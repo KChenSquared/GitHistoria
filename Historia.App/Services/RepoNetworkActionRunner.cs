@@ -116,17 +116,18 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         RepositoryContext repo, string remote, string branch, HistoriaGitException ex,
         IProgress<GitProgress> progress, CancellationToken ct)
     {
-        const int Rebase = 0, Merge = 1, Force = 2;
+        // Left→right: Fetch & merge (blue default) · Fetch & rebase · Force push (red) · Cancel.
+        const int Merge = 0, Rebase = 1, Force = 2;
         var choice = await _dialogs.ChooseAsync(
             "Push rejected",
             $"'{remote}/{branch}' has commits that aren't in your local '{branch}'. "
             + "Bring them in and push again, or overwrite the remote with your local branch.",
             [
-                "Fetch & rebase, then push",
                 "Fetch & merge, then push",
+                "Fetch & rebase, then push",
                 "Force push (with lease)",
             ],
-            defaultIndex: Rebase,
+            defaultIndex: Merge,
             destructiveIndex: Force);
 
         if (choice < 0)
