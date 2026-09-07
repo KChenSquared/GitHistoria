@@ -2251,8 +2251,10 @@ public sealed class CommitGraphControl : Control
             }
             else if (_layout is { } l && row >= 0 && row < l.Layout.RowCount)
             {
+                // Single click selects/reveals the tip commit but leaves the popup open, so a
+                // double click on the same row can still land and check the ref out. The close
+                // timer takes it down once the pointer leaves the popup and its badge.
                 _state?.SetSelectedCommit(l.Layout.Commits[row].Id);
-                CloseRefList();
             }
         }, RoutingStrategies.Tunnel);
         return rowBorder;
