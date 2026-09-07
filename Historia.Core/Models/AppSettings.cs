@@ -12,7 +12,7 @@ public sealed record AppSettings
     /// (§V3-13); v5: multi-line tab strip (§V3-B); v6: persistent graph cache toggle; v7: graph
     /// row hard cap; v8: local repo-state cache toggle; v9: terminal (V5); v10: tab-width mode
     /// (V5.5); v11: custom-theme id (§V6-G9); v12: splash-screen toggle.</summary>
-    public int SchemaVersion { get; init; } = 15;
+    public int SchemaVersion { get; init; } = 16;
 
     // ── Profile &amp; Identity ──
     /// <summary>§14.2: the default profile — the clone-dialog pre-selection and what an opened
@@ -26,6 +26,13 @@ public sealed record AppSettings
     /// token-bearing profile is the active per-repo selection.</summary>
     public bool EnableBackgroundPolling { get; init; } = true;
     public TimeSpan PollingInterval { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>§12.1: drives <c>IAutoFetchService</c>'s <c>[InitialFetch]</c> + <c>[AutoFetch]</c>
+    /// loop, which periodically <c>git fetch</c>es every open repository. Unlike
+    /// <see cref="EnableBackgroundPolling"/> it is <b>not</b> gated to a token-bearing profile —
+    /// it fetches SSH and <i>Local config</i> repos too — so this toggle is the single opt-out
+    /// that keeps constitution Rule 0.2 satisfiable. Default on.</summary>
+    public bool AutoFetchEnabled { get; init; } = true;
 
     // ── UI preferences ──
     /// <summary>User choice; <c>EffectiveTheme</c> is derived (§11.6). New installs follow the
