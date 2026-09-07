@@ -75,12 +75,14 @@ public sealed class RepositoryContext : IAsyncDisposable
         RepositoryPath = repository.Info.WorkingDirectory ?? repository.Info.Path;
         DisplayName = DeriveDisplayName(RepositoryPath, GitDirectory);
 
-        Gateway = new GitGateway(
-            this,
-            services.GetRequiredService<LibGit2Service>(),
-            services.GetRequiredService<IGitCliService>(),
-            services.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>(),
-            services.GetRequiredService<Historia.Services.Profiles.ICredentialVaultService>());
+        Gateway = new LoggingGitGateway(
+            new GitGateway(
+                this,
+                services.GetRequiredService<LibGit2Service>(),
+                services.GetRequiredService<IGitCliService>(),
+                services.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>(),
+                services.GetRequiredService<Historia.Services.Profiles.ICredentialVaultService>()),
+            RepositoryPath);
 
         State = new RepositoryStateService(
             this,
@@ -102,15 +104,19 @@ public sealed class RepositoryContext : IAsyncDisposable
     public static RepositoryContext Open(string path, IServiceProvider services)
     {
         using var _ = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.Open({Path.GetFileName(path)})");
+        using var _log = AppLog.Operation("repo", $"Open({Path.GetFileName(path)})");
         var discovered = Repository.Discover(path)
             ?? throw new RepositoryNotFoundException($"No Git repository found at or above '{path}'.");
         var repo = new Repository(discovered);
         try
         {
-            return new RepositoryContext(repo, services);
+            var ctx = new RepositoryContext(repo, services);
+            _log.Outcome(ctx.DisplayName);
+            return ctx;
         }
-        catch
+        catch (Exception ex)
         {
+            _log.Fail(ex);
             repo.Dispose();
             throw;
         }
@@ -176,6 +182,7 @@ public sealed class RepositoryContext : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         using var _ = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.DisposeAsync({System.IO.Path.GetFileName(RepositoryPath)})");
+        AppLog.Write(AppLogLevel.Info, "repo", $"Close({DisplayName})");
         try { _lifetimeCts.Cancel(); } catch { /* ignore */ }
 
         await Watcher.DisposeAsync().ConfigureAwait(false);

@@ -39,6 +39,38 @@ public sealed class GitCliService : IGitCliService
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (!AppLog.Enabled)
+            return await RunCoreAsync(request, progress, onStdoutLine, ct).ConfigureAwait(false);
+
+        var op = AppLog.Operation("git-cli", $"git {string.Join(' ', request.Arguments)}  (cwd={request.WorkingDirectory})");
+        try
+        {
+            var result = await RunCoreAsync(request, progress, onStdoutLine, ct).ConfigureAwait(false);
+            op.Outcome($"exit={result.ExitCode} kind={result.ErrorKind} ({result.Duration.TotalMilliseconds:F0}ms)");
+            if (result.ExitCode != 0 && !string.IsNullOrWhiteSpace(result.StandardError))
+            {
+                var firstLine = result.StandardError.Split('\n', 2)[0].TrimEnd('\r');
+                AppLog.Write(AppLogLevel.Warn, "git-cli", firstLine);
+            }
+            return result;
+        }
+        catch (Exception ex)
+        {
+            op.Fail(ex);
+            throw;
+        }
+        finally
+        {
+            op.Dispose();
+        }
+    }
+
+    private async Task<GitCliResult> RunCoreAsync(
+        GitCliRequest request,
+        IProgress<GitProgress>? progress,
+        Action<string>? onStdoutLine,
+        CancellationToken ct)
+    {
         var git = _locator.Current;
         if (!git.Found || git.Path is null)
         {

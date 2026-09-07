@@ -6,11 +6,24 @@ namespace Historia.Services.Git;
 /// an optional verbatim detail string for a "Details" expander. Higher layers map
 /// <see cref="Kind"/> to an actionable message; raw stderr is never surfaced directly.
 /// </summary>
-public sealed class HistoriaGitException(GitErrorKind kind, string message, string? details = null)
-    : Exception(message)
+public sealed class HistoriaGitException : Exception
 {
-    public GitErrorKind Kind { get; } = kind;
-    public string? Details { get; } = details;
+    public HistoriaGitException(GitErrorKind kind, string message, string? details = null)
+        : base(message)
+    {
+        Kind = kind;
+        Details = details;
+
+        // §V9.6: every classified git failure lands in the developer log the moment it is
+        // created, whether or not a caller turns it into a notification. No-op unless enabled.
+        var detail = string.IsNullOrWhiteSpace(details)
+            ? ""
+            : " — " + details.Split('\n', 2)[0].TrimEnd('\r');
+        AppLog.Write(AppLogLevel.Warn, "git-error", $"{kind}: {message}{detail}");
+    }
+
+    public GitErrorKind Kind { get; }
+    public string? Details { get; }
 
     /// <summary>
     /// §13.1: set when a user-initiated fetch/push/pull failed on every transport while a
