@@ -246,7 +246,7 @@ public partial class MainWindow : Window
 
     // ── Keyboard accelerators (§6.15.2) — same chord grammar as the WPF shell ──
 
-    private async void OnPreviewKeyDown(object? sender, KeyEventArgs e)
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
         if (_keyboard is null)
             return;
@@ -262,8 +262,29 @@ public partial class MainWindow : Window
         var key = e.Key == Key.Return ? "Enter" : e.Key.ToString();
         parts.Add(key.Length == 1 ? key.ToUpperInvariant() : key);
 
-        if (await _keyboard.DispatchAsync(string.Join('+', parts)))
-            e.Handled = true;
+        var chord = string.Join('+', parts);
+
+        // Decide synchronously and mark the key handled *before* dispatching — a handler that
+        // yields (e.g. CommitAsync) would otherwise leave e.Handled unset until long after this
+        // routed-event walk has finished, letting the keystroke fall through into a focused
+        // TextBox (§findings: async chord swallow bug).
+        if (!_keyboard.IsRegistered(chord))
+            return;
+
+        e.Handled = true;
+        _ = DispatchAndLogAsync(chord);
+    }
+
+    private async Task DispatchAndLogAsync(string chord)
+    {
+        try
+        {
+            await _keyboard!.DispatchAsync(chord).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(AppLogLevel.Warn, "keyboard", $"chord handler for '{chord}' threw", ex);
+        }
     }
 
     // ── Window geometry (§V3-9.2) ──
