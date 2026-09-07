@@ -39,6 +39,7 @@ public sealed class App : Application
         // Settings are loaded synchronously so the correct theme is applied on first paint
         // with no flash (§6.2.2) — the one permitted blocking read.
         AppPaths.EnsureCreated();
+        AppLog.Write(AppLogLevel.Info, "app", $"start — pid {Environment.ProcessId}, {Environment.OSVersion}");
         _settings = SettingsService.Load();
 
         var services = new ServiceCollection();
@@ -64,6 +65,7 @@ public sealed class App : Application
                 }
 
                 Historia.Diagnostics.PerfLog.Mark("desktop.Exit start");
+                AppLog.Write(AppLogLevel.Info, "app", "exit");
                 _singleInstanceCts?.Cancel();
                 Historia.Diagnostics.PerfLog.Mark("desktop.Exit singleInstanceCts cancelled");
                 _singleInstanceCts?.Dispose();
@@ -191,6 +193,7 @@ public sealed class App : Application
     private void ConfigureServices(IServiceCollection services, SettingsService settings)
     {
         // ── Platform seams (V4 §split) ──
+        services.AddSingleton<IAppLog>(AppLog.Current);
         services.AddSingleton<IUiDispatcher, UiDispatcher>();
         services.AddSingleton<ISystemThemeProbe, PlatformSystemThemeProbe>();
         services.AddSingleton<IDialogService, AvaloniaDialogService>();
@@ -373,6 +376,7 @@ public sealed class App : Application
     {
         Dispatcher.UIThread.UnhandledException += (_, args) =>
         {
+            AppLog.Write(AppLogLevel.Error, "unhandled", "Dispatcher.UIThread.UnhandledException", args.Exception);
             TryNotifyFatal(args.Exception);
             args.Handled = true;
         };
@@ -380,11 +384,16 @@ public sealed class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
         {
             if (args.ExceptionObject is Exception ex)
+            {
+                AppLog.Write(AppLogLevel.Error, "unhandled",
+                    $"AppDomain.UnhandledException (terminating={args.IsTerminating})", ex);
                 TryNotifyFatal(ex);
+            }
         };
 
         TaskScheduler.UnobservedTaskException += (_, args) =>
         {
+            AppLog.Write(AppLogLevel.Error, "unhandled", "TaskScheduler.UnobservedTaskException", args.Exception);
             TryNotifyFatal(args.Exception);
             args.SetObserved();
         };

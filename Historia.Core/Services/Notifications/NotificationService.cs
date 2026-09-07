@@ -74,6 +74,14 @@ public sealed class NotificationService : INotificationService
             }
         }
 
+        if (severity is NotificationSeverity.Warning or NotificationSeverity.Error)
+        {
+            AppLog.Write(
+                severity == NotificationSeverity.Error ? AppLogLevel.Error : AppLogLevel.Warn,
+                "notification",
+                string.IsNullOrEmpty(details) ? message : $"{message} — {details}");
+        }
+
         RaiseChanged();
         return notification;
     }
