@@ -10,6 +10,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Historia.Components;
 using Historia.Platform;
+using Historia.Services.AutoFetch;
 using Historia.Services.Profiles;
 using Historia.Services.Settings;
 using Historia.Services.Terminal;
@@ -36,6 +37,7 @@ public sealed class AppBandControl : UserControl, IDisposable
     private const double DragThreshold = 4;
 
     private IWorkspaceService _workspace = default!;
+    private IAutoFetchService _autoFetch = default!;
     private ITerminalSessionService _terminals = default!;
     private INavigationBus _nav = default!;
     private IProfileService _profiles = default!;
@@ -48,7 +50,12 @@ public sealed class AppBandControl : UserControl, IDisposable
     private EventHandler? _onProfilesChanged;
     private EventHandler<ActiveProfileChangedEventArgs>? _onActiveProfileChanged;
     private EventHandler<SettingsChangedEventArgs>? _onSettingsChanged;
+    private EventHandler? _onAutoFetchStates;
+    private Action? _onAutoFetchDebug;
     private bool _disposed;
+
+    // §21 dev visuals: per-open-repo left-edge colour bar + its last-applied token (skip re-binds).
+    private readonly Dictionary<RepositoryContext, (Border Bar, string Token)> _autoFetchBars = [];
 
     private readonly DockPanel _dock;
     private readonly WrapPanel _tabPanel;
@@ -261,6 +268,7 @@ public sealed class AppBandControl : UserControl, IDisposable
     public void Initialize(IServiceProvider services)
     {
         _workspace = services.GetRequiredService<IWorkspaceService>();
+        _autoFetch = services.GetRequiredService<IAutoFetchService>();
         _terminals = services.GetRequiredService<ITerminalSessionService>();
         _nav = services.GetRequiredService<INavigationBus>();
         _profiles = services.GetRequiredService<IProfileService>();
@@ -280,11 +288,16 @@ public sealed class AppBandControl : UserControl, IDisposable
             RebuildTabs(); // V5.5: tab-width mode / fixed width changes need the tabs rebuilt
         });
 
+        _onAutoFetchStates = (_, _) => Dispatcher.UIThread.Post(RecolorAutoFetchBars);
+        _onAutoFetchDebug = () => Dispatcher.UIThread.Post(ApplyAutoFetchBarVisibility);
+
         _workspace.OpenRepositoriesChanged += _onOpenChanged;
         _workspace.FocusedRepositoryChanged += _onFocusChanged;
         _profiles.ProfilesChanged += _onProfilesChanged;
         _profiles.ActiveProfileChanged += _onActiveProfileChanged;
         _settings.Changed += _onSettingsChanged;
+        _autoFetch.TabStatesChanged += _onAutoFetchStates;
+        AutoFetchDebug.Changed += _onAutoFetchDebug;
 
         BuildAppMenu();
         ApplyTabStripMode();
@@ -308,6 +321,41 @@ public sealed class AppBandControl : UserControl, IDisposable
         }
         if (_settings is not null)
             _settings.Changed -= _onSettingsChanged;
+        if (_autoFetch is not null && _onAutoFetchStates is not null)
+            _autoFetch.TabStatesChanged -= _onAutoFetchStates;
+        if (_onAutoFetchDebug is not null)
+            AutoFetchDebug.Changed -= _onAutoFetchDebug;
+    }
+
+    // ── §21 dev visuals: per-tab auto-fetch colour bar ──
+
+    private static string AutoFetchBarToken(AutoFetchTabState state) => state switch
+    {
+        AutoFetchTabState.FetchedThisCycle => "ColorSuccess",
+        AutoFetchTabState.PendingThisCycle => "ColorWarning",
+        _ => "ColorDanger",
+    };
+
+    private void ApplyAutoFetchBarVisibility()
+    {
+        foreach (var (bar, _) in _autoFetchBars.Values)
+            bar.IsVisible = AutoFetchDebug.Enabled;
+        RecolorAutoFetchBars();
+    }
+
+    private void RecolorAutoFetchBars()
+    {
+        if (!AutoFetchDebug.Enabled)
+            return;
+        foreach (var ctx in _autoFetchBars.Keys.ToList())
+        {
+            var (bar, token) = _autoFetchBars[ctx];
+            var want = AutoFetchBarToken(_autoFetch.GetTabState(ctx));
+            if (want == token)
+                continue;
+            Dyn(bar, Border.BackgroundProperty, want);
+            _autoFetchBars[ctx] = (bar, want);
+        }
     }
 
     // ── Terminal entry points (V5 §1) ──
@@ -397,6 +445,7 @@ public sealed class AppBandControl : UserControl, IDisposable
 
         _tabPanel.Children.Clear();
         _tabViews.Clear();
+        _autoFetchBars.Clear();
         var open = _workspace.OpenRepositories;
         Control? focusedView = null;
         for (var i = 0; i < open.Count; i++)
@@ -588,7 +637,21 @@ public sealed class AppBandControl : UserControl, IDisposable
             }
         };
 
-        shell.Child = body;
+        // §21 dev visuals: a 4 px colour bar down the tab's left edge (styled like the graph
+        // column's right-edge lane tick), showing this repo's auto-fetch state (§12.1). Hidden
+        // unless AutoFetchDebug.Enabled; recoloured in place on IAutoFetchService.TabStatesChanged.
+        var afBarToken = AutoFetchBarToken(_autoFetch.GetTabState(ctx));
+        var afBar = new Border { Width = 4, IsVisible = AutoFetchDebug.Enabled };
+        Dyn(afBar, Border.BackgroundProperty, afBarToken);
+        _autoFetchBars[ctx] = (afBar, afBarToken);
+
+        var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+        Grid.SetColumn(afBar, 0);
+        Grid.SetColumn(body, 1);
+        layout.Children.Add(afBar);
+        layout.Children.Add(body);
+
+        shell.Child = layout;
         shell.AddHandler(PointerPressedEvent, OnTabPressed, RoutingStrategies.Tunnel);
         return shell;
     }

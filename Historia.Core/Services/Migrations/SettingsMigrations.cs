@@ -242,3 +242,8 @@ public sealed class SettingsV14ToV15 : IJsonMigration
         document["schemaVersion"] = 15;
     }
 }
+
+/// <summary>v15 → v16: adds <c>autoFetchEnabled</c> (§12.1). Additive — an absent key falls
+/// through to the record default (<c>true</c>) on deserialize, so this only stamps the
+/// version.</summary>
+public sealed class SettingsV15ToV16() : StampOnlyMigration(15, 16);

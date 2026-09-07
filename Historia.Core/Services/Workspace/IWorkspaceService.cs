@@ -40,6 +40,10 @@ public interface IWorkspaceService
     Task CloseAsync(RepositoryContext context);
     void Focus(RepositoryContext context);
 
+    /// <summary>§12.1: force a deferred session-restore tab through its initialize path now
+    /// rather than on first focus. No-op if it is already initializing or fully loaded.</summary>
+    void EnsureInitialized(RepositoryContext context);
+
     /// <summary>
     /// Moves an open tab to <paramref name="newIndex"/> in the strip (drag-and-drop reorder,
     /// §V3-B/19.21). No-op when the context is not open or is already there. Raises
