@@ -25,7 +25,12 @@ just quietly reaches out. Everything below is subordinate to it.
 **0.2 — No network call the user did not initiate.** No telemetry, no analytics, no crash
    reporting, no avatar lookups. Background polling and hosting-API calls run only while a
    profile with a connected token is the active per-repo selection; a repo with its **SSH Only**
-   toggle on makes no non-SSH network call and falls closed rather than back to HTTPS. *(§I-5.5, §13)*
+   toggle on makes no non-SSH network call and falls closed rather than back to HTTPS.
+   **Auto-fetch** (§12.1) is the one sanctioned exception to "only what the user initiated": while
+   `AutoFetchEnabled` is on (default on) it periodically `git fetch`es every open repo over its
+   configured transport, regardless of profile/token. Opening a repo with a remote is treated as
+   the consent; the setting is the opt-out, and it must stay a single visible toggle that turns
+   *all* of it off — never a call that cannot be disabled. *(§I-5.5, §12.1, §13)*
 **0.3 — Three tiers, and only the third is negotiable.**
    - **Preinstalled platform — assume it.** Present on a stock Windows 11 machine: **Segoe UI**
      and the **Win32/DWM APIs**.
