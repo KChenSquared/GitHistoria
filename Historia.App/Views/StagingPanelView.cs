@@ -10,7 +10,8 @@ namespace Historia.Views;
 /// <summary>
 /// Working tree, staging area and commit box. Changes (unstaged) and Staged are the two
 /// resizable sections, with a checkbox column on each and a green ⬇ Stage / red ⬆ Unstage
-/// arrow pair between them acting on the checked rows. The commit-message strip is fixed size
+/// arrow pair in the Staged header (v9.5) acting on the checked rows; the two lists are
+/// resized by dragging the Staged section's top border. The commit-message strip is fixed size
 /// and pinned to the bottom, below both (v8.2) — it doesn't trade space with either list.
 /// </summary>
 public sealed class StagingPanelView : UserControl, IDisposable
@@ -71,7 +72,14 @@ public sealed class StagingPanelView : UserControl, IDisposable
     // content at the same height as the left-hand ref navigator's sections, so a long message
     // scrolls internally instead of growing the (fixed-size, v8.2) message strip without bound.
     private const double SectionMaxHeight = 240;
-    private const double StageSplitterHeight = 28;
+    private const double StageSplitterHeight = 7;
+    // v9.5: Changes is pinned to the top and is the only section the splitter resizes; it can't
+    // be dragged shorter than this. Staged fills whatever's left (down to StagedMinHeight) and
+    // the commit strip is docked to the bottom at a fixed height, so neither can be pushed off
+    // screen no matter where the split sits.
+    private const double ChangesMinHeight = 150;
+    private const double ChangesInitialHeight = 260;
+    private const double StagedMinHeight = 150;
 
     public StagingPanelView(IServiceProvider sp, RepositoryContext ctx)
     {
@@ -183,41 +191,19 @@ public sealed class StagingPanelView : UserControl, IDisposable
         conflictInner.Children.Add(_conflictRows);
         _conflictStrip.Child = conflictInner;
 
-        // ── two resizable sections (Changes / Staged) plus a fixed-size commit-message strip
-        // at the bottom. v8.2: the message box previously sat at the TOP of the resizable grid
-        // and was itself draggable; now it's pinned to the bottom, sized to its own content
-        // (capped at SectionMaxHeight, same as the left-hand ref navigator's sections, via the
-        // ScrollViewer built above) rather than to a Grid row a user can drag — only Changes and
-        // Staged trade space with each other. An Auto row does that for free: Grid gives Auto
-        // rows exactly what their content asks for and splits whatever's left between the Star
-        // rows, so nothing needs computing by hand the way the three-way split briefly did.
-        var lists = new Grid { RowDefinitions = new RowDefinitions("1*,Auto,1*,Auto") };
-        var changesSection = Section(_changesHeader, _selectAllChanges, _changesRows,
-            bulkLabel: "Stage all", bulkClass: "success",
-            bulk: () => _ = BulkAsync(_status.Unstaged.Concat(_status.Untracked).ToList(), staged: false),
-            extraAction: _discardAllChanges);
-        var stagedSection = Section(_stagedHeader, _selectAllStaged, _stagedRows,
-            bulkLabel: "Unstage all", bulkClass: "danger",
-            bulk: () => _ = BulkAsync(_status.Staged, staged: true));
-        Grid.SetRow(changesSection, 0);
-        Grid.SetRow(stagedSection, 2);
-        Grid.SetRow(messageSection, 3);
-        lists.Children.Add(changesSection);
-        lists.Children.Add(stagedSection);
-        lists.Children.Add(messageSection);
-
-        // Tall enough for the bordered arrow buttons (~24 px) to sit inside the row instead of
-        // bleeding over the section borders above and below.
-        var stageSplitter = new GridSplitter
-        {
-            ResizeDirection = GridResizeDirection.Rows,
-            Height = StageSplitterHeight,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Background = Brushes.Transparent,
-        };
-        Grid.SetRow(stageSplitter, 1);
-        lists.Children.Add(stageSplitter);
-
+        // ── layout (v9.5) ──────────────────────────────────────────────────────────────────
+        // A DockPanel keeps each piece in its own lane so a drag can never push one off-screen:
+        //   • the conflict strip docks to the top,
+        //   • the commit-message strip docks to the bottom at its own (capped) content height —
+        //     always pinned there, never trading space with the lists,
+        //   • the Changes / Staged split fills whatever is left.
+        // Inside that fill area a 3-row grid (Auto / Auto / *) holds Changes in a fixed-pixel
+        // row that the splitter resizes, a thin splitter row, then Staged in the Star row that
+        // simply absorbs the remainder. Changes is therefore pinned to the top and is the only
+        // section the drag grows or shrinks; Staged only ever gets "the rest" (floored at
+        // StagedMinHeight by the row's MinHeight), so it can't be driven off the bottom either.
+        // v9.5 also moved the stage/unstage arrows up into the Staged header's empty middle
+        // column so they line up with the "Staged" label.
         var arrowStrip = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -227,13 +213,54 @@ public sealed class StagingPanelView : UserControl, IDisposable
         };
         arrowStrip.Children.Add(_stageArrow);
         arrowStrip.Children.Add(_unstageArrow);
-        Grid.SetRow(arrowStrip, 1);
-        lists.Children.Add(arrowStrip);
+
+        var changesSection = Section(_changesHeader, _selectAllChanges, _changesRows,
+            bulkLabel: "Stage all", bulkClass: "success",
+            bulk: () => _ = BulkAsync(_status.Unstaged.Concat(_status.Untracked).ToList(), staged: false),
+            extraAction: _discardAllChanges,
+            borderThickness: new Thickness(1, 1, 1, 0),
+            minHeight: ChangesMinHeight);
+        var stagedSection = Section(_stagedHeader, _selectAllStaged, _stagedRows,
+            bulkLabel: "Unstage all", bulkClass: "danger",
+            bulk: () => _ = BulkAsync(_status.Staged, staged: true),
+            headerCenter: arrowStrip,
+            minHeight: 96);
+
+        var splitArea = new Grid
+        {
+            ClipToBounds = true, // a very short window clips the Staged list rather than letting it paint over the commit strip
+            RowDefinitions =
+            {
+                new RowDefinition(new GridLength(ChangesInitialHeight, GridUnitType.Pixel)) { MinHeight = ChangesMinHeight },
+                new RowDefinition(GridLength.Auto),
+                new RowDefinition(new GridLength(1, GridUnitType.Star)) { MinHeight = StagedMinHeight },
+            },
+        };
+        Grid.SetRow(changesSection, 0);
+        Grid.SetRow(stagedSection, 2);
+        splitArea.Children.Add(changesSection);
+        splitArea.Children.Add(stagedSection);
+
+        // Thin grab strip sitting right on the Changes/Staged boundary. Changes has no bottom
+        // border, so the visible line the user grabs here is the Staged section's own top edge.
+        var stageSplitter = new GridSplitter
+        {
+            ResizeDirection = GridResizeDirection.Rows,
+            ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+            Height = StageSplitterHeight,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = Brushes.Transparent,
+        };
+        Grid.SetRow(stageSplitter, 1);
+        splitArea.Children.Add(stageSplitter);
 
         var root = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(_conflictStrip, Dock.Top);
+        DockPanel.SetDock(messageSection, Dock.Bottom);
         root.Children.Add(_conflictStrip);
-        root.Children.Add(lists);
+        root.Children.Add(messageSection);
+        root.Children.Add(splitArea);
         Content = root;
 
         _status = ctx.State.Status;
@@ -244,7 +271,8 @@ public sealed class StagingPanelView : UserControl, IDisposable
     // ── section scaffolding ──
 
     private static Border Section(TextBlock header, CheckBox selectAll, StackPanel rows, string bulkLabel, Action bulk,
-        string? bulkClass = null, Control? extraAction = null)
+        string? bulkClass = null, Control? extraAction = null, Control? headerCenter = null, Thickness? borderThickness = null,
+        double minHeight = 64)
     {
         var head = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto"), Margin = new Thickness(0, 0, 0, 2) };
         selectAll.VerticalAlignment = VerticalAlignment.Center;
@@ -253,6 +281,16 @@ public sealed class StagingPanelView : UserControl, IDisposable
         Grid.SetColumn(header, 1);
         header.VerticalAlignment = VerticalAlignment.Center;
         head.Children.Add(header);
+
+        // Optional widget parked in the empty middle column — the stage/unstage arrows ride
+        // here on the Staged section so they sit in line with its header.
+        if (headerCenter is not null)
+        {
+            Grid.SetColumn(headerCenter, 2);
+            headerCenter.HorizontalAlignment = HorizontalAlignment.Center;
+            headerCenter.VerticalAlignment = VerticalAlignment.Center;
+            head.Children.Add(headerCenter);
+        }
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         if (extraAction is not null)
@@ -274,16 +312,23 @@ public sealed class StagingPanelView : UserControl, IDisposable
         Grid.SetColumn(actions, 3);
         head.Children.Add(actions);
 
+        // Rule between the header row and the list (or its "No changes." / "Nothing staged."
+        // placeholder), so the header reads as a distinct band.
+        var divider = new Border { Height = 1, Margin = new Thickness(0, 0, 0, 6) }
+            .Dyn(Border.BackgroundProperty, "ColorBorder");
+        DockPanel.SetDock(divider, Dock.Top);
+
         var inner = new DockPanel { LastChildFill = true, Margin = new Thickness(8) };
         DockPanel.SetDock(head, Dock.Top);
         inner.Children.Add(head);
+        inner.Children.Add(divider);
         inner.Children.Add(new ScrollViewer { Content = rows, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled });
 
         return new Border
         {
             Child = inner,
-            MinHeight = 64,
-            BorderThickness = new Thickness(1),
+            MinHeight = minHeight,
+            BorderThickness = borderThickness ?? new Thickness(1),
         }.Dyn(Border.BorderBrushProperty, "ColorBorder");
     }
 
