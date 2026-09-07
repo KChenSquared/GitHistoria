@@ -1,10 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-using Historia.Services.Git;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using Historia.Services.Workspace;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>Minimal DI provider + a real <see cref="RepositoryContext"/> for integration tests.</summary>
 public sealed class MiniHost : IAsyncDisposable

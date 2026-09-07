@@ -1,9 +1,4 @@
-﻿using System.Diagnostics;
-using System.IO;
-using System.Text.RegularExpressions;
-using Microsoft.Win32;
-
-namespace Historia.Services.Git;
+﻿namespace Historia.Services.Git;
 
 /// <inheritdoc cref="IGitExecutableLocator"/>
 public sealed partial class GitExecutableLocator : IGitExecutableLocator

@@ -1,12 +1,3 @@
-using System.Diagnostics;
-using Microsoft.Extensions.DependencyInjection;
-using Historia.Models;
-using Historia.Services.AutoFetch;
-using Historia.Services.Git;
-using Historia.Services.Profiles;
-using Historia.Services.Workspace;
-using Xunit;
-
 namespace Historia.Tests;
 
 /// <summary>§12.1 AF6 — the auto-fetch schedule, over a real <see cref="WorkspaceService"/> with

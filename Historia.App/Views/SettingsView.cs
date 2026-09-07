@@ -1,13 +1,4 @@
-﻿using Avalonia.Input;
-using Avalonia.Interactivity;
-using Avalonia.Media.Imaging;
-using Historia.Services.Graph;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using Historia.Services.Theming;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>Application settings (V4 port of Settings.razor).</summary>
 public sealed class SettingsView : UserControl, IDisposable

@@ -1,8 +1,3 @@
-using Avalonia.Controls.Shapes;
-using Avalonia.Markup.Xaml.MarkupExtensions;
-using Historia.Components;
-using Path = Avalonia.Controls.Shapes.Path;
-
 namespace Historia.Views;
 
 /// <summary>

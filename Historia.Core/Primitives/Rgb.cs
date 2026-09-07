@@ -1,6 +1,4 @@
-﻿using System.Globalization;
-
-namespace Historia;
+﻿namespace Historia;
 
 /// <summary>
 /// An 8-bit-per-channel ARGB colour. V4 §split: <see cref="Historia.Core"/> owns no UI framework,

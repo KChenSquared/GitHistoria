@@ -1,6 +1,4 @@
-﻿using System.Text.Json.Nodes;
-
-namespace Historia.Services.Migrations;
+﻿namespace Historia.Services.Migrations;
 
 /// <summary>
 /// v0 → v1 migration for <c>settings.json</c> (§9.3, §14 <c>Migrations/V0ToV1.cs</c>).

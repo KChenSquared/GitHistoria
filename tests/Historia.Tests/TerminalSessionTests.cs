@@ -1,8 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Terminal;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>Behaviour of a single <see cref="TerminalSession"/> against a fake pty — OSC
 /// hardening (V5 §9.3), the UTF-8 decoder (D1), the damage layer (D2), exit handling.</summary>

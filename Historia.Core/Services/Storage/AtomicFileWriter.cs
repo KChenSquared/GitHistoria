@@ -1,6 +1,4 @@
-﻿using System.IO;
-
-namespace Historia.Services.Storage;
+﻿namespace Historia.Services.Storage;
 
 /// <summary>
 /// Atomic, serialized file writes (§9.3). Every write to a given path is funneled through a

@@ -1,8 +1,4 @@
-﻿using Historia.Rendering;
-using Historia.Services.Terminal;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>
 /// Constitution rule 24 — "the render path creates no Historia-owned object per frame" — measured

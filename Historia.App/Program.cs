@@ -1,7 +1,4 @@
-﻿using Historia.Platform;
-using Historia.Services.Git.Helpers;
-
-namespace Historia;
+﻿namespace Historia;
 
 internal static class Program
 {

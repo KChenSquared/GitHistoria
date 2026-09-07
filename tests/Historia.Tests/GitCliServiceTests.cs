@@ -1,8 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Git;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 public class GitCliServiceTests
 {

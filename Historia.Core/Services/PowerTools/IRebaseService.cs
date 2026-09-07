@@ -1,6 +1,4 @@
-﻿using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <summary>
 /// Interactive rebase, executed by Git core (§8.1.4). Historia writes the todo plan and drives

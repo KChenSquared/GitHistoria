@@ -1,13 +1,4 @@
-﻿using System.IO;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using LibGit2Sharp;
-using Historia.Services.Git;
-using Historia.Services.Network;
-using Historia.Services.Profiles;
-using Historia.Services.Storage;
-
-namespace Historia.Services.Workspace;
+﻿namespace Historia.Services.Workspace;
 
 /// <inheritdoc cref="IWorkspaceService"/>
 public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable

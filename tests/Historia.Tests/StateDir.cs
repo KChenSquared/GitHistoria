@@ -1,6 +1,4 @@
-﻿using Historia.Services.Storage;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>Redirects <see cref="AppPaths"/> to a throwaway directory for the life of a test.</summary>
 public sealed class StateDir : IDisposable

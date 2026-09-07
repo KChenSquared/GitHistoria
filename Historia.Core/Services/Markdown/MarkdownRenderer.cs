@@ -1,8 +1,4 @@
-﻿using System.Net;
-using System.Text;
-using System.Text.RegularExpressions;
-
-namespace Historia.Services.Markdown;
+﻿namespace Historia.Services.Markdown;
 
 /// <summary>
 /// A small, dependency-free GitHub-Flavored-Markdown renderer for commit bodies, notes, and

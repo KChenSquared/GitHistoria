@@ -1,8 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Network;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>§13.1: scheme-first transport routing with a fallback to the other transport,
 /// unless SSH Only forces SSH with none.</summary>

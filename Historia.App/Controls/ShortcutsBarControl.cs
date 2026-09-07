@@ -1,11 +1,4 @@
-﻿using Avalonia.Controls.Primitives;
-using Historia.Services.Git;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using Historia.Services.Terminal;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Controls;
+﻿namespace Historia.Controls;
 
 /// <summary>
 /// v8 M5: a single continuous bar between the app band and the three body panels — full window

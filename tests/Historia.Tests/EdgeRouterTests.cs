@@ -1,9 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Graph;
-using Xunit;
-using Point = Historia.PointD;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 public class EdgeRouterTests
 {

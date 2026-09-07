@@ -1,9 +1,4 @@
-﻿using System.IO;
-using System.Text.Json;
-using Historia.Services.Settings;
-using Historia.Services.Storage;
-
-namespace Historia.Services.Workspace;
+﻿namespace Historia.Services.Workspace;
 
 /// <inheritdoc cref="IRecentRepositoryService"/>
 public sealed class RecentRepositoryService : IRecentRepositoryService, IAsyncDisposable

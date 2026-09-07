@@ -1,9 +1,4 @@
-﻿using System.Collections.Concurrent;
-using LibGit2Sharp;
-using Historia.Services.Git;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="ICherryPickService"/>
 public sealed class CherryPickService(IGitCliService cli) : ICherryPickService

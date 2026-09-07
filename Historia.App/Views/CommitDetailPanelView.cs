@@ -1,11 +1,4 @@
-﻿using Avalonia.Controls.Templates;
-using LibGit2Sharp;
-using Historia.Services.Git;
-using Historia.Services.Settings;
-using Historia.Services.State;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>Selected-commit detail: metadata, changed files, file diff (V4 port of CommitDetailPanel.razor).</summary>
 public sealed class CommitDetailPanelView : UserControl, IDisposable

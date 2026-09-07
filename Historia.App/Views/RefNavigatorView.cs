@@ -1,15 +1,4 @@
-﻿using Avalonia.Controls.Primitives;
-using Avalonia.Controls.Shapes;
-using Avalonia.Input;
-using Avalonia.Interactivity;
-using Historia.Services.Git;
-using Historia.Services.Graph;
-using Historia.Services.PowerTools;
-using Historia.Services.State;
-using Historia.Services.Storage;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>
 /// The sidebar ref navigator (V4 port of Sidebar.razor + RefNavigator.razor +

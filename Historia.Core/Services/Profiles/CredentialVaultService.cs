@@ -1,7 +1,4 @@
-﻿using System.Runtime.InteropServices;
-using System.Text;
-
-namespace Historia.Services.Profiles;
+﻿namespace Historia.Services.Profiles;
 
 /// <inheritdoc cref="ICredentialVaultService"/>
 public sealed class CredentialVaultService : ICredentialVaultService

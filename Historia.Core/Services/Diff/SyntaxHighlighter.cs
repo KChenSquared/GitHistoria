@@ -1,6 +1,4 @@
-﻿using System.Collections.Frozen;
-
-namespace Historia.Services.Diff;
+﻿namespace Historia.Services.Diff;
 
 public enum TokenKind { Plain, Keyword, String, Comment, Number, Punct }
 

@@ -1,6 +1,3 @@
-using Historia.Services.Settings;
-using Historia.Services.Workspace;
-
 namespace Historia.Services.AutoFetch;
 
 /// <inheritdoc cref="IAutoFetchService"/>

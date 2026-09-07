@@ -1,9 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 public class ProfileServiceTests : IDisposable
 {

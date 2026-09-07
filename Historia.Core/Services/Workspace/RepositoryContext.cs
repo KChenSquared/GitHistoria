@@ -1,15 +1,4 @@
-﻿using System.IO;
-using LibGit2Sharp;
-using Microsoft.Extensions.DependencyInjection;
-using Historia.Services.Git;
-using Historia.Services.Network;
-using Historia.Services.Settings;
-using Historia.Services.State;
-using Historia.Services.Storage;
-using Historia.Services.UI;
-using Historia.Services.Watching;
-
-namespace Historia.Services.Workspace;
+﻿namespace Historia.Services.Workspace;
 
 /// <summary>
 /// Per-repository-tab handle (§6.3, §6.6.3). Owns exactly one <see cref="Repository"/> and

@@ -1,7 +1,4 @@
-﻿using Avalonia.Platform;
-using Historia.Services.Theming;
-
-namespace Historia.Platform;
+﻿namespace Historia.Platform;
 
 /// <summary>
 /// App-side <see cref="ISystemThemeProbe"/> over Avalonia's cross-platform

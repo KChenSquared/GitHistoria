@@ -1,8 +1,4 @@
-﻿using Historia.Services.Git;
-using Historia.Services.PowerTools;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>
 /// Merge / rebase / cherry-pick conflict resolver (§8.4) — V4 port of ConflictResolver.razor.

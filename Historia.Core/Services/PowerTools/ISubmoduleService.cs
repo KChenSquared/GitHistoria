@@ -1,6 +1,4 @@
-﻿using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <summary>Submodule add / init / update / sync / remove (§8.6.2). Singleton.</summary>
 public interface ISubmoduleService

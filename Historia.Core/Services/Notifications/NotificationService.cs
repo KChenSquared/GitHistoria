@@ -1,6 +1,4 @@
-﻿using System.Collections.Immutable;
-
-namespace Historia.Services.Notifications;
+﻿namespace Historia.Services.Notifications;
 
 /// <inheritdoc cref="INotificationService"/>
 public sealed class NotificationService : INotificationService

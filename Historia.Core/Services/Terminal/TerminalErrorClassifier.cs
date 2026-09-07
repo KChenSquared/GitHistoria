@@ -1,6 +1,4 @@
-﻿using System.ComponentModel;
-
-namespace Historia.Services.Terminal;
+﻿namespace Historia.Services.Terminal;
 
 /// <summary>Start-up / runtime failure classes for the terminal subsystem (V5 §9.5). Mirrors
 /// <see cref="Historia.Services.Git.GitErrorKind"/> in spirit: there is no

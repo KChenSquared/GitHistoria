@@ -1,8 +1,4 @@
-﻿using Historia.Services.Notifications;
-using Historia.Services.Settings;
-using Historia.Services.UI;
-
-namespace Historia.Services.Terminal;
+﻿namespace Historia.Services.Terminal;
 
 /// <inheritdoc cref="ITerminalSessionService"/>
 public sealed class TerminalSessionService : ITerminalSessionService, IDisposable

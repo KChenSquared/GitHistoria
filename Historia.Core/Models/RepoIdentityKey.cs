@@ -1,7 +1,4 @@
-﻿using System.Security.Cryptography;
-using System.Text;
-
-namespace Historia.Models;
+﻿namespace Historia.Models;
 
 /// <summary>
 /// Stable identity key for a repository (§9.3.1). Derived from the repository's <b>root

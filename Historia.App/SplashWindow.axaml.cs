@@ -1,7 +1,4 @@
-﻿using Avalonia.Media.Imaging;
-using Avalonia.Platform;
-
-namespace Historia;
+﻿namespace Historia;
 
 /// <summary>
 /// Borderless splash shown on launch while the shell loads out of sight (§6.2.2): a complete

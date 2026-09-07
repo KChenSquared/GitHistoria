@@ -1,7 +1,4 @@
-﻿using LibGit2Sharp;
-using Res = Historia.Services.Graph.GraphLayoutState.Reservation;
-
-namespace Historia.Services.Graph;
+﻿namespace Historia.Services.Graph;
 
 /// <summary>
 /// Pure C# DAG layout algorithm (§7.3). Converts a topologically ordered commit stream

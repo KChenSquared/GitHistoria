@@ -1,7 +1,4 @@
-﻿using LibGit2Sharp;
-using RepositoryStatus = Historia.Models.RepositoryStatus;
-
-namespace Historia.Services.State;
+﻿namespace Historia.Services.State;
 
 public sealed record StatusChangedEventArgs(RepositoryStatus Status);
 public sealed record SelectionChangedEventArgs(ObjectId? CommitId);

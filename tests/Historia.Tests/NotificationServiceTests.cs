@@ -1,7 +1,4 @@
-﻿using Historia.Services.Notifications;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>§18 / v8 M10: identical error notifications published in quick succession coalesce
 /// into one card with an occurrence count instead of stacking.</summary>

@@ -1,7 +1,4 @@
-﻿using Historia.Services.Terminal;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 public class TerminalStartDirectoryTests
 {

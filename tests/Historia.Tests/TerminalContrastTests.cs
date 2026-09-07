@@ -1,9 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Terminal;
-using Historia.Services.Theming;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>
 /// V5 §8: in High Contrast every ANSI colour must clear 4.5:1 against <c>term-bg</c>. A

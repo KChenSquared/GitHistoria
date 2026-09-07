@@ -1,6 +1,4 @@
-﻿using LibGit2Sharp;
-
-namespace Historia.Models;
+﻿namespace Historia.Models;
 
 /// <summary>
 /// A parsed file diff (§6.10.1). <see cref="DiffHunk"/>/<see cref="DiffLine"/> are the single

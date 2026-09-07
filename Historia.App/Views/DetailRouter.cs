@@ -1,7 +1,4 @@
-﻿using Avalonia.Threading;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>
 /// The detail-pane router (V4 port of Routes.razor + MainLayout.razor). Maps the

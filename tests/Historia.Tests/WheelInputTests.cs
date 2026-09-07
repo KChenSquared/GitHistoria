@@ -1,8 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.UI;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>v8 M9: the shared wheel-direction sign used by the custom graph / tab-strip handlers.</summary>
 public class WheelInputTests

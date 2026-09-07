@@ -1,8 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Settings;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>§V3-B: per-repository graph layout store.</summary>
 public class RepoLayoutServiceTests : IDisposable

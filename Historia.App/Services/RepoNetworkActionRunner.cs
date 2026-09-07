@@ -1,9 +1,3 @@
-using Historia.Services.Git;
-using Historia.Services.PowerTools;
-using Historia.Services.Profiles;
-using Historia.Services.Terminal;
-using Historia.Views;
-
 namespace Historia.Services.UI;
 
 /// <summary>One network-op progress tick, or (with <c>Progress</c> null) "hide the progress UI" —

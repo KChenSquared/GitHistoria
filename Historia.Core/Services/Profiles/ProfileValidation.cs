@@ -1,7 +1,4 @@
-﻿using System.IO;
-using System.Text.RegularExpressions;
-
-namespace Historia.Services.Profiles;
+﻿namespace Historia.Services.Profiles;
 
 /// <summary>Profile field validation rules (§9.2). Throws <see cref="ProfileValidationException"/> on failure.</summary>
 public static partial class ProfileValidation

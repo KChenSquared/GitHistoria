@@ -1,6 +1,4 @@
-﻿using Avalonia.Threading;
-
-namespace Historia.Platform;
+﻿namespace Historia.Platform;
 
 /// <summary>App-side <see cref="IUiDispatcher"/> over <see cref="Dispatcher.UIThread"/> (V4 §split).</summary>
 public sealed class UiDispatcher : IUiDispatcher

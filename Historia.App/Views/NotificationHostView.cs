@@ -1,8 +1,4 @@
-﻿using Avalonia.Threading;
-using Historia.Services.Git;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>Toast stack for <see cref="INotificationService"/> (V4 port of NotificationHost.razor).</summary>
 public sealed class NotificationHostView : UserControl, IDisposable

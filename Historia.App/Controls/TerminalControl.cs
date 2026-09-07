@@ -1,16 +1,4 @@
-﻿using System.Globalization;
-using Avalonia.Input;
-using Avalonia.Interactivity;
-using Avalonia.Media.Immutable;
-using Avalonia.Threading;
-using Avalonia.VisualTree;
-using Historia.Rendering;
-using Historia.Services.Settings;
-using Historia.Services.Terminal;
-using Historia.Services.Theming;
-using AvColor = Avalonia.Media.Color;
-
-namespace Historia.Controls;
+﻿namespace Historia.Controls;
 
 /// <summary>
 /// The custom-drawn embedded terminal (V5 §6). A monospace grid of coloured cells — a simpler

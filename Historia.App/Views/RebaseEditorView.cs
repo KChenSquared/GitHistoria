@@ -1,8 +1,4 @@
-﻿using Historia.Services.Git;
-using Historia.Services.PowerTools;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>
 /// Interactive-rebase todo editor (§8.1) — V4 port of RebaseEditorPage.razor. Reached via the

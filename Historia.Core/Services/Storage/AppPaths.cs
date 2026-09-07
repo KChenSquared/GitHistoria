@@ -1,6 +1,4 @@
-﻿using System.IO;
-
-namespace Historia.Services.Storage;
+﻿namespace Historia.Services.Storage;
 
 /// <summary>
 /// Well-known on-disk locations for Historia's persistent state (§V3-9.1).

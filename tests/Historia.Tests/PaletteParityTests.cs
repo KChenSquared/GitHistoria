@@ -1,10 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Graph;
-using Historia.Services.Theming;
-using Xunit;
-using Color = Historia.Rgb;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>
 /// §V2-3 / §V2-15.1: <see cref="HistoriaPalette"/> is the single source of truth for every colour

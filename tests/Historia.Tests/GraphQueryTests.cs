@@ -1,8 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Graph;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>
 /// §V2-17.3: the graph query controls. Path filter restricts the walk (a coherent, valid

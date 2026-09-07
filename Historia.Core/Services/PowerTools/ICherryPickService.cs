@@ -1,7 +1,4 @@
-﻿using LibGit2Sharp;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <summary>
 /// Cherry-pick and revert of one commit or an ordered set (§8.5). Commits must be passed

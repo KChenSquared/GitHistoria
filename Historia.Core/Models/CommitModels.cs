@@ -1,6 +1,4 @@
-﻿using LibGit2Sharp;
-
-namespace Historia.Models;
+﻿namespace Historia.Models;
 
 /// <summary>
 /// Lightweight commit row for the history list (§6.11) and, in Phase 2, the graph. Projected

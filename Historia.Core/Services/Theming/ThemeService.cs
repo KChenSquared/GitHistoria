@@ -1,7 +1,4 @@
-﻿using Historia.Services.Graph;
-using Historia.Services.Settings;
-
-namespace Historia.Services.Theming;
+﻿namespace Historia.Services.Theming;
 
 /// <inheritdoc cref="IThemeService"/>
 /// <remarks>

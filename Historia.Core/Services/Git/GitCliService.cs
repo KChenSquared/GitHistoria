@@ -1,8 +1,4 @@
-﻿using System.Diagnostics;
-using System.IO;
-using System.Text;
-
-namespace Historia.Services.Git;
+﻿namespace Historia.Services.Git;
 
 /// <inheritdoc cref="IGitCliService"/>
 public sealed class GitCliService : IGitCliService

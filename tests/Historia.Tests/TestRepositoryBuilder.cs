@@ -1,6 +1,4 @@
-﻿using System.Diagnostics;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>
 /// Generates fixture repositories programmatically with the real <c>git</c> CLI (§16.1). Each

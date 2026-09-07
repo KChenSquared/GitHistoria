@@ -1,8 +1,4 @@
-﻿using Avalonia.Threading;
-using Historia.Services.Git;
-using Historia.Services.PowerTools;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>
 /// v8 M4: the branch context-menu items common to GitKraken · Fork · GitComet · GitHub Desktop,

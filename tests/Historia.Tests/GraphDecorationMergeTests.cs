@@ -1,7 +1,3 @@
-using Historia.Models;
-using Historia.Services.Graph;
-using Xunit;
-
 namespace Historia.Tests;
 
 /// <summary>

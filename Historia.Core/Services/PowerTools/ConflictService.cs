@@ -1,11 +1,4 @@
-﻿using System.Diagnostics;
-using System.IO;
-using LibGit2Sharp;
-using Historia.Services.Git;
-using Historia.Services.Settings;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IConflictService"/>
 public sealed class ConflictService(IGitCliService cli, ISettingsService settings) : IConflictService

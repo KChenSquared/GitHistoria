@@ -1,7 +1,4 @@
-﻿using System.Collections;
-using System.Diagnostics;
-
-namespace Historia.Services.Terminal;
+﻿namespace Historia.Services.Terminal;
 
 /// <summary>
 /// The OS-facing seams <see cref="TerminalSessionService"/> uses to resolve a shell, a start

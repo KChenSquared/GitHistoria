@@ -1,10 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Graph;
-using Historia.Services.Storage;
-using Historia.Services.Workspace;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>§7.6: with "Read commit details from disk" on, the layout service spills per-commit
 /// metadata and points <see cref="GraphLayout.Commits"/> at the paged <c>DiskCommitStore</c>,

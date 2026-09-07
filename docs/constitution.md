@@ -192,14 +192,20 @@ just quietly reaches out. Everything below is subordinate to it.
     tests that passed while the thing they guarded was broken: a test that scans only part of
     the tree is a convention wearing a test's clothes (rule 0.6), and where a real check is
     genuinely impossible, the rule says so and records a measurement instead (rule 25).
-37. **Global usings for namespaces most files need; per-file usings for everything else.**
-    `<ImplicitUsings>` already covers the BCL basics (`System`, `System.Linq`, `System.IO`,
-    `System.Threading.Tasks`, …) — never re-add those explicitly. Each project's
-    `GlobalUsings.cs` adds to that the small set of namespaces used across most of that
-    project's files (currently `Historia.Models` in both `Historia.App` and `Historia.Core`, plus the
-    core Avalonia/DI/UI namespaces in `Historia.App` — see the file for the exact list). A
-    namespace only a minority of files touch — `LibGit2Sharp`, a specific `Historia.Services.*`
-    area, `System.Text.Json` — stays an explicit `using` at the top of the files that need it:
-    globalizing it would hide what a given file actually depends on for no real benefit. When a
-    namespace crosses that "most files" threshold, move it into the project's `GlobalUsings.cs`
-    and drop the now-redundant explicit `using` everywhere it appeared.
+37. **Always use global usings. No per-file `using` directives anywhere in the solution.**
+    Every `using` directive lives in the project's `GlobalUsings.cs` as a `global using` —
+    plain namespace imports, `using static`, and alias directives (`using X = Y;`) alike. A
+    `.cs` file must contain no `using` directive of its own; `using` *statements* (`using var`,
+    `using (...)`) are unaffected. `<ImplicitUsings>` already covers the BCL basics (`System`,
+    `System.Linq`, `System.IO`, `System.Threading.Tasks`, …) — never re-add those, in
+    `GlobalUsings.cs` or elsewhere. When a new dependency is introduced, add its `global using`
+    to the relevant project's `GlobalUsings.cs`. When globalizing two namespaces makes a type
+    name ambiguous (`CS0104`), resolve it with a `global using` alias pinned to the intended
+    type (e.g. `global using Version = System.Version;`), or fully-qualify at the one-off call
+    site if only a single file wants the other type.
+
+    *Correction (supersedes the original rule 37).* The original rule reserved `GlobalUsings.cs`
+    for "namespaces most files need" and kept per-file `using`s for everything else, on the
+    argument that globalizing a minority-use namespace hides what a file depends on. That
+    tradeoff was reversed deliberately: the project now standardizes on global usings
+    everywhere, and the per-file-`using` exception is gone.

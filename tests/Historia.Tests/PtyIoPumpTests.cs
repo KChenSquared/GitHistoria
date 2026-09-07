@@ -1,8 +1,4 @@
-﻿using System.Collections.Concurrent;
-using Historia.Services.Terminal;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>
 /// Guards the fix for deviation D5: the pty I/O loops must run on dedicated background threads,

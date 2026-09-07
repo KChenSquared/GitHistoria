@@ -1,7 +1,4 @@
-﻿using System.Globalization;
-using System.Text.RegularExpressions;
-
-namespace Historia.Services.Diff;
+﻿namespace Historia.Services.Diff;
 
 /// <summary>
 /// Parses the unified-diff text of a single file's patch into the shared

@@ -1,7 +1,4 @@
-﻿using LibGit2Sharp;
-using RepositoryStatus = Historia.Models.RepositoryStatus;
-
-namespace Historia.Services.Git;
+﻿namespace Historia.Services.Git;
 
 /// <summary>
 /// The only Git surface the UI and higher-level services talk to (§6.4.2). Decides per

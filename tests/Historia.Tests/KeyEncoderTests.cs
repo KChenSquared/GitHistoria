@@ -1,7 +1,4 @@
-﻿using Historia.Services.Terminal;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>
 /// The byte table is load-bearing (V5 §6.5). Expected sequences are cross-checked against

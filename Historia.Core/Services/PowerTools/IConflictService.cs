@@ -1,6 +1,4 @@
-﻿using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <summary>
 /// Detect / parse / resolve / continue / abort for any conflicted operation (§8.4.4). Every

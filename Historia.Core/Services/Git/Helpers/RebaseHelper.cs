@@ -1,6 +1,4 @@
-﻿using System.IO;
-
-namespace Historia.Services.Git.Helpers;
+﻿namespace Historia.Services.Git.Helpers;
 
 /// <summary>
 /// The <c>GIT_SEQUENCE_EDITOR</c> / <c>GIT_EDITOR</c> body for interactive rebase (§8.1.4).

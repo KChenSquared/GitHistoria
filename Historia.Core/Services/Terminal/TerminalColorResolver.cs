@@ -1,6 +1,4 @@
-﻿using Historia.Services.Theming;
-
-namespace Historia.Services.Terminal;
+﻿namespace Historia.Services.Terminal;
 
 /// <summary>How an emulator cell colour is expressed.</summary>
 public enum TerminalColorKind

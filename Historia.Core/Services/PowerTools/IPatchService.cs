@@ -1,6 +1,4 @@
-﻿using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <summary>
 /// Builds and applies partial-staging patches (§8.2.5). Patches are generated from the diff

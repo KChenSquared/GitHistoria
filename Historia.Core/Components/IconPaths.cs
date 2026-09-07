@@ -1,6 +1,4 @@
-﻿using System.Collections.Frozen;
-
-namespace Historia.Components;
+﻿namespace Historia.Components;
 
 /// <summary>
 /// Path data for the utility icon set (§17 "Icons"). Most glyphs are

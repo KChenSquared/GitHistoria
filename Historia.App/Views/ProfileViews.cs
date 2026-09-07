@@ -1,10 +1,4 @@
-﻿using Historia.Services.Git;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using Historia.Services.State;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>
 /// Standalone "Profiles &amp; Accounts" panel, reached from the app menu's
@@ -392,4 +386,4 @@ public sealed class ProfilesView : UserControl, IDisposable
         _settings.Changed -= _onSettings;
     }
 }
-
+

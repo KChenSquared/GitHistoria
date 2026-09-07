@@ -1,6 +1,4 @@
-﻿using LibGit2Sharp;
-
-namespace Historia.Models;
+﻿namespace Historia.Models;
 
 /// <summary>Submodule state (§8.6.1). Derived from <c>git submodule status --recursive</c>.</summary>
 public sealed record SubmoduleInfo

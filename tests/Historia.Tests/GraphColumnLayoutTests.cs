@@ -1,9 +1,4 @@
-﻿using System.Collections.Immutable;
-using Historia.Models;
-using Historia.Services.Graph;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>§V3-8.4: the grow/shrink sizing model.</summary>
 public class GraphColumnLayoutTests

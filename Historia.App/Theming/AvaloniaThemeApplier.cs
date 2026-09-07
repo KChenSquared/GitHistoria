@@ -1,9 +1,4 @@
-﻿using Avalonia.Media.Immutable;
-using Avalonia.Styling;
-using Avalonia.Threading;
-using Historia.Services.Theming;
-
-namespace Historia.Theming;
+﻿namespace Historia.Theming;
 
 /// <summary>
 /// V4 §split: the App-side half of theming. <see cref="ThemeService"/> (in Core) decides the

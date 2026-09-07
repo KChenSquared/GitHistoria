@@ -1,8 +1,4 @@
-﻿using System.IO;
-using System.IO.Pipes;
-using System.Runtime.InteropServices;
-
-namespace Historia.Platform;
+﻿namespace Historia.Platform;
 
 /// <summary>
 /// Single-instance guard (§3). The first process to start holds a named mutex and runs a tiny

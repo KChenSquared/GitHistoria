@@ -1,8 +1,4 @@
-﻿using System.IO;
-using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
-
-namespace Historia.Services.Storage;
+﻿namespace Historia.Services.Storage;
 
 /// <summary>
 /// Removes a file or directory, routing it to the OS recycle bin / trash where the platform

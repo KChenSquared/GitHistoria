@@ -1,22 +1,3 @@
-using System.Globalization;
-using System.Threading.Channels;
-using Avalonia.Controls.Documents;
-using Avalonia.Controls.Primitives;
-using Avalonia.Input;
-using Avalonia.Interactivity;
-using Avalonia.Threading;
-using Avalonia.VisualTree;
-using LibGit2Sharp;
-using Historia.Components;
-using Historia.Services.Git;
-using Historia.Services.Graph;
-using Historia.Services.State;
-using Historia.Services.Theming;
-using Historia.Theming;
-using Historia.Views;
-using AvColor = Avalonia.Media.Color;
-using SelectionChangedEventArgs = Historia.Services.State.SelectionChangedEventArgs;
-
 namespace Historia.Controls;
 
 /// <summary>

@@ -1,6 +1,4 @@
-﻿using System.Text;
-
-namespace Historia.Services.Terminal;
+﻿namespace Historia.Services.Terminal;
 
 /// <summary>Keys that do not arrive as printable text and must be encoded (V5 §6.5).</summary>
 public enum TerminalKey

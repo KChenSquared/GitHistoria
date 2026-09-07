@@ -1,6 +1,4 @@
-﻿using System.Diagnostics;
-
-namespace Historia.Platform;
+﻿namespace Historia.Platform;
 
 /// <summary>
 /// App-side <see cref="IScrollDirectionProbe"/> (v8 M9). Windows is always standard. macOS reads

@@ -1,7 +1,3 @@
-using Historia.Services.Git;
-using Historia.Services.PowerTools;
-using Historia.Services.Settings;
-
 namespace Historia.Services.UI;
 
 /// <summary>

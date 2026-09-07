@@ -1,8 +1,4 @@
-﻿using Historia.Services.State;
-using static Historia.Views.ViewKit;
-using SelectionChangedEventArgs = Historia.Services.State.SelectionChangedEventArgs;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>
 /// The repository detail pane (V4 port of Repository.razor). A toolbar with the current branch

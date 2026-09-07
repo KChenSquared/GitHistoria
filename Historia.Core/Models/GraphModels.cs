@@ -1,6 +1,4 @@
-﻿using LibGit2Sharp;
-
-namespace Historia.Models;
+﻿namespace Historia.Models;
 
 /// <summary>
 /// Immutable per-commit metadata, projected from LibGit2Sharp inside the repository gate

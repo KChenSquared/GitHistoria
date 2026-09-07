@@ -1,10 +1,4 @@
-﻿using Historia.Services.Graph;
-using Historia.Services.Settings;
-using Historia.Services.Theming;
-using Historia.Theming;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>
 /// §V6-G9: the manage-themes panel — a peer of <see cref="SettingsView"/>. Lists the user's

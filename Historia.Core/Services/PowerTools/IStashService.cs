@@ -1,7 +1,4 @@
-﻿using LibGit2Sharp;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 public sealed record StashSaveOptions
 {

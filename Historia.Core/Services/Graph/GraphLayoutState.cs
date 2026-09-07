@@ -1,6 +1,4 @@
-﻿using LibGit2Sharp;
-
-namespace Historia.Services.Graph;
+﻿namespace Historia.Services.Graph;
 
 /// <summary>
 /// Opaque allocator state carried between layout calls so incremental extension produces the

@@ -1,8 +1,4 @@
-﻿using System.Text;
-using Historia.Services.UI;
-using XTermLib = XTerm;
-
-namespace Historia.Services.Terminal;
+﻿namespace Historia.Services.Terminal;
 
 public enum TerminalSessionState { Starting, Running, Exited, Failed }
 

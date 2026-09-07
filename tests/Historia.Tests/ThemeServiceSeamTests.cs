@@ -1,9 +1,4 @@
-﻿using Historia.Models;
-using Historia.Services.Graph;
-using Historia.Services.Theming;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>§V6-G9 M7.3: with no custom theme selected the resolution seam
 /// (<see cref="IThemeService.Palette"/> / <see cref="IThemeService.LaneColors"/>) is

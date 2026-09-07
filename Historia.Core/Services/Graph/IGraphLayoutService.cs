@@ -1,5 +1,3 @@
-using Historia.Services.Workspace;
-
 namespace Historia.Services.Graph;
 
 /// <summary>Result of a layout call: the layout, the opaque allocator state (§7.8), and the ref fingerprint.</summary>

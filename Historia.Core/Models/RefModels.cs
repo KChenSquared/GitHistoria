@@ -1,6 +1,4 @@
-﻿using LibGit2Sharp;
-
-namespace Historia.Models;
+﻿namespace Historia.Models;
 
 /// <summary>Local or remote branch (§6.12). Ahead/behind are computed lazily per visible row.</summary>
 public sealed record BranchInfo

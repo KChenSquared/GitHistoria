@@ -1,6 +1,4 @@
-﻿using System.Text.RegularExpressions;
-
-namespace Historia.Services.Text;
+﻿namespace Historia.Services.Text;
 
 /// <summary>One run of a linkified message: plain text when <see cref="Url"/> is null.</summary>
 public readonly record struct AutolinkRun(string Text, string? Url);

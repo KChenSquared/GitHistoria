@@ -1,5 +1,3 @@
-using Historia.Services.Workspace;
-
 namespace Historia.Services.AutoFetch;
 
 /// <summary>How a repository came to be open, for the "app start with no open repo" branch of

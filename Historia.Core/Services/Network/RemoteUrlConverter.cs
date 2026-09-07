@@ -1,6 +1,4 @@
-﻿using System.Text.RegularExpressions;
-
-namespace Historia.Services.Network;
+﻿namespace Historia.Services.Network;
 
 /// <summary>
 /// Parse-based (never regex-substitution) bidirectional remote URL conversion (§6.14.1).

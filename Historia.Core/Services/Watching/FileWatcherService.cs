@@ -1,9 +1,4 @@
-﻿using System.IO;
-using Historia.Services.Settings;
-using Historia.Services.State;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.Watching;
+﻿namespace Historia.Services.Watching;
 
 /// <summary>
 /// Debounced, gitignore-aware working-directory + <c>.git</c> watcher (§6.8.2). Filters

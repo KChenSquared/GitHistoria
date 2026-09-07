@@ -1,9 +1,4 @@
-﻿using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Markup.Xaml.MarkupExtensions;
-using Avalonia.Platform.Storage;
-using Avalonia.Threading;
-
-namespace Historia.Platform;
+﻿namespace Historia.Platform;
 
 /// <summary>
 /// App-side <see cref="IDialogService"/> (V4 §split — replaces the WPF <c>DialogService</c>).

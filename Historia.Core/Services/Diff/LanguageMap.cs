@@ -1,6 +1,4 @@
-﻿using System.IO;
-
-namespace Historia.Services.Diff;
+﻿namespace Historia.Services.Diff;
 
 /// <summary>
 /// Maps a file path to a syntax-highlighting language id (§6.10.1). Highlighting itself is a

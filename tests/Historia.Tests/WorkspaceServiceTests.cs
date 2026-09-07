@@ -1,14 +1,4 @@
-﻿using System.Text.Json;
-using System.Text.Json.Nodes;
-using Microsoft.Extensions.DependencyInjection;
-using Historia.Services.Git;
-using Historia.Services.Network;
-using Historia.Services.Profiles;
-using Historia.Services.Storage;
-using Historia.Services.Workspace;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 public class WorkspaceServiceTests : IAsyncDisposable
 {

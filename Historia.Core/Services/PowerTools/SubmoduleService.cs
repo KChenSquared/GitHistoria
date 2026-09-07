@@ -1,9 +1,4 @@
-﻿using System.IO;
-using System.Text.RegularExpressions;
-using Historia.Services.Git;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="ISubmoduleService"/>
 public sealed partial class SubmoduleService(IGitCliService cli) : ISubmoduleService

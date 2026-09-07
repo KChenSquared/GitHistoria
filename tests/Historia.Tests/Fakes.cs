@@ -1,12 +1,4 @@
-﻿using System.Collections.Concurrent;
-using Historia.Models;
-using Historia.Services.Git;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using Historia.Services.Terminal;
-using Historia.Services.UI;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>In-memory <see cref="ISettingsService"/> — no file, no debounce.</summary>
 public sealed class FakeSettingsService(AppSettings? initial = null) : ISettingsService

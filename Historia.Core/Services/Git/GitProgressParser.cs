@@ -1,7 +1,4 @@
-﻿using System.Globalization;
-using System.Text.RegularExpressions;
-
-namespace Historia.Services.Git;
+﻿namespace Historia.Services.Git;
 
 /// <summary>
 /// Parses <c>git --progress</c> stderr lines into <see cref="GitProgress"/> (§6.6.2), e.g.

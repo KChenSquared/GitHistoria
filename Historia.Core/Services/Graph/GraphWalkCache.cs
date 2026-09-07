@@ -1,9 +1,4 @@
-﻿using System.IO.Compression;
-using System.Text.Json;
-using LibGit2Sharp;
-using Historia.Services.Storage;
-
-namespace Historia.Services.Graph;
+﻿namespace Historia.Services.Graph;
 
 /// <summary>
 /// On-disk persistence of the raw graph walk (commits + decorations) keyed by a fingerprint of

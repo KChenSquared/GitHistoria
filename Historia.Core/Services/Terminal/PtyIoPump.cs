@@ -1,6 +1,4 @@
-﻿using System.Collections.Concurrent;
-
-namespace Historia.Services.Terminal;
+﻿namespace Historia.Services.Terminal;
 
 /// <summary>
 /// Moves a pseudoterminal's bytes on <b>dedicated background threads</b>, never on the

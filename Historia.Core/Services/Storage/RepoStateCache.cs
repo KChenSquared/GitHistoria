@@ -1,12 +1,4 @@
-﻿using System.IO;
-using System.IO.Compression;
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
-using LibGit2Sharp;
-using Historia.Services.Settings;
-
-namespace Historia.Services.Storage;
+﻿namespace Historia.Services.Storage;
 
 /// <inheritdoc cref="IRepoStateCache"/>
 public sealed class RepoStateCache(ISettingsService settings) : IRepoStateCache

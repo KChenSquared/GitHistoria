@@ -1,10 +1,4 @@
-﻿using LibGit2Sharp;
-using RepositoryStatus = Historia.Models.RepositoryStatus;
-using Historia.Services.Storage;
-using Historia.Services.UI;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.State;
+﻿namespace Historia.Services.State;
 
 /// <inheritdoc cref="IRepositoryStateService"/>
 public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisposable

@@ -1,6 +1,4 @@
-﻿using PortaPty = Porta.Pty;
-
-namespace Historia.Services.Terminal;
+﻿namespace Historia.Services.Terminal;
 
 /// <summary>
 /// The one production <see cref="ITerminalBackend"/>: a thin adapter over <c>Porta.Pty</c>

@@ -1,10 +1,3 @@
-using Avalonia.VisualTree;
-using Historia.Services.Git;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using Historia.Services.State;
-using static Historia.Views.ViewKit;
-
 namespace Historia.Views;
 
 /// <summary>

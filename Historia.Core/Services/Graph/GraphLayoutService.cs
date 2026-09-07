@@ -1,8 +1,3 @@
-using System.Runtime.CompilerServices;
-using LibGit2Sharp;
-using Historia.Services.Settings;
-using Historia.Services.Workspace;
-
 namespace Historia.Services.Graph;
 
 /// <inheritdoc cref="IGraphLayoutService"/>

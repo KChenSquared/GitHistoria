@@ -1,6 +1,4 @@
-﻿using LibGit2Sharp;
-
-namespace Historia.Models;
+﻿namespace Historia.Models;
 
 /// <summary>Request to create a commit (§6.9.2).</summary>
 public sealed record CommitRequest

@@ -1,15 +1,4 @@
-﻿using System.IO;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Markup.Xaml;
-using Avalonia.Threading;
-using Historia.Platform;
-using Historia.Services.Git;
-using Historia.Services.Settings;
-using Historia.Services.Storage;
-using Historia.Services.Theming;
-using Historia.Theming;
-
-namespace Historia;
+﻿namespace Historia;
 
 /// <summary>
 /// Composition root and startup sequence (§6.2.2, §6.3) — the Avalonia port of the WPF

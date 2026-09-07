@@ -1,8 +1,4 @@
-﻿using LibGit2Sharp;
-using Historia.Services.Git;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IWorktreeService"/>
 public sealed class WorktreeService(IGitCliService cli) : IWorktreeService

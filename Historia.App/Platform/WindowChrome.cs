@@ -1,8 +1,4 @@
-﻿using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
-using Historia.Services.Theming;
-
-namespace Historia.Platform;
+﻿namespace Historia.Platform;
 
 /// <summary>
 /// Windows-only caption theming via DWM (V4 §split — the thin remnant of the WPF

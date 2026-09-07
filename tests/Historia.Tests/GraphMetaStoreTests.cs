@@ -1,9 +1,4 @@
-﻿using LibGit2Sharp;
-using Historia.Models;
-using Historia.Services.Graph;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>§7.6: the disk-backed <see cref="ICommitStore"/> — round-trip, append/grow,
 /// graceful misses, and Ctrl+F search parity with the in-memory store.</summary>

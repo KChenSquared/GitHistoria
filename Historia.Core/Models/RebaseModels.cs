@@ -1,6 +1,4 @@
-﻿using LibGit2Sharp;
-
-namespace Historia.Models;
+﻿namespace Historia.Models;
 
 /// <summary>One row of a rebase todo list (§8.1.2). Target of a squash/fixup is expressed by
 /// <b>ordering</b> — meld always goes into the preceding entry — never by a field.</summary>

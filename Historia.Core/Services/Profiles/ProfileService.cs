@@ -1,10 +1,4 @@
-﻿using System.IO;
-using System.Text.Json;
-using Historia.Services.Git;
-using Historia.Services.Settings;
-using Historia.Services.Storage;
-
-namespace Historia.Services.Profiles;
+﻿namespace Historia.Services.Profiles;
 
 /// <inheritdoc cref="IProfileService"/>
 public sealed class ProfileService : IProfileService, IAsyncDisposable

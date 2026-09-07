@@ -1,8 +1,4 @@
-﻿using Avalonia.Controls.Documents;
-using Historia.Services.Markdown;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>
 /// Renders the <see cref="MarkdownRenderer.ToBlocks"/> model to native Avalonia controls

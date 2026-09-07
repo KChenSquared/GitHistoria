@@ -1,6 +1,4 @@
-﻿using System.Collections.Concurrent;
-
-namespace Historia.Services.UI;
+﻿namespace Historia.Services.UI;
 
 /// <summary>
 /// Shared keyboard-accelerator router for the WPF region and the WebView (§6.15.2). A WebView

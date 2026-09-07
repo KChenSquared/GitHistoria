@@ -1,6 +1,4 @@
-﻿using System.Diagnostics;
-
-namespace Historia.Services.UI;
+﻿namespace Historia.Services.UI;
 
 /// <summary>
 /// Opens a URL in the system default browser (§I-5.4) and reveals paths in the OS file

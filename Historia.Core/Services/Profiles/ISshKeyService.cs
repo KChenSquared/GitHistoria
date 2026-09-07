@@ -1,7 +1,4 @@
-﻿using System.Diagnostics;
-using Historia.Services.Storage;
-
-namespace Historia.Services.Profiles;
+﻿namespace Historia.Services.Profiles;
 
 /// <summary>The private + public key paths for a profile, and the public key text if present.</summary>
 public sealed record SshKeyInfo(string PrivatePath, string PublicPath, string? PublicKey)

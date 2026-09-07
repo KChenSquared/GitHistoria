@@ -1,9 +1,4 @@
-﻿using System.IO;
-using System.Text.Json;
-using Historia.Services.Graph;
-using Historia.Services.Storage;
-
-namespace Historia.Services.Theming;
+﻿namespace Historia.Services.Theming;
 
 /// <summary>§V6-G9: enumerate / load / save / validate the user's custom themes, and compose a
 /// theme against its built-in base into a concrete <see cref="ResolvedPalette"/>. Singleton.</summary>

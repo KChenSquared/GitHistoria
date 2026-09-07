@@ -1,7 +1,4 @@
-﻿using System.Diagnostics;
-using Historia.Services.Storage;
-
-namespace Historia.Diagnostics;
+﻿namespace Historia.Diagnostics;
 
 /// <summary>
 /// Opt-in stopwatch logging for startup / repo-open latency work. On unless every call is a

@@ -1,9 +1,4 @@
-﻿using LibGit2Sharp;
-using Historia.Models;
-using Historia.Services.Graph;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>§V3-11.2: the pure sidebar ref-tree builder.</summary>
 public class RefTreeTests

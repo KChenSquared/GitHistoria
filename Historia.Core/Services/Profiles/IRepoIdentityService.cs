@@ -1,6 +1,4 @@
-﻿using Historia.Services.Workspace;
-
-namespace Historia.Services.Profiles;
+﻿namespace Historia.Services.Profiles;
 
 /// <summary>
 /// Resolves a repository's <see cref="RepoIdentityKey"/>, applying the precedence rules of

@@ -1,9 +1,4 @@
-﻿using LibGit2Sharp;
-using Historia.Models;
-using Historia.Services.Graph;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 public class DagLayoutEngineTests
 {

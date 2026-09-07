@@ -1,10 +1,3 @@
-using System.IO;
-using LibGit2Sharp;
-using Historia.Services.Diff;
-using Historia.Services.Storage;
-using RepositoryStatus = Historia.Models.RepositoryStatus;
-using WhitespaceMode = Historia.Models.WhitespaceMode;
-
 namespace Historia.Services.Git;
 
 /// <summary>

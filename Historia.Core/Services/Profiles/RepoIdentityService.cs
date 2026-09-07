@@ -1,8 +1,4 @@
-﻿using LibGit2Sharp;
-using Historia.Services.Git;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.Profiles;
+﻿namespace Historia.Services.Profiles;
 
 /// <inheritdoc cref="IRepoIdentityService"/>
 public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityService

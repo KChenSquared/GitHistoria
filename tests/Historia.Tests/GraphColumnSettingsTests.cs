@@ -1,7 +1,4 @@
-﻿using Historia.Models;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>§V2-11.1 / §V2-15.1: validation of a hand-edited or migrated-forward column list.</summary>
 public class GraphColumnSettingsTests

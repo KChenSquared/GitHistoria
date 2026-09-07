@@ -1,10 +1,4 @@
-﻿using System.Text.Json.Nodes;
-using Historia.Models;
-using Historia.Services.Settings;
-using Historia.Services.Storage;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 public class SettingsServiceTests : IDisposable
 {

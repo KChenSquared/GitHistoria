@@ -1,8 +1,3 @@
-using Historia.Models;
-using Historia.Services.AutoFetch;
-using Historia.Services.Git;
-using Historia.Services.Workspace;
-
 namespace Historia.Services.UI;
 
 /// <summary>

@@ -8,5 +8,5 @@
 internal static class DevMode
 {
     public static bool Enabled { get; } =
-        File.Exists(Path.Combine(AppContext.BaseDirectory, "enableDevMode"));
+        File.Exists(System.IO.Path.Combine(AppContext.BaseDirectory, "enableDevMode"));
 }

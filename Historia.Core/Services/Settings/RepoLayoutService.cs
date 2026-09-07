@@ -1,9 +1,4 @@
-﻿using System.IO;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using Historia.Services.Storage;
-
-namespace Historia.Services.Settings;
+﻿namespace Historia.Services.Settings;
 
 /// <inheritdoc cref="IRepoLayoutService"/>
 public sealed class RepoLayoutService : IRepoLayoutService, IAsyncDisposable

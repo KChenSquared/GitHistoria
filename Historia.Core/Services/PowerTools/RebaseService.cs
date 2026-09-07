@@ -1,10 +1,4 @@
-﻿using System.IO;
-using System.Text;
-using LibGit2Sharp;
-using Historia.Services.Git;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IRebaseService"/>
 public sealed class RebaseService(IGitCliService cli) : IRebaseService

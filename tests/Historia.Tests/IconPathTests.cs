@@ -1,8 +1,4 @@
-﻿using System.Text.RegularExpressions;
-using Historia.Components;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 /// <summary>
 /// §V2-15.1: every name referenced by an <c>&lt;Icon Name="…"&gt;</c> in any <c>.razor</c>

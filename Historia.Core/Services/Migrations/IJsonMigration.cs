@@ -1,6 +1,4 @@
-﻿using System.Text.Json.Nodes;
-
-namespace Historia.Services.Migrations;
+﻿namespace Historia.Services.Migrations;
 
 /// <summary>
 /// One step in a JSON schema migration pipeline (§9.3). Migrations run in ascending

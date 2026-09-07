@@ -1,11 +1,4 @@
-﻿using LibGit2Sharp;
-using RepositoryStatus = Historia.Models.RepositoryStatus;
-using Historia.Services.Network;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.Git;
+﻿namespace Historia.Services.Git;
 
 /// <summary>
 /// <inheritdoc cref="IGitGateway"/>

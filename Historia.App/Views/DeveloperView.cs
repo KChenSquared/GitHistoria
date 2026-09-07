@@ -1,9 +1,4 @@
-﻿using Historia.Diagnostics;
-using Historia.Services.Graph;
-using Historia.Services.Storage;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>
 /// Developer-only tools panel (V4). Only routed to when <see cref="Historia.Platform.DevMode"/>

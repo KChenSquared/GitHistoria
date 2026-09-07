@@ -1,10 +1,4 @@
-﻿using LibGit2Sharp;
-using Historia.Models;
-using Historia.Services.Git;
-using Historia.Services.PowerTools;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 public class PatchServiceTests
 {

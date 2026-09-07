@@ -1,14 +1,4 @@
-﻿using Avalonia.Controls.Primitives;
-using Avalonia.Input;
-using Avalonia.Interactivity;
-using Avalonia.Threading;
-using Avalonia.VisualTree;
-using Historia.Services.Settings;
-using Historia.Services.Terminal;
-using Historia.Services.Theming;
-using Historia.Services.Workspace;
-
-namespace Historia.Controls;
+﻿namespace Historia.Controls;
 
 /// <summary>
 /// The bottom terminal dock (V5 §7): a 6 px splitter, a live-session tab strip, a small

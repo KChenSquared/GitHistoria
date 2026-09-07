@@ -1,16 +1,4 @@
-﻿using System.Text.Json;
-using Avalonia.Controls.Primitives;
-using Avalonia.Input;
-using Avalonia.Interactivity;
-using Avalonia.Threading;
-using Historia.Controls;
-using Historia.Services.State;
-using Historia.Services.Storage;
-using Historia.Services.Terminal;
-using Historia.Services.Theming;
-using Historia.Views;
-
-namespace Historia;
+﻿namespace Historia;
 
 /// <summary>
 /// The Avalonia shell window (§6.2.1, §7.4): app band on top, the three body regions

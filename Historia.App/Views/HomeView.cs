@@ -1,9 +1,4 @@
-﻿using Historia.Services.Git;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using static Historia.Views.ViewKit;
-
-namespace Historia.Views;
+﻿namespace Historia.Views;
 
 /// <summary>Landing page — open / clone / init and the recents list (V4 port of Home.razor).</summary>
 public sealed class HomeView : UserControl, IDisposable

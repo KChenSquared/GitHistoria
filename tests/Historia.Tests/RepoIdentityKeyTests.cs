@@ -1,7 +1,4 @@
-﻿using Historia.Models;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 public class RepoIdentityKeyTests
 {

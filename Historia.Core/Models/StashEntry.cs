@@ -1,6 +1,4 @@
-﻿using LibGit2Sharp;
-
-namespace Historia.Models;
+﻿namespace Historia.Models;
 
 /// <summary>
 /// One stash entry (§8.3.2). <see cref="CommitId"/> is the stable identity — every operation

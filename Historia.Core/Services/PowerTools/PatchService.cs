@@ -1,10 +1,4 @@
-﻿using System.Globalization;
-using System.Text;
-using System.Text.RegularExpressions;
-using Historia.Services.Git;
-using Historia.Services.Workspace;
-
-namespace Historia.Services.PowerTools;
+﻿namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IPatchService"/>
 public sealed partial class PatchService(IGitCliService cli) : IPatchService

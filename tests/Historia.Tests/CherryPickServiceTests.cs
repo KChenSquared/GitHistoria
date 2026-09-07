@@ -1,8 +1,4 @@
-﻿using Historia.Services.Git;
-using Historia.Services.PowerTools;
-using Xunit;
-
-namespace Historia.Tests;
+﻿namespace Historia.Tests;
 
 public class CherryPickServiceTests
 {

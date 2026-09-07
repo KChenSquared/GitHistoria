@@ -1,22 +1,4 @@
-﻿using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Controls.Primitives;
-using Avalonia.Controls.Shapes;
-using Avalonia.Input;
-using Avalonia.Interactivity;
-using Avalonia.Markup.Xaml.MarkupExtensions;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform;
-using Avalonia.Threading;
-using Avalonia.VisualTree;
-using Historia.Components;
-using Historia.Platform;
-using Historia.Services.AutoFetch;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using Historia.Services.Terminal;
-using Path = Avalonia.Controls.Shapes.Path;
-
-namespace Historia.Controls;
+﻿namespace Historia.Controls;
 
 /// <summary>
 /// The window's app band (Row 0, §V2-9.3): the branded app-menu button plus the repo tab
