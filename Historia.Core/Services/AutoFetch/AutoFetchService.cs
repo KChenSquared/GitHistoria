@@ -27,6 +27,12 @@ public sealed class AutoFetchService : IAutoFetchService
     private int _lastCount;
     private bool _started;
 
+    // §21 dev visuals: per-tab state in the current [AutoFetch] cycle.
+    private volatile bool _loopRunning;
+    private readonly HashSet<RepositoryContext> _fetchedThisCycle = [];
+
+    public event EventHandler? TabStatesChanged;
+
     public AutoFetchService(
         IWorkspaceService workspace,
         IAutoFetchHost host,
@@ -49,6 +55,18 @@ public sealed class AutoFetchService : IAutoFetchService
         lock (_sync)
             _pendingEntry = source;
     }
+
+    public AutoFetchTabState GetTabState(RepositoryContext context)
+    {
+        if (!_loopRunning)
+            return AutoFetchTabState.NotStarted;
+        lock (_sync)
+            return _fetchedThisCycle.Contains(context)
+                ? AutoFetchTabState.FetchedThisCycle
+                : AutoFetchTabState.PendingThisCycle;
+    }
+
+    private void RaiseTabStates() => TabStatesChanged?.Invoke(this, EventArgs.Empty);
 
     public void Start()
     {
@@ -79,6 +97,11 @@ public sealed class AutoFetchService : IAutoFetchService
 
         try { run?.Cancel(); }
         catch { /* already disposed */ }
+
+        _loopRunning = false;
+        lock (_sync)
+            _fetchedThisCycle.Clear();
+        RaiseTabStates();
     }
 
     private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
@@ -125,6 +148,11 @@ public sealed class AutoFetchService : IAutoFetchService
         catch
         {
             // §12.1: the loop must never take the app down.
+        }
+        finally
+        {
+            _loopRunning = false;
+            RaiseTabStates();
         }
     }
 
@@ -186,6 +214,8 @@ public sealed class AutoFetchService : IAutoFetchService
     // §12.1.2
     private async Task AutoFetchLoopAsync(CancellationToken ct)
     {
+        _loopRunning = true;
+
         while (!ct.IsCancellationRequested)
         {
             CancellationTokenSource cycle;
@@ -194,7 +224,9 @@ public sealed class AutoFetchService : IAutoFetchService
                 _cycleCts?.Dispose();
                 _cycleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cycle = _cycleCts;
+                _fetchedThisCycle.Clear(); // §21: a fresh cycle (incl. a restart) resets every tab to yellow
             }
+            RaiseTabStates();
 
             var cct = cycle.Token;
             try
@@ -211,8 +243,12 @@ public sealed class AutoFetchService : IAutoFetchService
                         await _delay(PerRepoStep, cct).ConfigureAwait(false);
 
                     var repos = _workspace.OpenRepositories;
-                    if (pos < repos.Count)
-                        await SafeFetchAsync(repos[pos], cct).ConfigureAwait(false);
+                    if (pos < repos.Count && await SafeFetchAsync(repos[pos], cct).ConfigureAwait(false))
+                    {
+                        lock (_sync)
+                            _fetchedThisCycle.Add(repos[pos]);
+                        RaiseTabStates();
+                    }
                 }
 
                 await _delay(PerRepoStep, cct).ConfigureAwait(false);
@@ -224,11 +260,13 @@ public sealed class AutoFetchService : IAutoFetchService
         }
     }
 
-    private async Task SafeFetchAsync(RepositoryContext context, CancellationToken ct)
+    /// <returns><c>true</c> if the fetch completed without error.</returns>
+    private async Task<bool> SafeFetchAsync(RepositoryContext context, CancellationToken ct)
     {
         try
         {
             await _host.FetchAsync(context, ct).ConfigureAwait(false);
+            return true;
         }
         catch (OperationCanceledException)
         {
@@ -237,6 +275,7 @@ public sealed class AutoFetchService : IAutoFetchService
         catch
         {
             // §12.1: a failed auto-fetch stops quietly.
+            return false;
         }
     }
 

@@ -11,6 +11,22 @@ public enum RepoEntrySource
     ClonedOrInitialized,
 }
 
+/// <summary>Per-tab position in the current <c>[AutoFetch]</c> cycle, for the developer-only
+/// tab colour bars (§12.1 / §21). Red / yellow / green.</summary>
+public enum AutoFetchTabState
+{
+    /// <summary>The <c>[AutoFetch]</c> loop has not started yet (start-condition wait,
+    /// <c>[InitialFetch]</c>, or the feature is disabled). Red.</summary>
+    NotStarted,
+
+    /// <summary>The loop is running but this repo has not been fetched in the current cycle.
+    /// Yellow.</summary>
+    PendingThisCycle,
+
+    /// <summary>The loop is running and this repo has been fetched in the current cycle. Green.</summary>
+    FetchedThisCycle,
+}
+
 /// <summary>
 /// App-supplied bridge the Core <see cref="IAutoFetchService"/> uses to (a) know when a
 /// repository tab is <b>fully loaded</b> — branches panel, full graph paint, changes panel
@@ -53,4 +69,12 @@ public interface IAutoFetchService : IAsyncDisposable
     /// repository from a cold start (no tabs), so the "no open repo" branch knows whether to run
     /// an <c>[InitialFetch]</c>.</summary>
     void NotifyRepoEntering(RepoEntrySource source);
+
+    /// <summary>This repo's state in the current <c>[AutoFetch]</c> cycle — for the developer-only
+    /// tab colour bars (§21). Cheap; safe to call from the UI thread.</summary>
+    AutoFetchTabState GetTabState(RepositoryContext context);
+
+    /// <summary>Raised (on an arbitrary thread) whenever a <see cref="GetTabState"/> result may
+    /// have changed — loop start/stop, a cycle restart, or a repo fetched this cycle.</summary>
+    event EventHandler? TabStatesChanged;
 }

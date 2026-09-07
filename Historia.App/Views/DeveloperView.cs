@@ -36,6 +36,18 @@ public sealed class DeveloperView : UserControl
         root.Children.Add(perf);
         root.Children.Add(Text($"Appended to {PerfLog.LogPath}", "ColorTextMuted", 12));
 
+        var afViz = new CheckBox
+        {
+            Content = "Auto-fetch visuals (tab colour bars)",
+            IsChecked = Historia.Platform.AutoFetchDebug.Enabled,
+        };
+        afViz.IsCheckedChanged += (_, _) => Historia.Platform.AutoFetchDebug.Enabled = afViz.IsChecked == true;
+        root.Children.Add(afViz);
+        root.Children.Add(Text(
+            "Draws a 4 px bar on the left of each app-band tab: red = auto-fetch loop not started, "
+            + "yellow = started but this repo not fetched this cycle, green = fetched this cycle (§12.1).",
+            "ColorTextMuted", 12));
+
         var wipe = TextButton("Wipe persisted graph cache", () =>
         {
             var removed = sp.GetRequiredService<IGraphLayoutService>().ClearPersistentCache();

@@ -285,6 +285,59 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         await delay.WaitForPending("loop idle");
     }
 
+    // ── §21 dev visuals: per-tab state ──
+
+    [Fact(Timeout = 60000)]
+    public async Task Tab_state_goes_not_started_then_pending_then_fetched_then_resets_on_restart()
+    {
+        var ws = NewWorkspace();
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+        var r2 = await ws.OpenAsync(Repo("b.txt").Path);
+
+        var host = new FakeHost();
+        var delay = new ManualDelayer();
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
+
+        Assert.Equal(AutoFetchTabState.NotStarted, _svc.GetTabState(r1)); // loop not started
+
+        _svc.Start();
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
+        await delay.WaitForPending("initial idle"); // loop has entered its first cycle
+        await WaitUntil(() => _svc.GetTabState(r1) == AutoFetchTabState.PendingThisCycle, "r1 pending");
+        Assert.Equal(AutoFetchTabState.PendingThisCycle, _svc.GetTabState(r2));
+
+        delay.Fire(); // → slot 0 (r1)
+        await WaitUntil(() => _svc.GetTabState(r1) == AutoFetchTabState.FetchedThisCycle, "r1 fetched");
+        Assert.Equal(AutoFetchTabState.PendingThisCycle, _svc.GetTabState(r2));
+
+        await delay.WaitForPending("step to slot 1");
+        delay.Fire(); // → slot 1 (r2)
+        await WaitUntil(() => _svc.GetTabState(r2) == AutoFetchTabState.FetchedThisCycle, "r2 fetched");
+
+        // A new tab restarts the cycle → everything back to pending, loop still running.
+        await ws.OpenAsync(Repo("c.txt").Path);
+        await WaitUntil(() => _svc.GetTabState(r1) == AutoFetchTabState.PendingThisCycle, "r1 reset to pending");
+        Assert.Equal(AutoFetchTabState.PendingThisCycle, _svc.GetTabState(r2));
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task Disabling_returns_tab_state_to_not_started()
+    {
+        var ws = NewWorkspace();
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+
+        var host = new FakeHost();
+        var delay = new ManualDelayer();
+        var settings = Settings(true);
+        _svc = new AutoFetchService(ws, host, settings, delay.Delay);
+        _svc.Start();
+        await delay.WaitForPending("initial idle");
+        await WaitUntil(() => _svc.GetTabState(r1) == AutoFetchTabState.PendingThisCycle, "r1 pending");
+
+        await settings.UpdateAsync(s => s with { AutoFetchEnabled = false });
+        await WaitUntil(() => _svc.GetTabState(r1) == AutoFetchTabState.NotStarted, "r1 back to not-started");
+    }
+
     private FakeSettingsService Settings(bool enabled) =>
         new(new AppSettings { AutoFetchEnabled = enabled });
 
