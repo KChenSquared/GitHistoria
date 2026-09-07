@@ -31,6 +31,30 @@ public sealed class DeveloperView : UserControl
         root.Children.Add(perf);
         root.Children.Add(Text($"Appended to {PerfLog.LogPath}", "ColorTextMuted", 12));
 
+        var devLog = new CheckBox { Content = "Enable developer log", IsChecked = AppLog.Enabled };
+        var devLogPath = Text(DevLogCaption(), "ColorTextMuted", 12);
+        devLog.IsCheckedChanged += (_, _) =>
+        {
+            AppLog.Enabled = devLog.IsChecked == true;
+            devLogPath.Text = DevLogCaption();
+        };
+        root.Children.Add(devLog);
+        root.Children.Add(devLogPath);
+        root.Children.Add(Text(
+            "Records unhandled and surfaced errors, every git operation and git CLI call with its "
+            + "outcome, and repo open/close. Terminal I/O is not logged. One file per session in the "
+            + "logs folder; the newest 10 are kept. Also on when the HISTORIA_LOG env var is set.",
+            "ColorTextMuted", 12));
+
+        var openLogs = TextButton("Open logs folder", () =>
+            sp.GetRequiredService<IExternalLauncher>().OpenFolder(AppPaths.LogsDirectory));
+        openLogs.HorizontalAlignment = HorizontalAlignment.Left;
+        root.Children.Add(openLogs);
+
+        static string DevLogCaption() => AppLog.Enabled
+            ? $"Writing to {AppLog.CurrentLogPath}"
+            : $"Saved under {AppPaths.LogsDirectory} when enabled";
+
         var afViz = new CheckBox
         {
             Content = "Auto-fetch visuals (tab colour bars)",

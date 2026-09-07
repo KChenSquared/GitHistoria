@@ -209,3 +209,18 @@ just quietly reaches out. Everything below is subordinate to it.
     argument that globalizing a minority-use namespace hides what a file depends on. That
     tradeoff was reversed deliberately: the project now standardizes on global usings
     everywhere, and the per-file-`using` exception is gone.
+38. **One logger: `AppLog`. Do not add a second logging system.** `Historia.Core/Diagnostics/AppLog.cs`
+    is the single application logger. Reach it by constructor-injecting `IAppLog` in a
+    DI-constructed service, or via `AppLog.Current` / the static `AppLog` methods from a
+    framework-built view or a static helper. It is **opt-in**: off unless the *Enable developer
+    log* toggle in the Developer panel or the `HISTORIA_LOG` environment variable turns it on,
+    at which point one `dev-<timestamp>.log` per session is written under `AppPaths.LogsDirectory`
+    and the newest 10 are kept. Every call is a no-op when disabled and never throws.
+    Automatically covered — do not hand-log these again: unhandled exceptions (the three handlers
+    in `App`), every `Warning`/`Error` notification (`NotificationService.Publish`), every
+    classified git failure (`HistoriaGitException`'s constructor), every `IGitGateway` call
+    (`LoggingGitGateway`), every git CLI invocation (`GitCliService`), and repo open/close
+    (`RepositoryContext`). Terminal session I/O is deliberately **not** logged. Add an explicit
+    `AppLog.Write` / `AppLog.Operation` call at a new seam only when it is not already covered by
+    one of those. `PerfLog` stays a **separate** tool, scoped to startup/latency timing
+    only — it is not part of this system and is not a model for adding another one.
