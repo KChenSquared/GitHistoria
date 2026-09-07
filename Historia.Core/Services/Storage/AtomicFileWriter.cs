@@ -40,13 +40,21 @@ public sealed class AtomicFileWriter : IAsyncDisposable
         catch { /* directory unreadable — not fatal */ }
     }
 
-    /// <summary>Writes immediately, bypassing the debounce. Used at shutdown and for first-write.</summary>
+    /// <summary>Writes immediately, bypassing the debounce. Used at shutdown and for first-write.
+    /// Best-effort like every other write here — a disk failure is logged and swallowed, never
+    /// thrown to the caller.</summary>
     public async Task WriteNowAsync(string content, CancellationToken ct = default)
+        => await WriteNowInternalAsync(content, ct).ConfigureAwait(false);
+
+    /// <summary>Same as <see cref="WriteNowAsync"/> but reports whether the write actually
+    /// reached disk, so a caller that is still holding the payload (<see cref="FlushAsync"/>)
+    /// knows whether it is safe to drop it.</summary>
+    private async Task<bool> WriteNowInternalAsync(string content, CancellationToken ct)
     {
         await _writeGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await WriteAtomicAsync(content, ct).ConfigureAwait(false);
+            return await WriteAtomicAsync(content, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -98,11 +106,17 @@ public sealed class AtomicFileWriter : IAsyncDisposable
 
         if (pending is not null)
         {
-            await WriteNowAsync(pending, ct).ConfigureAwait(false);
-            lock (_pendingLock)
+            // Only drop the pending payload once it actually reached disk — a failed write
+            // (disk full, a locked temp file) must leave it queued rather than disappear, since
+            // nothing else remembers it once this clears (§findings: silent write-loss on failure).
+            var wrote = await WriteNowInternalAsync(pending, ct).ConfigureAwait(false);
+            if (wrote)
             {
-                if (ReferenceEquals(_pendingContent, pending))
-                    _pendingContent = null;
+                lock (_pendingLock)
+                {
+                    if (ReferenceEquals(_pendingContent, pending))
+                        _pendingContent = null;
+                }
             }
         }
     }
@@ -118,11 +132,12 @@ public sealed class AtomicFileWriter : IAsyncDisposable
             return;
         }
 
+        // Peek, don't clear yet: a failed write below must leave the payload in place for the
+        // next debounce cycle or FlushAsync to retry (§findings: silent write-loss on failure).
         string? content;
         lock (_pendingLock)
         {
             content = _pendingContent;
-            _pendingContent = null;
         }
 
         if (content is null)
@@ -131,11 +146,20 @@ public sealed class AtomicFileWriter : IAsyncDisposable
         await _writeGate.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            await WriteAtomicAsync(content, token).ConfigureAwait(false);
+            var wrote = await WriteAtomicAsync(content, token).ConfigureAwait(false);
+            if (wrote)
+            {
+                lock (_pendingLock)
+                {
+                    // Only clear if nothing newer was queued while this write was in flight.
+                    if (ReferenceEquals(_pendingContent, content))
+                        _pendingContent = null;
+                }
+            }
         }
         catch (OperationCanceledException)
         {
-            // Shutdown; FlushAsync will pick up the latest pending content.
+            // Shutdown; _pendingContent is untouched — FlushAsync will pick it up.
         }
         finally
         {
@@ -143,13 +167,28 @@ public sealed class AtomicFileWriter : IAsyncDisposable
         }
     }
 
-    private async Task WriteAtomicAsync(string content, CancellationToken ct)
+    /// <returns>True once the content actually reached <see cref="FilePath"/>. False is a
+    /// non-fatal give-up (disk full, a held lock) — logged, and the caller keeps the payload
+    /// queued rather than treating the write as done. A cancellation still throws, since that
+    /// path is caller-driven and handled explicitly by every caller.</returns>
+    private async Task<bool> WriteAtomicAsync(string content, CancellationToken ct)
     {
         // Unique per write: a second process (or a second AtomicFileWriter) targeting the same
         // path can no longer truncate a temp file this write is still appending to.
         var tempPath = $"{FilePath}.{Guid.NewGuid():N}.tmp";
-        using (Historia.Diagnostics.PerfLog.Scope($"AtomicFileWriter WriteAllTextAsync ({System.IO.Path.GetFileName(FilePath)})"))
-            await File.WriteAllTextAsync(tempPath, content, ct).ConfigureAwait(false);
+
+        try
+        {
+            using (Historia.Diagnostics.PerfLog.Scope($"AtomicFileWriter WriteAllTextAsync ({System.IO.Path.GetFileName(FilePath)})"))
+                await File.WriteAllTextAsync(tempPath, content, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            try { File.Delete(tempPath); } catch { /* ignore */ }
+            AppLog.Write(AppLogLevel.Warn, "storage",
+                $"write failed for {System.IO.Path.GetFileName(FilePath)}", ex);
+            return false;
+        }
 
         // File.Move with overwrite is atomic on the same volume on Windows (ReplaceFile semantics).
         // §V3-9.1: Documents is often OneDrive-backed and the sync client can hold a transient
@@ -159,7 +198,7 @@ public sealed class AtomicFileWriter : IAsyncDisposable
             try
             {
                 File.Move(tempPath, FilePath, overwrite: true);
-                return;
+                return true;
             }
             catch (IOException) when (attempt < 2)
             {
@@ -169,15 +208,12 @@ public sealed class AtomicFileWriter : IAsyncDisposable
             {
                 await Task.Delay(50, ct).ConfigureAwait(false);
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 try { File.Delete(tempPath); } catch { /* ignore */ }
-                return; // give-up stays non-fatal
-            }
-            catch (UnauthorizedAccessException)
-            {
-                try { File.Delete(tempPath); } catch { /* ignore */ }
-                return;
+                AppLog.Write(AppLogLevel.Warn, "storage",
+                    $"move failed for {System.IO.Path.GetFileName(FilePath)}", ex);
+                return false; // give-up stays non-fatal
             }
         }
     }
