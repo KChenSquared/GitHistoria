@@ -124,6 +124,13 @@ public enum GitErrorKind
     LfsMissing,
     UnrelatedHistories,
     Cancelled,
+
+    /// <summary>The invocation's own <see cref="Historia.Models.GitCliRequest.Timeout"/> elapsed
+    /// before git exited — distinct from <see cref="Cancelled"/> (the caller's token tripped) so
+    /// a stalled credential helper or a hung network op is never reported as an opaque
+    /// <see cref="Unknown"/> failure with no stderr to classify.</summary>
+    TimedOut,
+
     Unknown,
 }
 
