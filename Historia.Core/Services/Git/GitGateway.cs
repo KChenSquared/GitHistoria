@@ -221,17 +221,27 @@ public sealed class GitGateway(
         await context.WithRepositoryAsync(r => lib.Checkout(r, refName, options), ct).ConfigureAwait(false);
     }
 
-    public Task<BranchInfo> CreateBranchAsync(string name, string startPoint, bool checkout, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.CreateBranch(r, name, startPoint, checkout), ct);
+    public async Task<BranchInfo> CreateBranchAsync(string name, string startPoint, bool checkout, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        return await context.WithRepositoryAsync(r => lib.CreateBranch(r, name, startPoint, checkout), ct).ConfigureAwait(false);
+    }
 
-    public Task DeleteBranchAsync(string name, bool force, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.DeleteBranch(r, name, force), ct);
+    public async Task DeleteBranchAsync(string name, bool force, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.DeleteBranch(r, name, force), ct).ConfigureAwait(false);
+    }
 
-    public Task RenameBranchAsync(string oldName, string newName, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.RenameBranch(r, oldName, newName), ct);
+    public async Task RenameBranchAsync(string oldName, string newName, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.RenameBranch(r, oldName, newName), ct).ConfigureAwait(false);
+    }
 
     public async Task SetUpstreamAsync(string branchName, string upstreamRef, CancellationToken ct = default)
     {
+        using var _ = context.BeginSelfOperation();
         var result = await cli.RunAsync(new GitCliRequest
         {
             Arguments = ["branch", $"--set-upstream-to={upstreamRef}", branchName],
@@ -241,23 +251,38 @@ public sealed class GitGateway(
             throw HistoriaGitException.FromCli(result, "Set upstream");
     }
 
-    public Task<TagInfo> CreateTagAsync(string name, string target, string? message, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.CreateTag(r, name, target, message,
-            message is null ? null : BuildTagger(r)), ct);
+    public async Task<TagInfo> CreateTagAsync(string name, string target, string? message, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        return await context.WithRepositoryAsync(r => lib.CreateTag(r, name, target, message,
+            message is null ? null : BuildTagger(r)), ct).ConfigureAwait(false);
+    }
 
-    public Task DeleteTagAsync(string name, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.DeleteTag(r, name), ct);
+    public async Task DeleteTagAsync(string name, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.DeleteTag(r, name), ct).ConfigureAwait(false);
+    }
 
     // ── Remotes ──
 
-    public Task AddRemoteAsync(string name, string url, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.AddRemote(r, name, url), ct);
+    public async Task AddRemoteAsync(string name, string url, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.AddRemote(r, name, url), ct).ConfigureAwait(false);
+    }
 
-    public Task RemoveRemoteAsync(string name, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.RemoveRemote(r, name), ct);
+    public async Task RemoveRemoteAsync(string name, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.RemoveRemote(r, name), ct).ConfigureAwait(false);
+    }
 
-    public Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.SetRemoteUrl(r, name, url), ct);
+    public async Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.SetRemoteUrl(r, name, url), ct).ConfigureAwait(false);
+    }
 
     // ── Network (always CLI) ──
 
