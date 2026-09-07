@@ -15,11 +15,35 @@ public class SettingsServiceTests : IDisposable
     {
         var svc = SettingsService.Load();
         Assert.Equal(ThemeMode.System, svc.Current.AppTheme);
-        Assert.Equal(15, svc.Current.SchemaVersion);
+        Assert.Equal(16, svc.Current.SchemaVersion);
         Assert.False(svc.Current.EnableMultiLineTabs);
         Assert.Equal(3, svc.Current.MaxTabRows);
         Assert.True(svc.Current.PersistRepoCache);
         Assert.True(svc.Current.GraphMetadataFromDisk); // default on
+        Assert.True(svc.Current.AutoFetchEnabled); // §12.1 default on
+    }
+
+    // ── §12.1: v15 → v16 (auto-fetch toggle) ──
+
+    [Fact]
+    public void V15_file_loads_with_auto_fetch_enabled_by_default()
+    {
+        File.WriteAllText(AppPaths.SettingsFile, "{ \"schemaVersion\": 15, \"appTheme\": \"dark\" }");
+
+        var svc = SettingsService.Load();
+
+        Assert.Equal(16, svc.Current.SchemaVersion);
+        Assert.True(svc.Current.AutoFetchEnabled);
+    }
+
+    [Fact]
+    public async Task Auto_fetch_toggle_round_trips()
+    {
+        var svc = SettingsService.Load();
+        await svc.UpdateAsync(s => s with { AutoFetchEnabled = false });
+        await svc.FlushAsync();
+
+        Assert.False(SettingsService.Load().Current.AutoFetchEnabled);
     }
 
     [Fact]
@@ -27,7 +51,7 @@ public class SettingsServiceTests : IDisposable
     {
         File.WriteAllText(AppPaths.SettingsFile, "{ \"schemaVersion\": 5, \"appTheme\": \"dark\" }");
         var svc = SettingsService.Load();
-        Assert.Equal(15, svc.Current.SchemaVersion);
+        Assert.Equal(16, svc.Current.SchemaVersion);
         Assert.True(svc.Current.PersistRepoCache);
     }
 
@@ -69,10 +93,10 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(15, svc.Current.SchemaVersion);
+        Assert.Equal(16, svc.Current.SchemaVersion);
         Assert.Equal(ThemeMode.Light, svc.Current.AppTheme);
         var onDisk = JsonNode.Parse(File.ReadAllText(AppPaths.SettingsFile))!;
-        Assert.Equal(15, onDisk["schemaVersion"]!.GetValue<int>());
+        Assert.Equal(16, onDisk["schemaVersion"]!.GetValue<int>());
     }
 
     [Fact]
@@ -82,7 +106,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(15, svc.Current.SchemaVersion);
+        Assert.Equal(16, svc.Current.SchemaVersion);
         Assert.Equal(ThemeMode.Dark, svc.Current.AppTheme);
     }
 
@@ -107,7 +131,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(15, svc.Current.SchemaVersion);
+        Assert.Equal(16, svc.Current.SchemaVersion);
         Assert.True(svc.Current.RestoreSessionTabs);
         Assert.Equal(30, svc.Current.MaxRecentRepositories);
     }
@@ -145,7 +169,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(15, svc.Current.SchemaVersion);
+        Assert.Equal(16, svc.Current.SchemaVersion);
         Assert.Null(svc.Current.TerminalShellPath);
         Assert.Empty(svc.Current.TerminalShellArgs);
         Assert.Equal(13, svc.Current.TerminalFontSize);
@@ -206,7 +230,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(15, svc.Current.SchemaVersion);
+        Assert.Equal(16, svc.Current.SchemaVersion);
         Assert.Equal(TabWidthMode.Dynamic, svc.Current.TabWidthMode);
         Assert.Equal(AppSettings.DefaultFixedTabWidth, svc.Current.FixedTabWidth);
     }

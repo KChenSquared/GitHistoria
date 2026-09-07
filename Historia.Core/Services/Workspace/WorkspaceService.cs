@@ -171,6 +171,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
+            context.MarkFirstFullLoadDone(); // §12.1: unblock any auto-fetch waiter on close
             return;
         }
         catch
@@ -185,6 +186,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         catch (OperationCanceledException)
         {
             // Tab closed during first refresh.
+        }
+        finally
+        {
+            context.MarkFirstFullLoadDone(); // §12.1
         }
     }
 
@@ -456,6 +461,18 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         {
             // Session persistence is best-effort.
         }
+    }
+
+    /// <summary>§12.1 (AF4): force a still-deferred session-restore tab through the ordinary
+    /// initialize path now, instead of waiting for its first focus — auto-fetch needs every open
+    /// repo fully loaded before its loop starts. No-op for a tab that is already initializing.</summary>
+    public void EnsureInitialized(RepositoryContext context)
+    {
+        bool needsInit;
+        lock (_sync)
+            needsInit = _deferredInit.Remove(context);
+        if (needsInit)
+            _ = InitializeContextAsync(context);
     }
 
     private void FocusInternal(RepositoryContext context)
