@@ -40,6 +40,20 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// <summary>Idempotent -- safe to call once per attempt or not at all.</summary>
     public void MarkFirstGraphPaintDone() => _firstGraphPaint.TrySetResult();
 
+    // §12.1: signalled once this tab is "fully loaded" -- identity resolved and the first full
+    // state refresh (branches, graph, changes) has completed. IAutoFetchService waits on this
+    // before its [InitialFetch] / [AutoFetch] loop touches the repo. Like FirstGraphPaint it
+    // never faults; a headless open completes it as soon as InitializeContextAsync runs.
+    private readonly TaskCompletionSource _firstFullLoad =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once this context has fully loaded (§12.1). Never faults.</summary>
+    public Task FirstFullLoad => _firstFullLoad.Task;
+
+    /// <summary>Idempotent. Called by <c>WorkspaceService.InitializeContextAsync</c> when the
+    /// first refresh settles (or the tab closes first).</summary>
+    public void MarkFirstFullLoadDone() => _firstFullLoad.TrySetResult();
+
     public string Id { get; } = Guid.NewGuid().ToString("N");
 
     /// <summary>Working directory, or the git directory for a bare repo.</summary>

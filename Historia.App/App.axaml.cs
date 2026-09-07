@@ -209,6 +209,8 @@ public sealed class App : Application
         services.AddSingleton<IScrollDirectionProbe, Historia.Platform.ScrollDirectionProbe>();
         services.AddSingleton<IRepoActionBus, RepoActionBus>();
         services.AddSingleton<IRepoNetworkActionRunner, RepoNetworkActionRunner>();
+        services.AddSingleton<Historia.Services.AutoFetch.IAutoFetchHost, AutoFetchHost>();
+        services.AddSingleton<Historia.Services.AutoFetch.IAutoFetchService, Historia.Services.AutoFetch.AutoFetchService>();
 
         // ── Singletons: app-lifetime, no repository affinity (§6.3) ──
         services.AddSingleton<ISettingsService>(settings);
@@ -324,6 +326,11 @@ public sealed class App : Application
         // §14.1: refresh the reserved global profile's identity from ~/.gitconfig once git is resolved.
         try { await Services.GetRequiredService<Historia.Services.Profiles.IProfileService>().SyncGlobalIdentityAsync().ConfigureAwait(false); }
         catch { /* a missing or unreadable ~/.gitconfig just leaves the global profile blank */ }
+
+        // §12.1: start auto-fetch after restore has populated the tab strip, so the "open repos
+        // present" branch sees them and waits for all to fully load before [InitialFetch].
+        try { Services.GetRequiredService<Historia.Services.AutoFetch.IAutoFetchService>().Start(); }
+        catch { /* auto-fetch is best-effort and must never block startup */ }
     }
 
     private static async Task ResolveGitAsync(IGitExecutableLocator locator, ISettingsService settings, INotificationService notifications)

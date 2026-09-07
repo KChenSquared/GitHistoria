@@ -17,6 +17,7 @@ public sealed class HomeView : UserControl, IDisposable
     private readonly IProfileService _profiles;
     private readonly IRepoIdentityService _identity;
     private readonly IRepoLayoutService _repoLayout;
+    private readonly Historia.Services.AutoFetch.IAutoFetchService _autoFetch;
 
     private readonly StackPanel _recentList = new() { Spacing = 4 };
     private readonly TextBlock _cloneStatus = Text("", "ColorSuccess", 12);
@@ -39,6 +40,7 @@ public sealed class HomeView : UserControl, IDisposable
         _profiles = sp.GetRequiredService<IProfileService>();
         _identity = sp.GetRequiredService<IRepoIdentityService>();
         _repoLayout = sp.GetRequiredService<IRepoLayoutService>();
+        _autoFetch = sp.GetRequiredService<Historia.Services.AutoFetch.IAutoFetchService>();
 
         var root = new StackPanel { Spacing = 16, Margin = new Thickness(32), MaxWidth = 640 };
 
@@ -163,6 +165,8 @@ public sealed class HomeView : UserControl, IDisposable
         _busy = true;
         try
         {
+            // §12.1.1: on a cold start this tells the auto-fetch loop to run an [InitialFetch].
+            _autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.Opened);
             await _workspace.OpenAsync(path);
             _nav.RequestNavigate("repo");
         }
@@ -183,6 +187,8 @@ public sealed class HomeView : UserControl, IDisposable
         _busy = true;
         try
         {
+            // §12.1.1: a fresh init is already current — start the loop with no [InitialFetch].
+            _autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.ClonedOrInitialized);
             await _workspace.InitAsync(path, string.IsNullOrWhiteSpace(branch) ? "main" : branch.Trim());
             _nav.RequestNavigate("repo");
         }
@@ -231,6 +237,8 @@ public sealed class HomeView : UserControl, IDisposable
         _cloneBox.IsVisible = true;
         try
         {
+            // §12.1.1: a fresh clone is already current — start the loop with no [InitialFetch].
+            _autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.ClonedOrInitialized);
             var ctx = await _workspace.CloneAsync(r.Url, r.TargetDirectory, options, progress, cts.Token);
             await ApplyCheckoutIdentityAsync(ctx, r.ProfileId);
             _nav.RequestNavigate("repo");

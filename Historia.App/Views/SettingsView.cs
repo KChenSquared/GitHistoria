@@ -168,6 +168,9 @@ public sealed class SettingsView : UserControl, IDisposable
         _root.Children.Add(Check("Allow background API polling", c.EnableBackgroundPolling,
             v => _ = _cfg.UpdateAsync(s => s with { EnableBackgroundPolling = v })));
         _root.Children.Add(Muted("Effective only while a repository's selected profile has a connected token."));
+        _root.Children.Add(Check("Automatically fetch open repositories", c.AutoFetchEnabled,
+            v => _ = _cfg.UpdateAsync(s => s with { AutoFetchEnabled = v })));
+        _root.Children.Add(Muted("Periodically runs “git fetch” on every open repository (about every 5 minutes plus 1 minute per open tab)."));
 
         // ── Diff & Editor ──
         _root.Children.Add(Section("Diff & Editor"));
