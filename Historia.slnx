@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/Historia.Tests/Historia.Tests.csproj" />
+  </Folder>
+  <Project Path="Historia.App/Historia.App.csproj" />
+  <Project Path="Historia.Core/Historia.Core.csproj" />
+</Solution>

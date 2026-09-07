@@ -1,0 +1,244 @@
+﻿using System.Text.Json.Nodes;
+
+namespace Historia.Services.Migrations;
+
+/// <summary>
+/// v0 → v1 migration for <c>settings.json</c> (§9.3, §14 <c>Migrations/V0ToV1.cs</c>).
+/// v0 is the legacy / first-run shape with no <c>schemaVersion</c> field. There are no field
+/// renames yet, so this only stamps the version.
+/// </summary>
+public sealed class SettingsV0ToV1 : IJsonMigration
+{
+    public int FromVersion => 0;
+    public int ToVersion => 1;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 1;
+    }
+}
+
+/// <summary>
+/// v1 → v2: adds the graph-panel column layout (§V2-11.1). Additive — an absent
+/// <c>graphColumns</c> is left absent so the record default (<c>GraphColumnDefaults.All</c>)
+/// applies on deserialize. Structural validation of a hand-edited list happens in
+/// <c>SettingsService</c> after deserialize (M5).
+/// </summary>
+public sealed class SettingsV1ToV2 : IJsonMigration
+{
+    public int FromVersion => 1;
+    public int ToVersion => 2;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 2;
+    }
+}
+
+/// <summary>v2 → v3: adds issue autolinks and the diff word-wrap flag (§V2-17). Additive —
+/// absent keys fall through to the record defaults on deserialize.</summary>
+public sealed class SettingsV2ToV3 : IJsonMigration
+{
+    public int FromVersion => 2;
+    public int ToVersion => 3;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 3;
+    }
+}
+
+/// <summary>
+/// v3 → v4 (§V3-13.3). Unlike its predecessors this rewrites three things:
+/// <list type="number">
+///   <item>sets <c>restoreSessionTabs</c> to <c>true</c> only when the key is absent — a user
+///   who deliberately turned it off keeps their choice;</item>
+///   <item>sets <c>visible: false</c> on the <c>author</c>, <c>date</c> and <c>sha</c> entries
+///   of <c>graphColumns</c> — a one-time event, no "already applied" flag needed;</item>
+///   <item>sets <c>maxRecentRepositories</c> to <c>30</c> when it is absent or still exactly
+///   <c>20</c> (a default nobody chose).</item>
+/// </list>
+/// </summary>
+public sealed class SettingsV3ToV4 : IJsonMigration
+{
+    public int FromVersion => 3;
+    public int ToVersion => 4;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 4;
+
+        if (document["restoreSessionTabs"] is null)
+            document["restoreSessionTabs"] = true;
+
+        var recents = document["maxRecentRepositories"]?.GetValue<int?>();
+        if (recents is null or 20)
+            document["maxRecentRepositories"] = 30;
+
+        if (document["graphColumns"] is JsonArray columns)
+        {
+            foreach (var node in columns)
+            {
+                if (node is not JsonObject col)
+                    continue;
+                var kind = col["kind"]?.GetValue<string>();
+                if (string.Equals(kind, "Author", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(kind, "Date", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(kind, "Sha", StringComparison.OrdinalIgnoreCase))
+                {
+                    col["visible"] = false;
+                }
+            }
+        }
+    }
+}
+
+/// <summary>v4 → v5: adds the multi-line tab-strip flag and its row cap (§V3-B). Additive —
+/// absent keys fall through to the record defaults on deserialize, so this only stamps the
+/// version.</summary>
+public sealed class SettingsV4ToV5 : IJsonMigration
+{
+    public int FromVersion => 4;
+    public int ToVersion => 5;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 5;
+    }
+}
+
+/// <summary>v5 → v6: adds <c>persistGraphCache</c> (v4.5 review). Additive — an absent key
+/// falls through to the record default (<c>true</c>) on deserialize, so this only stamps the
+/// version.</summary>
+public sealed class SettingsV5ToV6 : IJsonMigration
+{
+    public int FromVersion => 5;
+    public int ToVersion => 6;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 6;
+    }
+}
+
+/// <summary>v6 → v7: adds <c>graphRowHardCap</c> (§7.3). Additive — an absent key falls through
+/// to the record default (200,000) on deserialize, so this only stamps the version.</summary>
+public sealed class SettingsV6ToV7 : IJsonMigration
+{
+    public int FromVersion => 6;
+    public int ToVersion => 7;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 7;
+    }
+}
+
+/// <summary>v7 → v8: adds <c>persistRepoCache</c>. Additive — an absent key falls through to the
+/// record default (<c>true</c>) on deserialize, so this only stamps the version.</summary>
+public sealed class SettingsV7ToV8 : IJsonMigration
+{
+    public int FromVersion => 7;
+    public int ToVersion => 8;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 8;
+    }
+}
+
+/// <summary>v8 → v9: adds the terminal settings block (V5 §13). Additive — every new key has a
+/// working record default, so this only stamps the version.</summary>
+public sealed class SettingsV8ToV9 : IJsonMigration
+{
+    public int FromVersion => 8;
+    public int ToVersion => 9;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 9;
+    }
+}
+
+/// <summary>v9 → v10: adds <c>tabWidthMode</c> and <c>fixedTabWidth</c> (V5.5). Additive — an
+/// absent key falls through to the record default (<c>Dynamic</c> / 175) on deserialize, so
+/// this only stamps the version.</summary>
+public sealed class SettingsV9ToV10 : IJsonMigration
+{
+    public int FromVersion => 9;
+    public int ToVersion => 10;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 10;
+    }
+}
+
+/// <summary>v10 → v11: adds <c>customThemeId</c> (§V6-G9). Additive — an absent key falls
+/// through to the record default (<c>null</c>) on deserialize, so this only stamps the
+/// version.</summary>
+public sealed class SettingsV10ToV11 : IJsonMigration
+{
+    public int FromVersion => 10;
+    public int ToVersion => 11;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 11;
+    }
+}
+
+/// <summary>v11 → v12: adds <c>showSplashScreen</c>. Additive — an absent key falls through to
+/// the record default (<c>true</c>) on deserialize, so this only stamps the version.</summary>
+public sealed class SettingsV11ToV12 : IJsonMigration
+{
+    public int FromVersion => 11;
+    public int ToVersion => 12;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 12;
+    }
+}
+
+/// <summary>Generic migration for schema bumps where all new fields are additive and default properly on deserialization.</summary>
+public class StampOnlyMigration(int from, int to) : IJsonMigration
+{
+    public int FromVersion => from;
+    public int ToVersion => to;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = to;
+    }
+}
+
+/// <summary>v12 → v13: adds <c>wheelScrollDirection</c> (v8 M9). Additive — an absent key falls
+/// through to the record default (<c>Auto</c>) on deserialize, so this only stamps the
+/// version.</summary>
+public sealed class SettingsV12ToV13() : StampOnlyMigration(12, 13);
+
+/// <summary>v13 → v14: adds <c>commitDetailFontSize</c> and <c>commitFilesView</c> (v8 M13).
+/// Additive — absent keys fall through to the record defaults (14 / <c>Path</c>) on
+/// deserialize, so this only stamps the version.</summary>
+public sealed class SettingsV13ToV14() : StampOnlyMigration(13, 14);
+
+/// <summary>v14 → v15: v9 profile/network rework — drops <c>networkMode</c> and
+/// <c>enablePerRepoProfiles</c>, renames <c>primaryProfileId</c> → <c>defaultProfileId</c>.
+/// v9 ships with a data wipe (§23), so no field-level migration is attempted; this only
+/// stamps the version for any settings file that survives.</summary>
+public sealed class SettingsV14ToV15 : IJsonMigration
+{
+    public int FromVersion => 14;
+    public int ToVersion => 15;
+
+    public void Apply(JsonObject document)
+    {
+        if (document["primaryProfileId"] is { } pid)
+            document["defaultProfileId"] = pid.DeepClone();
+        document.Remove("primaryProfileId");
+        document.Remove("enablePerRepoProfiles");
+        document.Remove("networkMode");
+        document["schemaVersion"] = 15;
+    }
+}

@@ -1,0 +1,18 @@
+<Project>
+
+  <!--
+    V4: one build-output tree for the whole solution, rooted at the repository root. Every
+    project's bin/ and obj/ are redirected to <repo>\bin\<ProjectName>\ and
+    <repo>\obj\<ProjectName>\ — nothing is written under Historia.App\, Historia.Core\, or
+    tests\Historia.Tests\.
+
+    This must live in Directory.Build.props (imported before the SDK), not a .csproj, so
+    BaseIntermediateOutputPath is set before NuGet restore runs.
+  -->
+  <PropertyGroup>
+    <RepoRoot>$(MSBuildThisFileDirectory)</RepoRoot>
+    <BaseOutputPath>$(RepoRoot)bin\$(MSBuildProjectName)\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(RepoRoot)obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+  </PropertyGroup>
+
+</Project>

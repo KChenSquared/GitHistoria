@@ -1,0 +1,72 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ctl="clr-namespace:Historia.Controls"
+        mc:Ignorable="d"
+        x:Class="Historia.MainWindow"
+        Title="Historia" Icon="/Assets/Historia.ico" Width="1280" Height="760"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource ColorBg}">
+    <!-- Shell composition (§6.2.1, §7.4): native chrome + status bar; body is
+         [sidebar] | [native commit graph] | [detail], as three regions filled by later
+         milestones. Column widths are driven from code-behind (InitBodyLayout) — §V3-B/19.24. -->
+    <!-- 4-row grid (V5 §3; v8 M5 adds the shortcuts bar): app band, shortcuts bar, body,
+         status bar. The terminal dock lives inside the centre column and docks to the bottom
+         of that panel only. -->
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+        <!-- Row 0: the app band. -->
+        <ContentControl Grid.Row="0" x:Name="AppBandHost" MinHeight="32"
+                        Background="{DynamicResource ColorChrome}" />
+
+        <!-- Row 1: the shortcuts bar (v8 M5) — full window width, independent of the splits. -->
+        <ContentControl Grid.Row="1" x:Name="ShortcutsBarHost" Height="24" />
+
+        <Grid Grid.Row="2" x:Name="BodyGrid">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="264" MinWidth="0" />
+                <ColumnDefinition Width="4" />
+                <ColumnDefinition Width="*" MinWidth="0" />
+                <ColumnDefinition Width="4" />
+                <ColumnDefinition Width="1.35*" MinWidth="0" />
+            </Grid.ColumnDefinitions>
+
+            <ContentControl Grid.Column="0" x:Name="SidebarHost"
+                            Background="{DynamicResource ColorChrome}" />
+
+            <Border Grid.Column="1" x:Name="LeftDivider" Cursor="SizeWestEast"
+                    Background="{DynamicResource ColorBorder}"
+                    PointerPressed="OnDividerPressed" PointerMoved="OnLeftDividerMoved"
+                    PointerReleased="OnDividerReleased" PointerCaptureLost="OnDividerCaptureLost" />
+
+            <!-- Centre column: the graph / diff region with the terminal dock docked to its
+                 bottom edge only (review §1). The dock collapses to Height=0 when closed. -->
+            <Grid Grid.Column="2" RowDefinitions="*,Auto">
+                <ContentControl Grid.Row="0" x:Name="CenterHost"
+                                Background="{DynamicResource ColorBg}" />
+                <ContentControl Grid.Row="1" x:Name="TerminalDockHost" />
+            </Grid>
+
+            <Border Grid.Column="3" x:Name="RightDivider" Cursor="SizeWestEast"
+                    Background="{DynamicResource ColorBorder}"
+                    PointerPressed="OnDividerPressed" PointerMoved="OnRightDividerMoved"
+                    PointerReleased="OnDividerReleased" PointerCaptureLost="OnDividerCaptureLost" />
+
+            <ContentControl Grid.Column="4" x:Name="DetailHost"
+                            Background="{DynamicResource ColorChrome}" />
+        </Grid>
+
+        <Border Grid.Row="3" Background="{DynamicResource ColorSurface}"
+                BorderBrush="{DynamicResource ColorBorder}" BorderThickness="0,1,0,0"
+                Padding="12,4">
+            <TextBlock x:Name="StatusText" Text="Ready" FontSize="11"
+                       Foreground="{DynamicResource ColorTextMuted}" />
+        </Border>
+
+        <!-- Window-level modal layer: spans all rows so app-modal prompts
+             (first-run identity import) dim and centre over the whole window, not
+             inside one body panel. Empty and click-through until a prompt is shown. -->
+        <Panel Grid.Row="0" Grid.RowSpan="4" x:Name="ModalOverlayHost" />
+    </Grid>
+</Window>

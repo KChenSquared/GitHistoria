@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Historia</RootNamespace>
+    <!-- Executable name: compiled binary ships as Historia.exe (Historia on macOS/Linux).
+         RootNamespace is Historia. avares:// assembly authority matches this name. -->
+    <AssemblyName>Historia</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+
+    <!-- V4: framework-dependent, matching the WPF build. Windows is the parity target;
+         macOS / Linux must compile and launch. -->
+    <SelfContained>false</SelfContained>
+    <RuntimeIdentifiers>win-x64;osx-arm64;osx-x64;linux-x64</RuntimeIdentifiers>
+    <ApplicationIcon>Historia.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pinned, no floating wildcard (constitution rule 0.7). -->
+    <PackageReference Include="Avalonia" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Diagnostics" Version="11.3.20" Condition="'$(Configuration)' == 'Debug'" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Historia.Core\Historia.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+    <!-- Launch splashes authored under assets/ (dev/build-splash.ps1), embedded as avares. -->
+    <AvaloniaResource Include="..\assets\splash-light.png" Link="Assets\splash-light.png" />
+    <AvaloniaResource Include="..\assets\splash-dark.png" Link="Assets\splash-dark.png" />
+  </ItemGroup>
+
+  <!-- Dev-mode marker: copied next to the exe on every build so the Developer menu entry
+       appears, but never included in a publish / release package. -->
+  <ItemGroup>
+    <None Include="..\dev\enableDevMode" Link="enableDevMode">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

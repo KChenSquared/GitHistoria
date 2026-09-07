@@ -1,0 +1,47 @@
+﻿
+namespace Historia.Services.Terminal;
+
+/// <summary>
+/// Owns every live terminal session, keyed by <see cref="TerminalOrigin.Key"/> (V5 §2, §7.2).
+/// Registered as a <b>singleton</b> — never <c>AddScoped</c> (constitution rule 20). The only
+/// terminal surface the views talk to.
+/// </summary>
+public interface ITerminalSessionService
+{
+    IReadOnlyList<TerminalSession> Sessions { get; }
+    TerminalSession? Focused { get; }
+
+    /// <summary>
+    /// Focuses the existing session for this origin, or starts one. Never spawns a second
+    /// session for an origin that already has a live one — and is re-entrant-safe: two rapid
+    /// clicks produce one process.
+    /// </summary>
+    Task<TerminalSession> OpenOrFocusAsync(TerminalOrigin origin, CancellationToken ct = default);
+
+    /// <summary>
+    /// Always starts a fresh session for this origin, even when one is already live — the
+    /// "New Terminal" / <c>+</c> path (review §3, §5). The new session becomes the focused one.
+    /// </summary>
+    Task<TerminalSession> OpenNewAsync(TerminalOrigin origin, CancellationToken ct = default);
+
+    /// <summary>
+    /// Asks the dock to show itself without touching the session set or focus — the
+    /// "Open Terminal just reveals the dock" path (review §2, §4). No-op if nothing is listening.
+    /// </summary>
+    void RequestActivation();
+
+    void Focus(TerminalSession session);
+
+    Task CloseAsync(Guid sessionId);
+
+    /// <summary>Called by <c>WorkspaceService</c> when a repository tab closes (V5 §3.3), so a
+    /// closed repo does not leave an orphaned shell holding a directory handle open.</summary>
+    Task CloseForRepositoryAsync(RepoIdentityKey key);
+
+    event EventHandler? SessionsChanged;
+    event EventHandler? FocusedSessionChanged;
+    event EventHandler<TerminalSession>? SessionExited;
+
+    /// <summary>Raised when an entry point wants the dock brought into view (review §2).</summary>
+    event EventHandler? ActivationRequested;
+}

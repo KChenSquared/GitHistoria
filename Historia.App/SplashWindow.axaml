@@ -1,0 +1,16 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Historia.SplashWindow"
+        Width="400" Height="500"
+        CanResize="False"
+        SystemDecorations="None"
+        ShowInTaskbar="False"
+        Topmost="True"
+        Focusable="False"
+        Background="White"
+        WindowStartupLocation="CenterScreen">
+    <!-- Complete splash image (emblem + wordmark + background baked in). The code-behind picks
+         splash-light / splash-dark by the effective theme. App owns the window lifetime and
+         closes it after App.SplashDuration (§6.2.2). -->
+    <Image x:Name="Art" Stretch="Uniform" />
+</Window>

@@ -1,0 +1,2 @@
+Presence of this file (next to the Historia executable) enables the Developer menu
+entry in the app band. Copied to bin/ on build; never packaged for release.

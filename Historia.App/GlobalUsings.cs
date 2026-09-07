@@ -1,0 +1,9 @@
+﻿global using Avalonia;
+global using Avalonia.Controls;
+global using Avalonia.Layout;
+global using Avalonia.Media;
+global using Microsoft.Extensions.DependencyInjection;
+global using Historia.Models;
+global using Historia.Services.UI;
+global using Historia.Services.Workspace;
+global using Historia.Services.Notifications;

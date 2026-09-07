@@ -1,0 +1,171 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Historia.App"
+             RequestedThemeVariant="Dark">
+    <!-- V4: the palette (ColorBg, ColorBorder, …) is generated from HistoriaPalette at runtime
+         by AvaloniaThemeApplier and merged into Application.Resources — not authored here, so
+         the one source of truth stays HistoriaPalette.cs (parity with the old WPF dictionary). -->
+    <Application.Styles>
+        <FluentTheme />
+
+        <!-- V9: a classless Button never shows Fluent's grey fill. It reads like the Clone
+             dialog's buttons — transparent ground, 1 px outline, plain text — and only paints a
+             subtle fill on hover / press. Anything that opts into .primary / .flat / .danger /
+             .success / .secondary keeps its own chrome (class selectors outrank this one).
+             Icon buttons that set Background / BorderThickness inline stay borderless (a local
+             value outranks a style), they just lose the grey hover box. -->
+        <Style Selector="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="4" />
+        </Style>
+        <Style Selector="Button:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+        </Style>
+        <Style Selector="Button:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+        </Style>
+
+        <!-- Flat button family (V3 parity): understated chrome, quiet disabled state.
+             At rest the fill matches the panel background (transparent) with a grey outline;
+             only hover paints a fill. -->
+        <Style Selector="Button.secondary">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="12,6" />
+        </Style>
+        <Style Selector="Button.secondary:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+        </Style>
+        <Style Selector="Button.secondary:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+        </Style>
+        <Style Selector="Button.secondary:disabled">
+            <Setter Property="Opacity" Value="0.4" />
+        </Style>
+
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="{DynamicResource ColorPrimary}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="12,6" />
+        </Style>
+        <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorPrimaryHover}" />
+        </Style>
+        <Style Selector="Button.primary:disabled">
+            <Setter Property="Opacity" Value="0.4" />
+        </Style>
+
+        <!-- Icon/arrow chrome buttons: no fill until hover. When disabled the glyph fades but the
+             ground stays flush with the enabled sibling (Fluent's disabled ContentPresenter paints
+             a grey box otherwise), so a disabled arrow reads as the same black with a fainter mark. -->
+
+        <Style Selector="Button.flat">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+            <Setter Property="CornerRadius" Value="3" />
+        </Style>
+        <Style Selector="Button.flat:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+        </Style>
+        <Style Selector="Button.flat:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface2}" />
+        </Style>
+        <Style Selector="Button.flat:disabled">
+            <Setter Property="Opacity" Value="0.28" />
+        </Style>
+        <Style Selector="Button.flat:disabled /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+
+        <Style Selector="Button.danger">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorDanger}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorDanger}" />
+            <Setter Property="CornerRadius" Value="3" />
+        </Style>
+        <Style Selector="Button.danger:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorDanger}" />
+        </Style>
+        <Style Selector="Button.danger:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface2}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorDanger}" />
+        </Style>
+        <Style Selector="Button.danger:disabled">
+            <Setter Property="Opacity" Value="0.28" />
+        </Style>
+        <Style Selector="Button.danger:disabled /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorDanger}" />
+        </Style>
+
+        <Style Selector="Button.success">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorSuccess}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorSuccess}" />
+            <Setter Property="CornerRadius" Value="3" />
+        </Style>
+        <Style Selector="Button.success:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorSuccess}" />
+        </Style>
+        <Style Selector="Button.success:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface2}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorSuccess}" />
+        </Style>
+        <Style Selector="Button.success:disabled">
+            <Setter Property="Opacity" Value="0.28" />
+        </Style>
+        <Style Selector="Button.success:disabled /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorSuccess}" />
+        </Style>
+        <Style Selector="RepeatButton.flat">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+            <Setter Property="CornerRadius" Value="3" />
+        </Style>
+        <Style Selector="RepeatButton.flat:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+        </Style>
+        <Style Selector="RepeatButton.flat:disabled">
+            <Setter Property="Opacity" Value="0.28" />
+        </Style>
+        <Style Selector="RepeatButton.flat:disabled /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+
+        <!-- Global quiet-disabled net: Fluent paints a grey fill on the ContentPresenter of any
+             :disabled button that hasn't opted into its own chrome above. Blank just that fill
+             (leave the border alone) so a disabled button keeps the same ground as its enabled
+             sibling and only the glyph/label fades — the Discard-all behaviour, everywhere. -->
+        <Style Selector="Button:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ToggleButton:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="RepeatButton:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Button:disabled">
+            <Setter Property="Opacity" Value="0.4" />
+        </Style>
+    </Application.Styles>
+</Application>

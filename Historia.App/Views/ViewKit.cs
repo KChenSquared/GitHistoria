@@ -1,0 +1,282 @@
+using Avalonia.Controls.Shapes;
+using Avalonia.Markup.Xaml.MarkupExtensions;
+using Historia.Components;
+using Path = Avalonia.Controls.Shapes.Path;
+
+namespace Historia.Views;
+
+/// <summary>
+/// Shared helpers for the hand-built Avalonia views that replace the V3 Blazor components
+/// (V4 §views). Pure-C# construction, matching the native-control style, so there is no XAML
+/// compiler in the loop for the ported panels.
+/// </summary>
+internal static class ViewKit
+{
+    /// <summary>Bind a control property to a theme resource key (the {DynamicResource} of code).</summary>
+    public static T Dyn<T>(this T c, AvaloniaProperty p, string key) where T : Control
+    {
+        c.Bind(p, new DynamicResourceExtension(key));
+        return c;
+    }
+
+    public static TextBlock Text(string? text, string fgKey = "ColorText", double size = 13, FontWeight weight = FontWeight.Normal)
+        => new TextBlock
+        {
+            Text = text,
+            FontSize = size,
+            FontWeight = weight,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        }.Dyn(TextBlock.ForegroundProperty, fgKey);
+
+    public static Button TextButton(string caption, Action onClick, bool primary = false)
+    {
+        var b = new Button
+        {
+            Content = caption,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+        };
+        b.Classes.Add(primary ? "primary" : "secondary");
+        b.Click += (_, _) => onClick();
+        return b;
+    }
+
+    /// <summary>A bitmap from the app's embedded <c>Assets/</c> (avares:// resources).</summary>
+    public static Avalonia.Media.Imaging.Bitmap? Asset(string fileName)
+    {
+        try
+        {
+            return new Avalonia.Media.Imaging.Bitmap(
+                Avalonia.Platform.AssetLoader.Open(new System.Uri($"avares://Historia/Assets/{fileName}")));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Points <paramref name="img"/> at the Historia ship emblem for the current theme — the
+    /// maroon <c>historia-mark-light</c> in Light mode, the copper <c>historia-mark-dark</c> in Dark
+    /// and High Contrast — and keeps it in sync on <see cref="Historia.Services.Theming.IThemeService.ThemeChanged"/>.
+    /// The subscription is tied to the control's visual-tree lifetime, so it leaks nothing.
+    /// </summary>
+    public static Image BindThemedMark(Image img, Historia.Services.Theming.IThemeService theme)
+    {
+        void Apply()
+        {
+            var light = theme.Effective == Historia.Models.EffectiveTheme.Light;
+            img.Source = (light ? Asset("historia-mark-light@2x.png") : Asset("historia-mark-dark@2x.png"))
+                         ?? (light ? Asset("historia-mark-light.png") : Asset("historia-mark-dark.png"));
+        }
+
+        EventHandler<Historia.Services.Theming.ThemeChangedEventArgs> onChanged =
+            (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(Apply);
+
+        img.AttachedToVisualTree += (_, _) =>
+        {
+            theme.ThemeChanged -= onChanged;   // idempotent: guard against a re-attach doubling up
+            theme.ThemeChanged += onChanged;
+            Apply();
+        };
+        img.DetachedFromVisualTree += (_, _) => theme.ThemeChanged -= onChanged;
+
+        theme.ThemeChanged += onChanged;       // covers the window's first paint before the attach event
+        Apply();
+        return img;
+    }
+
+    /// <summary>An icon glyph in <c>currentColor</c> (the V3 &lt;Icon&gt;). Lucide glyphs render
+    /// stroked on a 24-unit grid; the Historia fill silhouettes render filled on a 16-unit grid.</summary>
+    public static Control Icon(string name, double size = 16, string fgKey = "ColorText")
+        => IconGlyphPath(name, size, fgKey);
+
+    /// <summary>Shared <see cref="Path"/> builder for <see cref="IconPaths"/> glyphs — honours the
+    /// per-glyph stroke/fill contract so stroke icons keep round caps and a proportional weight.</summary>
+    public static Path IconGlyphPath(string name, double size, string fgKey)
+    {
+        var glyph = IconPaths.Resolve(name);
+        var path = new Path
+        {
+            Data = Geometry.Parse(glyph.Data),
+            Stretch = Stretch.Uniform,
+            Width = size,
+            Height = size,
+        };
+        if (glyph.Stroke)
+        {
+            path.StrokeThickness = size * 2.0 / 24.0;   // 2 px on Lucide's 24-unit grid
+            path.StrokeLineCap = PenLineCap.Round;
+            path.StrokeJoin = PenLineJoin.Round;
+            return path.Dyn(Path.StrokeProperty, fgKey);
+        }
+        return path.Dyn(Path.FillProperty, fgKey);
+    }
+
+    public static Button IconButton(string iconName, string tip, Action onClick, double size = 14)
+    {
+        var b = new Button
+        {
+            Content = Icon(iconName, size, "ColorTextMuted"),
+            Padding = new Thickness(4),
+            Background = Brushes.Transparent,
+            BorderThickness = default,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+        };
+        ToolTip.SetTip(b, tip);
+        b.Click += (_, _) => onClick();
+        return b;
+    }
+
+    /// <summary>
+    /// A small circular “?” badge. Hovering shows <paramref name="text"/> in a tooltip that
+    /// wraps to fit the message with no scrollbar — used in place of a sub-text line under a
+    /// setting.
+    /// </summary>
+    public static Control HelpHint(string text, double diameter = 15)
+    {
+        var badge = new Border
+        {
+            Width = diameter,
+            Height = diameter,
+            CornerRadius = new CornerRadius(diameter / 2),
+            BorderThickness = new Thickness(1),
+            Background = Brushes.Transparent,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Help),
+            Child = new TextBlock
+            {
+                Text = "?",
+                FontSize = diameter * 0.72,
+                FontWeight = FontWeight.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            }.Dyn(TextBlock.ForegroundProperty, "ColorTextMuted"),
+        }.Dyn(Border.BorderBrushProperty, "ColorBorder");
+
+        // A plain wrapping TextBlock sizes itself to the text (up to MaxWidth) with no
+        // ScrollViewer in the way, so every message shows whole and right-sized.
+        ToolTip.SetTip(badge, new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, MaxWidth = 360 });
+        ToolTip.SetShowDelay(badge, 200);
+        return badge;
+    }
+
+    /// <summary>Lays a setting control out with a <see cref="HelpHint"/> to its right.</summary>
+    public static Control WithHint(Control setting, string hintText)
+    {
+        setting.VerticalAlignment = VerticalAlignment.Center;
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        row.Children.Add(setting);
+        row.Children.Add(HelpHint(hintText));
+        return row;
+    }
+
+    /// <summary>
+    /// A text block with issue-key runs turned into links (V4 port of Autolinked.razor).
+    /// URL runs open through <paramref name="launcher"/>; the rest is plain selectable text.
+    /// </summary>
+    public static SelectableTextBlock Autolinked(
+        string? text,
+        IReadOnlyList<Historia.Models.IssueAutolinkRule> rules,
+        Historia.Services.UI.IExternalLauncher launcher,
+        double size = 12,
+        string fgKey = "ColorText")
+    {
+        var tb = new SelectableTextBlock { FontSize = size, TextWrapping = TextWrapping.Wrap }
+            .Dyn(SelectableTextBlock.ForegroundProperty, fgKey);
+        foreach (var run in Historia.Services.Text.IssueAutolinker.Linkify(text ?? "", rules))
+        {
+            if (run.Url is { } url)
+            {
+                var link = new Avalonia.Controls.Documents.Run(run.Text) { TextDecorations = TextDecorations.Underline };
+                link.Bind(Avalonia.Controls.Documents.Run.ForegroundProperty, new DynamicResourceExtension("ColorAccent"));
+                tb.Inlines!.Add(link);
+                // Whole-block click: cheap and good enough — runs don't take pointer input in Avalonia.
+                tb.PointerPressed += (_, e) =>
+                {
+                    if (e.GetCurrentPoint(tb).Properties.IsLeftButtonPressed)
+                        launcher.OpenUrl(url);
+                };
+            }
+            else
+            {
+                tb.Inlines!.Add(new Avalonia.Controls.Documents.Run(run.Text));
+            }
+        }
+        return tb;
+    }
+
+    /// <summary>
+    /// Wraps a full-pane detail body with a top-right close button. Closing returns to the
+    /// focused repository if there is one, otherwise Home. Used by the Home / Settings /
+    /// Developer / Profiles panels — never the per-repository views.
+    /// </summary>
+    /// <param name="requireFocusedRepo">
+    /// When true (the Home panel), the button is omitted entirely if no repository is focused,
+    /// since closing would have nowhere to go.
+    /// </param>
+    /// <param name="closeTo">
+    /// An explicit route for the close button (e.g. the Themes panel returns to "settings").
+    /// When null, closing returns to the focused repository if there is one, otherwise Home.
+    /// </param>
+    public static Control ClosablePane(Control body, IServiceProvider sp, bool requireFocusedRepo = false, string? closeTo = null)
+    {
+        var nav = sp.GetRequiredService<INavigationBus>();
+        var workspace = sp.GetRequiredService<IWorkspaceService>();
+
+        if (requireFocusedRepo && workspace.Focused is null)
+            return body;
+
+        var close = IconButton("close", "Close", () =>
+            nav.RequestNavigate(closeTo ?? (workspace.Focused is not null ? "repo" : "")), 12);
+        close.HorizontalAlignment = HorizontalAlignment.Right;
+        close.VerticalAlignment = VerticalAlignment.Top;
+        close.Margin = new Thickness(0, 6, 6, 0);
+        close.ZIndex = 1;
+
+        var grid = new Grid();
+        grid.Children.Add(body);
+        grid.Children.Add(close);
+        return grid;
+    }
+
+    /// <summary>v8 M6: attach a "Reveal in file manager" + "Copy path" context menu to a row.
+    /// <paramref name="absolutePath"/> is resolved lazily on click (the entry may point at a
+    /// file that no longer exists — the launcher then reveals its parent folder).</summary>
+    public static T WithRevealMenu<T>(this T target, Historia.Services.UI.IExternalLauncher launcher,
+        Func<string> absolutePath, string revealLabel = "Open file location",
+        IEnumerable<Control>? extraItems = null) where T : Control
+    {
+        var items = new List<Control>
+        {
+            MenuLeaf(revealLabel, () => launcher.RevealInFileManager(absolutePath())),
+            MenuLeaf("Copy path", () => TopLevel.GetTopLevel(target)?.Clipboard?.SetTextAsync(absolutePath())),
+        };
+        if (extraItems is not null)
+        {
+            items.Add(new Separator());
+            items.AddRange(extraItems);
+        }
+        var menu = new ContextMenu { ItemsSource = items };
+        target.ContextMenu = menu;
+        return target;
+    }
+
+    /// <summary>A plain <see cref="MenuItem"/> with a click handler — the code equivalent of a
+    /// <c>&lt;MenuItem Header=… Click=…/&gt;</c>.</summary>
+    public static MenuItem MenuLeaf(string header, Action onClick)
+    {
+        var mi = new MenuItem { Header = header };
+        mi.Click += (_, _) => onClick();
+        return mi;
+    }
+
+    public static Border Card(Control child, double pad = 12)
+        => new Border
+        {
+            Child = child,
+            Padding = new Thickness(pad),
+            CornerRadius = new CornerRadius(6),
+            BorderThickness = new Thickness(1),
+        }.Dyn(Border.BackgroundProperty, "ColorSurface").Dyn(Border.BorderBrushProperty, "ColorBorder");
+}

@@ -1,0 +1,337 @@
+﻿using System.IO.Compression;
+using System.Text.Json;
+using LibGit2Sharp;
+using Historia.Services.Storage;
+
+namespace Historia.Services.Graph;
+
+/// <summary>
+/// On-disk persistence of the raw graph walk (commits + decorations) keyed by a fingerprint of
+/// the repo's refs. A hit skips the whole libgit2 revwalk on the next launch — only
+/// <see cref="DagLayoutEngine.Compute"/> (~tens of ms) still runs. Cached only for the plain
+/// all-refs, no-path-filter, no-stashes query; anything else re-walks.
+/// </summary>
+internal sealed class GraphWalkCache
+{
+    private const int Version = 2;
+    private const int MaxFiles = 40;
+
+    private static readonly JsonSerializerOptions Json = new() { IncludeFields = false };
+
+    // The optimistic snapshot (TryLoadStale) and the real, fingerprint-verified load (TryLoad)
+    // read the same file within moments of each other during a tab's first paint -- on a large
+    // repo that's a second, fully redundant multi-hundred-ms disk read + JSON deserialize of a
+    // file nothing could have written to in between (the walk that would rewrite it hasn't even
+    // started yet). Cache the raw DTO briefly per repo so the second reader gets it for free, and
+    // separately cache the CONVERTED Loaded (ToLoaded is its own real cost -- allocating a
+    // RawCommit per commit -- and both callers use the same metadataOnDisk value in the common
+    // case, so converting a ~100k-commit history twice back to back is pure waste, and appears to
+    // provoke extra GC pauses that make the second conversion look even slower than the first). A
+    // short TTL bounds how long a result could theoretically go unnoticed if something else ever
+    // reads this cache long after these two calls. Only successful reads are cached — a miss
+    // isn't worth remembering and must never mask a save that lands moments later.
+    private static readonly TimeSpan ReadCacheTtl = TimeSpan.FromSeconds(5);
+
+    private sealed class CachedRead
+    {
+        public required CacheFile Dto;
+        public required long Timestamp;
+        public Loaded? ConvertedMetadataOnDisk;
+        public Loaded? ConvertedFull;
+    }
+
+    private readonly Dictionary<string, CachedRead> _readCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _readCacheSync = new();
+
+    public sealed record Loaded(
+        List<RawCommit> Commits,
+        Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Decorations,
+        bool Exhausted);
+
+    public static bool Supports(GraphQuery query) =>
+        query.RefScope == GraphRefScope.AllRefs
+        && string.IsNullOrEmpty(query.PathFilter)
+        && !query.IncludeStashes;
+
+    /// <param name="metadataOnDisk">§7.6: when true the per-commit strings are served from the
+    /// paged <c>DiskCommitStore</c>, so a warm load only needs id + parent count here — skip
+    /// materialising the message/author/email text for a whole huge history.</param>
+    public Loaded? TryLoad(string repoPath, GraphQuery query, int wantCount, long fingerprint, bool metadataOnDisk = false)
+    {
+        if (!Supports(query))
+            return null;
+
+        CachedRead? entry;
+        using (Historia.Diagnostics.PerfLog.Scope("TryLoad ReadFile"))
+            entry = GetCachedRead(repoPath);
+        var dto = entry?.Dto;
+        if (dto is null
+            || dto.Fingerprint != fingerprint
+            || dto.IncludeRemoteBranches != query.IncludeRemoteBranches)
+            return null;
+
+        // Enough rows? Either the whole history is here, or it already holds what we need.
+        if (!dto.Exhausted && dto.Commits.Count < wantCount)
+            return null;
+
+        using (Historia.Diagnostics.PerfLog.Scope("TryLoad ToLoaded"))
+            return GetOrConvert(entry!, metadataOnDisk);
+    }
+
+    /// <summary>
+    /// v8.2: loads the cached walk WITHOUT checking it still matches the repo's current refs —
+    /// for an optimistic first paint the caller shows immediately, before the fresh ref-
+    /// fingerprint check (which needs a full <c>repo.Refs.ToList()</c> enumeration) even
+    /// completes. The result may be momentarily stale: a branch moved, a new commit landed, or
+    /// history was rewritten since the file was written. The caller is responsible for treating
+    /// this as provisional and replacing it with the real, fingerprint-verified layout once that
+    /// finishes — this method never substitutes for <see cref="TryLoad"/>, only precedes it.
+    /// </summary>
+    public Loaded? TryLoadStale(string repoPath, GraphQuery query, bool metadataOnDisk = false)
+    {
+        if (!Supports(query))
+            return null;
+
+        var entry = GetCachedRead(repoPath);
+        var dto = entry?.Dto;
+        if (dto is null || dto.IncludeRemoteBranches != query.IncludeRemoteBranches || dto.Commits.Count == 0)
+            return null;
+
+        return GetOrConvert(entry!, metadataOnDisk);
+    }
+
+    private CachedRead? GetCachedRead(string repoPath)
+    {
+        lock (_readCacheSync)
+        {
+            if (_readCache.TryGetValue(repoPath, out var cached)
+                && System.Diagnostics.Stopwatch.GetElapsedTime(cached.Timestamp) < ReadCacheTtl)
+                return cached;
+        }
+
+        var dto = ReadFileFromDisk(repoPath);
+        if (dto is null)
+            return null;
+
+        var entry = new CachedRead { Dto = dto, Timestamp = System.Diagnostics.Stopwatch.GetTimestamp() };
+        lock (_readCacheSync)
+            _readCache[repoPath] = entry;
+        return entry;
+    }
+
+    /// <summary>Converts (and caches) exactly once per distinct <paramref name="metadataOnDisk"/>
+    /// value for this cached read -- the optimistic snapshot and the real load both convert the
+    /// same DTO, and in the common case (metadata-from-disk paging off) with the same flag, so
+    /// the second caller gets the already-built commit list for free instead of re-allocating one
+    /// per commit in a multi-hundred-thousand-commit history a second time.</summary>
+    private static Loaded GetOrConvert(CachedRead entry, bool metadataOnDisk)
+    {
+        lock (entry)
+        {
+            if (metadataOnDisk)
+                return entry.ConvertedMetadataOnDisk ??= ToLoaded(entry.Dto, metadataOnDisk: true);
+            return entry.ConvertedFull ??= ToLoaded(entry.Dto, metadataOnDisk: false);
+        }
+    }
+
+    private static CacheFile? ReadFileFromDisk(string repoPath)
+    {
+        try
+        {
+            var path = FileFor(repoPath);
+            if (!File.Exists(path))
+                return null;
+
+            using var fs = File.OpenRead(path);
+            using var gz = new GZipStream(fs, CompressionMode.Decompress);
+            var dto = JsonSerializer.Deserialize<CacheFile>(gz, Json);
+            return dto?.Version == Version ? dto : null;
+        }
+        catch
+        {
+            return null; // any corruption → treat as a miss
+        }
+    }
+
+    private static Loaded ToLoaded(CacheFile dto, bool metadataOnDisk)
+    {
+        var commits = new List<RawCommit>(dto.Commits.Count);
+        foreach (var c in dto.Commits)
+        {
+            var parents = new ObjectId[c.Parents.Length];
+            for (var i = 0; i < parents.Length; i++)
+                parents[i] = new ObjectId(c.Parents[i]);
+            var id = new ObjectId(c.Id);
+            commits.Add(new RawCommit(id, parents, metadataOnDisk
+                ? new CommitMetadata
+                {
+                    Id = id,
+                    MessageShort = "", AuthorName = "", AuthorEmail = "",
+                    AuthorWhen = default, CommitWhen = default,
+                    ParentCount = c.ParentCount,
+                }
+                : new CommitMetadata
+                {
+                    Id = id,
+                    MessageShort = c.MessageShort,
+                    AuthorName = c.AuthorName,
+                    AuthorEmail = c.AuthorEmail,
+                    AuthorWhen = c.AuthorWhen,
+                    CommitWhen = c.CommitWhen,
+                    ParentCount = c.ParentCount,
+                }));
+        }
+
+        var decos = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>(dto.Decorations.Count);
+        foreach (var (sha, list) in dto.Decorations)
+            decos[new ObjectId(sha)] = list.Select(FromDto).ToArray();
+
+        return new Loaded(commits, decos, dto.Exhausted);
+    }
+
+    /// <summary>Deletes every persisted walk file (and any leftover temp files), plus the
+    /// disk-backed metadata store (§7.6). Returns the count.</summary>
+    public int WipeAll()
+    {
+        lock (_readCacheSync)
+            _readCache.Clear();
+
+        var n = 0;
+        try
+        {
+            var dir = new DirectoryInfo(AppPaths.CacheDirectory);
+            if (!dir.Exists)
+                return GraphMetaStore.Wipe();
+            foreach (var f in dir.GetFiles("graph-*.json.gz").Concat(dir.GetFiles("*.tmp")))
+            {
+                try { f.Delete(); n++; } catch { /* skip locked */ }
+            }
+        }
+        catch { }
+        return n + GraphMetaStore.Wipe();
+    }
+
+    public void Save(
+        string repoPath, GraphQuery query, long fingerprint, bool exhausted,
+        IReadOnlyList<RawCommit> commits,
+        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations)
+    {
+        if (!Supports(query))
+            return;
+
+        try
+        {
+            Directory.CreateDirectory(AppPaths.CacheDirectory);
+
+            var dto = new CacheFile
+            {
+                Version = Version,
+                Fingerprint = fingerprint,
+                IncludeRemoteBranches = query.IncludeRemoteBranches,
+                Exhausted = exhausted,
+                Commits = commits.Select(c => new CommitDto
+                {
+                    Id = c.Id.Sha,
+                    Parents = c.ParentIds.Select(p => p.Sha).ToArray(),
+                    MessageShort = c.Metadata.MessageShort,
+                    AuthorName = c.Metadata.AuthorName,
+                    AuthorEmail = c.Metadata.AuthorEmail,
+                    AuthorWhen = c.Metadata.AuthorWhen,
+                    CommitWhen = c.Metadata.CommitWhen,
+                    ParentCount = c.Metadata.ParentCount,
+                }).ToList(),
+                Decorations = decorations.ToDictionary(
+                    kv => kv.Key.Sha,
+                    kv => kv.Value.Select(ToDto).ToList()),
+            };
+
+            var dest = FileFor(repoPath);
+            var tmp = $"{dest}.{Guid.NewGuid():N}.tmp";
+            using (var fs = File.Create(tmp))
+            using (var gz = new GZipStream(fs, CompressionLevel.Fastest))
+                JsonSerializer.Serialize(gz, dto, Json);
+            File.Move(tmp, dest, overwrite: true);
+
+            // The on-disk file just changed under this path -- drop the cached read so a later
+            // TryLoad/TryLoadStale within the TTL window doesn't hand back the pre-save DTO.
+            lock (_readCacheSync)
+                _readCache.Remove(repoPath);
+
+            Prune();
+        }
+        catch { /* cache write is best-effort */ }
+    }
+
+    private static void Prune()
+    {
+        try
+        {
+            var dir = new DirectoryInfo(AppPaths.CacheDirectory);
+
+            foreach (var f in dir.GetFiles("graph-*.json.gz")
+                         .OrderByDescending(f => f.LastWriteTimeUtc)
+                         .Skip(MaxFiles))
+                f.Delete();
+
+            // Orphaned temp files from an interrupted write.
+            foreach (var f in dir.GetFiles("*.tmp"))
+                if (DateTime.UtcNow - f.LastWriteTimeUtc > TimeSpan.FromHours(1))
+                    f.Delete();
+        }
+        catch { }
+    }
+
+    // Case-fold only where the filesystem does. TODO: revisit — a case-insensitive macOS
+    // volume would also want folding, but IsWindows is the cheap 99% correct proxy.
+    private static string FileFor(string repoPath) => GraphCachePaths.File(repoPath, ".json.gz");
+
+    private static DecoDto ToDto(GraphDecorationInput d) => new()
+    {
+        Type = (int)d.Type,
+        Label = d.Label,
+        IsLocal = d.IsLocal,
+        Remotes = d.Remotes,
+        IsHead = d.IsHead,
+        Siblings = d.Siblings?.Select(ToDto).ToList(),
+    };
+
+    private static GraphDecorationInput FromDto(DecoDto d) => new(
+        (DecorationType)d.Type,
+        d.Label,
+        d.IsLocal,
+        d.Remotes,
+        d.IsHead,
+        d.Siblings?.Select(FromDto).ToArray());
+
+    private sealed class CacheFile
+    {
+        public int Version { get; set; }
+        public long Fingerprint { get; set; }
+        public bool IncludeRemoteBranches { get; set; }
+        public bool Exhausted { get; set; }
+        public List<CommitDto> Commits { get; set; } = [];
+        public Dictionary<string, List<DecoDto>> Decorations { get; set; } = [];
+    }
+
+    private sealed class CommitDto
+    {
+        public string Id { get; set; } = "";
+        public string[] Parents { get; set; } = [];
+        public string MessageShort { get; set; } = "";
+        public string AuthorName { get; set; } = "";
+        public string AuthorEmail { get; set; } = "";
+        public DateTimeOffset AuthorWhen { get; set; }
+        public DateTimeOffset CommitWhen { get; set; }
+        public int ParentCount { get; set; }
+    }
+
+    private sealed class DecoDto
+    {
+        public int Type { get; set; }
+        public string Label { get; set; } = "";
+        public bool IsLocal { get; set; }
+        public string[]? Remotes { get; set; }
+        public bool IsHead { get; set; }
+        public List<DecoDto>? Siblings { get; set; }
+    }
+}

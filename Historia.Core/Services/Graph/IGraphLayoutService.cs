@@ -1,0 +1,56 @@
+using Historia.Services.Workspace;
+
+namespace Historia.Services.Graph;
+
+/// <summary>Result of a layout call: the layout, the opaque allocator state (§7.8), and the ref fingerprint.</summary>
+public sealed record GraphLayoutResult(GraphLayout Layout, GraphLayoutState State, long Fingerprint = 0);
+
+/// <summary>
+/// Computes the visual commit-graph layout for a repository (§7.8). Runs entirely on a
+/// background thread and accesses the repository only through the owning
+/// <see cref="RepositoryContext"/>'s gate (§6.3.1). Registered as a singleton.
+/// </summary>
+public interface IGraphLayoutService
+{
+    /// <summary>Computes the layout for the first <paramref name="maxRows"/> rows.</summary>
+    Task<GraphLayoutResult> ComputeLayoutAsync(
+        RepositoryContext context, GraphQuery query, int maxRows = 10_000, CancellationToken ct = default);
+
+    /// <summary>
+    /// v8.2: an optimistic first paint from the last on-disk walk cache for this repo, skipping
+    /// the ref-fingerprint check (and its full <c>repo.Refs.ToList()</c> enumeration) that
+    /// <see cref="ComputeLayoutAsync"/> must otherwise pay before returning anything — a plain
+    /// file read + JSON deserialize instead. The result may be momentarily stale (a branch
+    /// moved, a new commit landed, or history was rewritten since the file was written); the
+    /// caller must still run <see cref="ComputeLayoutAsync"/> and replace this layout once that
+    /// completes. Returns null on any miss: no cached file, an unsupported query, or this
+    /// context already has an in-memory walk (nothing stale left to shortcut).
+    /// </summary>
+    GraphLayoutResult? TryOptimisticSnapshot(RepositoryContext context, GraphQuery query, int maxRows);
+
+    /// <summary>
+    /// Continues the walk from where <paramref name="existing"/> left off, appending up to
+    /// <paramref name="additionalRows"/> rows. Lane indices already assigned are never
+    /// renumbered.
+    /// </summary>
+    Task<GraphLayoutResult> ExtendLayoutAsync(
+        RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default);
+
+    /// <summary>
+    /// Recomputes the layout after a history change (§7.3 invalidation table). Appended commits
+    /// recompute from row 0 to the first unchanged row; every other change recomputes the whole
+    /// window.
+    /// </summary>
+    Task<GraphLayoutResult> RecomputeAsync(
+        RepositoryContext context, GraphQuery query, GraphLayoutResult previous,
+        InvalidationReason reason, int maxRows = 10_000, CancellationToken ct = default);
+
+    /// <summary>Drops any cached walk for a context (called when its tab closes).</summary>
+    void Forget(RepositoryContext context);
+
+    /// <summary>
+    /// Deletes the on-disk persisted graph walk and drops the in-memory decoration caches.
+    /// The next graph open re-walks from scratch. Returns the number of files removed.
+    /// </summary>
+    int ClearPersistentCache();
+}
