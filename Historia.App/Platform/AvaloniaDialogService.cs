@@ -380,8 +380,9 @@ internal static class CloneDialog
             Spacing = 8,
             Margin = new Thickness(0, 20, 0, 0),
         };
-        buttons.Children.Add(cancel);
+        // Cancel is always the rightmost button (matches SimpleDialog).
         buttons.Children.Add(confirm);
+        buttons.Children.Add(cancel);
 
         var panel = new StackPanel { Margin = new Thickness(20) };
         panel.Children.Add(Label("Remote URL"));
