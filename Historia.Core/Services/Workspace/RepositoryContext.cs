@@ -104,7 +104,7 @@ public sealed class RepositoryContext : IAsyncDisposable
     public static RepositoryContext Open(string path, IServiceProvider services)
     {
         using var _ = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.Open({Path.GetFileName(path)})");
-        using var _log = AppLog.Operation("repo", $"Open({Path.GetFileName(path)})");
+        using var _log = AppLog.Operation("repo", $"Open({Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))})");
         var discovered = Repository.Discover(path)
             ?? throw new RepositoryNotFoundException($"No Git repository found at or above '{path}'.");
         var repo = new Repository(discovered);
