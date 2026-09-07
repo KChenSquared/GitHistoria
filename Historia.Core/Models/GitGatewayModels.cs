@@ -35,6 +35,11 @@ public sealed record GitFetchOptions
     public bool Prune { get; init; }
     public bool Tags { get; init; }
     public bool All { get; init; }
+
+    /// <summary>§12.1: this fetch is an auto-fetch, not a user-initiated one. Routing must not
+    /// raise the switch-to-Local-config fallback (that prompt is user-ops only, §13.1); the
+    /// caller swallows failures quietly.</summary>
+    public bool Background { get; init; }
 }
 
 public sealed record GitPullOptions

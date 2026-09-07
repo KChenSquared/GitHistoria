@@ -276,7 +276,7 @@ public sealed class GitGateway(
         if (options.Prune) args.Add("--prune");
         if (options.Tags) args.Add("--tags");
 
-        await RunNetworkAsync(args, "Fetch", options.All ? null : remote, progress, ct).ConfigureAwait(false);
+        await RunNetworkAsync(args, "Fetch", options.All ? null : remote, progress, ct, options.Background).ConfigureAwait(false);
     }
 
     public async Task PullAsync(string remote, string branch, GitPullOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default)
@@ -317,7 +317,7 @@ public sealed class GitGateway(
 
     private async Task RunNetworkAsync(
         IReadOnlyList<string> args, string operation, string? remote,
-        IProgress<GitProgress>? progress, CancellationToken ct)
+        IProgress<GitProgress>? progress, CancellationToken ct, bool background = false)
     {
         string? remoteUrl = null;
         if (remote is not null)
@@ -373,8 +373,9 @@ public sealed class GitGateway(
         }
 
         // Every transport failed. Offer the Local-config fallback when a profile (not
-        // *Local config*) is the active selection (§13.1).
-        if (context.ActiveProfile is not null)
+        // *Local config*) is the active selection (§13.1) — never for a background auto-fetch,
+        // whose caller has no user to prompt (§12.1).
+        if (context.ActiveProfile is not null && !background)
         {
             throw new HistoriaGitException(lastError!.Kind, lastError.Message, lastError.Details)
             {
