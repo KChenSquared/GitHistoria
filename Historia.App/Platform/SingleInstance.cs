@@ -1,4 +1,7 @@
-﻿namespace Historia.Platform;
+﻿using System.Security.AccessControl;
+using System.Security.Principal;
+
+namespace Historia.Platform;
 
 /// <summary>
 /// Single-instance guard (§3). The first process to start holds a named mutex and runs a tiny
@@ -9,8 +12,23 @@
 /// </summary>
 internal static class SingleInstance
 {
-    private const string MutexName = @"Local\Historia.SingleInstance.Mutex";
+    // Global\, not Local\: a named pipe has no per-session namespace at all (unlike Mutex/Event/
+    // Semaphore, it always lives in the single machine-wide Npfs namespace), so a Local\ mutex
+    // here left the two objects in different scopes. In a second Windows session (fast user
+    // switching, two RDP sessions) that meant TryAcquirePrimary in session B always succeeded —
+    // its own Local\ mutex was unclaimed — while RunServerAsync's pipe bind failed forever
+    // because session A's Historia already owns the (machine-global) pipe name; B then spun
+    // retrying that bind every 200ms and never received forwarded launches. Global\ matches what
+    // this guard is actually protecting: one Historia per Windows user account, machine-wide,
+    // since %LOCALAPPDATA% (settings.json / profiles.json / session.json) is per-user, not
+    // per-session — the same account logged in twice must still resolve to a single writer.
+    private const string MutexName = @"Global\Historia.SingleInstance.Mutex";
     private const string PipeName = "Historia.SingleInstance.Pipe";
+
+    /// <summary>Consecutive pipe-bind failures in <see cref="RunServerAsync"/> before it gives up
+    /// rather than retrying forever — degrading to "no forwarding, act as a lone instance" per
+    /// this class's own stated policy.</summary>
+    private const int MaxConsecutiveServerFailures = 10;
 
     // Held for the process lifetime so the name stays claimed; never released explicitly (the
     // OS frees it on exit, and an abandoned mutex from a crash is reclaimable by the next launch).
@@ -139,12 +157,12 @@ internal static class SingleInstance
     /// </summary>
     public static async Task RunServerAsync(Action<string[]> onArgs, CancellationToken ct)
     {
+        var consecutiveFailures = 0;
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                using var server = new NamedPipeServerStream(
-                    PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                using var server = CreateServer();
                 await server.WaitForConnectionAsync(ct).ConfigureAwait(false);
 
                 using var r = new StreamReader(server);
@@ -154,6 +172,7 @@ internal static class SingleInstance
                     lines.Add(line);
 
                 onArgs(lines.ToArray());
+                consecutiveFailures = 0;
             }
             catch (OperationCanceledException)
             {
@@ -161,9 +180,35 @@ internal static class SingleInstance
             }
             catch
             {
-                // A malformed client must not kill the listener; accept the next one.
+                // A malformed client, or a bind failure, must not kill the listener outright —
+                // but a bind failure that never clears (e.g. another process/session holding the
+                // pipe name — see the MutexName/PipeName comment) used to retry forever, 5 times
+                // a second, for the life of the process. Give up after a bounded run of failures
+                // and act as a lone instance, per this class's own stated degrade policy.
+                if (++consecutiveFailures >= MaxConsecutiveServerFailures)
+                    return;
                 try { await Task.Delay(200, ct).ConfigureAwait(false); } catch { return; }
             }
         }
+    }
+
+    /// <summary>Builds the listener pipe, restricted on Windows to the current user via an
+    /// explicit ACL — without one, any user on the machine could connect and hand this listener
+    /// arguments that get opened and bring the window forward.</summary>
+    private static NamedPipeServerStream CreateServer()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var security = new PipeSecurity();
+            var self = WindowsIdentity.GetCurrent().User;
+            if (self is not null)
+                security.AddAccessRule(new PipeAccessRule(self, PipeAccessRights.ReadWrite, AccessControlType.Allow));
+
+            return NamedPipeServerStreamAcl.Create(
+                PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous,
+                inBufferSize: 0, outBufferSize: 0, pipeSecurity: security);
+        }
+
+        return new NamedPipeServerStream(PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
     }
 }
