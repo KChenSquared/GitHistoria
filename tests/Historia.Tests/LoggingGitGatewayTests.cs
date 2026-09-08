@@ -20,8 +20,14 @@ public sealed class LoggingGitGatewayTests : IDisposable
         _dir.Dispose();
     }
 
-    private string SessionText() =>
-        File.ReadAllText(Directory.GetFiles(AppPaths.LogsDirectory, "dev-*.log").Single());
+    /// <summary>Disables logging first — the session writer now holds the file open for the
+    /// whole session (§findings: no more open/close per line), so the handle must be closed
+    /// before a second reader can open the same file.</summary>
+    private string SessionText()
+    {
+        AppLog.Enabled = false;
+        return File.ReadAllText(Directory.GetFiles(AppPaths.LogsDirectory, "dev-*.log").Single());
+    }
 
     [Fact]
     public async Task Delegates_and_returns_the_inner_result()

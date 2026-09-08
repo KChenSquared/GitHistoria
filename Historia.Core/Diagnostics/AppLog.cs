@@ -25,6 +25,14 @@ public static partial class AppLog
     private static bool _enabled;
     private static string? _sessionPath;
 
+    /// <summary>The session file, held open for as long as logging is enabled. Every previous
+    /// version reopened, seeked-to-end, wrote, and closed the file on *every single entry* — a
+    /// full file-open cycle per gateway call / CLI invocation, all serialised on <see cref="Gate"/>,
+    /// which both slowed down the very operations being timed and let logging contention distort
+    /// the numbers it existed to record. Kept with auto-flush on, so each line still reaches disk
+    /// immediately without paying for a close+reopen.</summary>
+    private static StreamWriter? _writer;
+
     static AppLog()
     {
         try
@@ -64,6 +72,7 @@ public static partial class AppLog
                     WriteLineLocked($"{Stamp()}  INFO   [app]  logging stopped");
                     _enabled = false;
                     _sessionPath = null;
+                    CloseWriterLocked();
                 }
             }
         }
@@ -108,6 +117,7 @@ public static partial class AppLog
         {
             _enabled = false;
             _sessionPath = null;
+            CloseWriterLocked();
         }
     }
 
@@ -119,13 +129,42 @@ public static partial class AppLog
         Directory.CreateDirectory(dir);
         PruneLocked(dir);
 
+        CloseWriterLocked(); // in case a session was already open (Enabled toggled off/on rapidly)
+
         _sessionPath = Path.Combine(dir, $"dev-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+        try
+        {
+            // FileShare.Read explicitly: unlike File.AppendAllText's close-after-every-write,
+            // this handle stays open for the whole session, so anything that wants to read the
+            // file while it's live — "Open logs folder" + a text editor, `Get-Content -Wait` —
+            // must still be able to open it for read concurrently.
+            var stream = new FileStream(_sessionPath, FileMode.Append, FileAccess.Write, FileShare.Read);
+            // No-BOM, matching what File.AppendAllText (the old per-line writer) used — a BOM
+            // partway through an appended file would be wrong anyway.
+            _writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+            {
+                AutoFlush = true,
+            };
+        }
+        catch
+        {
+            // Can't open the file — WriteLineLocked below (and every later call) becomes a
+            // silent no-op via the null check, same as any other diagnostics failure.
+            _writer = null;
+        }
         _enabled = true;
 
         var asm = typeof(AppLog).Assembly.GetName();
         WriteLineLocked($"# Historia developer log — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         WriteLineLocked($"# {asm.Name} {asm.Version}  |  {RuntimeInformation.OSDescription}  |  pid {Environment.ProcessId}");
         WriteLineLocked($"{Stamp()}  INFO   [app]  logging started");
+    }
+
+    private static void CloseWriterLocked()
+    {
+        try { _writer?.Dispose(); }
+        catch { /* best effort */ }
+        _writer = null;
     }
 
     private static void PruneLocked(string dir)
@@ -146,9 +185,9 @@ public static partial class AppLog
 
     private static void WriteLineLocked(string line)
     {
-        if (_sessionPath is null)
+        if (_writer is null)
             return;
-        try { File.AppendAllText(_sessionPath, line + Environment.NewLine); }
+        try { _writer.WriteLine(line); }
         catch { /* disk full / permission — drop the line */ }
     }
 
