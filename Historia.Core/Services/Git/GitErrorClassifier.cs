@@ -71,7 +71,13 @@ public static class GitErrorClassifier
             "cannot pull with rebase: you have unstaged changes",
             "your local changes to the following files would be overwritten",
         ]),
-        (GitErrorKind.LockedIndex, ["index.lock", "unable to create", "another git process seems to be running"]),
+        // "unable to create" used to be a needle here too, but git also uses that exact phrase
+        // for ordinary filesystem failures unrelated to a lock — e.g. "unable to create file
+        // src/x.cs: Permission denied" during a checkout with a build holding the file open, or
+        // into a directory the user cannot write. That sent an unrelated permission error to the
+        // "another git process is running, check for a stale index.lock" message. index.lock and
+        // the process-running message are both unambiguous on their own; keep only those.
+        (GitErrorKind.LockedIndex, ["index.lock", "another git process seems to be running"]),
         (GitErrorKind.NotAGitRepository, ["not a git repository"]),
         (GitErrorKind.LfsMissing, ["git-lfs", "this repository is configured for git lfs but"]),
         (GitErrorKind.UnrelatedHistories, ["refusing to merge unrelated histories"]),
