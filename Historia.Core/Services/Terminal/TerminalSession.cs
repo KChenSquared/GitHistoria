@@ -31,6 +31,7 @@ public sealed class TerminalSession : IDisposable
     private long[] _rowHashes = [];
     private readonly HashSet<int> _dirtyRows = [];
     private bool _bufferDirtyPending;
+    private bool _coalesceTimerArmed;
     private int _disposed;
 
     public Guid Id { get; } = Guid.NewGuid();
@@ -296,7 +297,16 @@ public sealed class TerminalSession : IDisposable
         lock (_gate)
         {
             _bufferDirtyPending = true;
+
+            // Called once per pty chunk — under heavy output that's thousands of calls a
+            // second. Only the first call in a coalescing window needs to reach the UI thread
+            // at all; the timer itself is what actually gates the render, and re-posting once
+            // per chunk while a window is already open just floods the dispatcher queue.
+            if (_coalesceTimerArmed)
+                return;
+            _coalesceTimerArmed = true;
         }
+
         _dispatcher.Post(() =>
         {
             if (Volatile.Read(ref _disposed) == 0)
@@ -311,6 +321,7 @@ public sealed class TerminalSession : IDisposable
         {
             raise = _bufferDirtyPending;
             _bufferDirtyPending = false;
+            _coalesceTimerArmed = false;
         }
         _coalesceTimer.Stop();
         if (raise)

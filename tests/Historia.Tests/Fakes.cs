@@ -34,6 +34,57 @@ public sealed class ImmediateUiDispatcher : IUiDispatcher
     }
 }
 
+/// <summary>Queues <see cref="Post"/> actions and the timer's <c>Start</c>/<c>Stop</c> calls
+/// instead of running anything inline, so a test can control exactly when each fires and count
+/// how many were queued in between — the thing <see cref="ImmediateUiDispatcher"/> can't show,
+/// since it collapses a whole Post→Start→tick chain into one synchronous call.</summary>
+public sealed class RecordingUiDispatcher : IUiDispatcher
+{
+    private readonly Queue<Action> _posted = new();
+
+    public int PostCount { get; private set; }
+
+    public bool CheckAccess() => true;
+
+    public void Post(Action action)
+    {
+        PostCount++;
+        _posted.Enqueue(action);
+    }
+
+    /// <summary>Runs every queued post, in order, until none remain (a post can itself queue
+    /// another — e.g. the terminal session's Start() call queues nothing further today, but
+    /// draining to a fixed point keeps the helper honest either way).</summary>
+    public void DrainPosted()
+    {
+        while (_posted.Count > 0)
+            _posted.Dequeue()();
+    }
+
+    /// <summary>The most recently created timer — a session creates exactly one.</summary>
+    public ManualTimer? LastTimer { get; private set; }
+
+    public IUiTimer CreateTimer(TimeSpan interval, Action tick) => LastTimer = new ManualTimer(tick);
+
+    /// <summary>A timer that only ticks when the test calls <see cref="Fire"/> — <c>Start</c>
+    /// and <c>Stop</c> just record the running state.</summary>
+    public sealed class ManualTimer(Action tick) : IUiTimer
+    {
+        public bool IsRunning { get; private set; }
+        public int StartCount { get; private set; }
+
+        public void Start()
+        {
+            StartCount++;
+            IsRunning = true;
+        }
+
+        public void Stop() => IsRunning = false;
+        public void Dispose() => IsRunning = false;
+        public void Fire() => tick();
+    }
+}
+
 /// <summary>A scripted <see cref="IPtyConnection"/>: records writes/resizes, replays bytes on
 /// demand, and exits with a chosen code. Drives every terminal test (V5 §3.1).</summary>
 public sealed class FakePtyConnection : IPtyConnection
