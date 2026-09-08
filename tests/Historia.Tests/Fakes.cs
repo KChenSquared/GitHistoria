@@ -167,3 +167,22 @@ public sealed class NoGitCli : IGitCliService
     public Task<GitCliResult> RunAsync(GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default)
         => RunAsync(request, ct);
 }
+
+/// <summary>Records every invocation and reports success without touching a real process —
+/// for asserting exactly which git commands a gateway operation issued.</summary>
+public sealed class RecordingGitCliService : IGitCliService
+{
+    public List<GitCliRequest> Requests { get; } = [];
+
+    public bool IsGitAvailable => true;
+
+    public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default)
+        => RunAsync(request, progress: null, onStdoutLine: null, ct);
+
+    public Task<GitCliResult> RunAsync(
+        GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default)
+    {
+        Requests.Add(request);
+        return Task.FromResult(new GitCliResult(0, "", "", GitErrorKind.None, TimeSpan.Zero));
+    }
+}
