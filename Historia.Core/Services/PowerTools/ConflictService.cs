@@ -121,17 +121,41 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             var remotePath = WriteTemp(temp, "REMOTE", conflict.TheirsContent);
             var mergedPath = Path.Combine(context.RepositoryPath, filePath);
 
-            var cmd = tool
-                .Replace("$BASE", Quote(basePath)).Replace("$LOCAL", Quote(localPath))
-                .Replace("$REMOTE", Quote(remotePath)).Replace("$MERGED", Quote(mergedPath));
+            // Tokenize the configured command line ourselves and launch the executable directly
+            // — never through a shell. Routing the substituted command through "cmd.exe /c" used
+            // to double-escape any path with spaces: ArgumentList quotes an entry containing
+            // spaces and escapes its internal quotes as \", which cmd.exe does not understand
+            // (it uses ^ and its own /c quoting rule), so a path like the ones this substitutes
+            // — every one of which is pre-wrapped in quotes by the old Quote() helper — always
+            // reached cmd.exe mangled. Passing each token through ArgumentList against the real
+            // executable lets the runtime's own Win32 escaping do its job once, correctly, and
+            // needs no OS check either (no shell-specific syntax is involved).
+            var tokens = Tokenize(tool);
+            if (tokens.Count == 0)
+                return false; // an empty/whitespace-only configured tool — nothing to launch
 
-            var psi = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true };
-            psi.ArgumentList.Add("/c");
-            psi.ArgumentList.Add(cmd);
-            using var process = Process.Start(psi);
+            string Expand(string token) => token
+                .Replace("$BASE", basePath).Replace("$LOCAL", localPath)
+                .Replace("$REMOTE", remotePath).Replace("$MERGED", mergedPath);
+
+            var psi = new ProcessStartInfo(Expand(tokens[0])) { UseShellExecute = false, CreateNoWindow = true };
+            foreach (var token in tokens.Skip(1))
+                psi.ArgumentList.Add(Expand(token));
+
+            Process? process;
+            try
+            {
+                process = Process.Start(psi);
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                return false; // the configured tool's executable could not be found/started
+            }
             if (process is null)
                 return false;
-            await process.WaitForExitAsync(ct).ConfigureAwait(false);
+
+            using (process)
+                await process.WaitForExitAsync(ct).ConfigureAwait(false);
 
             var merged = await File.ReadAllTextAsync(mergedPath, ct).ConfigureAwait(false);
             return !merged.Contains("<<<<<<<", StringComparison.Ordinal);
@@ -273,5 +297,44 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         return path;
     }
 
-    private static string Quote(string s) => s.Contains(' ') ? $"\"{s}\"" : s;
+    /// <summary>
+    /// Splits a user-configured external-tool command line ("<c>"C:\Tool\t.exe" $LOCAL
+    /// $REMOTE</c>") into its executable and argument tokens, honouring double-quoted segments
+    /// (the quotes are consumed, not kept) so a quoted path with spaces stays one token. This is
+    /// deliberately simpler than full Win32 command-line parsing (no escaped-quote handling) —
+    /// good enough for the tool strings users actually type, and paired with
+    /// <see cref="ProcessStartInfo.ArgumentList"/> at the call site so the runtime's own,
+    /// correct escaping is what the child process actually sees — never a shell's.
+    /// </summary>
+    /// <summary>Internal for a direct test seam (Historia.Tests).</summary>
+    internal static List<string> Tokenize(string commandLine)
+    {
+        var tokens = new List<string>();
+        var current = new StringBuilder();
+        var inQuotes = false;
+
+        foreach (var ch in commandLine)
+        {
+            if (ch == '"')
+            {
+                inQuotes = !inQuotes;
+                continue;
+            }
+            if (!inQuotes && char.IsWhiteSpace(ch))
+            {
+                if (current.Length > 0)
+                {
+                    tokens.Add(current.ToString());
+                    current.Clear();
+                }
+                continue;
+            }
+            current.Append(ch);
+        }
+
+        if (current.Length > 0)
+            tokens.Add(current.ToString());
+
+        return tokens;
+    }
 }
