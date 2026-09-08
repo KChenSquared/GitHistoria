@@ -166,7 +166,26 @@ public sealed class RepositoryContext : IAsyncDisposable
         public void Dispose()
         {
             if (Interlocked.Decrement(ref owner._selfOperationDepth) == 0)
-                _ = owner.State.RefreshAllAsync(owner.Lifetime);
+                _ = RefreshQuietlyAsync(owner);
+        }
+
+        // Fire-and-forget, so a fault here must be observed and swallowed here — otherwise it
+        // surfaces later as an unobserved TaskScheduler exception, which App.axaml.cs reports to
+        // the user as a fatal error for what can be a routine tab close mid-operation.
+        private static async Task RefreshQuietlyAsync(RepositoryContext owner)
+        {
+            try
+            {
+                await owner.State.RefreshAllAsync(owner.Lifetime).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Tab closed during the operation.
+            }
+            catch
+            {
+                // A self-operation's trailing refresh failing must not surface as a fatal error.
+            }
         }
     }
 
