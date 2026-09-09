@@ -64,9 +64,17 @@ public sealed class AvaloniaDialogService : IDialogService
         OnUi(async () => (await SimpleDialog.ShowAsync(
             Owner, title, message, prompt: false, confirmLabel, "Cancel", defaultToCancel: defaultToCancel, icon: icon)).Confirmed);
 
+    // Constitution Rule 00: the destructive-confirm contract is hard-wired here — the red
+    // triangle-alert, Cancel as the primary + Enter button (still rightmost), the confirm
+    // button left plain. A call site cannot opt out of any of it.
+    public Task<bool> ConfirmDestructiveAsync(string title, string effect, string confirmLabel) =>
+        OnUi(async () => (await SimpleDialog.ShowAsync(
+            Owner, title, effect, prompt: false, confirmLabel, "Cancel",
+            defaultToCancel: true, icon: DialogIcon.Warning)).Confirmed);
+
     public Task<int> ChooseAsync(string title, string message, IReadOnlyList<string> options,
-        int defaultIndex = 0, int destructiveIndex = -1) =>
-        OnUi(() => SimpleDialog.ShowChoiceAsync(Owner, title, message, options, defaultIndex, destructiveIndex));
+        int defaultIndex = 0, int destructiveIndex = -1, DialogIcon icon = DialogIcon.None) =>
+        OnUi(() => SimpleDialog.ShowChoiceAsync(Owner, title, message, options, defaultIndex, destructiveIndex, icon));
 
     public Task ShowMessageAsync(string title, string message) =>
         OnUi<object?>(async () =>
@@ -110,15 +118,17 @@ internal static class SimpleDialog
 {
     public readonly record struct Result(bool Confirmed, string? Text);
 
-    public static async Task<Result> ShowAsync(
-        Window? owner, string title, string message, bool prompt,
-        string confirmLabel, string? cancelLabel, string? defaultValue = null, bool defaultToCancel = false,
-        bool primaryConfirm = false, DialogIcon icon = DialogIcon.None)
+    /// <summary>The confirm / cancel button row for <see cref="ShowAsync"/>. Cancel is always
+    /// the rightmost button (Windows <c>[Action] [Cancel]</c> order); <paramref name="defaultToCancel"/>
+    /// (constitution Rule 00) additionally makes Cancel the primary (blue) + Enter button and
+    /// leaves the confirm button plain. Factored out so <c>DestructiveConfirmationTests</c> can
+    /// assert the contract without showing a window.</summary>
+    internal static (StackPanel row, Button confirm, Button? cancel) ConfirmButtonRow(
+        string confirmLabel, string? cancelLabel, bool defaultToCancel, bool primaryConfirm)
     {
-        var box = new TextBox { Text = defaultValue ?? string.Empty, Margin = new Thickness(0, 8, 0, 0) };
         var confirm = new Button { Content = confirmLabel, IsDefault = !defaultToCancel, MinWidth = 80 };
         var cancel = cancelLabel is null ? null : new Button { Content = cancelLabel, IsCancel = true, MinWidth = 80 };
-        // For an irreversible action: Cancel is the highlighted (primary / Enter) button, so a
+        // For a destructive action: Cancel is the highlighted (primary / Enter) button, so a
         // reflexive Enter or click lands on the safe choice.
         if (defaultToCancel && cancel is not null)
         {
@@ -130,34 +140,48 @@ internal static class SimpleDialog
             confirm.Classes.Add("primary");
         }
 
-        var buttons = new StackPanel
+        var row = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
             Spacing = 8,
             Margin = new Thickness(0, 16, 0, 0),
         };
-        // Cancel is always the rightmost (first-from-right) button, matching ShowChoiceAsync
-        // and the Windows [OK] [Cancel] order — a reflexive click on the corner hits Cancel.
-        buttons.Children.Add(confirm);
-        if (cancel is not null) buttons.Children.Add(cancel);
+        // Cancel is always the rightmost (first-from-right) button — a reflexive click on the
+        // corner hits Cancel. defaultToCancel changes only its styling, never its position.
+        row.Children.Add(confirm);
+        if (cancel is not null) row.Children.Add(cancel);
+        return (row, confirm, cancel);
+    }
+
+    /// <summary>The message line, optionally led by the large red <c>triangle-alert</c>
+    /// (<see cref="DialogIcon.Warning"/> — constitution Rule 00). Shared by every hand-rolled
+    /// dialog so the warning treatment is identical everywhere.</summary>
+    internal static Control MessageBlock(string message, double maxWidth, DialogIcon icon)
+    {
+        var text = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, MaxWidth = maxWidth };
+        if (icon != DialogIcon.Warning)
+            return text;
+
+        var glyph = Historia.Views.ViewKit.IconGlyphPath("triangle-alert", 30, "ColorDanger");
+        glyph.VerticalAlignment = VerticalAlignment.Top;
+        glyph.Margin = new Thickness(0, 2, 12, 0);
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        row.Children.Add(glyph);
+        row.Children.Add(text);
+        return row;
+    }
+
+    public static async Task<Result> ShowAsync(
+        Window? owner, string title, string message, bool prompt,
+        string confirmLabel, string? cancelLabel, string? defaultValue = null, bool defaultToCancel = false,
+        bool primaryConfirm = false, DialogIcon icon = DialogIcon.None)
+    {
+        var box = new TextBox { Text = defaultValue ?? string.Empty, Margin = new Thickness(0, 8, 0, 0) };
+        var (buttons, confirm, cancel) = ConfirmButtonRow(confirmLabel, cancelLabel, defaultToCancel, primaryConfirm);
 
         var panel = new StackPanel { Margin = new Thickness(20) };
-        var messageText = new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 380 };
-        if (icon == DialogIcon.Warning)
-        {
-            var glyph = Historia.Views.ViewKit.IconGlyphPath("triangle-alert", 30, "ColorDanger");
-            glyph.VerticalAlignment = VerticalAlignment.Top;
-            glyph.Margin = new Thickness(0, 2, 12, 0);
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(glyph);
-            row.Children.Add(messageText);
-            panel.Children.Add(row);
-        }
-        else
-        {
-            panel.Children.Add(messageText);
-        }
+        panel.Children.Add(MessageBlock(message, maxWidth: 380, icon));
         if (prompt) panel.Children.Add(box);
         panel.Children.Add(buttons);
 
@@ -188,12 +212,17 @@ internal static class SimpleDialog
 
     /// <summary>One button per option plus a Cancel; returns the option index, or -1.
     /// Labels stay on one line (the window widens to fit rather than trimming);
-    /// <paramref name="destructiveIndex"/> gets the red outlined "danger" styling.</summary>
+    /// <paramref name="destructiveIndex"/> gets the red outlined "danger" styling.
+    /// <para>Constitution Rule 00: when <paramref name="icon"/> is
+    /// <see cref="DialogIcon.Warning"/> the red <c>triangle-alert</c> leads the message,
+    /// <c>Cancel</c> becomes the primary / Enter button, and the <paramref name="defaultIndex"/>
+    /// option is left plain (a destructive chooser has no blue "go" button).</para></summary>
     public static async Task<int> ShowChoiceAsync(
         Window? owner, string title, string message, IReadOnlyList<string> options,
-        int defaultIndex = 0, int destructiveIndex = -1)
+        int defaultIndex = 0, int destructiveIndex = -1, DialogIcon icon = DialogIcon.None)
     {
         var tcs = new TaskCompletionSource<int>();
+        var warn = icon == DialogIcon.Warning;
 
         var buttons = new StackPanel
         {
@@ -204,7 +233,7 @@ internal static class SimpleDialog
         };
 
         var panel = new StackPanel { Margin = new Thickness(20) };
-        panel.Children.Add(new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 440 });
+        panel.Children.Add(MessageBlock(message, maxWidth: 440, icon));
         panel.Children.Add(buttons);
 
         var window = new Window
@@ -233,17 +262,25 @@ internal static class SimpleDialog
                     TextWrapping = Avalonia.Media.TextWrapping.NoWrap,
                 },
                 MinWidth = 80,
-                IsDefault = i == defaultIndex,
+                // Rule 00: in a warning chooser the safe choice (Cancel) is the Enter default,
+                // never one of the options.
+                IsDefault = !warn && i == defaultIndex,
             };
             if (i == destructiveIndex)
                 b.Classes.Add("danger");
-            else if (i == defaultIndex)
+            else if (i == defaultIndex && !warn)
                 b.Classes.Add("primary");
             b.Click += (_, _) => Pick(idx);
             buttons.Children.Add(b);
         }
 
         var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80 };
+        // Rule 00: Cancel is the primary (blue) + Enter button in a warning chooser; still rightmost.
+        if (warn)
+        {
+            cancel.IsDefault = true;
+            cancel.Classes.Add("primary");
+        }
         cancel.Click += (_, _) => Pick(-1);
         buttons.Children.Add(cancel); // rightmost
 
