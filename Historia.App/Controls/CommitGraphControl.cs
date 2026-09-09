@@ -218,7 +218,6 @@ public sealed class CommitGraphControl : Control
     private readonly Dictionary<int, SolidColorBrush> _laneFills = [];
     private readonly Dictionary<int, SolidColorBrush> _laneTicks = [];
     private readonly Dictionary<(int Tag, int Size, int WidthKey, string Text), FormattedText> _textCache = [];
-    internal int PoolMisses;
 
     private double CornerRadius => Math.Min(LaneWidth, _rowHeight) * 0.75;
 
@@ -1108,95 +1107,48 @@ public sealed class CommitGraphControl : Control
         return Rgb.FromRgb((byte)(c.R * factor), (byte)(c.G * factor), (byte)(c.B * factor));
     }
 
-    private Pen LanePen(int colorIndex)
-    {
-        if (_lanePens.TryGetValue(colorIndex, out var p))
-            return p;
-        PoolMisses++;
-        p = new Pen(new SolidColorBrush(ToColor(LaneRgb(colorIndex))), LaneStrokeWidth);
-        _lanePens[colorIndex] = p;
-        return p;
-    }
+    // §V6: every per-lane-colour Pen/Brush is memoised in its own dictionary (all cleared
+    // together by RebuildThemeResources on a theme change). One shape: look it up, else build
+    // it once and cache. The build lambda runs only on a miss.
+    private static T Pooled<T>(Dictionary<int, T> pool, int colorIndex, Func<int, T> build)
+        => pool.TryGetValue(colorIndex, out var v) ? v : pool[colorIndex] = build(colorIndex);
+
+    private Pen LanePen(int colorIndex) => Pooled(_lanePens, colorIndex,
+        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), LaneStrokeWidth));
 
     /// <summary>§V6-G2: a thin, faint version of the lane colour for a non-HEAD badge→node
     /// connector. 1 DIP at 45% alpha — the crisp, stable equivalent of "thin and faint" (a
     /// sub-pixel stroke rounds away under layout rounding).</summary>
-    private Pen FaintConnectorPen(int colorIndex)
+    private Pen FaintConnectorPen(int colorIndex) => Pooled(_faintConnectorPens, colorIndex, i =>
     {
-        if (_faintConnectorPens.TryGetValue(colorIndex, out var p))
-            return p;
-        PoolMisses++;
-        var c = LaneRgb(colorIndex);
-        p = new Pen(new SolidColorBrush(AvColor.FromArgb(0x73, c.R, c.G, c.B)), 1.0);
-        _faintConnectorPens[colorIndex] = p;
-        return p;
-    }
+        var c = LaneRgb(i);
+        return new Pen(new SolidColorBrush(AvColor.FromArgb(0x73, c.R, c.G, c.B)), 1.0);
+    });
 
-    private SolidColorBrush LaneBrush(int colorIndex)
-    {
-        if (_laneBrushes.TryGetValue(colorIndex, out var b))
-            return b;
-        PoolMisses++;
-        b = new SolidColorBrush(ToColor(LaneRgb(colorIndex)));
-        _laneBrushes[colorIndex] = b;
-        return b;
-    }
+    private SolidColorBrush LaneBrush(int colorIndex) => Pooled(_laneBrushes, colorIndex,
+        i => new SolidColorBrush(ToColor(LaneRgb(i))));
 
-    private Pen EmphPen(int colorIndex)
-    {
-        if (_emphPens.TryGetValue(colorIndex, out var p))
-            return p;
-        PoolMisses++;
-        p = new Pen(new SolidColorBrush(ToColor(LaneRgb(colorIndex))), 3.0);
-        _emphPens[colorIndex] = p;
-        return p;
-    }
+    private Pen EmphPen(int colorIndex) => Pooled(_emphPens, colorIndex,
+        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 3.0));
 
     /// <summary>§V6-G1: the badge is a solid opaque lane-colour fill, so its label and icons
     /// need ink that contrasts against that hue — near-black on a light badge, near-white on a
     /// dark one. Two shared brush instances keep <see cref="Text"/>'s cache keying correct.</summary>
-    private SolidColorBrush BadgeInk(int colorIndex)
-    {
-        if (_badgeInk.TryGetValue(colorIndex, out var b))
-            return b;
-        PoolMisses++;
-        var c = LaneRgb(colorIndex);
-        b = c.RelativeLuminance() > 0.55 ? _badgeInkDark : _badgeInkLight;
-        _badgeInk[colorIndex] = b;
-        return b;
-    }
+    private SolidColorBrush BadgeInk(int colorIndex) => Pooled(_badgeInk, colorIndex,
+        i => LaneRgb(i).RelativeLuminance() > 0.55 ? _badgeInkDark : _badgeInkLight);
 
-    private Pen PillBorder(int colorIndex)
-    {
-        if (_pillBorders.TryGetValue(colorIndex, out var p))
-            return p;
-        PoolMisses++;
-        p = new Pen(new SolidColorBrush(ToColor(LaneRgb(colorIndex))), 1.5);
-        _pillBorders[colorIndex] = p;
-        return p;
-    }
+    private Pen PillBorder(int colorIndex) => Pooled(_pillBorders, colorIndex,
+        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 1.5));
 
-    private SolidColorBrush LaneFill(int colorIndex)
+    private SolidColorBrush LaneFill(int colorIndex) => Pooled(_laneFills, colorIndex, i =>
     {
-        if (_laneFills.TryGetValue(colorIndex, out var b))
-            return b;
-        PoolMisses++;
-        var c = LaneRgb(colorIndex);
+        var c = LaneRgb(i);
         byte a = _themeMode == EffectiveTheme.Light ? (byte)0x2E : (byte)0x3A;
-        b = new SolidColorBrush(AvColor.FromArgb(a, c.R, c.G, c.B));
-        _laneFills[colorIndex] = b;
-        return b;
-    }
+        return new SolidColorBrush(AvColor.FromArgb(a, c.R, c.G, c.B));
+    });
 
-    private SolidColorBrush LaneTick(int colorIndex)
-    {
-        if (_laneTicks.TryGetValue(colorIndex, out var b))
-            return b;
-        PoolMisses++;
-        b = new SolidColorBrush(ToColor(LaneRgb(colorIndex)));
-        _laneTicks[colorIndex] = b;
-        return b;
-    }
+    private SolidColorBrush LaneTick(int colorIndex) => Pooled(_laneTicks, colorIndex,
+        i => new SolidColorBrush(ToColor(LaneRgb(i))));
 
     private int TextTag(IBrush b) =>
         ReferenceEquals(b, _text) ? 0 :
@@ -3324,7 +3276,6 @@ public sealed class CommitGraphControl : Control
         var key = (tag, (int)size, wKey, s);
         if (_textCache.TryGetValue(key, out var ft))
             return ft;
-        PoolMisses++;
         if (_textCache.Count > 10000)
             _textCache.Clear();
         ft = new FormattedText(s, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, _typeface, size, brush)
