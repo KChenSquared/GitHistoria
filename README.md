@@ -18,6 +18,10 @@ Our goal is to create the premier Windows Git GUI that unites:
 
 ## 💎 Core Pillars
 
+- **Confirm Before Destroying Anything:** The project's highest rule (constitution Rule 00). No
+  action that discards uncommitted work or rewrites history — discard, clean, hard reset,
+  branch/tag delete, rebase, force-push, stash drop — runs without an explicit modal alert
+  (red warning icon, exact effect named) whose **Cancel** button is the highlighted default.
 - **Performance-First Architecture:** Powered by native .NET and Avalonia UI; minimal memory footprint, non-blocking Git operations, and fast cold starts (< 800ms).
 - **Progressive Disclosure UI:** A layered interface philosophy ensuring zero visual clutter. Common daily operations take center stage with high ergonomic polish; advanced Git machinery and deep technical metadata remain readily accessible but stay tucked behind collapsible sections, contextual actions, and detail drawers until needed.
 - **Next-Gen Commit Graph:** Virtualized rendering (60+ FPS) designed to scroll smoothly across repositories with hundreds of thousands of commits. Features vibrant multi-color branch lanes and smooth bezier connections.
