@@ -36,6 +36,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Headless-Avalonia regression suite (debloat audit §4, Path B). Mirrors the
+         Historia.Core → Historia.Tests grant; the extracted Tier 3 helpers are internal. -->
+    <InternalsVisibleTo Include="Historia.App.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
     <!-- Launch splashes authored under assets/ (dev/build-splash.ps1), embedded as avares. -->
     <AvaloniaResource Include="..\assets\splash-light.png" Link="Assets\splash-light.png" />

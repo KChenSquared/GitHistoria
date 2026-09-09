@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <!-- Not "Historia.App.Tests" — that namespace collides with the `Historia.App` type
+         (the App class) and warns CS0435. Assembly name stays Historia.App.Tests for the
+         InternalsVisibleTo grant. -->
+    <RootNamespace>HistoriaApp.Tests</RootNamespace>
+    <!-- Unlike Historia.Tests (Core-only, builds while the app runs), this project references
+         the Avalonia exe: `dotnet test` on it can hit the locked-apphost copy failure if
+         Historia is open. It is the headless regression suite, not the iterate-while-running
+         one — close the app first if a build fails to copy GitEpoch/Historia.exe. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- Pinned to the Avalonia line in Historia.App.csproj (constitution 0.7). -->
+    <PackageReference Include="Avalonia.Headless" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Headless.XUnit" Version="11.3.20" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Historia.App\Historia.App.csproj" />
+    <ProjectReference Include="..\..\Historia.Core\Historia.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
