@@ -119,6 +119,12 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             await op();
             await _ctx.State.RefreshAllAsync(_ctx.Lifetime);
         }
+        catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.MergeConflict)
+        {
+            // Not a failure to shout about in red — the operation is simply blocked until every
+            // conflicted file is resolved. Warn (orange) with git's own already-clean sentence.
+            _notifications.Publish(NotificationSeverity.Warning, ex.Message);
+        }
         catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, $"{what} failed: {ex.Message}", ex.NotificationDetails()); }
     }
 

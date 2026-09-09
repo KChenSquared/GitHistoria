@@ -5,7 +5,7 @@ namespace Historia.Controls;
 /// <c>NativeControls.CommitGraphControl</c>. Fully virtualized: only the visible row range is
 /// drawn each frame. Selection flows through <see cref="IRepositoryStateService"/> (§7.7).
 /// </summary>
-public sealed class CommitGraphControl : Control
+public sealed partial class CommitGraphControl : Control
 {
     private const double MinRowHeight = 20;
     private const double MaxRowHeight = 44;
@@ -218,7 +218,6 @@ public sealed class CommitGraphControl : Control
     private readonly Dictionary<int, SolidColorBrush> _laneFills = [];
     private readonly Dictionary<int, SolidColorBrush> _laneTicks = [];
     private readonly Dictionary<(int Tag, int Size, int WidthKey, string Text), FormattedText> _textCache = [];
-    internal int PoolMisses;
 
     private double CornerRadius => Math.Min(LaneWidth, _rowHeight) * 0.75;
 
@@ -251,9 +250,7 @@ public sealed class CommitGraphControl : Control
     private readonly ComboBox _scopeBox;
     private readonly CheckBox _stashCheck;
     private readonly TextBlock _matchLabel;
-    private readonly List<int> _matchRows = [];
-    private readonly HashSet<int> _matchRowSet = [];
-    private int _matchCursor = -1;
+    private readonly GraphMatchCursor _matches = new();
 
     private double RowsTop => HeaderHeight + (_queryBar.IsVisible ? QueryBarHeight : 0);
 
@@ -1088,115 +1085,54 @@ public sealed class CommitGraphControl : Control
     }
 
     /// <summary>§V6-G9: the resolved lane colour for an index, read from the theme service
-    /// (built-in rainbow or the active custom overlay). Mirrors <c>LanePalette.ColorFor</c>'s
-    /// cycle-luminance shift for indices past one palette cycle. <c>EdgeColorFor</c> is the
-    /// identity, so this covers both the fill and the stroke.</summary>
+    /// (built-in rainbow or the active custom overlay). The maths lives in
+    /// <see cref="GraphLanePalette.LaneRgb"/> so it is unit-testable; this is the control-state
+    /// binding of it.</summary>
     private Rgb LaneRgb(int colorIndex)
-    {
-        var lanes = _theme.LaneColors;
-        var n = lanes.Count;
-        if (n == 0)
-            return LanePalette.ColorFor(colorIndex, _themeMode);
+        => GraphLanePalette.LaneRgb(colorIndex, _theme.LaneColors, _themeMode);
 
-        var i = ((colorIndex % n) + n) % n;
-        var c = lanes[i];
-        var cycle = colorIndex / n;
-        if (cycle <= 0)
-            return c;
+    // §V6: every per-lane-colour Pen/Brush is memoised in its own dictionary (all cleared
+    // together by RebuildThemeResources on a theme change). One shape: look it up, else build
+    // it once and cache. The build lambda runs only on a miss.
+    private static T Pooled<T>(Dictionary<int, T> pool, int colorIndex, Func<int, T> build)
+        => pool.TryGetValue(colorIndex, out var v) ? v : pool[colorIndex] = build(colorIndex);
 
-        var factor = 1.0 - Math.Min(0.5, cycle * 0.18);
-        return Rgb.FromRgb((byte)(c.R * factor), (byte)(c.G * factor), (byte)(c.B * factor));
-    }
-
-    private Pen LanePen(int colorIndex)
-    {
-        if (_lanePens.TryGetValue(colorIndex, out var p))
-            return p;
-        PoolMisses++;
-        p = new Pen(new SolidColorBrush(ToColor(LaneRgb(colorIndex))), LaneStrokeWidth);
-        _lanePens[colorIndex] = p;
-        return p;
-    }
+    private Pen LanePen(int colorIndex) => Pooled(_lanePens, colorIndex,
+        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), LaneStrokeWidth));
 
     /// <summary>§V6-G2: a thin, faint version of the lane colour for a non-HEAD badge→node
     /// connector. 1 DIP at 45% alpha — the crisp, stable equivalent of "thin and faint" (a
     /// sub-pixel stroke rounds away under layout rounding).</summary>
-    private Pen FaintConnectorPen(int colorIndex)
+    private Pen FaintConnectorPen(int colorIndex) => Pooled(_faintConnectorPens, colorIndex, i =>
     {
-        if (_faintConnectorPens.TryGetValue(colorIndex, out var p))
-            return p;
-        PoolMisses++;
-        var c = LaneRgb(colorIndex);
-        p = new Pen(new SolidColorBrush(AvColor.FromArgb(0x73, c.R, c.G, c.B)), 1.0);
-        _faintConnectorPens[colorIndex] = p;
-        return p;
-    }
+        var c = LaneRgb(i);
+        return new Pen(new SolidColorBrush(AvColor.FromArgb(0x73, c.R, c.G, c.B)), 1.0);
+    });
 
-    private SolidColorBrush LaneBrush(int colorIndex)
-    {
-        if (_laneBrushes.TryGetValue(colorIndex, out var b))
-            return b;
-        PoolMisses++;
-        b = new SolidColorBrush(ToColor(LaneRgb(colorIndex)));
-        _laneBrushes[colorIndex] = b;
-        return b;
-    }
+    private SolidColorBrush LaneBrush(int colorIndex) => Pooled(_laneBrushes, colorIndex,
+        i => new SolidColorBrush(ToColor(LaneRgb(i))));
 
-    private Pen EmphPen(int colorIndex)
-    {
-        if (_emphPens.TryGetValue(colorIndex, out var p))
-            return p;
-        PoolMisses++;
-        p = new Pen(new SolidColorBrush(ToColor(LaneRgb(colorIndex))), 3.0);
-        _emphPens[colorIndex] = p;
-        return p;
-    }
+    private Pen EmphPen(int colorIndex) => Pooled(_emphPens, colorIndex,
+        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 3.0));
 
     /// <summary>§V6-G1: the badge is a solid opaque lane-colour fill, so its label and icons
     /// need ink that contrasts against that hue — near-black on a light badge, near-white on a
     /// dark one. Two shared brush instances keep <see cref="Text"/>'s cache keying correct.</summary>
-    private SolidColorBrush BadgeInk(int colorIndex)
-    {
-        if (_badgeInk.TryGetValue(colorIndex, out var b))
-            return b;
-        PoolMisses++;
-        var c = LaneRgb(colorIndex);
-        b = c.RelativeLuminance() > 0.55 ? _badgeInkDark : _badgeInkLight;
-        _badgeInk[colorIndex] = b;
-        return b;
-    }
+    private SolidColorBrush BadgeInk(int colorIndex) => Pooled(_badgeInk, colorIndex,
+        i => GraphLanePalette.PrefersDarkInk(LaneRgb(i)) ? _badgeInkDark : _badgeInkLight);
 
-    private Pen PillBorder(int colorIndex)
-    {
-        if (_pillBorders.TryGetValue(colorIndex, out var p))
-            return p;
-        PoolMisses++;
-        p = new Pen(new SolidColorBrush(ToColor(LaneRgb(colorIndex))), 1.5);
-        _pillBorders[colorIndex] = p;
-        return p;
-    }
+    private Pen PillBorder(int colorIndex) => Pooled(_pillBorders, colorIndex,
+        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 1.5));
 
-    private SolidColorBrush LaneFill(int colorIndex)
+    private SolidColorBrush LaneFill(int colorIndex) => Pooled(_laneFills, colorIndex, i =>
     {
-        if (_laneFills.TryGetValue(colorIndex, out var b))
-            return b;
-        PoolMisses++;
-        var c = LaneRgb(colorIndex);
+        var c = LaneRgb(i);
         byte a = _themeMode == EffectiveTheme.Light ? (byte)0x2E : (byte)0x3A;
-        b = new SolidColorBrush(AvColor.FromArgb(a, c.R, c.G, c.B));
-        _laneFills[colorIndex] = b;
-        return b;
-    }
+        return new SolidColorBrush(AvColor.FromArgb(a, c.R, c.G, c.B));
+    });
 
-    private SolidColorBrush LaneTick(int colorIndex)
-    {
-        if (_laneTicks.TryGetValue(colorIndex, out var b))
-            return b;
-        PoolMisses++;
-        b = new SolidColorBrush(ToColor(LaneRgb(colorIndex)));
-        _laneTicks[colorIndex] = b;
-        return b;
-    }
+    private SolidColorBrush LaneTick(int colorIndex) => Pooled(_laneTicks, colorIndex,
+        i => new SolidColorBrush(ToColor(LaneRgb(i))));
 
     private int TextTag(IBrush b) =>
         ReferenceEquals(b, _text) ? 0 :
@@ -1410,55 +1346,24 @@ public sealed class CommitGraphControl : Control
     }
 
     private int BoundaryAt(double x)
-    {
-        for (var i = 0; i < _resolvedColumns.Length - 1; i++)
-        {
-            var edge = _resolvedColumns[i].Left + _resolvedColumns[i].Width - _hScrollOffset;
-            if (Math.Abs(x - edge) <= BoundaryGrab)
-                return i;
-        }
-        return -1;
-    }
+        => GraphColumnInteraction.BoundaryAt(_resolvedColumns, x, _hScrollOffset, BoundaryGrab);
 
     private static IReadOnlyList<GraphColumn> WithColumnWidth(IReadOnlyList<GraphColumn> cols, GraphColumnKind kind, double width)
         => [.. cols.Select(c => c.Kind == kind ? c with { Width = width } : c)];
 
     private int CaretIndexAt(double x)
-    {
-        for (var i = 0; i < _resolvedColumns.Length; i++)
-        {
-            var mid = _resolvedColumns[i].Left + _resolvedColumns[i].Width / 2 - _hScrollOffset;
-            if (x < mid)
-                return i;
-        }
-        return _resolvedColumns.Length;
-    }
+        => GraphColumnInteraction.CaretIndexAt(_resolvedColumns, x, _hScrollOffset);
 
     private GraphColumnKind? ColumnKindAt(double x)
-    {
-        foreach (var c in _resolvedColumns)
-        {
-            var left = c.Left - _hScrollOffset;
-            if (x >= left && x < left + c.Width)
-                return c.Kind;
-        }
-        return null;
-    }
+        => GraphColumnInteraction.ColumnKindAt(_resolvedColumns, x, _hScrollOffset);
 
     private void ReorderColumn(GraphColumnKind moved, int caret)
     {
-        var visible = _columns.Where(c => c.Visible).ToList();
-        var hidden = _columns.Where(c => !c.Visible).ToList();
-        var from = visible.FindIndex(c => c.Kind == moved);
-        if (from < 0)
+        var next = GraphColumnInteraction.Reorder(_columns, moved, caret);
+        if (ReferenceEquals(next, _columns))
             return;
 
-        var col = visible[from];
-        visible.RemoveAt(from);
-        var to = Math.Clamp(caret > from ? caret - 1 : caret, 0, visible.Count);
-        visible.Insert(to, col);
-
-        _columns = [.. visible, .. hidden];
+        _columns = next;
         PersistColumns();
         InvalidateArrange();
         InvalidateVisual();
@@ -1476,7 +1381,7 @@ public sealed class CommitGraphControl : Control
             items.Add(mi);
         }
         items.Add(new Separator());
-        items.Add(Item("Reset columns", () =>
+        items.Add(MenuLeaf("Reset columns", () =>
         {
             _columns = GraphColumnDefaults.All;
             _graphWidthPinned = false;
@@ -1542,7 +1447,7 @@ public sealed class CommitGraphControl : Control
             e.Handled = true;
             return;
         }
-        if (e.Key is Key.F3 && _matchRows.Count > 0)
+        if (e.Key is Key.F3 && _matches.HasMatches)
         {
             StepMatch((e.KeyModifiers & KeyModifiers.Shift) != 0 ? -1 : 1);
             e.Handled = true;
@@ -1586,26 +1491,13 @@ public sealed class CommitGraphControl : Control
 
     private void RecomputeMatches()
     {
-        _matchRows.Clear();
-        _matchRowSet.Clear();
-        _matchCursor = -1;
         var term = _searchBox.Text?.Trim() ?? "";
 
-        if (term.Length > 0 && _layout is { } l)
-        {
-            // The store owns the scan: an in-memory array loops; a disk-backed store streams
-            // its search sidecar rather than paging every record (§7.5, §7.6).
-            foreach (var i in l.Layout.Commits.Search(term))
-            {
-                _matchRows.Add(i);
-                _matchRowSet.Add(i);
-            }
-            if (_matchRows.Count > 0)
-            {
-                _matchCursor = 0;
-                ScrollRowIntoView(_matchRows[0]);
-            }
-        }
+        // The store owns the scan: an in-memory array loops; a disk-backed store streams its
+        // search sidecar rather than paging every record (§7.5, §7.6).
+        _matches.Reset(term.Length > 0 && _layout is { } l ? l.Layout.Commits.Search(term) : []);
+        if (_matches.HasMatches)
+            ScrollRowIntoView(_matches.Rows[0]);
 
         UpdateMatchLabel();
         InvalidateVisual();
@@ -1613,10 +1505,9 @@ public sealed class CommitGraphControl : Control
 
     private void StepMatch(int direction)
     {
-        if (_matchRows.Count == 0)
+        var row = _matches.Step(direction);
+        if (row < 0)
             return;
-        _matchCursor = ((_matchCursor + direction) % _matchRows.Count + _matchRows.Count) % _matchRows.Count;
-        var row = _matchRows[_matchCursor];
         ScrollRowIntoView(row);
         _state?.SetSelectedCommit(_layout!.Layout.Commits[row].Id);
         UpdateMatchLabel();
@@ -1624,9 +1515,7 @@ public sealed class CommitGraphControl : Control
     }
 
     private void UpdateMatchLabel() =>
-        _matchLabel.Text = _matchRows.Count == 0
-            ? (string.IsNullOrEmpty(_searchBox.Text) ? "" : "0 / 0")
-            : $"{_matchCursor + 1} / {_matchRows.Count}";
+        _matchLabel.Text = _matches.Label(!string.IsNullOrEmpty(_searchBox.Text));
 
     private void ScrollRowIntoView(int row)
     {
@@ -1881,7 +1770,7 @@ public sealed class CommitGraphControl : Control
         foreach (var d in hidden)
         {
             var deco = d;
-            items.Add(Item(d.Type == DecorationType.Head ? "HEAD" : d.Label, () => ShowPillContextMenu(deco)));
+            items.Add(MenuLeaf(d.Type == DecorationType.Head ? "HEAD" : d.Label, () => ShowPillContextMenu(deco)));
         }
         menu.ItemsSource = items;
         OpenMenu(menu);
@@ -2260,378 +2149,6 @@ public sealed class CommitGraphControl : Control
         return rowBorder;
     }
 
-    private void CheckoutRefEntry(DecorationType type, string label, bool isLocal, string[]? remotes)
-    {
-        if (type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
-        {
-            CheckoutFromBadge(new GraphDecoration
-            {
-                RowIndex = 0, Type = type, Label = label, ColorIndex = 0,
-                IsLocal = isLocal, RemotesOrNull = remotes,
-            });
-            return;
-        }
-        if (type == DecorationType.Tag && _context is { } ctx)
-            _ = RunConfirmedDetachedCheckout(ctx, label, $"Check out tag '{label}' in a detached HEAD?");
-    }
-
-    private async Task RunConfirmedDetachedCheckout(RepositoryContext ctx, string refish, string prompt)
-    {
-        if (!await _dialogs.ConfirmAsync("Detached checkout", prompt))
-            return;
-        await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
-            () => ctx.Gateway.CheckoutAsync(refish, new GitCheckoutOptions(), ctx.Lifetime), "Checkout");
-    }
-
-    // ── Context menus (§7.6) ──
-
-    private void ShowCommitContextMenu(ObjectId id)
-    {
-        if (_context is not { } ctx)
-            return;
-        var sha = id.Sha;
-        var shortSha = sha[..7];
-        var items = new List<Control>
-        {
-            Item("Copy SHA", () => CopyText(sha)),
-            Item("Copy short SHA", () => CopyText(shortSha)),
-            Item("Copy commit message", () => CopyCommitMessage(id)),
-            new Separator(),
-            Item("Create branch here…", () => PromptCreateBranch(ctx, sha, shortSha)),
-            Item("Create tag here…", () => PromptCreateTag(ctx, sha, shortSha)),
-            Item("Checkout this commit (detached)", () =>
-                RunConfirmedDetachedCheckout(ctx, sha, $"Check out {shortSha} in a detached HEAD?")),
-            new Separator(),
-        };
-
-        var resetItem = new MenuItem { Header = "Reset current branch to here" };
-        resetItem.ItemsSource = new Control[]
-        {
-            Item("Soft (keep index and working tree)", () => ResetAsync(ctx, sha, GitResetMode.Soft, shortSha)),
-            Item("Mixed (keep working tree)", () => ResetAsync(ctx, sha, GitResetMode.Mixed, shortSha)),
-            Item("Hard (discard changes)", () => ResetAsync(ctx, sha, GitResetMode.Hard, shortSha)),
-        };
-        items.Add(resetItem);
-
-        items.Add(Item("Merge into current branch", () => MergeAsync(ctx, sha, shortSha)));
-        items.Add(new Separator());
-        items.Add(Item("Cherry-pick onto current branch", () => CherryPickAsync([id])));
-        items.Add(Item("Revert this commit", () => RevertAsync([id])));
-        if (_multiSelect.Count > 1)
-        {
-            var ordered = _multiSelect.OrderByDescending(r => r)
-                .Select(r => _layout!.Layout.Commits[r].Id).ToList();
-            items.Add(Item($"Cherry-pick {ordered.Count} selected (oldest first)", () => CherryPickAsync(ordered)));
-            items.Add(Item($"Revert {ordered.Count} selected", () => RevertAsync(ordered)));
-        }
-
-        OpenMenu(new ContextMenu { ItemsSource = items });
-    }
-
-    /// <summary>v8 M3: prompt for a new branch at <paramref name="sha"/> and create it.
-    /// Shared by the commit-row menu and the branch/tag pill menu.</summary>
-    private Task PromptCreateBranch(RepositoryContext ctx, string sha, string shortSha)
-        => BranchMenu.PromptCreateBranch(ctx, _dialogs, _notifications, _stashes, sha, shortSha);
-
-    /// <summary>v8 M3: prompt for a new lightweight tag at <paramref name="sha"/>.</summary>
-    private Task PromptCreateTag(RepositoryContext ctx, string sha, string shortSha)
-        => BranchMenu.PromptCreateTag(ctx, _dialogs, _notifications, sha, shortSha);
-
-    private void CheckoutFromBadge(GraphDecoration deco)
-    {
-        if (_context is not { } ctx)
-            return;
-        if (deco.Type is not (DecorationType.LocalBranch or DecorationType.RemoteBranch))
-            return;
-
-        var name = deco.Label;
-        var hasLocal = deco.IsLocal
-            || (_state?.Branches.Any(b => !b.IsRemote && string.Equals(b.Name, name, StringComparison.Ordinal)) ?? false);
-
-        if (hasLocal)
-        {
-            _ = BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
-                () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout");
-            return;
-        }
-
-        var remotes = deco.RemotesOrNull ?? [];
-        var tracking = remotes.Length > 0 ? $"{remotes[0]}/{name}" : name;
-        _ = BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
-            () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout");
-    }
-
-    private void ShowPillContextMenu(GraphDecoration deco)
-    {
-        if (_context is not { } ctx)
-            return;
-        var name = deco.Label;
-        var remotes = deco.RemotesOrNull ?? [];
-        var items = new List<Control>();
-
-        // v8 M3: the pill's own commit — for "Create branch/tag here" on a branch or tag label.
-        ObjectId? pillId = _layout is { } lay && deco.RowIndex >= 0 && deco.RowIndex < lay.Layout.Commits.Count
-            ? lay.Layout.Commits[deco.RowIndex].Id
-            : null;
-
-        if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
-        {
-            if (deco.IsLocal)
-                items.Add(Item($"Checkout {TruncateBranchLabelForMenu(name)}", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
-                    () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout")));
-
-            if (remotes.Length > 0)
-            {
-                if (deco.IsLocal)
-                    items.Add(new Separator());
-                foreach (var rem in remotes)
-                {
-                    var tracking = $"{rem}/{name}";
-                    items.Add(Item($"Checkout {TruncateBranchLabelForMenu(tracking)} as a new branch", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
-                        () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout")));
-                }
-            }
-
-            var primaryRef = deco.IsLocal ? name : (remotes.Length > 0 ? $"{remotes[0]}/{name}" : name);
-            items.Add(new Separator());
-            items.Add(Item($"Merge {TruncateBranchLabelForMenu(primaryRef)} into current", () => MergeAsync(ctx, primaryRef, primaryRef)));
-            items.Add(Item($"Rebase current branch onto {TruncateBranchLabelForMenu(primaryRef)}", () => _nav.RequestNavigate($"rebase?onto={Uri.EscapeDataString(primaryRef)}")));
-
-            if (deco.IsLocal)
-            {
-                items.Add(new Separator());
-                items.Add(Item("Rename…", async () =>
-                {
-                    var newName = await _dialogs.PromptAsync("Rename branch", $"New name for '{name}':", name);
-                    if (string.IsNullOrWhiteSpace(newName) || newName == name) return;
-                    await Guard(() => ctx.Gateway.RenameBranchAsync(name, newName.Trim(), ctx.Lifetime), ctx, "Rename");
-                }));
-                items.Add(Item("Delete", () => BranchMenu.DeleteAsync(ctx, _dialogs, _notifications, name)));
-            }
-        }
-        else if (deco.Type == DecorationType.Tag)
-        {
-            items.Add(Item($"Delete tag {TruncateBranchLabelForMenu(name)}", async () =>
-            {
-                if (!await _dialogs.ConfirmAsync("Delete tag", $"Delete local tag '{name}'?", destructive: true, "Delete")) return;
-                await Guard(() => ctx.Gateway.DeleteTagAsync(name, ctx.Lifetime), ctx, "Delete tag");
-            }));
-        }
-
-        // v8 M3: "Create branch/tag here" act on the pill's own commit — present on the branch
-        // label and tag menus, same as on the graph row menu.
-        if (pillId is { } bid &&
-            deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch or DecorationType.Tag)
-        {
-            var shortSha = bid.Sha[..7];
-            if (items.Count > 0) items.Add(new Separator());
-            items.Add(Item("Create branch here…", () => PromptCreateBranch(ctx, bid.Sha, shortSha)));
-            items.Add(Item("Create tag here…", () => PromptCreateTag(ctx, bid.Sha, shortSha)));
-        }
-
-        // v8 M4: "Copy branch name" — the one common-denominator item the pill menu still lacked.
-        if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
-        {
-            var copyName = deco.IsLocal ? name : (remotes.Length > 0 ? $"{remotes[0]}/{name}" : name);
-            items.Add(new Separator());
-            items.Add(Item("Copy branch name", () => CopyText(copyName)));
-        }
-
-        if (items.Count > 0)
-        {
-            var menu = new ContextMenu { ItemsSource = items };
-
-            // v8.4: long branch/tag names get ellipsis-trimmed in the menu items above (so the
-            // popup never overflows the screen) — show the untrimmed name as a tooltip anchored
-            // above the menu itself so it's still readable. Opened/Closed keep the tooltip's
-            // lifetime tied to the menu's.
-            if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch or DecorationType.Tag)
-            {
-                var fullLabel = deco.Type == DecorationType.Tag ? name
-                    : deco.IsLocal ? name : (remotes.Length > 0 ? $"{remotes[0]}/{name}" : name);
-                if (fullLabel.Length > MenuNameMaxChars)
-                {
-                    ToolTip.SetTip(menu, fullLabel);
-                    ToolTip.SetPlacement(menu, PlacementMode.TopEdgeAlignedLeft);
-                    ToolTip.SetVerticalOffset(menu, -4);
-                    ToolTip.SetHorizontalOffset(menu, 0);
-                    // Deferred a frame: the menu reports a zero-size Bounds at Opened time (before
-                    // its first layout pass), which placed the tooltip on top of the menu instead
-                    // of above it.
-                    menu.Opened += (_, _) => Dispatcher.UIThread.Post(() => ToolTip.SetIsOpen(menu, true), DispatcherPriority.Loaded);
-                    menu.Closed += (_, _) => ToolTip.SetIsOpen(menu, false);
-                }
-            }
-
-            OpenMenu(menu);
-        }
-    }
-
-    /// <summary>Max characters of a branch/tag name shown in a context-menu item before it's
-    /// ellipsis-trimmed (§ pill-menu fix) — long names otherwise force the right-click popup
-    /// wider than the screen.</summary>
-    private const int MenuNameMaxChars = 25;
-
-    /// <summary>Ellipsis-trims a branch/tag name to <see cref="MenuNameMaxChars"/> for display in
-    /// a menu item — e.g. "Checkout origin/feature/very-long-name as a new branch" — without
-    /// affecting the untrimmed name callers still use for the actual git operation.</summary>
-    private static string TruncateBranchLabelForMenu(string name) =>
-        name.Length <= MenuNameMaxChars ? name : name[..(MenuNameMaxChars - 1)] + "…";
-
-    private void ShowDropIntentMenu(ObjectId commitId, string shortSha, string branchLabel)
-    {
-        if (_context is not { } ctx)
-            return;
-        var items = new List<Control>
-        {
-            new MenuItem { Header = $"Drop {shortSha} → {branchLabel}", IsEnabled = false },
-            new Separator(),
-            Item($"Merge {shortSha} into current branch", () => MergeAsync(ctx, commitId.Sha, shortSha)),
-            Item("Reset current branch to this commit (mixed)", () => ResetAsync(ctx, commitId.Sha, GitResetMode.Mixed, shortSha)),
-            Item($"Cherry-pick {shortSha} onto current branch", () => CherryPickAsync([commitId])),
-            Item($"Rebase current branch onto {branchLabel}", () => _nav.RequestNavigate($"rebase?onto={Uri.EscapeDataString(branchLabel)}")),
-        };
-        OpenMenu(new ContextMenu { ItemsSource = items });
-    }
-
-    private async Task ResetAsync(RepositoryContext ctx, string sha, GitResetMode mode, string shortSha)
-    {
-        var destructive = mode == GitResetMode.Hard;
-        if (!await _dialogs.ConfirmAsync("Reset branch",
-                $"Move {_state?.CurrentBranch?.Name ?? "HEAD"} to {shortSha} ({mode})?"
-                + (destructive ? " Uncommitted changes will be lost." : ""),
-                destructive, "Reset"))
-            return;
-        await Guard(() => ctx.Gateway.ResetAsync(sha, mode, ctx.Lifetime), ctx, "Reset");
-    }
-
-    private async Task CherryPickAsync(IReadOnlyList<ObjectId> ids)
-    {
-        if (_context is not { } ctx)
-            return;
-        var isMerge = ids.Count == 1 && await ctx.WithRepositoryAsync(r => r.Lookup<Commit>(ids[0])?.Parents.Count() > 1, ctx.Lifetime);
-        var mainline = isMerge ? 1 : (int?)null;
-        if (!await _dialogs.ConfirmAsync("Cherry-pick",
-                $"Cherry-pick {ids.Count} commit(s) onto {_state?.CurrentBranch?.Name ?? "the current branch"}?"
-                + (isMerge ? " (merge commit — mainline parent 1)" : "")))
-            return;
-        try
-        {
-            await _cherryPick.CherryPickAsync(ctx, ids, noCommit: false, mainline, ctx.Lifetime);
-            var c = ctx.State.Status.Conflicted.Count;
-            _notifications.Publish(c > 0 ? NotificationSeverity.Warning : NotificationSeverity.Success,
-                c > 0 ? $"Cherry-pick paused on {c} conflict(s)." : "Cherry-pick complete.");
-        }
-        catch (Exception ex)
-        {
-            _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails());
-        }
-    }
-
-    private async Task RevertAsync(IReadOnlyList<ObjectId> ids)
-    {
-        if (_context is not { } ctx)
-            return;
-        var isMerge = ids.Count == 1 && await ctx.WithRepositoryAsync(r => r.Lookup<Commit>(ids[0])?.Parents.Count() > 1, ctx.Lifetime);
-        if (!await _dialogs.ConfirmAsync("Revert", $"Revert {ids.Count} commit(s)?" + (isMerge ? " (merge commit — mainline parent 1)" : "")))
-            return;
-        try
-        {
-            await _cherryPick.RevertAsync(ctx, ids, isMerge ? 1 : null, ctx.Lifetime);
-            var c = ctx.State.Status.Conflicted.Count;
-            _notifications.Publish(c > 0 ? NotificationSeverity.Warning : NotificationSeverity.Success,
-                c > 0 ? $"Revert paused on {c} conflict(s)." : "Revert complete.");
-        }
-        catch (Exception ex)
-        {
-            _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails());
-        }
-    }
-
-    private async Task MergeAsync(RepositoryContext ctx, string refish, string display)
-    {
-        if (!await _dialogs.ConfirmAsync("Merge", $"Merge {display} into {_state?.CurrentBranch?.Name ?? "the current branch"}?"))
-            return;
-        await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes, async () =>
-        {
-            await ctx.Gateway.MergeAsync(refish, noFastForward: false, ctx.Lifetime);
-            await ctx.State.RefreshAllAsync(ctx.Lifetime);
-            var conflicts = ctx.State.Status.Conflicted.Count;
-            _notifications.Publish(conflicts > 0 ? NotificationSeverity.Warning : NotificationSeverity.Success,
-                conflicts > 0 ? $"Merge produced {conflicts} conflict(s). Resolve them, then commit." : $"Merged {display}.");
-        }, "Merge");
-    }
-
-    private async Task Guard(Func<Task> op, RepositoryContext ctx, string what)
-    {
-        try
-        {
-            await op();
-            await ctx.State.RefreshAllAsync(ctx.Lifetime);
-        }
-        catch (Exception ex)
-        {
-            _notifications.Publish(NotificationSeverity.Error, $"{what} failed: {ex.Message}", ex.NotificationDetails());
-        }
-    }
-
-    private void CopyText(string s)
-        => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(s);
-
-    /// <summary>v8 M4: copy the full commit message (subject + body). Uses the M16 body cache
-    /// when warm, else fetches the detail once.</summary>
-    private void CopyCommitMessage(ObjectId id)
-    {
-        // _msgBodyCache (M16) holds the body only; combine with the subject.
-        if (TryGetCachedBody(id, out var body))
-        {
-            var subject = FindSubject(id);
-            CopyText(body.Length > 0 ? subject + "\n\n" + body : subject);
-            return;
-        }
-        if (_context is not { } ctx)
-            return;
-        Dispatcher.UIThread.Post(async () =>
-        {
-            try
-            {
-                var d = await ctx.Gateway.GetCommitDetailAsync(id, ctx.Lifetime);
-                CacheMessageBody(id, d.MessageBody ?? "");
-                CopyText(string.IsNullOrEmpty(d.MessageBody)
-                    ? d.MessageShort
-                    : d.MessageShort + "\n\n" + d.MessageBody);
-            }
-            catch (Exception ex)
-            {
-                _notifications.Publish(NotificationSeverity.Error, $"Copy message failed: {ex.Message}", ex.NotificationDetails());
-            }
-        });
-    }
-
-    private string FindSubject(ObjectId id)
-    {
-        if (_layout is { } lay && lay.Layout.RowByCommitId.TryGetValue(id, out var row)
-            && row >= 0 && row < lay.Layout.Commits.Count)
-        {
-            return lay.Layout.Commits[row].MessageShort;
-        }
-        return id.Sha[..7];
-    }
-
-    private static MenuItem Item(string header, Action action)
-    {
-        var mi = new MenuItem { Header = header };
-        mi.Click += (_, _) => action();
-        return mi;
-    }
-
-    private static MenuItem Item(string header, Func<Task> action)
-    {
-        var mi = new MenuItem { Header = header };
-        mi.Click += (_, _) => _ = action();
-        return mi;
-    }
-
     // ── Render (§V2-6.3) ──
 
     private readonly Dictionary<int, List<GraphDecoration>> _decoIndex = [];
@@ -2741,8 +2258,8 @@ public sealed class CommitGraphControl : Control
         _overflowChips.Clear();
         _badgeRightEdge.Clear();
 
-        var currentMatchRow = _matchCursor >= 0 && _matchCursor < _matchRows.Count ? _matchRows[_matchCursor] : -1;
-        var matchSet = _matchRows.Count > 0 ? _matchRowSet : null;
+        var currentMatchRow = _matches.CurrentRow;
+        var matchSet = _matches.RowSet;
         var gx = _graphColLeft - _hScrollOffset;
         var washRight = gx + Math.Max(0, _graphColWidth - TickWidth);
         // Clip the row-background band to the row area: the first drawn row starts two rows
@@ -3324,7 +2841,6 @@ public sealed class CommitGraphControl : Control
         var key = (tag, (int)size, wKey, s);
         if (_textCache.TryGetValue(key, out var ft))
             return ft;
-        PoolMisses++;
         if (_textCache.Count > 10000)
             _textCache.Clear();
         ft = new FormattedText(s, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, _typeface, size, brush)

@@ -7,6 +7,11 @@ namespace Historia.Views;
 /// </summary>
 internal static class ViewKit
 {
+    /// <summary>The current user's home directory — the one place the App layer spells out
+    /// <see cref="Environment.SpecialFolder.UserProfile"/> (terminal "Home" origins, the clone-root
+    /// fallback, the ~/.gitconfig write). Core has its own copies for its own seams.</summary>
+    public static string HomeDirectory => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
     /// <summary>Bind a control property to a theme resource key (the {DynamicResource} of code).</summary>
     public static T Dyn<T>(this T c, AvaloniaProperty p, string key) where T : Control
     {
@@ -263,6 +268,16 @@ internal static class ViewKit
     {
         var mi = new MenuItem { Header = header };
         mi.Click += (_, _) => onClick();
+        return mi;
+    }
+
+    /// <summary>As <see cref="MenuLeaf(string, Action)"/>, for an async click handler. The task
+    /// is fire-and-forget — the handler is expected to route its own failures. <see cref="Task"/>
+    /// is nullable so a <c>?.</c>-chained one-liner binds here without a warning.</summary>
+    public static MenuItem MenuLeaf(string header, Func<Task?> onClick)
+    {
+        var mi = new MenuItem { Header = header };
+        mi.Click += (_, _) => _ = onClick();
         return mi;
     }
 

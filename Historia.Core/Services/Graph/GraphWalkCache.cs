@@ -276,8 +276,9 @@ internal sealed class GraphWalkCache
         catch { }
     }
 
-    // Case-fold only where the filesystem does. TODO: revisit — a case-insensitive macOS
-    // volume would also want folding, but IsWindows is the cheap 99% correct proxy.
+    // Case-fold only where the filesystem does. A case-insensitive macOS volume would also want
+    // folding; IsWindows is deliberately used as the cheap ~99%-correct proxy rather than probing
+    // each volume's case sensitivity.
     private static string FileFor(string repoPath) => GraphCachePaths.File(repoPath, ".json.gz");
 
     private static DecoDto ToDto(GraphDecorationInput d) => new()

@@ -1,9 +1,9 @@
 namespace Historia.Services.UI;
 
 /// <summary>
-/// v8.4: shared "Stash all" behaviour for the staging panel's green save-check button and the
-/// shortcuts-bar stash button. Stashes the whole working tree (tracked edits + untracked
-/// files). The stash message is <c>Stash of &lt;branch&gt;</c> unless
+/// v8.4: "Stash all" behaviour behind the shortcuts-bar stash button (the <c>save-check</c>
+/// icon, <see cref="Historia.Controls.ShortcutsBarControl"/>). Stashes the whole working tree
+/// (tracked edits + untracked files). The stash message is <c>Stash of &lt;branch&gt;</c> unless
 /// <see cref="AppSettings.UseCustomStashNames"/> is on, in which case the user is prompted for
 /// one (cancelling the prompt cancels the stash).
 /// </summary>

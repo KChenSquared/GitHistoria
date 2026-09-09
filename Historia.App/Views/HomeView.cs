@@ -204,7 +204,7 @@ public sealed class HomeView : UserControl, IDisposable
             if (!string.IsNullOrEmpty(parent))
                 return parent;
         }
-        return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return HomeDirectory;
     }
 
     private async Task CloneAsync()

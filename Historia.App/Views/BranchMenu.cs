@@ -27,13 +27,6 @@ internal static class BranchMenu
             catch (Exception ex) { notify.Publish(NotificationSeverity.Error, $"{what} failed: {ex.Message}", ex.NotificationDetails()); }
         }
 
-        MenuItem Item(string header, Func<Task> action)
-        {
-            var mi = new MenuItem { Header = header };
-            mi.Click += (_, _) => _ = action();
-            return mi;
-        }
-
         // A local branch matching the short name already exists → just check it out. Only when a
         // remote row has no local counterpart do we materialise a tracking branch (and wire its
         // upstream). Mirrors RefNavigatorView.CheckoutAsync so the row menu and double-tap agree.
@@ -41,7 +34,7 @@ internal static class BranchMenu
             !x.IsRemote && string.Equals(x.Name, t.Name, StringComparison.Ordinal));
         var isCurrent = t.IsLocal && string.Equals(t.Name, t.CurrentBranch, StringComparison.Ordinal);
 
-        items.Add(Item("Checkout", () => RunWithStashRecovery(ctx, notify, stash, async () =>
+        items.Add(MenuLeaf("Checkout", () => RunWithStashRecovery(ctx, notify, stash, async () =>
         {
             if (!t.IsLocal && !localExists)
             {
@@ -57,13 +50,13 @@ internal static class BranchMenu
         if (t.TipSha is { Length: > 0 } sha)
         {
             var short7 = sha.Length >= 7 ? sha[..7] : sha;
-            items.Add(Item("Create branch here…", () => PromptCreateBranch(ctx, dialogs, notify, stash, sha, short7)));
-            items.Add(Item("Create tag here…", () => PromptCreateTag(ctx, dialogs, notify, sha, short7)));
+            items.Add(MenuLeaf("Create branch here…", () => PromptCreateBranch(ctx, dialogs, notify, stash, sha, short7)));
+            items.Add(MenuLeaf("Create tag here…", () => PromptCreateTag(ctx, dialogs, notify, sha, short7)));
         }
 
         if (t.IsLocal)
         {
-            items.Add(Item("Rename…", async () =>
+            items.Add(MenuLeaf("Rename…", async () =>
             {
                 var n = await dialogs.PromptAsync("Rename branch", $"New name for '{t.Name}':", t.Name);
                 if (string.IsNullOrWhiteSpace(n) || n == t.Name) return;
@@ -72,7 +65,7 @@ internal static class BranchMenu
             // Git refuses to delete the checked-out branch — omit the item rather than offer a
             // guaranteed failure.
             if (!isCurrent)
-                items.Add(Item("Delete…", () => DeleteAsync(ctx, dialogs, notify, t.Name)));
+                items.Add(MenuLeaf("Delete…", () => DeleteAsync(ctx, dialogs, notify, t.Name)));
         }
 
         // Merging a branch into itself is a no-op at best — only offer it for a non-current target.
@@ -80,14 +73,21 @@ internal static class BranchMenu
         {
             var mergeRef = t.IsLocal ? t.Name : t.CopyName;
             var into = t.CurrentBranch ?? "current";
-            items.Add(Item($"Merge into {into} branch", async () =>
+            items.Add(MenuLeaf($"Merge into {into} branch", async () =>
             {
                 if (!await dialogs.ConfirmAsync("Merge", $"Merge {mergeRef} into {t.CurrentBranch ?? "the current branch"}?")) return;
-                await RunWithStashRecovery(ctx, notify, stash, () => ctx.Gateway.MergeAsync(mergeRef, noFastForward: false, ctx.Lifetime), "Merge");
+                await RunWithStashRecovery(ctx, notify, stash, async () =>
+                {
+                    await ctx.Gateway.MergeAsync(mergeRef, noFastForward: false, ctx.Lifetime);
+                    await ctx.State.RefreshAllAsync(ctx.Lifetime);
+                    var conflicts = ctx.State.Status.Conflicted.Count;
+                    notify.Publish(conflicts > 0 ? NotificationSeverity.Warning : NotificationSeverity.Success,
+                        conflicts > 0 ? $"Merge paused on {conflicts} conflict(s) — resolve, then commit." : $"Merged {mergeRef}.");
+                }, "Merge");
             }));
         }
 
-        items.Add(Item("Copy branch name", () => { copyToClipboard(t.CopyName); return Task.CompletedTask; }));
+        items.Add(MenuLeaf("Copy branch name", () => { copyToClipboard(t.CopyName); return Task.CompletedTask; }));
 
         return items;
     }
