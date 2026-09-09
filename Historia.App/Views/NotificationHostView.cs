@@ -64,6 +64,10 @@ public sealed class NotificationHostView : UserControl, IDisposable
             var header = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(7, 7, 7, 0) };
             var msg = Text(n.Count > 1 ? $"{n.Message}  ×{n.Count}" : n.Message, "ColorText", 13);
             msg.VerticalAlignment = VerticalAlignment.Center;
+            // The shared Text() helper ellipsis-trims to one line; a toast must show its whole
+            // message, so wrap within the card width instead of cutting off with "…".
+            msg.TextWrapping = TextWrapping.Wrap;
+            msg.TextTrimming = TextTrimming.None;
             header.Children.Add(msg);
             Grid.SetColumn(corner, 1);
             header.Children.Add(corner);

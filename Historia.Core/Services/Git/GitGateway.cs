@@ -190,7 +190,16 @@ public sealed class GitGateway(
         }, ct).ConfigureAwait(false);
 
         if (!result.IsSuccess && result.ErrorKind != GitErrorKind.MergeConflict)
+        {
+            // A plain conflicted merge prints "CONFLICT (…)" / "Automatic merge failed" to
+            // stdout, not stderr, so the stderr-only classifier tags it Unknown. Re-check the
+            // combined output before treating it as a hard failure — a conflict is an expected
+            // outcome the conflict resolver handles, not an exception.
+            if (GitErrorClassifier.Classify(result.ExitCode,
+                    $"{result.StandardOutput}\n{result.StandardError}") == GitErrorKind.MergeConflict)
+                return;
             throw HistoriaGitException.FromCli(result, "Merge");
+        }
     }
 
     public async Task ResetAsync(string target, GitResetMode mode, CancellationToken ct = default)

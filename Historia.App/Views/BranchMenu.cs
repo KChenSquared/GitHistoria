@@ -83,7 +83,14 @@ internal static class BranchMenu
             items.Add(Item($"Merge into {into} branch", async () =>
             {
                 if (!await dialogs.ConfirmAsync("Merge", $"Merge {mergeRef} into {t.CurrentBranch ?? "the current branch"}?")) return;
-                await RunWithStashRecovery(ctx, notify, stash, () => ctx.Gateway.MergeAsync(mergeRef, noFastForward: false, ctx.Lifetime), "Merge");
+                await RunWithStashRecovery(ctx, notify, stash, async () =>
+                {
+                    await ctx.Gateway.MergeAsync(mergeRef, noFastForward: false, ctx.Lifetime);
+                    await ctx.State.RefreshAllAsync(ctx.Lifetime);
+                    var conflicts = ctx.State.Status.Conflicted.Count;
+                    notify.Publish(conflicts > 0 ? NotificationSeverity.Warning : NotificationSeverity.Success,
+                        conflicts > 0 ? "Merge encountered conflicts, resolve before continue" : $"Merged {mergeRef}.");
+                }, "Merge");
             }));
         }
 
