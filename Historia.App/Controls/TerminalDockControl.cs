@@ -270,13 +270,13 @@ public sealed class TerminalDockControl : UserControl, IDisposable
             catch { /* repo-follow is a convenience; never surface as a fatal error */ }
         });
 
-    /// <summary>The live session whose origin matches <paramref name="repo"/> — by stable repo
-    /// identity key, or, when identity resolution hasn't caught up yet, by start directory.</summary>
+    /// <summary>The live session that belongs to <paramref name="repo"/>'s workspace tab — by
+    /// tab id, or, as a fallback, by start directory.</summary>
     private TerminalSession? FindRepoSession(Historia.Services.Workspace.RepositoryContext repo)
     {
         var origin = AppBandControl.RepoOrigin(repo);
         return _sessions.Sessions.FirstOrDefault(s =>
-            (origin.RepoKey is { } k && s.Origin.RepoKey == k)
+            (origin.TabId is { } id && s.Origin.TabId == id)
             || PathsEqual(s.Origin.WorkingDirectory, origin.WorkingDirectory));
     }
 

@@ -25,7 +25,9 @@ public class TerminalSessionServiceTests
     }
 
     private static TerminalOrigin Repo(string name = "alpha")
-        => TerminalOrigin.ForRepository(RepoIdentityKey.FromExplicitId(Guid.Parse($"00000000-0000-0000-0000-0000000000{(name == "alpha" ? "01" : "02")}")), $"/src/{name}", name);
+        => TerminalOrigin.ForRepository(
+            RepoIdentityKey.FromExplicitId(Guid.Parse($"00000000-0000-0000-0000-0000000000{(name == "alpha" ? "01" : "02")}")),
+            tabId: name, $"/src/{name}", name);
 
     [Fact]
     public async Task OpenOrFocus_ReusesSessionForSameOrigin()
@@ -59,11 +61,27 @@ public class TerminalSessionServiceTests
         var (svc, backend) = NewService();
         var key = RepoIdentityKey.FromExplicitId(Guid.NewGuid());
 
-        var first = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(key, "/src/before-cd", "r"));
-        var second = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(key, "/somewhere/else", "r"));
+        var first = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(key, "tab-1", "/src/before-cd", "r"));
+        var second = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(key, "tab-1", "/somewhere/else", "r"));
 
         Assert.Same(first, second);
         Assert.Single(backend.Starts);
+    }
+
+    [Fact]
+    public async Task SameRepoDifferentTabs_GetSeparateSessions()
+    {
+        var (svc, backend) = NewService();
+        // Two workspace tabs open on the same repository (two clones of one upstream): same
+        // identity hash, different tab ids — each must get its own shell.
+        var key = RepoIdentityKey.FromExplicitId(Guid.NewGuid());
+
+        var a = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(key, "tab-a", "/src/clone-a", "docs"));
+        var b = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(key, "tab-b", "/src/clone-b", "docs"));
+
+        Assert.NotSame(a, b);
+        Assert.Equal(2, backend.Starts.Count);
+        Assert.Equal(2, svc.Sessions.Count);
     }
 
     [Fact]
@@ -77,17 +95,31 @@ public class TerminalSessionServiceTests
     }
 
     [Fact]
-    public async Task CloseForRepository_ClosesOnlyThatSession()
+    public async Task CloseForTab_ClosesOnlyThatTabsSession()
     {
         var (svc, _) = NewService();
         var repoKey = RepoIdentityKey.FromExplicitId(Guid.NewGuid());
-        var repoSession = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(repoKey, "/src/x", "x"));
+        var repoSession = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(repoKey, "tab-x", "/src/x", "x"));
         var homeSession = await svc.OpenOrFocusAsync(TerminalOrigin.Home("/home/me"));
 
-        await svc.CloseForRepositoryAsync(repoKey);
+        await svc.CloseForTabAsync("tab-x");
 
         Assert.DoesNotContain(repoSession, svc.Sessions);
         Assert.Contains(homeSession, svc.Sessions);
+    }
+
+    [Fact]
+    public async Task CloseForTab_LeavesTheOtherTabOnSameRepoAlone()
+    {
+        var (svc, _) = NewService();
+        var repoKey = RepoIdentityKey.FromExplicitId(Guid.NewGuid());
+        var tabA = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(repoKey, "tab-a", "/src/a", "docs"));
+        var tabB = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(repoKey, "tab-b", "/src/b", "docs"));
+
+        await svc.CloseForTabAsync("tab-a");
+
+        Assert.DoesNotContain(tabA, svc.Sessions);
+        Assert.Contains(tabB, svc.Sessions);
     }
 
     [Fact]
@@ -184,7 +216,7 @@ public class TerminalSessionServiceTests
         var host = Host() with { DirectoryExists = p => p == "/home/me" };
         var svc = new TerminalSessionService(backend, new FakeSettingsService(), new ImmediateUiDispatcher(), host);
 
-        var s = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(RepoIdentityKey.FromExplicitId(Guid.NewGuid()), "/gone", "g"));
+        var s = await svc.OpenOrFocusAsync(TerminalOrigin.ForRepository(RepoIdentityKey.FromExplicitId(Guid.NewGuid()), "tab-g", "/gone", "g"));
 
         Assert.Equal("/home/me", backend.Starts[0].WorkingDirectory);
         Assert.NotNull(s.StartupNotice);

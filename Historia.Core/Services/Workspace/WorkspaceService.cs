@@ -294,13 +294,13 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService)) as Historia.Services.Graph.IGraphLayoutService)
             ?.Forget(context);
 
-        // V5 §3.3: close any terminal session bound to this repo so its shell releases the
-        // working-directory handle before the context is disposed.
-        if (context.IdentityKey is { } repoKey
-            && _services.GetService(typeof(Historia.Services.Terminal.ITerminalSessionService))
+        // V5 §3.3: close the terminal session bound to this tab so its shell releases the
+        // working-directory handle before the context is disposed. Keyed by the tab's own id,
+        // so a second tab open on the same repository keeps its shell running.
+        if (_services.GetService(typeof(Historia.Services.Terminal.ITerminalSessionService))
                is Historia.Services.Terminal.ITerminalSessionService terminals)
         {
-            try { await terminals.CloseForRepositoryAsync(repoKey).ConfigureAwait(false); }
+            try { await terminals.CloseForTabAsync(context.Id).ConfigureAwait(false); }
             catch { /* teardown must not be blocked by a terminal close */ }
         }
 
