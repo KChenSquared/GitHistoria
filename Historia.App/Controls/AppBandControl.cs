@@ -653,7 +653,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         _lastPanelPos = panelPos;
         if (!_dragging)
         {
-            if (Math.Abs(panelPos.X - _pressPanelPos.X) < DragThreshold)
+            if (!AppBandDragReorder.PassesThreshold(_pressPanelPos.X, panelPos.X, DragThreshold))
                 return;
             _dragging = true;
             e.Pointer.Capture(_tabPanel);
@@ -667,10 +667,8 @@ public sealed class AppBandControl : UserControl, IDisposable
             e.GetPosition(this).X - _grabOffset.X,
             e.GetPosition(this).Y - _grabOffset.Y));
 
-        var vpX = e.GetPosition(_scroller).X;
-        _edgeDir = vpX < EdgeScrollZone ? -1
-                 : vpX > _scroller.Viewport.Width - EdgeScrollZone ? 1
-                 : 0;
+        _edgeDir = AppBandDragReorder.EdgeDirection(
+            e.GetPosition(_scroller).X, _scroller.Viewport.Width, EdgeScrollZone);
     }
 
     // Capture lost without a normal drop (a dialog, Alt+Tab, …): abandon the drag and resync.
@@ -722,18 +720,8 @@ public sealed class AppBandControl : UserControl, IDisposable
         if (current < 0)
             return;
 
-        var target = 0;
-        double acc = 0;
-        for (var i = 0; i < _tabViews.Count; i++)
-        {
-            var w = _tabViews[i].Bounds.Width;
-            if (w <= 0) w = TabWidth;
-            if (panelX < acc + w / 2)
-                break;
-            acc += w;
-            target = i + 1;
-        }
-        target = Math.Clamp(target, 0, _tabViews.Count - 1);
+        var target = AppBandDragReorder.TargetIndex(
+            panelX, [.. _tabViews.Select(t => t.Bounds.Width)], TabWidth);
         if (target == current)
             return;
 
