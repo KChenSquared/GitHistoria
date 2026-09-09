@@ -147,17 +147,17 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             {
                 // Rewrites the *remote* ref: --force-with-lease/--force-if-includes stop us
                 // clobbering commits pushed since our last fetch, but not ones we've never had.
-                // A second, explicitly destructive confirm (warning glyph, Cancel highlighted)
-                // stands between the modal and an operation that can lose other people's work.
-                if (!await _dialogs.ConfirmAsync("Force push — destructive",
+                // A second, explicitly destructive confirm (Rule 00: warning glyph, Cancel the
+                // primary + Enter button) stands between the modal and an operation that can
+                // lose other people's work.
+                if (!await _dialogs.ConfirmDestructiveAsync("Force push — destructive",
                         $"This force-pushes {branch} to {remote} and overwrites {remote}/{branch} "
                         + "with your local branch.\n\n"
                         + $"Any commits on {remote}/{branch} that aren't in your local history — "
                         + "including work pushed by other people — are permanently discarded. "
                         + "--force-with-lease only guards against changes made since your last fetch.\n\n"
                         + "Prefer \"Fetch & rebase\" unless you are certain you want to replace the remote branch.",
-                        destructive: true, confirmLabel: "Force push", defaultToCancel: true,
-                        icon: DialogIcon.Warning))
+                        "Force push"))
                     return;
                 await repo.Gateway.PushAsync(remote,
                     new PushSpec { RefSpec = branch, ForceWithLease = true, SetUpstream = setUpstream }, progress, ct);
@@ -282,9 +282,9 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                 }),
                 new NotificationAction($"Reset to {remote}/{branch}", async () =>
                 {
-                    if (!await _dialogs.ConfirmAsync("Reset branch",
+                    if (!await _dialogs.ConfirmDestructiveAsync("Reset branch",
                             $"Move {branch} to {remote}/{branch}, discarding its current local commits? This cannot be undone.",
-                            destructive: true, "Reset"))
+                            "Reset"))
                         return;
                     try { await repo.Gateway.ResetAsync($"{remote}/{branch}", GitResetMode.Hard, repo.Lifetime); }
                     finally { await repo.State.RefreshAllAsync(repo.Lifetime); }
