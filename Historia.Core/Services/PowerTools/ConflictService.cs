@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IConflictService"/>
 public sealed class ConflictService(IGitCliService cli, ISettingsService settings) : IConflictService
@@ -121,28 +121,47 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             var remotePath = WriteTemp(temp, "REMOTE", conflict.TheirsContent);
             var mergedPath = Path.Combine(context.RepositoryPath, filePath);
 
-            // Tokenize the configured template ourselves and launch the program directly — no
-            // cmd.exe, no shell. filePath (and therefore mergedPath) comes from the repository's
-            // own index and is attacker-controlled; a shell metacharacter in it (e.g. "pwn&calc")
-            // must never be interpreted as a command separator (security review 2026-09-07,
-            // finding 1). Each substituted value becomes its own ArgumentList entry, so no
-            // quoting or escaping is needed regardless of its contents.
-            var tokens = TokenizeCommand(tool);
+            // Tokenize the configured command line ourselves and launch the executable directly
+            // — never through a shell. Routing the substituted command through "cmd.exe /c" used
+            // to double-escape any path with spaces: ArgumentList quotes an entry containing
+            // spaces and escapes its internal quotes as \", which cmd.exe does not understand
+            // (it uses ^ and its own /c quoting rule), so a path like the ones this substitutes
+            // — every one of which is pre-wrapped in quotes by the old Quote() helper — always
+            // reached cmd.exe mangled. Passing each token through ArgumentList against the real
+            // executable lets the runtime's own Win32 escaping do its job once, correctly, and
+            // needs no OS check either (no shell-specific syntax is involved).
+            //
+            // Security review 2026-09-07, finding 1: filePath (and therefore mergedPath) comes
+            // from the repository's own index and is attacker-controlled; a shell metacharacter in it
+            // (e.g. "pwn&calc") must never be interpreted as a command separator. Each substituted
+            // value becomes its own ArgumentList entry, so no quoting or escaping is needed
+            // regardless of its contents.
+            var tokens = Tokenize(tool);
             if (tokens.Count == 0)
-                return false;
+                return false; // an empty/whitespace-only configured tool — nothing to launch
 
-            string Substitute(string t) => t
+            string Expand(string token) => token
                 .Replace("$BASE", basePath).Replace("$LOCAL", localPath)
                 .Replace("$REMOTE", remotePath).Replace("$MERGED", mergedPath);
 
-            var psi = new ProcessStartInfo(Substitute(tokens[0])) { UseShellExecute = false, CreateNoWindow = true };
-            for (var i = 1; i < tokens.Count; i++)
-                psi.ArgumentList.Add(Substitute(tokens[i]));
+            var psi = new ProcessStartInfo(Expand(tokens[0])) { UseShellExecute = false, CreateNoWindow = true };
+            foreach (var token in tokens.Skip(1))
+                psi.ArgumentList.Add(Expand(token));
 
-            using var process = Process.Start(psi);
+            Process? process;
+            try
+            {
+                process = Process.Start(psi);
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                return false; // the configured tool's executable could not be found/started
+            }
             if (process is null)
                 return false;
-            await process.WaitForExitAsync(ct).ConfigureAwait(false);
+
+            using (process)
+                await process.WaitForExitAsync(ct).ConfigureAwait(false);
 
             var merged = await File.ReadAllTextAsync(mergedPath, ct).ConfigureAwait(false);
             return !merged.Contains("<<<<<<<", StringComparison.Ordinal);
@@ -284,20 +303,26 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         return path;
     }
 
-    /// <summary>Splits a merge-tool command template into argv-style tokens: whitespace
-    /// separates tokens, and a double-quoted run (e.g. a program path with spaces) is one
-    /// token with its quotes removed. This is our own tokenizer, not a shell's — the result is
-    /// handed straight to <see cref="ProcessStartInfo.ArgumentList"/>, so no metacharacter in a
-    /// later substituted path (see <see cref="LaunchExternalMergeToolAsync"/>) can act as a
-    /// separator or operator.</summary>
-    private static List<string> TokenizeCommand(string command)
+    /// <summary>
+    /// Splits a user-configured external-tool command line ("<c>"C:\Tool\t.exe" $LOCAL
+    /// $REMOTE</c>") into its executable and argument tokens, honouring double-quoted segments
+    /// (the quotes are consumed, not kept) so a quoted path with spaces stays one token. This is
+    /// deliberately simpler than full Win32 command-line parsing (no escaped-quote handling) —
+    /// good enough for the tool strings users actually type, and paired with
+    /// <see cref="ProcessStartInfo.ArgumentList"/> at the call site so the runtime's own,
+    /// correct escaping is what the child process actually sees — never a shell's.
+    /// Also ensures metacharacters in substituted paths cannot act as command separators
+    /// (security review 2026-09-07, finding 1).
+    /// </summary>
+    /// <summary>Internal for a direct test seam (Historia.Tests).</summary>
+    internal static List<string> Tokenize(string commandLine)
     {
         var tokens = new List<string>();
         var current = new StringBuilder();
         var inQuotes = false;
         var hasToken = false;
 
-        foreach (var c in command)
+        foreach (var c in commandLine)
         {
             if (c == '"')
             {
@@ -306,7 +331,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
                 continue;
             }
 
-            if (char.IsWhiteSpace(c) && !inQuotes)
+            if (!inQuotes && char.IsWhiteSpace(c))
             {
                 if (hasToken)
                 {

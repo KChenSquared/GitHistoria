@@ -78,9 +78,12 @@ internal sealed class PtyIoPump : IDisposable
         {
             _writeQueue.TryAdd(data.ToArray());
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
         {
-            // CompleteAdding has been called — shutting down.
+            // InvalidOperationException: CompleteAdding has been called. ObjectDisposedException:
+            // Dispose() has already disposed the queue — the _disposed check above and this call
+            // are not atomic with Dispose, so a write racing a close (e.g. a keystroke while the
+            // tab is closing) can still reach TryAdd after the queue is gone.
         }
     }
 

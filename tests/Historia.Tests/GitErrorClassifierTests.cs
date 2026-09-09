@@ -32,6 +32,18 @@ public class GitErrorClassifierTests
         => Assert.Equal(GitErrorKind.Unknown, GitErrorClassifier.Classify(1, "some entirely novel failure text"));
 
     [Fact]
+    public void Permission_denied_creating_an_ordinary_file_is_not_a_locked_index()
+    {
+        // "unable to create" alone used to be a LockedIndex needle, but git also uses that exact
+        // phrase for ordinary filesystem failures with no lock involved at all — e.g. a checkout
+        // hitting a file a build still has open, or a directory the user cannot write to. Only
+        // "index.lock" / "another git process seems to be running" should say LockedIndex.
+        Assert.Equal(
+            GitErrorKind.Unknown,
+            GitErrorClassifier.Classify(128, "error: unable to create file src/x.cs: Permission denied"));
+    }
+
+    [Fact]
     public void Exit_zero_with_no_stderr_is_none()
         => Assert.Equal(GitErrorKind.None, GitErrorClassifier.Classify(0, ""));
 }

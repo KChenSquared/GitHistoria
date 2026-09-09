@@ -221,17 +221,27 @@ public sealed class GitGateway(
         await context.WithRepositoryAsync(r => lib.Checkout(r, refName, options), ct).ConfigureAwait(false);
     }
 
-    public Task<BranchInfo> CreateBranchAsync(string name, string startPoint, bool checkout, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.CreateBranch(r, name, startPoint, checkout), ct);
+    public async Task<BranchInfo> CreateBranchAsync(string name, string startPoint, bool checkout, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        return await context.WithRepositoryAsync(r => lib.CreateBranch(r, name, startPoint, checkout), ct).ConfigureAwait(false);
+    }
 
-    public Task DeleteBranchAsync(string name, bool force, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.DeleteBranch(r, name, force), ct);
+    public async Task DeleteBranchAsync(string name, bool force, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.DeleteBranch(r, name, force), ct).ConfigureAwait(false);
+    }
 
-    public Task RenameBranchAsync(string oldName, string newName, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.RenameBranch(r, oldName, newName), ct);
+    public async Task RenameBranchAsync(string oldName, string newName, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.RenameBranch(r, oldName, newName), ct).ConfigureAwait(false);
+    }
 
     public async Task SetUpstreamAsync(string branchName, string upstreamRef, CancellationToken ct = default)
     {
+        using var _ = context.BeginSelfOperation();
         var result = await cli.RunAsync(new GitCliRequest
         {
             Arguments = ["branch", $"--set-upstream-to={upstreamRef}", branchName],
@@ -241,35 +251,79 @@ public sealed class GitGateway(
             throw HistoriaGitException.FromCli(result, "Set upstream");
     }
 
-    public Task<TagInfo> CreateTagAsync(string name, string target, string? message, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.CreateTag(r, name, target, message,
-            message is null ? null : BuildTagger(r)), ct);
+    public async Task<TagInfo> CreateTagAsync(string name, string target, string? message, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        return await context.WithRepositoryAsync(r => lib.CreateTag(r, name, target, message,
+            message is null ? null : BuildTagger(r)), ct).ConfigureAwait(false);
+    }
 
-    public Task DeleteTagAsync(string name, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.DeleteTag(r, name), ct);
+    public async Task DeleteTagAsync(string name, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.DeleteTag(r, name), ct).ConfigureAwait(false);
+    }
 
     // ── Remotes ──
 
-    public Task AddRemoteAsync(string name, string url, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.AddRemote(r, name, url), ct);
+    public async Task AddRemoteAsync(string name, string url, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.AddRemote(r, name, url), ct).ConfigureAwait(false);
+    }
 
-    public Task RemoveRemoteAsync(string name, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.RemoveRemote(r, name), ct);
+    public async Task RemoveRemoteAsync(string name, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.RemoveRemote(r, name), ct).ConfigureAwait(false);
+    }
 
-    public Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.SetRemoteUrl(r, name, url), ct);
+    public async Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        await context.WithRepositoryAsync(r => lib.SetRemoteUrl(r, name, url), ct).ConfigureAwait(false);
+    }
 
     // ── Network (always CLI) ──
 
     public async Task FetchAsync(string remote, GitFetchOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default)
     {
-        var args = new List<string> { "fetch", "--progress" };
-        if (options.All) args.Add("--all");
-        else args.Add(remote);
+        if (options.All)
+        {
+            // Fetch every remote individually rather than a single untargeted "git fetch --all":
+            // RunNetworkAsync can only route an untargeted fetch as RouteTransport.AsIs (no
+            // remote name means no remote URL to classify), which silently skips the active
+            // profile's PAT/SSH key injection and — critically — makes the SSH-Only setting a
+            // no-op, since the transport plan was decided before it could apply (§findings). One
+            // remote failing to route doesn't stop the others; the last failure (if any) is what
+            // the caller sees, matching git's own "try every remote, report failures" behaviour.
+            var remotes = await context.WithRepositoryAsync(lib.ProjectRemotes, ct).ConfigureAwait(false);
+            HistoriaGitException? lastError = null;
+            foreach (var r in remotes)
+            {
+                try
+                {
+                    await FetchAsync(r.Name, options with { All = false }, progress, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (HistoriaGitException ex)
+                {
+                    lastError = ex;
+                }
+            }
+            if (lastError is not null)
+                throw lastError;
+            return;
+        }
+
+        var args = new List<string> { "fetch", "--progress", remote };
         if (options.Prune) args.Add("--prune");
         if (options.Tags) args.Add("--tags");
 
-        await RunNetworkAsync(args, "Fetch", options.All ? null : remote, progress, ct, options.Background).ConfigureAwait(false);
+        await RunNetworkAsync(args, "Fetch", remote, progress, ct, options.Background).ConfigureAwait(false);
     }
 
     public async Task PullAsync(string remote, string branch, GitPullOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default)

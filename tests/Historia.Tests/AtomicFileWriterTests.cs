@@ -33,6 +33,22 @@ public class AtomicFileWriterTests : IDisposable
     }
 
     [Fact]
+    public async Task Failed_write_keeps_the_payload_queued_for_the_next_attempt()
+    {
+        var path = Path.Combine(_dir, "d.json");
+        Directory.CreateDirectory(path); // occupies the target name so the atomic Move fails
+        await using var writer = new AtomicFileWriter(path);
+
+        writer.QueueWrite("{\"x\":1}");
+        await writer.FlushAsync(); // must not throw, and must not drop the payload on failure
+
+        Directory.Delete(path); // clear the obstruction
+        await writer.FlushAsync(); // should now succeed using the still-queued content
+
+        Assert.Equal("{\"x\":1}", await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
     public async Task Concurrent_WriteNow_calls_do_not_corrupt_the_file()
     {
         var path = Path.Combine(_dir, "c.json");

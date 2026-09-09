@@ -11,6 +11,14 @@ public interface IKeyboardCommandRouter
     /// <summary>Registers a handler for a chord such as <c>"Ctrl+Enter"</c>. Returns a token that unregisters on dispose.</summary>
     IDisposable Register(string chord, Func<Task> handler);
 
+    /// <summary>
+    /// True when a handler is registered for the chord. A caller with a synchronous key event
+    /// (e.g. Avalonia's <c>KeyDown</c>) must check this and set <c>e.Handled</c> <b>before</b>
+    /// calling <see cref="DispatchAsync"/> — awaiting the dispatch first only marks the key
+    /// handled after the routed-event walk has already finished for any handler that yields.
+    /// </summary>
+    bool IsRegistered(string chord);
+
     /// <summary>Dispatches a chord. Returns true when a handler ran (the caller should then swallow the key).</summary>
     Task<bool> DispatchAsync(string chord);
 }
@@ -25,6 +33,8 @@ public sealed class KeyboardCommandRouter : IKeyboardCommandRouter
         _handlers[normalized] = handler;
         return new Registration(this, normalized, handler);
     }
+
+    public bool IsRegistered(string chord) => _handlers.ContainsKey(Normalize(chord));
 
     public async Task<bool> DispatchAsync(string chord)
     {

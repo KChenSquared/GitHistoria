@@ -95,4 +95,35 @@ public class TerminalSessionTests
         session.Resize(100, 40);
         Assert.Contains((100, 40), pty.Resizes);
     }
+
+    [Fact]
+    public void RapidOutput_PostsToTheDispatcherOnceWhileACoalesceWindowIsOpen()
+    {
+        // A deferred dispatcher: unlike ImmediateUiDispatcher, Post/Start don't run inline, so
+        // multiple pty chunks can queue up before anything actually reaches the "UI thread" —
+        // exposing the one-Post-per-chunk bug that ImmediateUiDispatcher's synchronous chain
+        // can't observe (each of its calls resolves fully before the next MarkBufferDirty runs).
+        var dispatcher = new RecordingUiDispatcher();
+        var pty = new FakePtyConnection();
+        using var session = new TerminalSession(TerminalOrigin.Home("/home/me"), pty, dispatcher, 80, 24, 1000);
+
+        for (var i = 0; i < 50; i++)
+            pty.EmitOutput($"line {i}\r\n");
+
+        // A coalescing window is still open (the timer hasn't ticked), so only the first chunk's
+        // MarkBufferDirty call should have reached the dispatcher.
+        Assert.Equal(1, dispatcher.PostCount);
+
+        dispatcher.DrainPosted();
+        Assert.Equal(1, dispatcher.LastTimer!.StartCount);
+
+        var raised = 0;
+        session.BufferChanged += (_, _) => raised++;
+        dispatcher.LastTimer!.Fire(); // simulate the 16ms coalescing tick
+        Assert.Equal(1, raised);
+
+        // The window closed on that tick — new output opens a fresh one and posts again.
+        pty.EmitOutput("more\r\n");
+        Assert.Equal(2, dispatcher.PostCount);
+    }
 }

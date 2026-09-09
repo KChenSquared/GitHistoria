@@ -166,7 +166,26 @@ public sealed class RepositoryContext : IAsyncDisposable
         public void Dispose()
         {
             if (Interlocked.Decrement(ref owner._selfOperationDepth) == 0)
-                _ = owner.State.RefreshAllAsync(owner.Lifetime);
+                _ = RefreshQuietlyAsync(owner);
+        }
+
+        // Fire-and-forget, so a fault here must be observed and swallowed here — otherwise it
+        // surfaces later as an unobserved TaskScheduler exception, which App.axaml.cs reports to
+        // the user as a fatal error for what can be a routine tab close mid-operation.
+        private static async Task RefreshQuietlyAsync(RepositoryContext owner)
+        {
+            try
+            {
+                await owner.State.RefreshAllAsync(owner.Lifetime).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Tab closed during the operation.
+            }
+            catch
+            {
+                // A self-operation's trailing refresh failing must not surface as a fatal error.
+            }
         }
     }
 
@@ -181,7 +200,7 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        using var _ = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.DisposeAsync({System.IO.Path.GetFileName(RepositoryPath)})");
+        using var perfScope = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.DisposeAsync({System.IO.Path.GetFileName(RepositoryPath)})");
         AppLog.Write(AppLogLevel.Info, "repo", $"Close({DisplayName})");
         try { _lifetimeCts.Cancel(); } catch { /* ignore */ }
 
@@ -191,8 +210,12 @@ public sealed class RepositoryContext : IAsyncDisposable
 
         // Take the gate so no operation is mid-flight when the native handle is freed. A
         // libgit2 call already running can't be interrupted, so bound the wait: if it does not
-        // finish, abandon the native handle to the finalizer rather than hang the tab close.
-        // The still-running operation keeps the semaphore / CTS alive and releases them itself.
+        // finish, return without hanging the tab close — but still reclaim the gate, the CTS,
+        // and the native handle once that operation eventually does finish, via
+        // DisposeWhenGateFreesAsync below, rather than leaking all three for the rest of the
+        // process (§findings: the "still-running operation releases them itself" premise this
+        // comment used to state is false — WithRepositoryAsync's finally only releases the
+        // semaphore; nothing here ever disposed it, the CTS, or the Repository on this path).
         var gateWaitStart = System.Diagnostics.Stopwatch.GetTimestamp();
         var gotGate = await _repoGate.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         Historia.Diagnostics.PerfLog.Mark(
@@ -210,6 +233,33 @@ public sealed class RepositoryContext : IAsyncDisposable
 
             _repoGate.Dispose();
             _lifetimeCts.Dispose();
+        }
+        else
+        {
+            // Cancel() above already ran every callback registered against _lifetimeCts.Token
+            // (including the still-running operation's linked source's registration) — disposing
+            // the source itself afterwards is safe regardless of what else is still in flight.
+            try { _lifetimeCts.Dispose(); } catch { /* ignore */ }
+            _ = DisposeWhenGateFreesAsync();
+        }
+    }
+
+    /// <summary>Fire-and-forget tail for the DisposeAsync timeout path: waits — however long it
+    /// takes — for the stuck operation to release the gate, then disposes the native handle and
+    /// the semaphore. Never awaited by a caller, so any fault here must be swallowed rather than
+    /// becoming an unobserved <see cref="TaskScheduler"/> exception.</summary>
+    private async Task DisposeWhenGateFreesAsync()
+    {
+        try
+        {
+            await _repoGate.WaitAsync().ConfigureAwait(false);
+            try { _repository.Dispose(); }
+            finally { _repoGate.Release(); }
+            _repoGate.Dispose();
+        }
+        catch
+        {
+            // Best-effort — there is no caller left to report a failure to by the time this runs.
         }
     }
 }

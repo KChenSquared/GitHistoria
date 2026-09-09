@@ -20,6 +20,11 @@ public sealed class FileWatcherService : IAsyncDisposable
     private readonly object _sync = new();
     private readonly HashSet<string> _pendingPaths = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Memoizes <see cref="IsBesideAProjectFile"/> per relative directory (see
+    /// <see cref="IsLikelyIgnored"/>) so a build storm under one project's bin/obj pays the
+    /// filesystem probe once rather than once per file event.</summary>
+    private readonly ConcurrentDictionary<string, bool> _buildOutputParents = new(StringComparer.OrdinalIgnoreCase);
+
     private Timer? _debounceTimer;
     private DateTimeOffset _firstPendingAt;
     private bool _refsTouched;
@@ -225,17 +230,52 @@ public sealed class FileWatcherService : IAsyncDisposable
     /// <summary>Called by the workspace when the tab regains focus, for the degraded-mode fallback (§6.8.2).</summary>
     public Task RefreshOnFocusAsync() => _state.RefreshAllAsync(_context.Lifetime);
 
-    private static bool IsLikelyIgnored(string relPath)
+    /// <summary>Internal for a direct test seam (Historia.Tests) — otherwise only called from
+    /// <see cref="OnRawEvent"/>.</summary>
+    internal bool IsLikelyIgnored(string relPath)
     {
         // Cheap synchronous pre-filter for the common build-output offenders only. The
         // authoritative .gitignore check is LibGit2Sharp's ignore rules, consulted lazily
         // during the status scan — never here: this runs on the FileSystemWatcher callback
         // thread, and blocking it on the per-repo async gate (a running walk can hold that
         // gate for seconds) stalls every later event and can starve the thread pool.
-        foreach (var seg in relPath.Split('/'))
-            if (seg is "bin" or "obj" or "node_modules" or ".vs" or ".git")
+        //
+        // node_modules/.vs/.git are near-certain vendor/tooling dirs, always skipped. bin/obj
+        // are also skipped, but only where they actually look like build output — beside a
+        // project file — so a repo that tracks a top-level bin/ of scripts (a common layout)
+        // still gets its Changes panel updated when one of those tracked files is edited.
+        var segments = relPath.Split('/');
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var seg = segments[i];
+            if (seg is "node_modules" or ".vs" or ".git")
                 return true;
+            if (seg is "bin" or "obj" && IsBesideAProjectFile(segments, i))
+                return true;
+        }
         return false;
+    }
+
+    /// <summary>True when the directory containing <c>segments[binOrObjIndex]</c> holds a
+    /// project file (<c>*.*proj</c> — csproj/fsproj/vbproj/…), i.e. <c>bin</c>/<c>obj</c> there
+    /// really is that project's build output. Memoized per directory so a build storm — the
+    /// exact case this pre-filter exists for — pays the one filesystem probe once, not once
+    /// per event.</summary>
+    private bool IsBesideAProjectFile(string[] segments, int binOrObjIndex)
+    {
+        var relDir = string.Join('/', segments.Take(binOrObjIndex));
+        return _buildOutputParents.GetOrAdd(relDir, static (dir, workDir) =>
+        {
+            try
+            {
+                var full = string.IsNullOrEmpty(dir) ? workDir : Path.Combine(workDir, dir.Replace('/', Path.DirectorySeparatorChar));
+                return Directory.Exists(full) && Directory.EnumerateFiles(full, "*.*proj").Any();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }, NormalizePath(_context.RepositoryPath));
     }
 
     private static int CountFilesCapped(string root, int cap)

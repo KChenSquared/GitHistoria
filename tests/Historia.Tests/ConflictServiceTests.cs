@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 public class ConflictServiceTests
 {
@@ -135,5 +135,52 @@ public class ConflictServiceTests
             try { File.Delete(script); } catch { /* best effort */ }
             try { File.Delete(marker); } catch { /* best effort */ }
         }
+    }
+
+    // ── external merge tool command-line handling (§findings: cmd.exe /c double-escaping) ──
+
+    [Fact]
+    public void Tokenize_keeps_a_quoted_path_with_spaces_as_one_token()
+    {
+        var tokens = ConflictService.Tokenize(
+            "\"C:\\Program Files\\Beyond Compare 4\\BComp.exe\" $LOCAL $REMOTE $BASE $MERGED");
+
+        Assert.Equal(
+            [@"C:\Program Files\Beyond Compare 4\BComp.exe", "$LOCAL", "$REMOTE", "$BASE", "$MERGED"],
+            tokens);
+    }
+
+    [Fact]
+    public void Tokenize_handles_an_unquoted_tool_with_no_spaces_in_its_path()
+        => Assert.Equal(["meld", "$LOCAL", "$REMOTE", "$MERGED"], ConflictService.Tokenize("meld $LOCAL $REMOTE $MERGED"));
+
+    [Fact]
+    public void Tokenize_collapses_repeated_whitespace_between_tokens()
+        => Assert.Equal(["a", "b"], ConflictService.Tokenize("  a    b  "));
+
+    [Fact]
+    public void Tokenize_of_blank_input_yields_no_tokens()
+        => Assert.Empty(ConflictService.Tokenize("   "));
+
+    [Fact]
+    public async Task LaunchExternalMergeToolAsync_runs_the_configured_tool_directly_not_via_a_wrapping_shell()
+    {
+        // "cmd.exe" here plays the role of a user-configured external tool: each substituted
+        // token reaches it as its own argv entry via ArgumentList, exactly as production code
+        // launches whatever the user configures — not as one shell command string this service
+        // builds and hands to a nested "cmd.exe /c" (the old, double-escaping path).
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        await host.Settings.UpdateAsync(s => s with { ExternalMergeTool = "cmd.exe /c copy /Y $LOCAL $MERGED" });
+
+        var ok = await svc.LaunchExternalMergeToolAsync(ctx, "f.txt");
+
+        Assert.True(ok);
+        var merged = await File.ReadAllTextAsync(Path.Combine(repoDir.Path, "f.txt"));
+        Assert.Contains("OURS", merged);
+        Assert.DoesNotContain("<<<<<<<", merged, StringComparison.Ordinal);
     }
 }

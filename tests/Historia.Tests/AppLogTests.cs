@@ -24,7 +24,14 @@ public sealed class AppLogTests : IDisposable
             ? Directory.GetFiles(AppPaths.LogsDirectory, "dev-*.log")
             : [];
 
-    private string ReadSession() => File.ReadAllText(SessionFiles().Single());
+    /// <summary>Reads the session file's content. Disables logging first — the session writer
+    /// now holds the file open for the whole session (§findings: no more open/close per line),
+    /// so the handle must be closed before a second reader can open the same file.</summary>
+    private string ReadSession()
+    {
+        AppLog.Enabled = false;
+        return File.ReadAllText(SessionFiles().Single());
+    }
 
     [Fact]
     public void Disabled_writes_nothing()
@@ -43,6 +50,7 @@ public sealed class AppLogTests : IDisposable
 
         var file = Assert.Single(SessionFiles());
         Assert.Equal(file, AppLog.CurrentLogPath);
+        AppLog.Enabled = false; // close the session writer before reopening the file for read
         var text = File.ReadAllText(file);
         Assert.Contains("# Historia developer log", text);
         Assert.Contains("logging started", text);
@@ -117,6 +125,23 @@ public sealed class AppLogTests : IDisposable
         // 10 retained + the one just opened.
         Assert.Equal(11, SessionFiles().Length);
         Assert.False(File.Exists(Path.Combine(AppPaths.LogsDirectory, "dev-20200100-000000.log")));
+    }
+
+    [Fact]
+    public void The_session_file_stays_open_for_writing_across_multiple_entries()
+    {
+        // §findings: every previous version reopened, wrote, and closed the file on every single
+        // entry — no handle was ever held between calls. Now one handle spans the whole session:
+        // a second attempt to open the same file for writing must be rejected while it's live.
+        AppLog.Enabled = true;
+        AppLog.Write(AppLogLevel.Info, "test", "one");
+
+        var file = AppLog.CurrentLogPath!;
+        Assert.Throws<IOException>(() => File.Open(file, FileMode.Open, FileAccess.Write, FileShare.None));
+
+        // The held-open handle keeps working for later entries too.
+        AppLog.Write(AppLogLevel.Info, "test", "two");
+        Assert.Contains("two", ReadSession());
     }
 
     [Fact]

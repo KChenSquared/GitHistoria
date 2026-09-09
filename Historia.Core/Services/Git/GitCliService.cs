@@ -175,10 +175,19 @@ public sealed class GitCliService : IGitCliService
 
         stopwatch.Stop();
 
+        // The caller's own token and the per-request Timeout both trip `cancelled` via the same
+        // linked registration — tell them apart so a stalled invocation (killed by the timeout,
+        // with nothing in stderr to classify) isn't reported as an opaque Unknown failure.
         if (cancelled && ct.IsCancellationRequested)
         {
             return new GitCliResult(-1, stdout.ToString(), stderr.ToString(),
                 GitErrorKind.Cancelled, stopwatch.Elapsed);
+        }
+
+        if (cancelled && timeoutCts.IsCancellationRequested)
+        {
+            return new GitCliResult(-1, stdout.ToString(), stderr.ToString(),
+                GitErrorKind.TimedOut, stopwatch.Elapsed);
         }
 
         var exitCode = SafeExitCode(process);
