@@ -567,7 +567,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private async Task DiscardAsync(FileStatusEntry f)
     {
-        if (!await _dialogs.ConfirmAsync("Discard changes", $"Discard all changes to '{f.Path}'?", destructive: true, "Discard"))
+        if (!await _dialogs.ConfirmDestructiveAsync("Discard changes", $"Discard all changes to '{f.Path}'? This cannot be undone.", "Discard"))
             return;
         _checkedChanges.Remove(f.Path);
         _checkedStaged.Remove(f.Path);
@@ -588,11 +588,10 @@ public sealed class StagingPanelView : UserControl, IDisposable
     {
         var paths = _status.Unstaged.Concat(_status.Untracked).Select(f => f.Path).ToList();
         if (paths.Count == 0) return;
-        if (!await _dialogs.ConfirmAsync(
+        if (!await _dialogs.ConfirmDestructiveAsync(
             "Discard all changes",
             "Discard all unstaged changes? Untracked files are moved to the recycle bin; "
             + "changes to tracked files cannot be undone.",
-            destructive: true,
             "Discard all"))
             return;
         _checkedChanges.Clear();
