@@ -312,9 +312,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
     /// <see cref="ProcessStartInfo.ArgumentList"/> at the call site so the runtime's own,
     /// correct escaping is what the child process actually sees — never a shell's.
     /// Also ensures metacharacters in substituted paths cannot act as command separators
-    /// (security review 2026-09-07, finding 1).
     /// </summary>
-    /// <summary>Internal for a direct test seam (Historia.Tests).</summary>
     internal static List<string> Tokenize(string commandLine)
     {
         var tokens = new List<string>();

@@ -82,7 +82,7 @@ internal static class BranchMenu
                     await ctx.State.RefreshAllAsync(ctx.Lifetime);
                     var conflicts = ctx.State.Status.Conflicted.Count;
                     notify.Publish(conflicts > 0 ? NotificationSeverity.Warning : NotificationSeverity.Success,
-                        conflicts > 0 ? "Merge encountered conflicts, resolve before continue" : $"Merged {mergeRef}.");
+                        conflicts > 0 ? $"Merge paused on {conflicts} conflict(s) — resolve, then commit." : $"Merged {mergeRef}.");
                 }, "Merge");
             }));
         }

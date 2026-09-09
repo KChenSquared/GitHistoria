@@ -305,7 +305,7 @@ public sealed partial class CommitGraphControl
             await ctx.State.RefreshAllAsync(ctx.Lifetime);
             var conflicts = ctx.State.Status.Conflicted.Count;
             _notifications.Publish(conflicts > 0 ? NotificationSeverity.Warning : NotificationSeverity.Success,
-                conflicts > 0 ? "Merge encountered conflicts, resolve before continue" : $"Merged {display}.");
+                conflicts > 0 ? $"Merge paused on {conflicts} conflict(s) — resolve, then commit." : $"Merged {display}.");
         }, "Merge");
     }
 
