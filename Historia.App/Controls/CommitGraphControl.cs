@@ -250,9 +250,7 @@ public sealed class CommitGraphControl : Control
     private readonly ComboBox _scopeBox;
     private readonly CheckBox _stashCheck;
     private readonly TextBlock _matchLabel;
-    private readonly List<int> _matchRows = [];
-    private readonly HashSet<int> _matchRowSet = [];
-    private int _matchCursor = -1;
+    private readonly GraphMatchCursor _matches = new();
 
     private double RowsTop => HeaderHeight + (_queryBar.IsVisible ? QueryBarHeight : 0);
 
@@ -1480,7 +1478,7 @@ public sealed class CommitGraphControl : Control
             e.Handled = true;
             return;
         }
-        if (e.Key is Key.F3 && _matchRows.Count > 0)
+        if (e.Key is Key.F3 && _matches.HasMatches)
         {
             StepMatch((e.KeyModifiers & KeyModifiers.Shift) != 0 ? -1 : 1);
             e.Handled = true;
@@ -1524,26 +1522,13 @@ public sealed class CommitGraphControl : Control
 
     private void RecomputeMatches()
     {
-        _matchRows.Clear();
-        _matchRowSet.Clear();
-        _matchCursor = -1;
         var term = _searchBox.Text?.Trim() ?? "";
 
-        if (term.Length > 0 && _layout is { } l)
-        {
-            // The store owns the scan: an in-memory array loops; a disk-backed store streams
-            // its search sidecar rather than paging every record (§7.5, §7.6).
-            foreach (var i in l.Layout.Commits.Search(term))
-            {
-                _matchRows.Add(i);
-                _matchRowSet.Add(i);
-            }
-            if (_matchRows.Count > 0)
-            {
-                _matchCursor = 0;
-                ScrollRowIntoView(_matchRows[0]);
-            }
-        }
+        // The store owns the scan: an in-memory array loops; a disk-backed store streams its
+        // search sidecar rather than paging every record (§7.5, §7.6).
+        _matches.Reset(term.Length > 0 && _layout is { } l ? l.Layout.Commits.Search(term) : []);
+        if (_matches.HasMatches)
+            ScrollRowIntoView(_matches.Rows[0]);
 
         UpdateMatchLabel();
         InvalidateVisual();
@@ -1551,10 +1536,9 @@ public sealed class CommitGraphControl : Control
 
     private void StepMatch(int direction)
     {
-        if (_matchRows.Count == 0)
+        var row = _matches.Step(direction);
+        if (row < 0)
             return;
-        _matchCursor = ((_matchCursor + direction) % _matchRows.Count + _matchRows.Count) % _matchRows.Count;
-        var row = _matchRows[_matchCursor];
         ScrollRowIntoView(row);
         _state?.SetSelectedCommit(_layout!.Layout.Commits[row].Id);
         UpdateMatchLabel();
@@ -1562,9 +1546,7 @@ public sealed class CommitGraphControl : Control
     }
 
     private void UpdateMatchLabel() =>
-        _matchLabel.Text = _matchRows.Count == 0
-            ? (string.IsNullOrEmpty(_searchBox.Text) ? "" : "0 / 0")
-            : $"{_matchCursor + 1} / {_matchRows.Count}";
+        _matchLabel.Text = _matches.Label(!string.IsNullOrEmpty(_searchBox.Text));
 
     private void ScrollRowIntoView(int row)
     {
@@ -2665,8 +2647,8 @@ public sealed class CommitGraphControl : Control
         _overflowChips.Clear();
         _badgeRightEdge.Clear();
 
-        var currentMatchRow = _matchCursor >= 0 && _matchCursor < _matchRows.Count ? _matchRows[_matchCursor] : -1;
-        var matchSet = _matchRows.Count > 0 ? _matchRowSet : null;
+        var currentMatchRow = _matches.CurrentRow;
+        var matchSet = _matches.RowSet;
         var gx = _graphColLeft - _hScrollOffset;
         var washRight = gx + Math.Max(0, _graphColWidth - TickWidth);
         // Clip the row-background band to the row area: the first drawn row starts two rows
