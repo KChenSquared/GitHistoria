@@ -510,7 +510,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private async Task DeleteTagAsync(TagInfo tag)
     {
         if (_repo is null) return;
-        if (!await _dialogs.ConfirmAsync("Delete tag", $"Delete local tag '{tag.Name}'?", destructive: true, "Delete"))
+        if (!await _dialogs.ConfirmDestructiveAsync("Delete tag", $"Delete local tag '{tag.Name}'? This cannot be undone.", "Delete"))
             return;
         try
         {
@@ -553,7 +553,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private async Task WorktreeRemoveAsync(WorktreeInfo wt)
     {
         if (_repo is null) return;
-        if (!await _dialogs.ConfirmAsync("Remove worktree", $"Remove the worktree at '{wt.Path}'?", destructive: true, "Remove")) return;
+        if (!await _dialogs.ConfirmDestructiveAsync("Remove worktree", $"Remove the worktree at '{wt.Path}'?", "Remove")) return;
         await PowerOp(r => _worktrees.RemoveAsync(r, wt.Path, force: false, r.Lifetime));
     }
 
@@ -582,7 +582,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private async Task StashDropAsync(StashEntry entry)
     {
         if (_repo is null) return;
-        if (!await _dialogs.ConfirmAsync("Drop stash", $"Drop '{entry.Message}'?", destructive: true, "Drop")) return;
+        if (!await _dialogs.ConfirmDestructiveAsync("Drop stash", $"Drop '{entry.Message}'? This cannot be undone.", "Drop")) return;
         await StashOp(() => _stashes.DropAsync(_repo!, entry.CommitId, _repo!.Lifetime));
     }
 
