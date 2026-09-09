@@ -63,6 +63,8 @@ public sealed class AppBandControl : UserControl, IDisposable
     private Point _grabOffset;
     private Point _lastPanelPos;
     private AppBandDragGhost? _dragGhost;
+    // Reused across the per-pointer-move ReorderTo calls so the hot drag path stays allocation-free.
+    private readonly List<double> _reorderWidths = new();
 
     public AppBandControl()
     {
@@ -720,8 +722,10 @@ public sealed class AppBandControl : UserControl, IDisposable
         if (current < 0)
             return;
 
-        var target = AppBandDragReorder.TargetIndex(
-            panelX, [.. _tabViews.Select(t => t.Bounds.Width)], TabWidth);
+        _reorderWidths.Clear();
+        foreach (var t in _tabViews)
+            _reorderWidths.Add(t.Bounds.Width);
+        var target = AppBandDragReorder.TargetIndex(panelX, _reorderWidths, TabWidth);
         if (target == current)
             return;
 
