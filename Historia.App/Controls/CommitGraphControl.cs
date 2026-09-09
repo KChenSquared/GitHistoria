@@ -1346,55 +1346,24 @@ public sealed class CommitGraphControl : Control
     }
 
     private int BoundaryAt(double x)
-    {
-        for (var i = 0; i < _resolvedColumns.Length - 1; i++)
-        {
-            var edge = _resolvedColumns[i].Left + _resolvedColumns[i].Width - _hScrollOffset;
-            if (Math.Abs(x - edge) <= BoundaryGrab)
-                return i;
-        }
-        return -1;
-    }
+        => GraphColumnInteraction.BoundaryAt(_resolvedColumns, x, _hScrollOffset, BoundaryGrab);
 
     private static IReadOnlyList<GraphColumn> WithColumnWidth(IReadOnlyList<GraphColumn> cols, GraphColumnKind kind, double width)
         => [.. cols.Select(c => c.Kind == kind ? c with { Width = width } : c)];
 
     private int CaretIndexAt(double x)
-    {
-        for (var i = 0; i < _resolvedColumns.Length; i++)
-        {
-            var mid = _resolvedColumns[i].Left + _resolvedColumns[i].Width / 2 - _hScrollOffset;
-            if (x < mid)
-                return i;
-        }
-        return _resolvedColumns.Length;
-    }
+        => GraphColumnInteraction.CaretIndexAt(_resolvedColumns, x, _hScrollOffset);
 
     private GraphColumnKind? ColumnKindAt(double x)
-    {
-        foreach (var c in _resolvedColumns)
-        {
-            var left = c.Left - _hScrollOffset;
-            if (x >= left && x < left + c.Width)
-                return c.Kind;
-        }
-        return null;
-    }
+        => GraphColumnInteraction.ColumnKindAt(_resolvedColumns, x, _hScrollOffset);
 
     private void ReorderColumn(GraphColumnKind moved, int caret)
     {
-        var visible = _columns.Where(c => c.Visible).ToList();
-        var hidden = _columns.Where(c => !c.Visible).ToList();
-        var from = visible.FindIndex(c => c.Kind == moved);
-        if (from < 0)
+        var next = GraphColumnInteraction.Reorder(_columns, moved, caret);
+        if (ReferenceEquals(next, _columns))
             return;
 
-        var col = visible[from];
-        visible.RemoveAt(from);
-        var to = Math.Clamp(caret > from ? caret - 1 : caret, 0, visible.Count);
-        visible.Insert(to, col);
-
-        _columns = [.. visible, .. hidden];
+        _columns = next;
         PersistColumns();
         InvalidateArrange();
         InvalidateVisual();
