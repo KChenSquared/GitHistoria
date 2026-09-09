@@ -45,6 +45,31 @@ public class TerminalSessionTests
         Assert.Equal("my-shell", seen);
     }
 
+    [Theory]
+    [InlineData(@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")]
+    [InlineData(@"C:\Program Files\PowerShell\7\pwsh.exe")]
+    [InlineData("/usr/bin/bash.exe")]
+    public void LooksLikeExecutablePath_RejectsRootedExe(string title)
+        => Assert.True(TerminalSession.LooksLikeExecutablePath(title));
+
+    [Theory]
+    [InlineData("powershell.exe")]        // bare name, not rooted
+    [InlineData("Building myapp.exe")]    // sentence that happens to end in .exe
+    [InlineData("~/projects/app")]
+    [InlineData("my-shell")]
+    public void LooksLikeExecutablePath_AllowsEverythingElse(string title)
+        => Assert.False(TerminalSession.LooksLikeExecutablePath(title));
+
+    [Fact]
+    public void Osc0_ExecutablePathTitle_IsRejected_KeepsOriginFallback()
+    {
+        using var session = NewSession(out var pty);
+
+        pty.EmitOutput("\x1b]0;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\x07");
+
+        Assert.Null(session.ReportedTitle);
+    }
+
     [Fact]
     public void Osc52_ClipboardWrite_IsIgnored_NoThrow()
     {
