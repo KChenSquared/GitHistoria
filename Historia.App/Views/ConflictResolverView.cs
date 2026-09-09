@@ -107,7 +107,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private async Task AbortAsync()
     {
-        if (!await _dialogs.ConfirmAsync("Abort operation", "Abort the in-progress merge / rebase / cherry-pick?", destructive: true, "Abort"))
+        if (!await _dialogs.ConfirmDestructiveAsync("Abort operation",
+                "Abort the in-progress merge / rebase / cherry-pick? Conflict resolutions made so far will be discarded.", "Abort"))
             return;
         await Guard(() => _conflicts.AbortOperationAsync(_ctx, _ctx.Lifetime), "Abort");
     }
