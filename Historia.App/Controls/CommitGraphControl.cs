@@ -1428,7 +1428,7 @@ public sealed class CommitGraphControl : Control
             items.Add(mi);
         }
         items.Add(new Separator());
-        items.Add(Item("Reset columns", () =>
+        items.Add(MenuLeaf("Reset columns", () =>
         {
             _columns = GraphColumnDefaults.All;
             _graphWidthPinned = false;
@@ -1833,7 +1833,7 @@ public sealed class CommitGraphControl : Control
         foreach (var d in hidden)
         {
             var deco = d;
-            items.Add(Item(d.Type == DecorationType.Head ? "HEAD" : d.Label, () => ShowPillContextMenu(deco)));
+            items.Add(MenuLeaf(d.Type == DecorationType.Head ? "HEAD" : d.Label, () => ShowPillContextMenu(deco)));
         }
         menu.ItemsSource = items;
         OpenMenu(menu);
@@ -2245,13 +2245,13 @@ public sealed class CommitGraphControl : Control
         var shortSha = sha[..7];
         var items = new List<Control>
         {
-            Item("Copy SHA", () => CopyText(sha)),
-            Item("Copy short SHA", () => CopyText(shortSha)),
-            Item("Copy commit message", () => CopyCommitMessage(id)),
+            MenuLeaf("Copy SHA", () => CopyText(sha)),
+            MenuLeaf("Copy short SHA", () => CopyText(shortSha)),
+            MenuLeaf("Copy commit message", () => CopyCommitMessage(id)),
             new Separator(),
-            Item("Create branch here…", () => PromptCreateBranch(ctx, sha, shortSha)),
-            Item("Create tag here…", () => PromptCreateTag(ctx, sha, shortSha)),
-            Item("Checkout this commit (detached)", () =>
+            MenuLeaf("Create branch here…", () => PromptCreateBranch(ctx, sha, shortSha)),
+            MenuLeaf("Create tag here…", () => PromptCreateTag(ctx, sha, shortSha)),
+            MenuLeaf("Checkout this commit (detached)", () =>
                 RunConfirmedDetachedCheckout(ctx, sha, $"Check out {shortSha} in a detached HEAD?")),
             new Separator(),
         };
@@ -2259,22 +2259,22 @@ public sealed class CommitGraphControl : Control
         var resetItem = new MenuItem { Header = "Reset current branch to here" };
         resetItem.ItemsSource = new Control[]
         {
-            Item("Soft (keep index and working tree)", () => ResetAsync(ctx, sha, GitResetMode.Soft, shortSha)),
-            Item("Mixed (keep working tree)", () => ResetAsync(ctx, sha, GitResetMode.Mixed, shortSha)),
-            Item("Hard (discard changes)", () => ResetAsync(ctx, sha, GitResetMode.Hard, shortSha)),
+            MenuLeaf("Soft (keep index and working tree)", () => ResetAsync(ctx, sha, GitResetMode.Soft, shortSha)),
+            MenuLeaf("Mixed (keep working tree)", () => ResetAsync(ctx, sha, GitResetMode.Mixed, shortSha)),
+            MenuLeaf("Hard (discard changes)", () => ResetAsync(ctx, sha, GitResetMode.Hard, shortSha)),
         };
         items.Add(resetItem);
 
-        items.Add(Item("Merge into current branch", () => MergeAsync(ctx, sha, shortSha)));
+        items.Add(MenuLeaf("Merge into current branch", () => MergeAsync(ctx, sha, shortSha)));
         items.Add(new Separator());
-        items.Add(Item("Cherry-pick onto current branch", () => CherryPickAsync([id])));
-        items.Add(Item("Revert this commit", () => RevertAsync([id])));
+        items.Add(MenuLeaf("Cherry-pick onto current branch", () => CherryPickAsync([id])));
+        items.Add(MenuLeaf("Revert this commit", () => RevertAsync([id])));
         if (_multiSelect.Count > 1)
         {
             var ordered = _multiSelect.OrderByDescending(r => r)
                 .Select(r => _layout!.Layout.Commits[r].Id).ToList();
-            items.Add(Item($"Cherry-pick {ordered.Count} selected (oldest first)", () => CherryPickAsync(ordered)));
-            items.Add(Item($"Revert {ordered.Count} selected", () => RevertAsync(ordered)));
+            items.Add(MenuLeaf($"Cherry-pick {ordered.Count} selected (oldest first)", () => CherryPickAsync(ordered)));
+            items.Add(MenuLeaf($"Revert {ordered.Count} selected", () => RevertAsync(ordered)));
         }
 
         OpenMenu(new ContextMenu { ItemsSource = items });
@@ -2329,7 +2329,7 @@ public sealed class CommitGraphControl : Control
         if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
         {
             if (deco.IsLocal)
-                items.Add(Item($"Checkout {TruncateBranchLabelForMenu(name)}", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+                items.Add(MenuLeaf($"Checkout {TruncateBranchLabelForMenu(name)}", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
                     () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout")));
 
             if (remotes.Length > 0)
@@ -2339,31 +2339,31 @@ public sealed class CommitGraphControl : Control
                 foreach (var rem in remotes)
                 {
                     var tracking = $"{rem}/{name}";
-                    items.Add(Item($"Checkout {TruncateBranchLabelForMenu(tracking)} as a new branch", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+                    items.Add(MenuLeaf($"Checkout {TruncateBranchLabelForMenu(tracking)} as a new branch", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
                         () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout")));
                 }
             }
 
             var primaryRef = deco.IsLocal ? name : (remotes.Length > 0 ? $"{remotes[0]}/{name}" : name);
             items.Add(new Separator());
-            items.Add(Item($"Merge {TruncateBranchLabelForMenu(primaryRef)} into current", () => MergeAsync(ctx, primaryRef, primaryRef)));
-            items.Add(Item($"Rebase current branch onto {TruncateBranchLabelForMenu(primaryRef)}", () => _nav.RequestNavigate($"rebase?onto={Uri.EscapeDataString(primaryRef)}")));
+            items.Add(MenuLeaf($"Merge {TruncateBranchLabelForMenu(primaryRef)} into current", () => MergeAsync(ctx, primaryRef, primaryRef)));
+            items.Add(MenuLeaf($"Rebase current branch onto {TruncateBranchLabelForMenu(primaryRef)}", () => _nav.RequestNavigate($"rebase?onto={Uri.EscapeDataString(primaryRef)}")));
 
             if (deco.IsLocal)
             {
                 items.Add(new Separator());
-                items.Add(Item("Rename…", async () =>
+                items.Add(MenuLeaf("Rename…", async () =>
                 {
                     var newName = await _dialogs.PromptAsync("Rename branch", $"New name for '{name}':", name);
                     if (string.IsNullOrWhiteSpace(newName) || newName == name) return;
                     await Guard(() => ctx.Gateway.RenameBranchAsync(name, newName.Trim(), ctx.Lifetime), ctx, "Rename");
                 }));
-                items.Add(Item("Delete", () => BranchMenu.DeleteAsync(ctx, _dialogs, _notifications, name)));
+                items.Add(MenuLeaf("Delete", () => BranchMenu.DeleteAsync(ctx, _dialogs, _notifications, name)));
             }
         }
         else if (deco.Type == DecorationType.Tag)
         {
-            items.Add(Item($"Delete tag {TruncateBranchLabelForMenu(name)}", async () =>
+            items.Add(MenuLeaf($"Delete tag {TruncateBranchLabelForMenu(name)}", async () =>
             {
                 if (!await _dialogs.ConfirmAsync("Delete tag", $"Delete local tag '{name}'?", destructive: true, "Delete")) return;
                 await Guard(() => ctx.Gateway.DeleteTagAsync(name, ctx.Lifetime), ctx, "Delete tag");
@@ -2377,8 +2377,8 @@ public sealed class CommitGraphControl : Control
         {
             var shortSha = bid.Sha[..7];
             if (items.Count > 0) items.Add(new Separator());
-            items.Add(Item("Create branch here…", () => PromptCreateBranch(ctx, bid.Sha, shortSha)));
-            items.Add(Item("Create tag here…", () => PromptCreateTag(ctx, bid.Sha, shortSha)));
+            items.Add(MenuLeaf("Create branch here…", () => PromptCreateBranch(ctx, bid.Sha, shortSha)));
+            items.Add(MenuLeaf("Create tag here…", () => PromptCreateTag(ctx, bid.Sha, shortSha)));
         }
 
         // v8 M4: "Copy branch name" — the one common-denominator item the pill menu still lacked.
@@ -2386,7 +2386,7 @@ public sealed class CommitGraphControl : Control
         {
             var copyName = deco.IsLocal ? name : (remotes.Length > 0 ? $"{remotes[0]}/{name}" : name);
             items.Add(new Separator());
-            items.Add(Item("Copy branch name", () => CopyText(copyName)));
+            items.Add(MenuLeaf("Copy branch name", () => CopyText(copyName)));
         }
 
         if (items.Count > 0)
@@ -2438,10 +2438,10 @@ public sealed class CommitGraphControl : Control
         {
             new MenuItem { Header = $"Drop {shortSha} → {branchLabel}", IsEnabled = false },
             new Separator(),
-            Item($"Merge {shortSha} into current branch", () => MergeAsync(ctx, commitId.Sha, shortSha)),
-            Item("Reset current branch to this commit (mixed)", () => ResetAsync(ctx, commitId.Sha, GitResetMode.Mixed, shortSha)),
-            Item($"Cherry-pick {shortSha} onto current branch", () => CherryPickAsync([commitId])),
-            Item($"Rebase current branch onto {branchLabel}", () => _nav.RequestNavigate($"rebase?onto={Uri.EscapeDataString(branchLabel)}")),
+            MenuLeaf($"Merge {shortSha} into current branch", () => MergeAsync(ctx, commitId.Sha, shortSha)),
+            MenuLeaf("Reset current branch to this commit (mixed)", () => ResetAsync(ctx, commitId.Sha, GitResetMode.Mixed, shortSha)),
+            MenuLeaf($"Cherry-pick {shortSha} onto current branch", () => CherryPickAsync([commitId])),
+            MenuLeaf($"Rebase current branch onto {branchLabel}", () => _nav.RequestNavigate($"rebase?onto={Uri.EscapeDataString(branchLabel)}")),
         };
         OpenMenu(new ContextMenu { ItemsSource = items });
     }
@@ -2568,20 +2568,6 @@ public sealed class CommitGraphControl : Control
             return lay.Layout.Commits[row].MessageShort;
         }
         return id.Sha[..7];
-    }
-
-    private static MenuItem Item(string header, Action action)
-    {
-        var mi = new MenuItem { Header = header };
-        mi.Click += (_, _) => action();
-        return mi;
-    }
-
-    private static MenuItem Item(string header, Func<Task> action)
-    {
-        var mi = new MenuItem { Header = header };
-        mi.Click += (_, _) => _ = action();
-        return mi;
     }
 
     // ── Render (§V2-6.3) ──

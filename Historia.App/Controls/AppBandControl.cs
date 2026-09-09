@@ -195,9 +195,9 @@ public sealed class AppBandControl : UserControl, IDisposable
         _addMenu = new ContextMenu { Placement = PlacementMode.BottomEdgeAlignedLeft };
         _addMenu.ItemsSource = new Control[]
         {
-            MenuItem("Open…", () => _nav.RequestNavigate("?intent=open")),
-            MenuItem("Clone…", () => _nav.RequestNavigate("?intent=clone")),
-            MenuItem("Initialize…", () => _nav.RequestNavigate("?intent=init")),
+            MenuLeaf("Open…", () => _nav.RequestNavigate("?intent=open")),
+            MenuLeaf("Clone…", () => _nav.RequestNavigate("?intent=clone")),
+            MenuLeaf("Initialize…", () => _nav.RequestNavigate("?intent=init")),
         };
         _add.Click += (_, _) => _addMenu.Open(_add);
 
@@ -342,13 +342,10 @@ public sealed class AppBandControl : UserControl, IDisposable
 
     // ── Terminal entry points (V5 §1) ──
 
-    private static string HomeDir()
-        => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
     // The Historia menu's sole terminal item, labelled "Open Terminal" — always adds another Home
     // shell and focuses it (the label is cosmetic; behaviour is unchanged "new" semantics).
     private Task NewHomeTerminalAsync()
-        => _terminals.OpenNewAsync(TerminalOrigin.Home(HomeDir()));
+        => _terminals.OpenNewAsync(TerminalOrigin.Home(HomeDirectory));
 
     private Task OpenRepoTerminalAsync(RepositoryContext ctx)
     {
@@ -373,9 +370,9 @@ public sealed class AppBandControl : UserControl, IDisposable
     {
         var items = new List<Control>
         {
-            MenuItem("Open Repository…", () => _nav.RequestNavigate("")),
-            MenuItem("Clone Repository…", () => _nav.RequestNavigate("")),
-            MenuItem("Initialize Repository…", () => _nav.RequestNavigate("")),
+            MenuLeaf("Open Repository…", () => _nav.RequestNavigate("")),
+            MenuLeaf("Clone Repository…", () => _nav.RequestNavigate("")),
+            MenuLeaf("Initialize Repository…", () => _nav.RequestNavigate("")),
             new Separator(),
         };
 
@@ -395,27 +392,20 @@ public sealed class AppBandControl : UserControl, IDisposable
         }
         if (profileItems.Count > 0)
             profileItems.Add(new Separator());
-        profileItems.Add(MenuItem("Manage profiles…", () => _nav.RequestNavigate("profiles")));
+        profileItems.Add(MenuLeaf("Manage profiles…", () => _nav.RequestNavigate("profiles")));
         profileRoot.ItemsSource = profileItems;
         items.Add(profileRoot);
 
-        items.Add(MenuItem("Open Terminal", () => _ = NewHomeTerminalAsync()));
-        items.Add(MenuItem("Settings", () => _nav.RequestNavigate("settings")));
+        items.Add(MenuLeaf("Open Terminal", () => _ = NewHomeTerminalAsync()));
+        items.Add(MenuLeaf("Settings", () => _nav.RequestNavigate("settings")));
         if (DevMode.Enabled)
-            items.Add(MenuItem("Developer", () => _nav.RequestNavigate("dev")));
+            items.Add(MenuLeaf("Developer", () => _nav.RequestNavigate("dev")));
         items.Add(new Separator());
-        items.Add(MenuItem("About Historia", () => _nav.RequestNavigate("settings")));
-        items.Add(MenuItem("Exit", () =>
+        items.Add(MenuLeaf("About Historia", () => _nav.RequestNavigate("settings")));
+        items.Add(MenuLeaf("Exit", () =>
             (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.Shutdown()));
 
         _appMenu.ItemsSource = items;
-    }
-
-    private static MenuItem MenuItem(string header, Action onClick)
-    {
-        var item = new MenuItem { Header = header };
-        item.Click += (_, _) => onClick();
-        return item;
     }
 
     // ── Tabs ──
@@ -597,10 +587,10 @@ public sealed class AppBandControl : UserControl, IDisposable
             var tabMenu = new ContextMenu();
             tabMenu.ItemsSource = new Control[]
             {
-                MenuItem("Open repository location", () => _launcher.OpenFolder(ctx.RepositoryPath)),
-                MenuItem("Copy path", () => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(ctx.RepositoryPath)),
+                MenuLeaf("Open repository location", () => _launcher.OpenFolder(ctx.RepositoryPath)),
+                MenuLeaf("Copy path", () => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(ctx.RepositoryPath)),
                 new Separator(),
-                MenuItem("Close", () => _ = CloseAsync(ctx)),
+                MenuLeaf("Close", () => _ = CloseAsync(ctx)),
             };
             body.ContextMenu = tabMenu;
         }

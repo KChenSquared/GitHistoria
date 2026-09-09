@@ -295,8 +295,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     }
 
     private void NewHomeTerminal()
-        => _ = _sessions.OpenNewAsync(TerminalOrigin.Home(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)));
+        => _ = _sessions.OpenNewAsync(TerminalOrigin.Home(HomeDirectory));
 
     // Shuts every session down one at a time (not in parallel) so each shell gets a clean kill
     // in turn rather than a burst of simultaneous pipe teardowns.

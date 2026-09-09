@@ -207,7 +207,7 @@ public sealed class ProfilesView : UserControl, IDisposable
                     return;
 
                 var cli = _sp.GetRequiredService<Historia.Services.Git.IGitCliService>();
-                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                var home = HomeDirectory;
                 await cli.RunAsync(new Historia.Models.GitCliRequest
                 {
                     Arguments = ["config", "--global", "user.name", user.Trim()],
