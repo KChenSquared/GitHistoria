@@ -160,7 +160,7 @@ public sealed partial class CommitGraphControl
         {
             items.Add(MenuLeaf($"Delete tag {TruncateBranchLabelForMenu(name)}", async () =>
             {
-                if (!await _dialogs.ConfirmAsync("Delete tag", $"Delete local tag '{name}'?", destructive: true, "Delete")) return;
+                if (!await _dialogs.ConfirmDestructiveAsync("Delete tag", $"Delete local tag '{name}'? This cannot be undone.", "Delete")) return;
                 await Guard(() => ctx.Gateway.DeleteTagAsync(name, ctx.Lifetime), ctx, "Delete tag");
             }));
         }
@@ -243,12 +243,18 @@ public sealed partial class CommitGraphControl
 
     private async Task ResetAsync(RepositoryContext ctx, string sha, GitResetMode mode, string shortSha)
     {
-        var destructive = mode == GitResetMode.Hard;
-        if (!await _dialogs.ConfirmAsync("Reset branch",
-                $"Move {_state?.CurrentBranch?.Name ?? "HEAD"} to {shortSha} ({mode})?"
-                + (destructive ? " Uncommitted changes will be lost." : ""),
-                destructive, "Reset"))
+        var target = _state?.CurrentBranch?.Name ?? "HEAD";
+        if (mode == GitResetMode.Hard)
+        {
+            if (!await _dialogs.ConfirmDestructiveAsync("Reset branch",
+                    $"Move {target} to {shortSha} (hard)? Uncommitted changes will be lost.", "Reset"))
+                return;
+        }
+        else if (!await _dialogs.ConfirmAsync("Reset branch",
+                     $"Move {target} to {shortSha} ({mode})?", confirmLabel: "Reset"))
+        {
             return;
+        }
         await Guard(() => ctx.Gateway.ResetAsync(sha, mode, ctx.Lifetime), ctx, "Reset");
     }
 
