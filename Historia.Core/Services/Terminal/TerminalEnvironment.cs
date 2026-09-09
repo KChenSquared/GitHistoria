@@ -24,6 +24,7 @@ public static class TerminalEnvironment
         "HISTORIA_ASKPASS",
         "HISTORIA_ASKPASS_USERNAME",
         "HISTORIA_ASKPASS_PASSWORD",
+        "HISTORIA_ASKPASS_HOST",
         "HISTORIA_REBASE_DIR",
         "HISTORIA_REBASE_TOKEN",
         "HISTORIA_SSH_KEY",

@@ -20,7 +20,7 @@ public class TerminalEnvironmentTests
     {
         Assert.Equal(
         [
-            "HISTORIA_ASKPASS", "HISTORIA_ASKPASS_USERNAME", "HISTORIA_ASKPASS_PASSWORD",
+            "HISTORIA_ASKPASS", "HISTORIA_ASKPASS_USERNAME", "HISTORIA_ASKPASS_PASSWORD", "HISTORIA_ASKPASS_HOST",
             "HISTORIA_REBASE_DIR", "HISTORIA_REBASE_TOKEN", "HISTORIA_SSH_KEY", "HISTORIA_PERF",
         ], TerminalEnvironment.AlwaysRemoved);
     }
@@ -32,10 +32,12 @@ public class TerminalEnvironmentTests
             ("HISTORIA_ASKPASS", "1"),
             ("HISTORIA_ASKPASS_USERNAME", "git"),
             ("HISTORIA_ASKPASS_PASSWORD", "ghp_secret"),
+            ("HISTORIA_ASKPASS_HOST", "github.com"),
             ("PATH", "/usr/bin")));
         Assert.False(e.ContainsKey("HISTORIA_ASKPASS"));
         Assert.False(e.ContainsKey("HISTORIA_ASKPASS_USERNAME"));
         Assert.False(e.ContainsKey("HISTORIA_ASKPASS_PASSWORD"));
+        Assert.False(e.ContainsKey("HISTORIA_ASKPASS_HOST"));
         Assert.Equal("/usr/bin", e["PATH"]);
     }
 

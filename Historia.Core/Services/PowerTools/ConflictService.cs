@@ -121,13 +121,24 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             var remotePath = WriteTemp(temp, "REMOTE", conflict.TheirsContent);
             var mergedPath = Path.Combine(context.RepositoryPath, filePath);
 
-            var cmd = tool
-                .Replace("$BASE", Quote(basePath)).Replace("$LOCAL", Quote(localPath))
-                .Replace("$REMOTE", Quote(remotePath)).Replace("$MERGED", Quote(mergedPath));
+            // Tokenize the configured template ourselves and launch the program directly — no
+            // cmd.exe, no shell. filePath (and therefore mergedPath) comes from the repository's
+            // own index and is attacker-controlled; a shell metacharacter in it (e.g. "pwn&calc")
+            // must never be interpreted as a command separator (security review 2026-09-07,
+            // finding 1). Each substituted value becomes its own ArgumentList entry, so no
+            // quoting or escaping is needed regardless of its contents.
+            var tokens = TokenizeCommand(tool);
+            if (tokens.Count == 0)
+                return false;
 
-            var psi = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true };
-            psi.ArgumentList.Add("/c");
-            psi.ArgumentList.Add(cmd);
+            string Substitute(string t) => t
+                .Replace("$BASE", basePath).Replace("$LOCAL", localPath)
+                .Replace("$REMOTE", remotePath).Replace("$MERGED", mergedPath);
+
+            var psi = new ProcessStartInfo(Substitute(tokens[0])) { UseShellExecute = false, CreateNoWindow = true };
+            for (var i = 1; i < tokens.Count; i++)
+                psi.ArgumentList.Add(Substitute(tokens[i]));
+
             using var process = Process.Start(psi);
             if (process is null)
                 return false;
@@ -273,5 +284,46 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         return path;
     }
 
-    private static string Quote(string s) => s.Contains(' ') ? $"\"{s}\"" : s;
+    /// <summary>Splits a merge-tool command template into argv-style tokens: whitespace
+    /// separates tokens, and a double-quoted run (e.g. a program path with spaces) is one
+    /// token with its quotes removed. This is our own tokenizer, not a shell's — the result is
+    /// handed straight to <see cref="ProcessStartInfo.ArgumentList"/>, so no metacharacter in a
+    /// later substituted path (see <see cref="LaunchExternalMergeToolAsync"/>) can act as a
+    /// separator or operator.</summary>
+    private static List<string> TokenizeCommand(string command)
+    {
+        var tokens = new List<string>();
+        var current = new StringBuilder();
+        var inQuotes = false;
+        var hasToken = false;
+
+        foreach (var c in command)
+        {
+            if (c == '"')
+            {
+                inQuotes = !inQuotes;
+                hasToken = true;
+                continue;
+            }
+
+            if (char.IsWhiteSpace(c) && !inQuotes)
+            {
+                if (hasToken)
+                {
+                    tokens.Add(current.ToString());
+                    current.Clear();
+                    hasToken = false;
+                }
+                continue;
+            }
+
+            current.Append(c);
+            hasToken = true;
+        }
+
+        if (hasToken)
+            tokens.Add(current.ToString());
+
+        return tokens;
+    }
 }

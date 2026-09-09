@@ -28,9 +28,20 @@ internal static class Program
         if (Environment.GetEnvironmentVariable("HISTORIA_ASKPASS") == "1")
         {
             var prompt = args.Length > 0 ? args[0] : string.Empty;
-            var answer = prompt.Contains("Username", StringComparison.OrdinalIgnoreCase)
-                ? Environment.GetEnvironmentVariable("HISTORIA_ASKPASS_USERNAME")
-                : Environment.GetEnvironmentVariable("HISTORIA_ASKPASS_PASSWORD");
+
+            // Git names the host it is actually asking about inside the prompt text itself
+            // (e.g. "Password for 'https://user@host/path': ") — the credentials handed to this
+            // helper must only ever answer for the host GitGateway resolved them for, never for
+            // whatever host git.exe ends up contacting (a redirected pushurl, an insteadOf
+            // rewrite, a submodule URL). HISTORIA_ASKPASS_HOST is set alongside the credentials
+            // by the caller that composed them (security review 2026-09-07, finding 2).
+            var expectedHost = Environment.GetEnvironmentVariable("HISTORIA_ASKPASS_HOST");
+            var answer = Historia.Services.Git.AskpassProtocol.PromptHostMatches(prompt, expectedHost)
+                ? (prompt.Contains("Username", StringComparison.OrdinalIgnoreCase)
+                    ? Environment.GetEnvironmentVariable("HISTORIA_ASKPASS_USERNAME")
+                    : Environment.GetEnvironmentVariable("HISTORIA_ASKPASS_PASSWORD"))
+                : null; // host mismatch, or no host was pinned for this invocation — answer nothing
+
             Console.Out.Write(answer ?? string.Empty);
             Console.Out.Write('\n');
             return 0;

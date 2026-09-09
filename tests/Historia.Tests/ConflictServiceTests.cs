@@ -89,4 +89,51 @@ public class ConflictServiceTests
                 ? ".git/MERGE_HEAD" : "");
         Assert.Contains("OURS", await File.ReadAllTextAsync(Path.Combine(repoDir.Path, "f.txt")));
     }
+
+    // Regression test for security review 2026-09-07, finding 1: a conflicted path containing
+    // shell metacharacters must reach the external merge tool as one literal argument, never as
+    // something a shell re-parses into extra commands.
+    [Fact]
+    public async Task LaunchExternalMergeTool_passes_a_metacharacter_laden_path_as_one_literal_argument()
+    {
+        const string conflictedName = "pwn&calc&file.txt";
+
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+        repoDir.WriteFile(conflictedName, "line1\nshared\nline3\n").Stage().Commit("base");
+        repoDir.Checkout("feature", create: true).WriteFile(conflictedName, "line1\nTHEIRS\nline3\n").Stage().Commit("theirs");
+        repoDir.Checkout("main").WriteFile(conflictedName, "line1\nOURS\nline3\n").Stage().Commit("ours");
+        try { repoDir.Git("merge", "feature"); } catch { /* expected to conflict */ }
+
+        await using var ctx = host.Open(repoDir.Path);
+
+        // A "merge tool" that records the argv it actually received, one line per argument.
+        var script = Path.Combine(Path.GetTempPath(), $"historia-mergetool-test-{Guid.NewGuid():N}.ps1");
+        var marker = Path.Combine(Path.GetTempPath(), $"historia-mergetool-test-{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(script,
+            "param([string]$Merged)\n" +
+            "Set-Content -LiteralPath '" + marker.Replace("'", "''") + "' -Value $Merged -Encoding utf8\n");
+
+        try
+        {
+            await host.Settings.UpdateAsync(s => s with
+            {
+                ExternalMergeTool = $"powershell -NoProfile -ExecutionPolicy Bypass -File \"{script}\" $MERGED",
+            });
+
+            var svc = Make(host);
+            await svc.LaunchExternalMergeToolAsync(ctx, conflictedName);
+
+            Assert.True(File.Exists(marker), "the configured merge tool never ran");
+            var received = (await File.ReadAllTextAsync(marker)).Trim();
+            // The whole "&calc&"-laden path arrived as PowerShell's single -Merged argument
+            // (i.e. it was never split or re-parsed by a shell along the way).
+            Assert.EndsWith(conflictedName, received, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { File.Delete(script); } catch { /* best effort */ }
+            try { File.Delete(marker); } catch { /* best effort */ }
+        }
+    }
 }

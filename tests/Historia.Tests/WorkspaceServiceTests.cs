@@ -56,6 +56,47 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
+    // ── security review 2026-09-07, finding 3: clone URL validation ──
+
+    [Theory]
+    [InlineData("--upload-pack=calc.exe")]
+    [InlineData("-oProxyCommand=calc.exe")]
+    [InlineData("ext::sh -c calc.exe")]
+    [InlineData("fd::1")]
+    public async Task CloneAsync_rejects_urls_that_are_not_a_repository_address(string maliciousUrl)
+    {
+        var ws = NewWorkspace();
+        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-test-{Guid.NewGuid():N}");
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(
+            () => ws.CloneAsync(maliciousUrl, target, new Historia.Services.Workspace.CloneOptions(), progress: null));
+
+        Assert.False(Directory.Exists(target), "a rejected clone must never touch the filesystem");
+        Assert.NotNull(ex);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task CloneAsync_still_clones_a_plain_local_path()
+    {
+        var ws = NewWorkspace();
+        using var source = Repo("a.txt");
+        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-test-{Guid.NewGuid():N}");
+
+        try
+        {
+            var ctx = await ws.CloneAsync(source.Path, target, new Historia.Services.Workspace.CloneOptions(), progress: null);
+            Assert.True(Directory.Exists(Path.Combine(target, ".git")));
+            // ws.DisposeAsync() below disposes every still-open context, ctx included — don't
+            // dispose it a second time here.
+        }
+        finally
+        {
+            await ws.DisposeAsync();
+            try { if (Directory.Exists(target)) Directory.Delete(target, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
     // ── §V3-B/19.21: tab drag-and-drop reorder ──
 
     [Fact(Timeout = 30000)]

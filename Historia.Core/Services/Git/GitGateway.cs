@@ -421,6 +421,10 @@ public sealed class GitGateway(
         {
             ["HISTORIA_ASKPASS_USERNAME"] = string.IsNullOrWhiteSpace(profile.GitUserName) ? "git" : profile.GitUserName,
             ["HISTORIA_ASKPASS_PASSWORD"] = token,
+            // Pins the answer to the host the token was actually issued for — the askpass
+            // helper refuses to answer a prompt naming any other host (security review
+            // 2026-09-07, finding 2). uri.Host here is the host TokenRefForHost just matched.
+            ["HISTORIA_ASKPASS_HOST"] = uri.Host,
         };
     }
 
