@@ -380,11 +380,10 @@ public partial class MainWindow : Window
             try
             {
                 var count = termSessions.Sessions.Count;
-                var confirmed = await dialogs.ConfirmAsync(
+                var confirmed = await dialogs.ConfirmDestructiveAsync(
                     "Quit Historia?",
-                    $"There {(count == 1 ? "is 1 live terminal session" : $"are {count} live terminal sessions")}. Quitting will terminate {(count == 1 ? "it" : "them")}.",
-                    destructive: true,
-                    confirmLabel: "Quit");
+                    $"There {(count == 1 ? "is 1 live terminal session" : $"are {count} live terminal sessions")}. Quitting will terminate {(count == 1 ? "it" : "them")} and anything running inside.",
+                    "Quit");
                 if (confirmed)
                 {
                     _forceClose = true;

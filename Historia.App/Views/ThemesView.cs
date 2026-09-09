@@ -121,8 +121,7 @@ public sealed class ThemesView : UserControl, IDisposable
 
     private async Task DeleteAsync(CustomTheme t)
     {
-        if (!await _dialogs.ConfirmAsync("Delete theme", $"Delete “{t.Name}”? This cannot be undone.",
-                destructive: true, confirmLabel: "Delete"))
+        if (!await _dialogs.ConfirmDestructiveAsync("Delete theme", $"Delete “{t.Name}”? This cannot be undone.", "Delete"))
             return;
 
         var wasActive = _theme.CurrentMode == ThemeMode.Custom && _cfg.Current.CustomThemeId == t.Id;

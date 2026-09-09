@@ -108,14 +108,12 @@ public sealed class DeveloperView : UserControl
 
     private static async Task WipeAllAsync(IServiceProvider sp)
     {
-        var confirmed = await sp.GetRequiredService<IDialogService>().ConfirmAsync(
+        var confirmed = await sp.GetRequiredService<IDialogService>().ConfirmDestructiveAsync(
             "Wipe all Historia local data?",
             "This permanently deletes every Historia setting, profile, repo binding, theme, saved "
             + "session, cached repository/graph file and log from Historia's data and cache folders. "
             + "It cannot be undone. Restart Historia afterwards.",
-            destructive: true,
-            confirmLabel: "OK",
-            defaultToCancel: true); // Cancel is the highlighted button
+            "Wipe");
         if (!confirmed)
             return;
 
