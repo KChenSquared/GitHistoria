@@ -1087,25 +1087,11 @@ public sealed class CommitGraphControl : Control
     }
 
     /// <summary>§V6-G9: the resolved lane colour for an index, read from the theme service
-    /// (built-in rainbow or the active custom overlay). Mirrors <c>LanePalette.ColorFor</c>'s
-    /// cycle-luminance shift for indices past one palette cycle. <c>EdgeColorFor</c> is the
-    /// identity, so this covers both the fill and the stroke.</summary>
+    /// (built-in rainbow or the active custom overlay). The maths lives in
+    /// <see cref="GraphLanePalette.LaneRgb"/> so it is unit-testable; this is the control-state
+    /// binding of it.</summary>
     private Rgb LaneRgb(int colorIndex)
-    {
-        var lanes = _theme.LaneColors;
-        var n = lanes.Count;
-        if (n == 0)
-            return LanePalette.ColorFor(colorIndex, _themeMode);
-
-        var i = ((colorIndex % n) + n) % n;
-        var c = lanes[i];
-        var cycle = colorIndex / n;
-        if (cycle <= 0)
-            return c;
-
-        var factor = 1.0 - Math.Min(0.5, cycle * 0.18);
-        return Rgb.FromRgb((byte)(c.R * factor), (byte)(c.G * factor), (byte)(c.B * factor));
-    }
+        => GraphLanePalette.LaneRgb(colorIndex, _theme.LaneColors, _themeMode);
 
     // §V6: every per-lane-colour Pen/Brush is memoised in its own dictionary (all cleared
     // together by RebuildThemeResources on a theme change). One shape: look it up, else build
@@ -1135,7 +1121,7 @@ public sealed class CommitGraphControl : Control
     /// need ink that contrasts against that hue — near-black on a light badge, near-white on a
     /// dark one. Two shared brush instances keep <see cref="Text"/>'s cache keying correct.</summary>
     private SolidColorBrush BadgeInk(int colorIndex) => Pooled(_badgeInk, colorIndex,
-        i => LaneRgb(i).RelativeLuminance() > 0.55 ? _badgeInkDark : _badgeInkLight);
+        i => GraphLanePalette.PrefersDarkInk(LaneRgb(i)) ? _badgeInkDark : _badgeInkLight);
 
     private Pen PillBorder(int colorIndex) => Pooled(_pillBorders, colorIndex,
         i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 1.5));
