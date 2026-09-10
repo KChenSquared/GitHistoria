@@ -2406,10 +2406,11 @@ public sealed partial class CommitGraphControl : Control
             {
                 var gr = layout.Rows[row];
                 var colorIndex = gr.ColorIndex;
-                var rawLeft = NodeX(gr.LaneIndex, out _) - LaneWidth / 2;
-                var fillLeft = Math.Max(gx, rawLeft);
-                if (washRight > fillLeft)
-                    dc.DrawRectangle(LaneFill(colorIndex), null, new Rect(fillLeft, y, washRight - fillLeft, _rowHeight));
+                // §V3.2: the wash runs from the column's left edge to the commit's own node —
+                // the graph line it sits on — not across the whole lane band to the right edge.
+                var fillRight = Math.Min(washRight, NodeX(gr.LaneIndex, out _));
+                if (fillRight > gx)
+                    dc.DrawRectangle(LaneFill(colorIndex), null, new Rect(gx, y, fillRight - gx, _rowHeight));
                 // The solid right-edge tick is drawn in DrawGraphColumn, AFTER the edges, so a
                 // lane line routed near the column's right edge can't paint over it.
             }
@@ -2738,14 +2739,17 @@ public sealed partial class CommitGraphControl : Control
     }
 
     /// <summary>§V3.1: screen x of a commit node — its lane centre, or pinned just inside the
-    /// Graph column's left/right edge when that lane is panned or clipped out of view. The
+    /// Graph column's left/right edge when that lane has been <b>panned</b> out of view. The
     /// single source of a node's x: the drawn dot, its hit area, its lane wash and its badge
-    /// connector all read from here so they always agree.</summary>
+    /// connector all read from here so they always agree.
+    /// <para>§V3.2: the edge-clamp only fires while the lanes are panned (<c>_graphPanOffset
+    /// != 0</c>). Merely narrowing the Graph column with the divider lets the rightmost dots
+    /// clip with the column instead of piling up against its edge.</para></summary>
     private double NodeX(int laneIndex, out bool clamped)
     {
         var naturalX = LaneX(laneIndex);
         clamped = false;
-        if (_graphColWidth <= 0)
+        if (_graphColWidth <= 0 || _graphPanOffset == 0)
             return naturalX;
 
         var gcx = _graphColLeft - _hScrollOffset;
