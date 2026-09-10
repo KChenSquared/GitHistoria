@@ -678,12 +678,15 @@ public sealed class DagLayoutEngine
 
         var seed = (int)(StableHash.Fnv1a(laneKey) % LanePalette.Size);
 
-        // 2. Deterministic ±2 de-collision: step +1 (mod palette) past the colours of nearby
+        // 2. Deterministic ±4 de-collision: step +1 (mod palette) past the colours of nearby
         // lanes already coloured. Lane birth order is a pure function of the (stable) walk, and
         // a lane born later that lands on the same colour steps when it is itself coloured — so
         // the outcome does not depend on which side of a pair is processed first.
+        // §V3.1: with up to hundreds of lanes and 9 palette colours the old ±2 window let
+        // identical colours sit only 3 lanes apart everywhere. ±4 is the widest window that
+        // still guarantees a free colour exists — its 8 neighbours can hold at most 8 of the 9.
         var taken = new HashSet<int>();
-        for (var l = compactedLane - 2; l <= compactedLane + 2; l++)
+        for (var l = compactedLane - 4; l <= compactedLane + 4; l++)
             if (l != compactedLane && s.LaneColor.TryGetValue(l, out var nearColor))
                 taken.Add(nearColor);
 

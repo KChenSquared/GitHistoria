@@ -652,7 +652,7 @@ public class DagLayoutEngineTests
     {
         // An undecorated lane's seed must come from its birth-commit SHA (not the lane ordinal),
         // so it is identical on every reopen. Lane 0 is coloured first with no neighbours, so it
-        // is never nudged by the ±2 de-collision pass — a clean assertion point.
+        // is never nudged by the ±4 de-collision pass — a clean assertion point.
         var commits = new[] { C(3, 1), C(2), C(1) }; // row0 -> id1 (lane0); row1 id2 is a second root
         var r1 = Compute(commits);
         var r2 = Compute(commits);
@@ -749,6 +749,64 @@ public class DagLayoutEngineTests
         Assert.Contains(
             r.Layout.GetRowSegments(3).ToArray(),
             s => s.Type == LaneSegmentType.TopToNode && s.Lane == 1);
+    }
+
+    // ── §V3.1: uncapped lanes + ±4 colour de-collision ──
+
+    [Fact]
+    public void Uncapped_engine_gives_every_lineage_its_own_lane()
+    {
+        var commits = BuildWideFan(60);
+        var full = Compute(commits, maxRows: commits.Count);
+
+        Assert.True(full.Layout.TotalLaneCount >= 60,
+            $"expected >= 60 lanes, got {full.Layout.TotalLaneCount}");
+
+        // Every tip row lands on a distinct lane — nothing collapses onto a shared overflow lane.
+        var tipLanes = full.Layout.Rows.Take(60).Select(r => r.LaneIndex).ToList();
+        Assert.Equal(60, tipLanes.Distinct().Count());
+    }
+
+    [Fact]
+    public void Wide_history_compute_plus_extend_matches_full_compute()
+    {
+        var commits = BuildWideFan(60);
+        var full = Compute(commits, maxRows: commits.Count);
+
+        var s1 = _engine.Compute(commits, null, 25);
+        var s2 = _engine.Extend(s1, commits.Skip(25).ToList(), null, commits.Count);
+
+        Assert.Equal(full.Layout.Rows, s2.Layout.Rows);
+        Assert.Equal(full.Layout.Edges, s2.Layout.Edges);
+        Assert.Equal(full.Layout.Segments, s2.Layout.Segments);
+        Assert.Equal(full.Layout.Elbows, s2.Layout.Elbows);
+    }
+
+    [Fact]
+    public void No_two_coloured_lanes_within_four_share_a_colour()
+    {
+        var commits = BuildWideFan(60);
+        var full = Compute(commits, maxRows: commits.Count);
+
+        var colourByLane = new Dictionary<int, int>();
+        foreach (var r in full.Layout.Rows)
+            colourByLane[r.LaneIndex] = r.ColorIndex;
+
+        foreach (var (lane, colour) in colourByLane)
+            for (var d = 1; d <= 4; d++)
+                if (colourByLane.TryGetValue(lane + d, out var other))
+                    Assert.NotEqual(colour, other);
+    }
+
+    /// <summary>One shared root with <paramref name="tips"/> independent single-commit branches,
+    /// so the walk needs one concurrent lane per tip — wider than the retired 48-lane cap.</summary>
+    private static List<RawCommit> BuildWideFan(int tips)
+    {
+        var list = new List<RawCommit>();
+        for (var i = 0; i < tips; i++)
+            list.Add(new RawCommit(Sha(1000 + i), new List<ObjectId> { Sha(1) }, Meta(1000 + i, 1)));
+        list.Add(new RawCommit(Sha(1), new List<ObjectId>(), Meta(1, 0)));
+        return list;
     }
 
     /// <summary>A chain with periodic branch/merge structure, newest-first, children before parents.</summary>
