@@ -2368,7 +2368,7 @@ public sealed partial class CommitGraphControl : Control
                 switch (col.Kind)
                 {
                     case GraphColumnKind.Graph:
-                        DrawGraphColumn(dc, layout, first, last, x);
+                        DrawGraphColumn(dc, layout, first, last, x, size.Width);
                         break;
                     case GraphColumnKind.Refs:
                         DrawRefsColumn(dc, decosByRow, first, last, x, col.Width);
@@ -2554,9 +2554,16 @@ public sealed partial class CommitGraphControl : Control
         dc.DrawText(sub, new Point((size.Width - sub.Width) / 2, RowsTop + rowAreaH * 0.70));
     }
 
-    private void DrawGraphColumn(DrawingContext dc, GraphLayout layout, int first, int last, double colX)
+    private void DrawGraphColumn(DrawingContext dc, GraphLayout layout, int first, int last, double colX, double viewportWidth)
     {
         var hoverLane = _hoverRow >= 0 && _hoverRow < layout.RowCount ? layout.Rows[_hoverRow].LaneIndex : -1;
+
+        // §V3.1: cull lane geometry against the visible span — the Graph column intersected with
+        // the viewport — with a small margin for the pen width. A stretched or panned column
+        // "contains" every lane, so culling against the column edge alone would skip nothing;
+        // this stops issuing draw calls for lines nobody can see.
+        var minVisibleX = Math.Max(colX, 0) - 4;
+        var maxVisibleX = Math.Min(colX + _graphColWidth, viewportWidth) + 4;
 
         // Draw segments and elbows directly for visible rows in O(visible rows) time
         for (var row = first; row <= last; row++)
@@ -2570,6 +2577,9 @@ public sealed partial class CommitGraphControl : Control
                 foreach (var seg in segments)
                 {
                     var x = LaneX(seg.Lane);
+                    if (x < minVisibleX || x > maxVisibleX)
+                        continue;
+
                     var isEmph = hoverLane >= 0 && seg.Lane == hoverLane;
                     var pen = isEmph ? EmphPen(seg.ColorIndex) : LanePen(seg.ColorIndex);
 
@@ -2588,6 +2598,12 @@ public sealed partial class CommitGraphControl : Control
                 foreach (var elbow in elbows)
                 {
                     var fromX = LaneX(elbow.FromLane);
+                    var toX = LaneX(elbow.ToLane);
+                    // An elbow spans [min(fromX, toX), max(fromX, toX)]; skip it only when that
+                    // whole span is outside the visible span.
+                    if (Math.Max(fromX, toX) < minVisibleX || Math.Min(fromX, toX) > maxVisibleX)
+                        continue;
+
                     var isEmph = hoverLane >= 0 && (elbow.FromLane == hoverLane || elbow.ToLane == hoverLane);
                     var pen = isEmph ? EmphPen(elbow.ColorIndex) : LanePen(elbow.ColorIndex);
 
