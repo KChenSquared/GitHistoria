@@ -12,6 +12,9 @@
 # --------------------------------------------------------------------
 [Bb]in/
 [Oo]bj/
+# Scratch build outputs used to compile-check while the app holds a lock on bin/
+*-verify/
+*-verify-int/
 [Aa]rtifacts/
 .artifacts/
 [Oo]ut/

@@ -1298,7 +1298,13 @@ public sealed partial class CommitGraphControl : Control
             var delta = pos.X - _resizeStartX;
             var eff = _resizeInverted ? -delta : delta;
             var min = GraphColumnDefaults.MinWidthFor(_resizeKind);
-            var w = Math.Max(min, _resizeStartWidth + eff);
+            var max = GraphColumnDefaults.MaxWidthFor(_resizeKind);
+            // §V3.1: Graph never drags wider than the lanes the layout uses (skip until a
+            // layout has lanes). Applying the ceiling during the drag — not only on save —
+            // also removes the snap-back when a non-Graph column is released past 2,000px.
+            if (_resizeKind == GraphColumnKind.Graph && _layout is { } l && l.Layout.TotalLaneCount > 0)
+                max = Math.Clamp(NaturalGraphWidth(l.Layout.TotalLaneCount), min, max);
+            var w = Math.Clamp(_resizeStartWidth + eff, min, max);
             _columns = WithColumnWidth(_columns, _resizeKind, w);
             if (_resizeKind == GraphColumnKind.Graph)
             {
@@ -1753,11 +1759,34 @@ public sealed partial class CommitGraphControl : Control
         _ = _repoLayout.UpdateAsync(ctx.RepositoryPath, l => l with { Columns = cols, GraphWidthPinned = pinned });
     }
 
+    /// <summary>§V3.1: the width that shows every lane the layout uses, plus one lane of margin
+    /// for the right-edge tick.</summary>
+    private double NaturalGraphWidth(int lanes) => (lanes + 1) * LaneWidth;
+
     private void AutoFitColumn(GraphColumnKind kind)
     {
         if (_layout is not { } result)
             return;
         var layout = result.Layout;
+
+        // §V3.1: Graph auto-fit stretches to show the whole graph at once — every lane plus one
+        // lane of tick margin — bounded by the floor and the hand-edit sanity ceiling. (Without
+        // this it measured an empty string and landed on its 150px floor.)
+        if (kind == GraphColumnKind.Graph)
+        {
+            var floor = GraphColumnDefaults.MinWidthFor(GraphColumnKind.Graph);
+            var fitWidth = Math.Clamp(NaturalGraphWidth(layout.TotalLaneCount), floor,
+                GraphColumnDefaults.MaxWidthFor(GraphColumnKind.Graph));
+
+            _columns = WithColumnWidth(_columns, kind, fitWidth);
+            _graphWidthPinned = true;
+            _zoomOverridesPin = false;
+            PersistColumns();
+            InvalidateArrange();
+            InvalidateVisual();
+            return;
+        }
+
         var rowArea = Bounds.Height - RowsTop;
         var first = Math.Max(0, (int)(_scrollOffset / _rowHeight));
         var last = Math.Min(layout.RowCount - 1, (int)((_scrollOffset + rowArea) / _rowHeight));

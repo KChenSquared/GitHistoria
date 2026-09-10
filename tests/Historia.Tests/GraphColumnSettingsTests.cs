@@ -57,6 +57,18 @@ public class GraphColumnSettingsTests
     }
 
     [Fact]
+    public void Graph_keeps_a_width_above_2000_but_other_kinds_still_clamp()
+    {
+        var input = Defaults();
+        input[1] = input[1] with { Width = 5922 }; // Graph, stretched to ~328 lanes
+        input[4] = input[4] with { Width = 5000 }; // Date
+
+        var r = GraphColumnDefaults.Normalize(input);
+        Assert.Equal(5922, r.First(c => c.Kind == GraphColumnKind.Graph).Width, 3);
+        Assert.Equal(GraphColumnDefaults.MaxWidth, r.First(c => c.Kind == GraphColumnKind.Date).Width, 3);
+    }
+
+    [Fact]
     public void AllHiddenResetsToDefaults()
     {
         var input = Defaults().Select(c => c with { Visible = false }).ToList();

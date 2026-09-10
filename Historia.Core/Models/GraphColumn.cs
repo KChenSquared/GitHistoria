@@ -55,6 +55,17 @@ public static class GraphColumnDefaults
 
     public const double MaxWidth = 2000;
 
+    /// <summary>§V3.1: Graph's real upper bound is its lane geometry (the resize clamp and
+    /// <c>GraphColumnLayout.Resolve</c>). This only guards hand-edited values so a stretched
+    /// Graph column is not snapped back to <see cref="MaxWidth"/> on the next save.
+    /// 603 lanes × MaxLaneWidth 60 = 36,180, so 65,536 is comfortable headroom.</summary>
+    public const double GraphMaxWidth = 65_536;
+
+    /// <summary>The width ceiling for a column kind — <see cref="GraphMaxWidth"/> for Graph,
+    /// <see cref="MaxWidth"/> for every other kind.</summary>
+    public static double MaxWidthFor(GraphColumnKind kind) =>
+        kind == GraphColumnKind.Graph ? GraphMaxWidth : MaxWidth;
+
     /// <summary>
     /// §V3-9.4 / §V3-B: at every launch the column <i>order</i> is reset to the canonical order
     /// and every <i>width</i> to its default; only <see cref="GraphColumn.Visible"/> and
@@ -96,7 +107,7 @@ public static class GraphColumnDefaults
                 continue;
             result.Add(col with
             {
-                Width = Math.Clamp(col.Width, MinWidthFor(col.Kind), MaxWidth),
+                Width = Math.Clamp(col.Width, MinWidthFor(col.Kind), MaxWidthFor(col.Kind)),
             });
         }
 
