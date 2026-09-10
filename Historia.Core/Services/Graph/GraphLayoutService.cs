@@ -77,9 +77,29 @@ public sealed class GraphLayoutService : IGraphLayoutService
         lock (cache)
             input = cache.Commits.GetRange(0, Math.Min(cache.Commits.Count, maxRows + WalkOverscan));
 
+        // §V10.1: the trunk pre-pass needs a full-history ancestry oracle for the checked-out
+        // branch. Keep one repo handle open across the (synchronous, few-ms) engine run and
+        // answer straight from LibGit2 — at most one call per candidate tip, memoised.
         GraphLayoutResult result;
         using (Diagnostics.PerfLog.Scope("engine.Compute"))
-            result = _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct, retainCommits: !spill);
+            result = await context.WithRepositoryAsync(repo =>
+            {
+                var memo = new Dictionary<(ObjectId, ObjectId), bool>();
+                bool IsAncestor(ObjectId a, ObjectId b)
+                {
+                    if (a.Equals(b)) return true;
+                    var key = (a, b);
+                    if (memo.TryGetValue(key, out var hit)) return hit;
+                    var ca = repo.Lookup<Commit>(a);
+                    var cb = repo.Lookup<Commit>(b);
+                    var r = ca is not null && cb is not null
+                        && repo.ObjectDatabase.CalculateHistoryDivergence(ca, cb).AheadBy is 0;
+                    memo[key] = r;
+                    return r;
+                }
+                return _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct,
+                    retainCommits: !spill, isAncestor: IsAncestor);
+            }, ct).ConfigureAwait(false);
 
         result = result with { Fingerprint = cache.Fingerprint };
 
