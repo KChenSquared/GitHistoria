@@ -521,6 +521,50 @@ public class DagLayoutEngineTests
     }
 
     [Fact]
+    public void Only_near_head_tips_are_pinned_a_reserved_lane()
+    {
+        // A 40-row main line; two 1-commit branches fork near HEAD, three fork far below row 16.
+        var list = new List<RawCommit>();
+        for (var id = 100; id >= 60; id--)
+            list.Add(C(id, id - 1));                 // main line, rows 0..40 (id 100-row)
+        list.Insert(3, C(50, 95));                   // near-a  → row 3
+        list.Insert(6, C(49, 90));                   // near-b  → row 6
+        list.Insert(20, C(48, 75));                  // far-1   → row 20
+        list.Insert(22, C(47, 74));                  // far-2   → row 22
+        list.Insert(25, C(46, 73));                  // far-3   → row 25
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(100)] = [new(DecorationType.LocalBranch, "main")],
+            [Sha(50)] = [new(DecorationType.LocalBranch, "near-a")],
+            [Sha(49)] = [new(DecorationType.LocalBranch, "near-b")],
+            [Sha(48)] = [new(DecorationType.LocalBranch, "far-1")],
+            [Sha(47)] = [new(DecorationType.LocalBranch, "far-2")],
+            [Sha(46)] = [new(DecorationType.LocalBranch, "far-3")],
+        };
+
+        var r = Compute(list, deco: deco);
+
+        // Only the trunk + the two near-HEAD tips reserve a lane; the three far tips do not.
+        Assert.Equal(
+            new[] { Sha(49), Sha(50), Sha(100) }.OrderBy(x => x.Sha),
+            r.State.TipTargetLane.Keys.OrderBy(x => x.Sha));
+
+        // The far tips pack into the lanes freed by the near branches merging back — far-1/2/3 on
+        // lanes 1/2/3 (3 genuinely-concurrent branches), total 4 lanes. Before the fix all six
+        // tips were pinned, so far-1/2/3 sat at their pin ranks 3/4/5 and the window was 6 wide.
+        Assert.Equal(1, r.Layout.Rows[r.Layout.RowByCommitId[Sha(48)]].LaneIndex); // far-1
+        Assert.Equal(3, r.Layout.Rows[r.Layout.RowByCommitId[Sha(46)]].LaneIndex); // far-3
+        Assert.Equal(4, r.Layout.TotalLaneCount);
+
+        // The horizon is still a pure function of the fixed prefix — Extend matches a full compute.
+        var full = _engine.Compute(list, deco, maxRows: 60);
+        var partial = _engine.Compute(list, deco, maxRows: 8);
+        var extended = _engine.Extend(partial, list.Skip(8).ToList(), deco, additionalRows: 60);
+        Assert.Equal(full.Layout.Rows, extended.Layout.Rows);
+        Assert.Equal(full.Layout.Edges, extended.Layout.Edges);
+    }
+
+    [Fact]
     public void Tip_priority_pass_keeps_extension_identical_to_a_full_recomputation()
     {
         var commits = new[] { C(21, 20), C(20, 10), C(12, 10), C(10, 1), C(1) };

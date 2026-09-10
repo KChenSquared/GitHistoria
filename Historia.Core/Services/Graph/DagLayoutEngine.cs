@@ -459,13 +459,24 @@ public sealed class DagLayoutEngine
     /// It ranks only tips within the first <see cref="TipPriorityScanHorizon"/> commits of the
     /// list the engine is handed, and is a pure function of that prefix (plus the oracle) — never
     /// of <c>maxRows</c>. So a partial <see cref="Compute"/> + <see cref="Extend"/> seeds the same
-    /// pins as a full compute over the same list and criterion 4 (§7.9.2) still holds; and the
-    /// horizon is small enough (and the app paints a larger first batch) that a pinned tip is
-    /// always drawn, never left holding an empty near-HEAD column while its commits are still
-    /// below the window. A checked-out branch whose tip is beyond the horizon is not a candidate,
-    /// so the exception does not fire for it.
+    /// pins as a full compute over the same list and criterion 4 (§7.9.2) still holds. A
+    /// checked-out branch whose tip is beyond the horizon is not a candidate, so the exception
+    /// does not fire for it.
+    ///
+    /// Only the trunk tip and tips whose commit sits in the first <see cref="PinLaneHorizon"/>
+    /// rows are actually <b>pinned</b> to a reserved lane. A tip hundreds of rows down does not
+    /// need an empty column held for it from row 0 — it gets its lane from the normal allocator
+    /// when the walk reaches it. This keeps the near-HEAD region only as wide as the branches
+    /// that truly live there (a repo with dozens of branch tips otherwise renders that many empty
+    /// lanes across the top, pushing every early merge-in far to the right).
     /// </summary>
     private const int TipPriorityScanHorizon = 200;
+
+    /// <summary>A ranked tip gets a reserved lane only when its commit sits in the first this-many
+    /// rows (see <see cref="SeedTipPriority"/>); the trunk tip is pinned regardless of row. Tips
+    /// deeper than this take a lane from the normal allocator when the walk reaches them —
+    /// still deterministic (the walk is time-ordered), just not a column held empty from row 0.</summary>
+    private const int PinLaneHorizon = 16;
 
     private static void SeedTipPriority(
         GraphLayoutState s,
@@ -484,6 +495,7 @@ public sealed class DagLayoutEngine
                 hasChild.Add(p);
 
         var tips = new List<RawCommit>();
+        var tipRow = new Dictionary<ObjectId, int>();
         for (var i = 0; i < limit; i++)
         {
             var c = commits[i];
@@ -491,7 +503,10 @@ public sealed class DagLayoutEngine
                 continue; // a ref pointing mid-history — it gets its lane by reservation, not here
             if (decorations.TryGetValue(c.Id, out var d)
                 && d.Any(x => x.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch))
+            {
                 tips.Add(c);
+                tipRow[c.Id] = i;
+            }
         }
         if (tips.Count < 2)
             return;
@@ -556,17 +571,24 @@ public sealed class DagLayoutEngine
             // promote == 0 → HEAD is an ancestor of the current newest tip: order is unchanged.
         }
 
-        // Pin the first (MaxLanes-1) tips to lanes 0..n-1; any beyond that fall back to the
-        // normal allocator. Pre-seed the compaction map in the same order so the trunk tip
-        // renders in the leftmost column even when the walk places a different tip on row 0 first.
-        var n = Math.Min(tips.Count, Math.Max(0, s.MaxLanes - 1));
-        for (var rank = 0; rank < n; rank++)
+        // Pin the trunk tip (rank 0) to lane 0 always; pin the other ranked tips only when their
+        // commit is near HEAD (row < PinLaneHorizon). Far-down tips fall back to the normal
+        // allocator when the walk reaches them, so the near-HEAD region stays only as wide as the
+        // branches truly live there. Compacted lanes are handed out by a running counter so the
+        // pinned set stays contiguous 0..lane-1; the compaction map is pre-seeded to match so the
+        // trunk renders in the leftmost column even when the walk emits a different tip on row 0.
+        var cap = Math.Max(0, s.MaxLanes - 1);
+        var lane = 0;
+        for (var rank = 0; rank < tips.Count && lane < cap; rank++)
         {
-            s.TipTargetLane[tips[rank].Id] = rank;
-            s.CompactionMap[rank] = rank;
+            if (rank != 0 && tipRow.GetValueOrDefault(tips[rank].Id, int.MaxValue) >= PinLaneHorizon)
+                continue;
+            s.TipTargetLane[tips[rank].Id] = lane;
+            s.CompactionMap[lane] = lane;
+            lane++;
         }
-        s.NextCompactedLane = Math.Max(s.NextCompactedLane, n);
-        s.LaneCeiling = Math.Max(s.LaneCeiling, n);
+        s.NextCompactedLane = Math.Max(s.NextCompactedLane, lane);
+        s.LaneCeiling = Math.Max(s.LaneCeiling, lane);
     }
 
     private static int AllocLane(GraphLayoutState s)
