@@ -158,11 +158,14 @@ internal sealed class GraphWalkCache
                 parents[i] = new ObjectId(c.Parents[i]);
             var id = new ObjectId(c.Id);
             commits.Add(new RawCommit(id, parents, metadataOnDisk
+                // §V10.1: keep the timestamps even in the id/parents-only load — DagLayoutEngine's
+                // tip-priority pre-pass sorts by CommitWhen, and the paged store is only consulted
+                // for the heavy strings. Zeroing the dates here pinned the trunk to SHA order.
                 ? new CommitMetadata
                 {
                     Id = id,
                     MessageShort = "", AuthorName = "", AuthorEmail = "",
-                    AuthorWhen = default, CommitWhen = default,
+                    AuthorWhen = c.AuthorWhen, CommitWhen = c.CommitWhen,
                     ParentCount = c.ParentCount,
                 }
                 : new CommitMetadata

@@ -324,9 +324,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }, ct);
     }
 
-    /// <summary>Replace the resident <see cref="CommitMetadata"/> strings for rows already
-    /// spilled to disk with an id/parent-count stub — the layout engine only needs those two
-    /// fields on a re-layout, and the paged store serves the real text.</summary>
+    /// <summary>Replace the resident <see cref="CommitMetadata"/> <b>strings</b> for rows already
+    /// spilled to disk with a stub — the paged store serves the real text. Id, parent count and
+    /// the two timestamps are kept: they are 16 bytes/row and <see cref="DagLayoutEngine"/>'s
+    /// tip-priority pre-pass sorts candidate tips by <see cref="CommitMetadata.CommitWhen"/>
+    /// (§V10.1). Zeroing it here made every re-layout after the first spill fall back to SHA
+    /// order and pin the trunk to the wrong lane — see
+    /// <c>GraphSpillTrunkStabilityTests</c>.</summary>
     private static void StubResidentMetadata(RepoCache cache, int uptoRow)
     {
         lock (cache)
@@ -345,8 +349,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
                         MessageShort = "",
                         AuthorName = "",
                         AuthorEmail = "",
-                        AuthorWhen = default,
-                        CommitWhen = default,
+                        AuthorWhen = rc.Metadata.AuthorWhen,
+                        CommitWhen = rc.Metadata.CommitWhen,
                         ParentCount = rc.Metadata.ParentCount,
                     },
                 };
