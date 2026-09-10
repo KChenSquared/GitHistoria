@@ -22,7 +22,7 @@ public sealed class DagLayoutEngine
         IReadOnlyList<RawCommit> commits,
         IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
         int maxRows,
-        int maxLanes = 48,
+        int maxLanes = int.MaxValue,
         CancellationToken ct = default,
         bool retainCommits = true,
         Func<ObjectId, ObjectId, bool>? isAncestor = null)
@@ -603,7 +603,9 @@ public sealed class DagLayoutEngine
         if (s.LaneCeiling < s.MaxLanes - 1)
             return s.LaneCeiling++;
 
-        return s.MaxLanes - 1; // overflow lane (rendered with a distinct dashed style)
+        // §V3.1: with MaxLanes == int.MaxValue this branch is unreachable — kept only as an
+        // overflow-safe guard. It no longer describes a rendered lane; nothing collapses here.
+        return s.MaxLanes - 1;
     }
 
     private static void ReleaseLane(GraphLayoutState s, int rawLane)

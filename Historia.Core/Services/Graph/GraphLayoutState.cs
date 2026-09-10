@@ -7,7 +7,7 @@
 /// </summary>
 public sealed class GraphLayoutState
 {
-    internal int MaxLanes { get; init; } = 48;
+    internal int MaxLanes { get; init; } = int.MaxValue;
 
     /// <summary>When false, <see cref="Commits"/> is left empty — the owning service is
     /// spilling per-row metadata to a disk-backed store instead of keeping it resident (§7.6).</summary>

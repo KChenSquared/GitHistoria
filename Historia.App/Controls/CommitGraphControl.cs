@@ -235,7 +235,6 @@ public sealed partial class CommitGraphControl : Control
     private SolidColorBrush _selectionBar = new(Colors.SlateBlue);
     private SolidColorBrush _hoverFill = new(Colors.DimGray);
     private Pen _hoverPen = new(new SolidColorBrush(Colors.White), 1);
-    private Pen _overflowPen = new(new SolidColorBrush(Colors.Gray), 1) { DashStyle = DashStyle.Dash };
     // v8.4: the repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
     private Pen _cogPen = new(new SolidColorBrush(Colors.DimGray), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
     private static readonly Geometry _cogGeo = Geometry.Parse(Historia.Components.IconPaths.Get("settings"));
@@ -1069,7 +1068,6 @@ public sealed partial class CommitGraphControl : Control
         _selectionBar = new SolidColorBrush(primary);
         _hoverPen = new Pen(new SolidColorBrush(primary), 2.0);
         _cogPen = new Pen(new SolidColorBrush(muted), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
-        _overflowPen = new Pen(new SolidColorBrush(ToColor(palette["text-faint"])), 2.0) { DashStyle = DashStyle.Dash };
         var warn = palette["warning"];
         _matchFill = new SolidColorBrush(AvColor.FromArgb(0x30, warn.R, warn.G, warn.B));
 
@@ -2503,7 +2501,6 @@ public sealed partial class CommitGraphControl : Control
     private void DrawGraphColumn(DrawingContext dc, GraphLayout layout, int first, int last, double colX)
     {
         var hoverLane = _hoverRow >= 0 && _hoverRow < layout.RowCount ? layout.Rows[_hoverRow].LaneIndex : -1;
-        var overflowLane = layout.TotalLaneCount >= _query.MaxLanes ? _query.MaxLanes - 1 : -1;
 
         // Draw segments and elbows directly for visible rows in O(visible rows) time
         for (var row = first; row <= last; row++)
@@ -2517,9 +2514,8 @@ public sealed partial class CommitGraphControl : Control
                 foreach (var seg in segments)
                 {
                     var x = LaneX(seg.Lane);
-                    var isOverflow = overflowLane >= 0 && seg.Lane == overflowLane;
                     var isEmph = hoverLane >= 0 && seg.Lane == hoverLane;
-                    var pen = isOverflow ? _overflowPen : isEmph ? EmphPen(seg.ColorIndex) : LanePen(seg.ColorIndex);
+                    var pen = isEmph ? EmphPen(seg.ColorIndex) : LanePen(seg.ColorIndex);
 
                     if (seg.Type == LaneSegmentType.Full)
                         dc.DrawLine(pen, new Point(x, y), new Point(x, y + _rowHeight));
@@ -2536,9 +2532,8 @@ public sealed partial class CommitGraphControl : Control
                 foreach (var elbow in elbows)
                 {
                     var fromX = LaneX(elbow.FromLane);
-                    var isOverflow = overflowLane >= 0 && (elbow.FromLane == overflowLane || elbow.ToLane == overflowLane);
                     var isEmph = hoverLane >= 0 && (elbow.FromLane == hoverLane || elbow.ToLane == hoverLane);
-                    var pen = isOverflow ? _overflowPen : isEmph ? EmphPen(elbow.ColorIndex) : LanePen(elbow.ColorIndex);
+                    var pen = isEmph ? EmphPen(elbow.ColorIndex) : LanePen(elbow.ColorIndex);
 
                     DrawElbow(dc, pen, elbow.FromLane, elbow.ToLane, fromX, y, elbow.Kind);
                 }
@@ -2560,14 +2555,12 @@ public sealed partial class CommitGraphControl : Control
     /// lane colour (§V6).</summary>
     private void DrawGraphNodes(DrawingContext dc, GraphLayout layout, int first, int last)
     {
-        var overflowLane = layout.TotalLaneCount >= _query.MaxLanes ? _query.MaxLanes - 1 : -1;
         for (var row = first; row <= last; row++)
         {
             var gr = layout.Rows[row];
             var cx = LaneX(gr.LaneIndex);
             var cy = RowY(row) + _rowHeight / 2;
-            var pen = gr.LaneIndex == overflowLane ? _overflowPen : null;
-            dc.DrawEllipse(LaneBrush(gr.ColorIndex), pen, new Point(cx, cy), NodeRadius, NodeRadius);
+            dc.DrawEllipse(LaneBrush(gr.ColorIndex), null, new Point(cx, cy), NodeRadius, NodeRadius);
             if (row == _hoverRow)
                 dc.DrawEllipse(null, _hoverPen, new Point(cx, cy), NodeRadius + 2, NodeRadius + 2);
         }

@@ -313,5 +313,9 @@ public sealed record GraphQuery
     public bool IncludeStashes { get; init; }
     public bool IncludeRemoteBranches { get; init; } = true;
     public string? PathFilter { get; init; }
-    public int MaxLanes { get; init; } = 48;
+    /// <summary>§V3.1: lanes are uncapped — every lineage gets its own track. The former
+    /// 48-lane cap collapsed anything beyond lane 47 onto a single dashed overflow lane; on a
+    /// busy history that obscured genuine topology. Far lanes are reached by the in-graph pan or
+    /// by stretching the Graph column, not by a cap.</summary>
+    public int MaxLanes { get; init; } = int.MaxValue;
 }
