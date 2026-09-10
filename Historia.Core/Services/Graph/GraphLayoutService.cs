@@ -54,6 +54,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private const int DecoCacheCap = 24;
     private readonly object _sync = new();
 
+    /// <summary>Repo paths that have had at least one fingerprint-verified compute this process.
+    /// The optimistic stale snapshot exists only to fill the gap before the very first verified
+    /// layout of a cold launch — once one has landed, every later (re)bind (tab switch, a
+    /// <see cref="Forget"/> + reopen) recomputes directly against the now-warm walk cache instead
+    /// of risking a stale disk paint that a racing <see cref="RecomputeAsync"/> could strand
+    /// on screen. Survives <see cref="Forget"/> deliberately; never cleared.</summary>
+    private readonly HashSet<string> _verifiedPaths = new(StringComparer.OrdinalIgnoreCase);
+
     public async Task<GraphLayoutResult> ComputeLayoutAsync(
         RepositoryContext context, GraphQuery query, int maxRows = 10_000, CancellationToken ct = default)
     {
@@ -103,6 +111,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         result = result with { Fingerprint = cache.Fingerprint };
 
+        // This path has now had a fingerprint-verified layout — later (re)binds skip the stale
+        // snapshot entirely (see TryOptimisticSnapshot).
+        lock (_sync)
+            _verifiedPaths.Add(context.RepositoryPath);
+
         // §V10.1: persist the trunk-tip order this verified compute settled on, so the next
         // cold-open optimistic snapshot pins the same trunk (best-effort, off the return path).
         if (result.State.SeededTipOrder is { Count: > 0 } tipOrder && cache.Fingerprint != 0
@@ -125,12 +138,19 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// <inheritdoc/>
     public GraphLayoutResult? TryOptimisticSnapshot(RepositoryContext context, GraphQuery query, int maxRows)
     {
-        // Only the very first paint for this context can benefit — once an in-memory walk
-        // exists (this session's own earlier walk, or the real ComputeLayoutAsync already
-        // finished), it is already at least as fresh as a stale on-disk snapshot.
+        // Only the very first paint of a cold launch can benefit. Once ANY verified compute has
+        // landed for this repo path this process, a (re)bind — tab switch, Forget + reopen —
+        // recomputes directly instead: the walk cache is warm so it is quick, and a stale disk
+        // paint here can otherwise be stranded on screen by a racing RecomputeAsync that Forgot
+        // the in-memory cache. The per-context row check still covers a first bind that raced its
+        // own verified walk.
         lock (_sync)
+        {
+            if (_verifiedPaths.Contains(context.RepositoryPath))
+                return null;
             if (_caches.TryGetValue(context, out var existing) && existing.Commits.Count > 0)
                 return null;
+        }
 
         var loaded = _walkCache.TryLoadStale(context.RepositoryPath, query, metadataOnDisk: false);
         if (loaded is null)
