@@ -12,6 +12,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// Mirrors <c>WorkspaceService.GraphPriorityTimeout</c>.</summary>
     private static readonly TimeSpan SpillStartGrace = TimeSpan.FromSeconds(8);
 
+    /// <summary>Rows per chunk of the background full-history walk (§7.6). Each chunk is a
+    /// separate low-priority repo-gate acquisition, so this also bounds how long a foreground
+    /// caller that has already started waiting can be stuck behind the spill.</summary>
+    private const int SpillWalkChunkRows = 150_000;
+
     private readonly ISettingsService? _settings;
 
     /// <summary>§7.6: page per-commit metadata from a random-access file instead of keeping
@@ -311,9 +316,25 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 if (ct.IsCancellationRequested)
                     return;
 
-                // One walk to the ceiling — Walk() restarts from the tips each call, so batching
-                // the *walk* would be quadratic. Batch only the append + stub afterwards.
-                await EnsureWalkedAsync(context, query, cache, cap + WalkOverscan, ct).ConfigureAwait(false);
+                // Walk to the ceiling in chunks, each its own low-priority gate turn. Walk()
+                // restarts from the tips every call so this re-pays the walk setup per chunk
+                // (~seconds even on a big repo) — a deliberate trade for not holding the single
+                // repo gate for the whole tens-of-seconds full-history walk, which would make a
+                // tab switch / scroll / status refresh on this repo wait the entire time. The
+                // gate itself hands foreground callers priority (WithRepositoryBackgroundAsync);
+                // the chunking is what bounds how long any one of them can already be committed
+                // to waiting.
+                var ceiling = cap + WalkOverscan;
+                for (var target = SpillWalkChunkRows; ; target += SpillWalkChunkRows)
+                {
+                    await EnsureWalkedAsync(context, query, cache, Math.Min(target, ceiling), ct, background: true)
+                        .ConfigureAwait(false);
+                    bool walkDone;
+                    lock (cache) walkDone = cache.Exhausted || cache.Commits.Count >= cap;
+                    if (walkDone)
+                        break;
+                    await Task.Delay(150, ct).ConfigureAwait(false); // let foreground gate work in
+                }
 
                 while (!ct.IsCancellationRequested)
                 {
@@ -444,7 +465,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     private async Task EnsureWalkedAsync(
-        RepositoryContext context, GraphQuery query, RepoCache cache, int wantCount, CancellationToken ct)
+        RepositoryContext context, GraphQuery query, RepoCache cache, int wantCount, CancellationToken ct,
+        bool background = false)
     {
         if (cache.Exhausted || cache.Commits.Count >= wantCount)
             return;
@@ -455,7 +477,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         Diagnostics.PerfLog.Mark($"EnsureWalked need {wantCount}, have {cache.Commits.Count}, decoFp={deco?.Fingerprint ?? 0}");
         var repoPath = context.RepositoryPath;
-        var walked = await context.WithRepositoryAsync(repo =>
+        Task<WalkResult> WithRepo(Func<Repository, WalkResult> work) => background
+            ? context.WithRepositoryBackgroundAsync(work, ct)
+            : context.WithRepositoryAsync(work, ct);
+        var walked = await WithRepo(repo =>
         {
             var fp = ComputeFingerprint(repo, query, out var allRefs);
 
@@ -482,7 +507,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
 
             return Walk(repo, query, wantCount, deco, allRefs, fp);
-        }, ct).ConfigureAwait(false);
+        }).ConfigureAwait(false);
 
         lock (cache)
         {
