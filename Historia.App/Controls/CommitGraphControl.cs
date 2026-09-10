@@ -2406,11 +2406,12 @@ public sealed partial class CommitGraphControl : Control
             {
                 var gr = layout.Rows[row];
                 var colorIndex = gr.ColorIndex;
-                // §V3.2: the wash runs from the column's left edge to the commit's own node —
-                // the graph line it sits on — not across the whole lane band to the right edge.
-                var fillRight = Math.Min(washRight, NodeX(gr.LaneIndex, out _));
-                if (fillRight > gx)
-                    dc.DrawRectangle(LaneFill(colorIndex), null, new Rect(gx, y, fillRight - gx, _rowHeight));
+                // §V3.2: the wash starts at the commit's own node — the graph line it sits on —
+                // and runs right to the column edge, rather than beginning half a lane to its
+                // left and covering the whole lane band.
+                var fillLeft = Math.Max(gx, NodeX(gr.LaneIndex, out _));
+                if (washRight > fillLeft)
+                    dc.DrawRectangle(LaneFill(colorIndex), null, new Rect(fillLeft, y, washRight - fillLeft, _rowHeight));
                 // The solid right-edge tick is drawn in DrawGraphColumn, AFTER the edges, so a
                 // lane line routed near the column's right edge can't paint over it.
             }
