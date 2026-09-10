@@ -9,7 +9,7 @@ public sealed partial class CommitGraphControl : Control
 {
     private const double MinRowHeight = 20;
     private const double MaxRowHeight = 44;
-    private const double MinLaneWidth = 13;
+    private const double MinLaneWidth = 15; // §V3.1: raised from 13 with the +2px lane width
     private const double MaxLaneWidth = 60;
     /// <summary>§V3.2: commit nodes are round dots again (the §V3.1 diamond was reverted).</summary>
     private const double NodeRadius = 5;
