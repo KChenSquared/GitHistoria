@@ -149,3 +149,5 @@ node_modules/
 # Sibling clones used only as reference material for v8 M4 (not part of the app)
 /GitComet/
 /desktop/
+
+vscode-git-graph
