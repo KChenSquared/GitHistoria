@@ -22,8 +22,32 @@ public class DagLayoutEngineTests
         new(Sha(id), parents.Select(Sha).ToList(), Meta(id, parents.Length));
 
     private GraphLayoutResult Compute(IReadOnlyList<RawCommit> commits, int maxRows = 1000,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? deco = null)
-        => _engine.Compute(commits, deco, maxRows);
+        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? deco = null,
+        Func<ObjectId, ObjectId, bool>? isAncestor = null)
+        => _engine.Compute(commits, deco, maxRows, isAncestor: isAncestor);
+
+    /// <summary>An ancestry oracle over a synthetic commit list — <c>f(a, b)</c> is true when
+    /// <c>a</c> is an ancestor of (or equal to) <c>b</c>, walking parent links.</summary>
+    private static Func<ObjectId, ObjectId, bool> AncestryOf(IReadOnlyList<RawCommit> commits)
+    {
+        var byId = commits.ToDictionary(c => c.Id);
+        return (a, b) =>
+        {
+            var seen = new HashSet<ObjectId>();
+            var stack = new Stack<ObjectId>();
+            stack.Push(b);
+            while (stack.Count > 0)
+            {
+                var cur = stack.Pop();
+                if (cur.Equals(a)) return true;
+                if (!seen.Add(cur)) continue;
+                if (byId.TryGetValue(cur, out var rc))
+                    foreach (var p in rc.ParentIds)
+                        stack.Push(p);
+            }
+            return false;
+        };
+    }
 
     // ── Criterion 13: degenerate inputs render without throwing ──
 
@@ -343,14 +367,14 @@ public class DagLayoutEngineTests
         AssertEndpointInvariant(extended);
     }
 
-    // ── §V9-G: "older tip wins the trunk" ──
+    // ── §V10.1: "newest tip wins the trunk, with a checked-out-branch exception" ──
 
     [Fact]
-    public void Older_branch_tip_holds_the_trunk_lane_and_newer_divergent_work_branches_off()
+    public void Newest_branch_tip_holds_the_trunk_lane_when_no_head_is_marked()
     {
-        // Two branches diverge from a shared ancestor (id 10). v9.1-relogo's tip (id 12) is
-        // OLDER than v9.2-fixes2's tip (id 21). Row order is still newest-first, but the older
-        // branch must stay collinear with the shared mainline on lane 0.
+        // Two branches diverge from a shared ancestor (id 10). v9.2-fixes2's tip (id 21) is the
+        // NEWEST, so it — not the older branch — stays collinear with the shared mainline on
+        // lane 0. No HEAD badge and no oracle: the plain base rule applies.
         var commits = new[] { C(21, 20), C(20, 10), C(12, 10), C(10, 1), C(1) };
         var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
         {
@@ -364,20 +388,121 @@ public class DagLayoutEngineTests
         Assert.Equal(0, r.Layout.RowByCommitId[Sha(21)]);
         Assert.Equal(2, r.Layout.RowByCommitId[Sha(12)]);
 
-        // Older tip + the shared history below the fork sit on the trunk (lane 0)…
-        Assert.Equal(0, r.Layout.Rows[2].LaneIndex); // v9.1-relogo tip
+        // Newest tip + the shared history below the fork sit on the trunk (lane 0)…
+        Assert.Equal(0, r.Layout.Rows[0].LaneIndex); // v9.2-fixes2 tip
+        Assert.Equal(0, r.Layout.Rows[1].LaneIndex);
         Assert.Equal(0, r.Layout.Rows[3].LaneIndex); // shared ancestor
         Assert.Equal(0, r.Layout.Rows[4].LaneIndex); // shared root
-        // …and the newer branch is the one that branches off.
-        Assert.Equal(1, r.Layout.Rows[0].LaneIndex); // v9.2-fixes2 tip
-        Assert.Equal(1, r.Layout.Rows[1].LaneIndex);
+        // …and the older branch is the one that branches off.
+        Assert.Equal(1, r.Layout.Rows[2].LaneIndex); // v9.1-relogo tip
 
-        // The trunk lane is born from the older branch (row 2), so its colour is seeded there and
-        // is stable across runs and distinct from the branched-off lane.
+        // Deterministic across runs; the trunk lane is born from the newest branch (row 0).
         var r2 = Compute(commits, deco: deco);
         Assert.Equal(r.Layout.Rows.Select(x => x.ColorIndex), r2.Layout.Rows.Select(x => x.ColorIndex));
-        Assert.NotEqual(r.Layout.Rows[0].ColorIndex, r.Layout.Rows[2].ColorIndex);
-        Assert.Equal("v9.1-relogo", r.State.LaneKey[r.Layout.Rows[2].LaneIndex]);
+        Assert.Equal("v9.2-fixes2", r.State.LaneKey[r.Layout.Rows[0].LaneIndex]);
+    }
+
+    [Fact]
+    public void Checked_out_branch_that_is_ancestor_of_the_newest_tip_leaves_the_order_unchanged()
+    {
+        // main (tip 30, checked out) is the base both feature branches were built on:
+        //   feat-b: 30 → 60   (newest)      feat-a: 30 → 50
+        var commits = new[] { C(60, 30), C(50, 40), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(60)] = [new(DecorationType.LocalBranch, "feat-b")],
+            [Sha(50)] = [new(DecorationType.LocalBranch, "feat-a")],
+            [Sha(30)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
+        };
+
+        var r = Compute(commits, deco: deco, isAncestor: AncestryOf(commits));
+
+        // main is an ancestor of the newest tip (60) → newest-first order stands.
+        Assert.Equal(0, r.Layout.Rows[0].LaneIndex);                                     // feat-b tip on the trunk
+        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(30)]].LaneIndex);       // main stays collinear on the trunk
+        Assert.NotEqual(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(50)]].LaneIndex);    // feat-a branches off
+    }
+
+    [Fact]
+    public void Checked_out_branch_that_is_ancestor_of_a_non_newest_tip_promotes_that_tip()
+    {
+        // main (tip 20, checked out) is the base of feat-a (20 → 30 → 40) only. feat-c (1 → 70 →
+        // 80) is newer and shares nothing with main past the root.
+        var commits = new[] { C(80, 70), C(70, 1), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(80)] = [new(DecorationType.LocalBranch, "feat-c")],
+            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-a")],
+            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
+        };
+
+        var r = Compute(commits, deco: deco, isAncestor: AncestryOf(commits));
+
+        // main is an ancestor of feat-a (40) but not of the newest tip feat-c (80): feat-a takes
+        // the trunk, feat-c shifts one lane right. main was feat-a's first-parent base, so it
+        // rides feat-a's trunk lane.
+        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex); // feat-a → trunk
+        Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-c (row 0) → lane 1
+        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex);  // main rides the trunk under feat-a
+    }
+
+    [Fact]
+    public void Checked_out_branch_that_is_ancestor_of_no_newer_tip_takes_the_trunk()
+    {
+        // Three branches off the shared root, sharing nothing else. main (tip 20) is checked out
+        // and is an ancestor of neither newer tip.
+        var commits = new[] { C(60, 50), C(50, 1), C(40, 30), C(30, 1), C(20, 10), C(10, 1), C(1) };
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(60)] = [new(DecorationType.LocalBranch, "feat-y")],
+            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-x")],
+            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
+        };
+
+        var r = Compute(commits, deco: deco, isAncestor: AncestryOf(commits));
+
+        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex); // main → trunk
+        Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-y (row 0) → lane 1
+        Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex);  // feat-x → lane 2
+    }
+
+    [Fact]
+    public void Without_an_ancestry_oracle_the_checked_out_branch_exception_is_skipped()
+    {
+        // Same graph as the "ancestor of no newer tip" case, but no oracle: the stale first
+        // paint keeps the plain newest-first order until the verified recompute.
+        var commits = new[] { C(60, 50), C(50, 1), C(40, 30), C(30, 1), C(20, 10), C(10, 1), C(1) };
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(60)] = [new(DecorationType.LocalBranch, "feat-y")],
+            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-x")],
+            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
+        };
+
+        var r = Compute(commits, deco: deco); // no isAncestor
+
+        Assert.Equal(0, r.Layout.Rows[0].LaneIndex);                                // feat-y (newest) → trunk
+        Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex);  // main stays last
+    }
+
+    [Fact]
+    public void Checked_out_branch_exception_keeps_extension_identical_to_a_full_recomputation()
+    {
+        var commits = new[] { C(80, 70), C(70, 1), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(80)] = [new(DecorationType.LocalBranch, "feat-c")],
+            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-a")],
+            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
+        };
+        var anc = AncestryOf(commits);
+
+        var full = _engine.Compute(commits, deco, maxRows: 7, isAncestor: anc);
+        var partial = _engine.Compute(commits, deco, maxRows: 2, isAncestor: anc);
+        var extended = _engine.Extend(partial, commits.Skip(2).ToList(), deco, additionalRows: 5);
+
+        Assert.Equal(full.Layout.Rows, extended.Layout.Rows);
+        Assert.Equal(full.Layout.Edges, extended.Layout.Edges);
     }
 
     [Fact]
