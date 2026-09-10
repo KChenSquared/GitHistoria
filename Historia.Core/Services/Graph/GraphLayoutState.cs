@@ -43,12 +43,6 @@ public sealed class GraphLayoutState
     /// unchanged by <see cref="DagLayoutEngine.Extend"/>.</summary>
     internal readonly Dictionary<ObjectId, int> TipTargetLane = [];
 
-    /// <summary>§V10.1: the trunk-tip commit ids in the final order <see cref="DagLayoutEngine"/>
-    /// pinned them (base newest-first order, after the checked-out-branch exception). Persisted by
-    /// <see cref="GraphLayoutService"/> so the next cold-open optimistic snapshot can pin the same
-    /// trunk instead of a plain newest-first guess. Null for a single-tip / no-decoration window.</summary>
-    internal List<ObjectId>? SeededTipOrder;
-
     /// <summary>compacted lane → color index, seeded once from the lane's topmost commit.</summary>
     internal readonly Dictionary<int, int> LaneColor = [];
 

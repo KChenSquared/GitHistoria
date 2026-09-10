@@ -197,82 +197,13 @@ internal sealed class GraphWalkCache
             var dir = new DirectoryInfo(AppPaths.CacheDirectory);
             if (!dir.Exists)
                 return GraphMetaStore.Wipe();
-            foreach (var f in dir.GetFiles("graph-*.json.gz")
-                         .Concat(dir.GetFiles("graph-*.tiporder.json"))
-                         .Concat(dir.GetFiles("*.tmp")))
+            foreach (var f in dir.GetFiles("graph-*.json.gz").Concat(dir.GetFiles("*.tmp")))
             {
                 try { f.Delete(); n++; } catch { /* skip locked */ }
             }
         }
         catch { }
         return n + GraphMetaStore.Wipe();
-    }
-
-    // ── §V10.1 trunk-tip order sidecar ──
-    // A tiny uncompressed JSON file next to the walk cache holding the trunk-tip commit order the
-    // last verified compute settled on. The optimistic first-paint snapshot replays it so it pins
-    // the same trunk instead of a plain newest-first guess (which mispaints the trunk whenever
-    // HEAD is a local branch sitting behind its newer siblings). Stale-tolerant, like TryLoadStale
-    // itself: if refs have moved the snapshot is provisional anyway and the verified layout — with
-    // a fresh order — replaces it moments later.
-
-    private const int TipOrderVersion = 1;
-
-    private sealed class TipOrderFile
-    {
-        public int Version { get; set; }
-        public long Fingerprint { get; set; }
-        public bool IncludeRemoteBranches { get; set; }
-        public List<string> TipShas { get; set; } = [];
-    }
-
-    public void SaveTipOrder(string repoPath, GraphQuery query, long fingerprint, bool includeRemotes,
-        IReadOnlyList<string> tipShas)
-    {
-        if (!Supports(query) || fingerprint == 0 || tipShas.Count == 0)
-            return;
-        try
-        {
-            Directory.CreateDirectory(AppPaths.CacheDirectory);
-            var dto = new TipOrderFile
-            {
-                Version = TipOrderVersion,
-                Fingerprint = fingerprint,
-                IncludeRemoteBranches = includeRemotes,
-                TipShas = [.. tipShas],
-            };
-            var dest = GraphCachePaths.File(repoPath, ".tiporder.json");
-            var tmp = $"{dest}.{Guid.NewGuid():N}.tmp";
-            File.WriteAllBytes(tmp, JsonSerializer.SerializeToUtf8Bytes(dto, Json));
-            File.Move(tmp, dest, overwrite: true);
-        }
-        catch { /* best-effort */ }
-    }
-
-    /// <summary>Reads the recorded trunk-tip order for an optimistic snapshot. Does NOT verify the
-    /// fingerprint (the snapshot is provisional either way); only the remote-branch flag must
-    /// match so the tip set is comparable.</summary>
-    public IReadOnlyList<ObjectId>? TryLoadTipOrder(string repoPath, bool includeRemotes)
-    {
-        try
-        {
-            var path = GraphCachePaths.File(repoPath, ".tiporder.json");
-            if (!File.Exists(path))
-                return null;
-            var dto = JsonSerializer.Deserialize<TipOrderFile>(File.ReadAllBytes(path), Json);
-            if (dto is null || dto.Version != TipOrderVersion
-                || dto.IncludeRemoteBranches != includeRemotes || dto.TipShas.Count == 0)
-                return null;
-            var ids = new List<ObjectId>(dto.TipShas.Count);
-            foreach (var sha in dto.TipShas)
-                if (sha is { Length: 40 })
-                    ids.Add(new ObjectId(sha));
-            return ids.Count > 0 ? ids : null;
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     public void Save(
@@ -336,14 +267,6 @@ internal sealed class GraphWalkCache
                          .OrderByDescending(f => f.LastWriteTimeUtc)
                          .Skip(MaxFiles))
                 f.Delete();
-
-            // §V10.1 tip-order sidecars whose walk file is gone.
-            var stems = dir.GetFiles("graph-*.json.gz")
-                .Select(f => f.Name[..^".json.gz".Length])
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var f in dir.GetFiles("graph-*.tiporder.json"))
-                if (!stems.Contains(f.Name[..^".tiporder.json".Length]))
-                    f.Delete();
 
             // Orphaned temp files from an interrupted write.
             foreach (var f in dir.GetFiles("*.tmp"))

@@ -103,18 +103,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         result = result with { Fingerprint = cache.Fingerprint };
 
-        // §V10.1: persist the trunk-tip order this verified compute settled on, so the next
-        // cold-open optimistic snapshot pins the same trunk (best-effort, off the return path).
-        if (result.State.SeededTipOrder is { Count: > 0 } tipOrder && cache.Fingerprint != 0
-            && GraphWalkCache.Supports(query))
-        {
-            var shas = tipOrder.Select(id => id.Sha).ToArray();
-            var fp = cache.Fingerprint;
-            var repoPath = context.RepositoryPath;
-            var q = query;
-            _ = Task.Run(() => _walkCache.SaveTipOrder(repoPath, q, fp, q.IncludeRemoteBranches, shas));
-        }
-
         if (!spill)
             return result;
         var swapped = SpillAndSwap(context, cache, query.IncludeRemoteBranches, result);
@@ -137,12 +125,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             return null;
 
         Diagnostics.PerfLog.Mark($"optimistic snapshot HIT: {loaded.Commits.Count} commits (stale, unverified)");
-        // §V10.1: replay the trunk-tip order the last verified compute settled on so the snapshot
-        // pins the same trunk. Null (first ever open / cache wiped) → the engine's bounded
-        // in-window ancestry fallback still runs the checked-out-branch exception.
-        var tipOrder = _walkCache.TryLoadTipOrder(context.RepositoryPath, query.IncludeRemoteBranches);
-        return _engine.Compute(loaded.Commits, loaded.Decorations, maxRows, query.MaxLanes,
-            CancellationToken.None, retainCommits: true, tipOrderHint: tipOrder);
+        return _engine.Compute(loaded.Commits, loaded.Decorations, maxRows, query.MaxLanes, CancellationToken.None, retainCommits: true);
     }
 
     public async Task<GraphLayoutResult> ExtendLayoutAsync(

@@ -16,13 +16,8 @@ public sealed class DagLayoutEngine
     /// <param name="isAncestor">§V10.1 checked-out-branch exception: a full-history ancestry
     /// oracle — <c>isAncestor(a, b)</c> is true when commit <paramref name="a"/> is an ancestor of
     /// (or equal to) commit <c>b</c>. Supplied by <see cref="GraphLayoutService"/> from the live
-    /// repo. When null (the optimistic stale first paint) the exception still runs against a
-    /// bounded ancestry walk over the loaded commit window.</param>
-    /// <param name="tipOrderHint">§V10.1: an explicit trunk-tip order (commit ids) recorded by a
-    /// previous verified compute. When given, <see cref="SeedTipPriority"/> pins tips in this
-    /// order and skips both the newest-first sort and the exception — so the optimistic snapshot
-    /// reproduces the last settled trunk exactly. Ids not present as candidates are ignored;
-    /// candidates the hint omits fall to the end in newest-first order.</param>
+    /// repo; null on the optimistic stale first paint, where the exception is skipped and the
+    /// plain newest-tip-wins order stands until the verified recompute.</param>
     public GraphLayoutResult Compute(
         IReadOnlyList<RawCommit> commits,
         IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
@@ -30,11 +25,10 @@ public sealed class DagLayoutEngine
         int maxLanes = 48,
         CancellationToken ct = default,
         bool retainCommits = true,
-        Func<ObjectId, ObjectId, bool>? isAncestor = null,
-        IReadOnlyList<ObjectId>? tipOrderHint = null)
+        Func<ObjectId, ObjectId, bool>? isAncestor = null)
     {
         var state = new GraphLayoutState { MaxLanes = Math.Max(2, maxLanes), RetainCommits = retainCommits };
-        SeedTipPriority(state, commits, decorations, isAncestor, tipOrderHint);
+        SeedTipPriority(state, commits, decorations, isAncestor);
         Consume(state, commits, decorations, maxRows, ct);
         return Build(state, complete: commits.Count <= maxRows);
     }
@@ -459,12 +453,8 @@ public sealed class DagLayoutEngine
     ///   <item>ancestor of none of the newer tips → <c>H</c> takes the trunk and every other tip
     ///     shifts one lane right.</item>
     /// </list>
-    /// When no ancestry oracle is supplied (the optimistic stale first paint) the exception still
-    /// runs, against a <see cref="BoundedAncestry"/> walk over the loaded commit window — enough
-    /// for the common "checked-out branch a little behind its newer siblings" case; anything it
-    /// cannot resolve within the window falls through to plain newest-first. A
-    /// <paramref name="tipOrderHint"/> from a previous verified compute overrides all of this: the
-    /// tips are pinned in that exact order and neither the sort nor the exception runs.
+    /// The exception is skipped when no ancestry oracle is supplied (the optimistic stale first
+    /// paint); the verified recompute that follows applies it.
     ///
     /// It ranks only tips within the first <see cref="TipPriorityScanHorizon"/> commits of the
     /// list the engine is handed, and is a pure function of that prefix (plus the oracle) — never
@@ -481,8 +471,7 @@ public sealed class DagLayoutEngine
         GraphLayoutState s,
         IReadOnlyList<RawCommit> commits,
         IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
-        Func<ObjectId, ObjectId, bool>? isAncestor,
-        IReadOnlyList<ObjectId>? tipOrderHint)
+        Func<ObjectId, ObjectId, bool>? isAncestor)
     {
         if (decorations is null || decorations.Count == 0 || commits.Count < 2)
             return;
@@ -516,26 +505,6 @@ public sealed class DagLayoutEngine
         }
         tips.Sort(ByNewest);
 
-        // §V10.1: a recorded order from the last verified compute wins outright — pin to it and
-        // skip the sort's fallback and the exception entirely, so the optimistic snapshot draws
-        // the same trunk that settled last time.
-        if (tipOrderHint is { Count: > 0 })
-        {
-            var rank = new Dictionary<ObjectId, int>(tipOrderHint.Count);
-            for (var i = 0; i < tipOrderHint.Count; i++)
-                rank.TryAdd(tipOrderHint[i], i);
-            // Stable: candidates the hint lists keep its order; the rest stay newest-first behind.
-            var ordered = tips
-                .Select((t, i) => (t, key: rank.TryGetValue(t.Id, out var r) ? r : int.MaxValue, i))
-                .OrderBy(x => x.key).ThenBy(x => x.i)
-                .Select(x => x.t)
-                .ToList();
-            tips.Clear();
-            tips.AddRange(ordered);
-            PinTips(s, tips);
-            return;
-        }
-
         // §V10.1 checked-out-branch exception. Locate the checked-out local branch's tip anywhere
         // in the scan window — it need NOT be a leaf: the whole point is that newer work has been
         // built on it. A detached HEAD carries no such badge, so nothing fires.
@@ -548,13 +517,8 @@ public sealed class DagLayoutEngine
                 break;
             }
 
-        if (head is { } h && !tips[0].Id.Equals(h.Id))
+        if (isAncestor is not null && head is { } h && !tips[0].Id.Equals(h.Id))
         {
-            // Without a live repo oracle (optimistic snapshot), fall back to a bounded ancestry
-            // walk over the loaded window — resolves the usual "HEAD a little behind" case, and
-            // any pair it cannot decide within the window reads as "not an ancestor".
-            var ancestry = isAncestor ?? BoundedAncestry(commits);
-
             // The tips strictly newer than HEAD are the front run of the sorted list.
             var newerCount = 0;
             while (newerCount < tips.Count && ByNewest(tips[newerCount], h) < 0)
@@ -563,7 +527,7 @@ public sealed class DagLayoutEngine
             // Newest-first, the first newer tip HEAD is an ancestor of.
             var promote = -1;
             for (var i = 0; i < newerCount; i++)
-                if (!tips[i].Id.Equals(h.Id) && ancestry(h.Id, tips[i].Id))
+                if (!tips[i].Id.Equals(h.Id) && isAncestor(h.Id, tips[i].Id))
                 {
                     promote = i;
                     break;
@@ -592,16 +556,9 @@ public sealed class DagLayoutEngine
             // promote == 0 → HEAD is an ancestor of the current newest tip: order is unchanged.
         }
 
-        PinTips(s, tips);
-    }
-
-    /// <summary>Pins the first <c>MaxLanes-1</c> tips to raw lanes <c>0..n-1</c> (any beyond that
-    /// fall back to the normal allocator), pre-seeding the compaction map in the same order so the
-    /// trunk tip renders in the leftmost column even when the walk places a different tip on row 0
-    /// first, and records the full order in <see cref="GraphLayoutState.SeededTipOrder"/> for the
-    /// walk cache to persist.</summary>
-    private static void PinTips(GraphLayoutState s, List<RawCommit> tips)
-    {
+        // Pin the first (MaxLanes-1) tips to lanes 0..n-1; any beyond that fall back to the
+        // normal allocator. Pre-seed the compaction map in the same order so the trunk tip
+        // renders in the leftmost column even when the walk places a different tip on row 0 first.
         var n = Math.Min(tips.Count, Math.Max(0, s.MaxLanes - 1));
         for (var rank = 0; rank < n; rank++)
         {
@@ -610,53 +567,6 @@ public sealed class DagLayoutEngine
         }
         s.NextCompactedLane = Math.Max(s.NextCompactedLane, n);
         s.LaneCeiling = Math.Max(s.LaneCeiling, n);
-        s.SeededTipOrder = tips.Select(t => t.Id).ToList();
-    }
-
-    /// <summary>§V10.1 fallback ancestry oracle for the optimistic snapshot, which has no live
-    /// repo. <c>f(a, b)</c> is true when <c>a</c> is reachable from <c>b</c> by walking parent
-    /// links that stay inside the loaded commit window; a walk that exceeds
-    /// <see cref="AncestryVisitCap"/> nodes or runs off the window returns false. Parent map and
-    /// results are memoised across the handful of calls one seed pass makes.</summary>
-    private const int AncestryVisitCap = 20_000;
-
-    private static Func<ObjectId, ObjectId, bool> BoundedAncestry(IReadOnlyList<RawCommit> commits)
-    {
-        var parents = new Dictionary<ObjectId, IReadOnlyList<ObjectId>>(commits.Count);
-        foreach (var c in commits)
-            parents.TryAdd(c.Id, c.ParentIds);
-
-        var memo = new Dictionary<(ObjectId A, ObjectId B), bool>();
-
-        return (a, b) =>
-        {
-            if (a.Equals(b))
-                return true;
-            if (memo.TryGetValue((a, b), out var cached))
-                return cached;
-
-            var seen = new HashSet<ObjectId>();
-            var stack = new Stack<ObjectId>();
-            stack.Push(b);
-            var found = false;
-            while (stack.Count > 0 && seen.Count < AncestryVisitCap)
-            {
-                var cur = stack.Pop();
-                if (!seen.Add(cur))
-                    continue;
-                if (cur.Equals(a))
-                {
-                    found = true;
-                    break;
-                }
-                if (parents.TryGetValue(cur, out var ps))
-                    foreach (var p in ps)
-                        stack.Push(p);
-            }
-
-            memo[(a, b)] = found;
-            return found;
-        };
     }
 
     private static int AllocLane(GraphLayoutState s)
