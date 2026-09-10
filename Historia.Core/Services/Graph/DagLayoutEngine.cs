@@ -13,16 +13,22 @@ public sealed class DagLayoutEngine
     /// accumulated in the layout state — the caller is spilling it to a disk-backed store and
     /// will swap that in (§7.6). The built <see cref="GraphLayout.Commits"/> is then an empty
     /// <see cref="ArrayCommitStore"/> until the swap.</param>
+    /// <param name="isAncestor">§V10.1 checked-out-branch exception: a full-history ancestry
+    /// oracle — <c>isAncestor(a, b)</c> is true when commit <paramref name="a"/> is an ancestor of
+    /// (or equal to) commit <c>b</c>. Supplied by <see cref="GraphLayoutService"/> from the live
+    /// repo; null on the optimistic stale first paint, where the exception is skipped and the
+    /// plain newest-tip-wins order stands until the verified recompute.</param>
     public GraphLayoutResult Compute(
         IReadOnlyList<RawCommit> commits,
         IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
         int maxRows,
         int maxLanes = 48,
         CancellationToken ct = default,
-        bool retainCommits = true)
+        bool retainCommits = true,
+        Func<ObjectId, ObjectId, bool>? isAncestor = null)
     {
         var state = new GraphLayoutState { MaxLanes = Math.Max(2, maxLanes), RetainCommits = retainCommits };
-        SeedTipPriority(state, commits, decorations);
+        SeedTipPriority(state, commits, decorations, isAncestor);
         Consume(state, commits, decorations, maxRows, ct);
         return Build(state, complete: commits.Count <= maxRows);
     }
@@ -428,27 +434,44 @@ public sealed class DagLayoutEngine
     // ── Lane allocation ──
 
     /// <summary>
-    /// §V9-G "older tip wins the trunk". When the walk window holds two or more branch tips
-    /// that are leaves (nothing in the window builds on them), rank them by tip-commit age — oldest
-    /// first — and pin each to a raw lane in that order. The oldest branch then stays collinear
-    /// with the shared mainline below the fork and newer divergent work is what visibly branches
-    /// off, instead of whichever tip the time-ordered walk happened to place on row 0 claiming
-    /// lane 0. Row order is untouched: the newest commit is still row 0, it just sits on a
-    /// higher lane.
+    /// §V10.1 "newest tip wins the trunk, with a checked-out-branch exception". When the walk
+    /// window holds two or more branch tips that are leaves (nothing in the window builds on
+    /// them), rank them and pin each to a raw lane in that order; lane 0 is the trunk. Row order
+    /// is untouched — the newest commit is still row 0, a tip just moves to a higher lane.
+    ///
+    /// Base order: <b>newest tip first</b>, by committer date (SHA breaks an exact-timestamp tie
+    /// so the order is stable per run).
+    ///
+    /// Exception: the currently checked-out local branch stays on the trunk when its work has
+    /// been built on. Let <c>H</c> be that branch's tip among the candidates. If <c>H</c> is not
+    /// already newest, scan the tips newer than <c>H</c> newest-first for the first one <c>H</c>
+    /// is an ancestor of:
+    /// <list type="bullet">
+    ///   <item>ancestor of the newest tip → order is unchanged.</item>
+    ///   <item>ancestor of a later (non-newest) tip <c>T</c> → <c>T</c> takes the trunk and every
+    ///     tip ahead of it shifts one lane right.</item>
+    ///   <item>ancestor of none of the newer tips → <c>H</c> takes the trunk and every other tip
+    ///     shifts one lane right.</item>
+    /// </list>
+    /// The exception is skipped when no ancestry oracle is supplied (the optimistic stale first
+    /// paint); the verified recompute that follows applies it.
     ///
     /// It ranks only tips within the first <see cref="TipPriorityScanHorizon"/> commits of the
-    /// list the engine is handed, and is a pure function of that prefix — never of <c>maxRows</c>.
-    /// So a partial <see cref="Compute"/> + <see cref="Extend"/> seeds the same pins as a full
-    /// compute over the same list and criterion 4 (§7.9.2) still holds; and the horizon is small
-    /// enough (and the app paints a larger first batch) that a pinned tip is always drawn, never
-    /// left holding an empty near-HEAD column while its commits are still below the window.
+    /// list the engine is handed, and is a pure function of that prefix (plus the oracle) — never
+    /// of <c>maxRows</c>. So a partial <see cref="Compute"/> + <see cref="Extend"/> seeds the same
+    /// pins as a full compute over the same list and criterion 4 (§7.9.2) still holds; and the
+    /// horizon is small enough (and the app paints a larger first batch) that a pinned tip is
+    /// always drawn, never left holding an empty near-HEAD column while its commits are still
+    /// below the window. A checked-out branch whose tip is beyond the horizon is not a candidate,
+    /// so the exception does not fire for it.
     /// </summary>
     private const int TipPriorityScanHorizon = 200;
 
     private static void SeedTipPriority(
         GraphLayoutState s,
         IReadOnlyList<RawCommit> commits,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations)
+        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
+        Func<ObjectId, ObjectId, bool>? isAncestor)
     {
         if (decorations is null || decorations.Count == 0 || commits.Count < 2)
             return;
@@ -473,17 +496,55 @@ public sealed class DagLayoutEngine
         if (tips.Count < 2)
             return;
 
-        // Oldest tip first, by committer date to match the walk's own Time ordering; the SHA
-        // breaks an exact timestamp tie so the order is stable per run.
+        // §V10.1: newest tip first, by committer date; the SHA breaks an exact timestamp tie so
+        // the order is stable per run.
         tips.Sort((a, b) =>
         {
-            var t = a.Metadata.CommitWhen.CompareTo(b.Metadata.CommitWhen);
+            var t = b.Metadata.CommitWhen.CompareTo(a.Metadata.CommitWhen);
             return t != 0 ? t : string.CompareOrdinal(a.Id.Sha, b.Id.Sha);
         });
 
+        // §V10.1 checked-out-branch exception. Find the checked-out local branch's tip among the
+        // candidates (its badge carries IsHead); a detached HEAD has no such badge.
+        if (isAncestor is not null)
+        {
+            var headIdx = -1;
+            for (var i = 0; i < tips.Count; i++)
+                if (decorations.TryGetValue(tips[i].Id, out var d)
+                    && d.Any(x => x.IsHead && x.Type == DecorationType.LocalBranch))
+                {
+                    headIdx = i;
+                    break;
+                }
+
+            if (headIdx > 0)
+            {
+                // Scan the tips newer than HEAD (ahead of it in the descending order),
+                // newest-first, for the first one HEAD is an ancestor of.
+                var promote = -1;
+                for (var i = 0; i < headIdx; i++)
+                    if (isAncestor(tips[headIdx].Id, tips[i].Id))
+                    {
+                        promote = i;
+                        break;
+                    }
+
+                // promote < 0  → HEAD is an ancestor of no newer tip: HEAD takes the trunk.
+                // promote > 0  → that tip takes the trunk; tips ahead of it shift one lane right.
+                // promote == 0 → HEAD is an ancestor of the newest tip: order is unchanged.
+                var move = promote < 0 ? headIdx : promote;
+                if (move > 0)
+                {
+                    var t = tips[move];
+                    tips.RemoveAt(move);
+                    tips.Insert(0, t);
+                }
+            }
+        }
+
         // Pin the first (MaxLanes-1) tips to lanes 0..n-1; any beyond that fall back to the
-        // normal allocator. Pre-seed the compaction map in the same order so the oldest tip
-        // renders in the leftmost column even though the walk places a newer tip on row 0 first.
+        // normal allocator. Pre-seed the compaction map in the same order so the trunk tip
+        // renders in the leftmost column even when the walk places a different tip on row 0 first.
         var n = Math.Min(tips.Count, Math.Max(0, s.MaxLanes - 1));
         for (var rank = 0; rank < n; rank++)
         {
