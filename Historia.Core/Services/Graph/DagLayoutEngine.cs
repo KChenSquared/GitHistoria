@@ -498,48 +498,62 @@ public sealed class DagLayoutEngine
 
         // §V10.1: newest tip first, by committer date; the SHA breaks an exact timestamp tie so
         // the order is stable per run.
-        tips.Sort((a, b) =>
+        static int ByNewest(RawCommit a, RawCommit b)
         {
             var t = b.Metadata.CommitWhen.CompareTo(a.Metadata.CommitWhen);
             return t != 0 ? t : string.CompareOrdinal(a.Id.Sha, b.Id.Sha);
-        });
+        }
+        tips.Sort(ByNewest);
 
-        // §V10.1 checked-out-branch exception. Find the checked-out local branch's tip among the
-        // candidates (its badge carries IsHead); a detached HEAD has no such badge.
-        if (isAncestor is not null)
+        // §V10.1 checked-out-branch exception. Locate the checked-out local branch's tip anywhere
+        // in the scan window — it need NOT be a leaf: the whole point is that newer work has been
+        // built on it. A detached HEAD carries no such badge, so nothing fires.
+        RawCommit? head = null;
+        for (var i = 0; i < limit; i++)
+            if (decorations.TryGetValue(commits[i].Id, out var hd)
+                && hd.Any(x => x.IsHead && x.Type == DecorationType.LocalBranch))
+            {
+                head = commits[i];
+                break;
+            }
+
+        if (isAncestor is not null && head is { } h && !tips[0].Id.Equals(h.Id))
         {
-            var headIdx = -1;
-            for (var i = 0; i < tips.Count; i++)
-                if (decorations.TryGetValue(tips[i].Id, out var d)
-                    && d.Any(x => x.IsHead && x.Type == DecorationType.LocalBranch))
+            // The tips strictly newer than HEAD are the front run of the sorted list.
+            var newerCount = 0;
+            while (newerCount < tips.Count && ByNewest(tips[newerCount], h) < 0)
+                newerCount++;
+
+            // Newest-first, the first newer tip HEAD is an ancestor of.
+            var promote = -1;
+            for (var i = 0; i < newerCount; i++)
+                if (!tips[i].Id.Equals(h.Id) && isAncestor(h.Id, tips[i].Id))
                 {
-                    headIdx = i;
+                    promote = i;
                     break;
                 }
 
-            if (headIdx > 0)
+            if (promote > 0)
             {
-                // Scan the tips newer than HEAD (ahead of it in the descending order),
-                // newest-first, for the first one HEAD is an ancestor of.
-                var promote = -1;
-                for (var i = 0; i < headIdx; i++)
-                    if (isAncestor(tips[headIdx].Id, tips[i].Id))
-                    {
-                        promote = i;
-                        break;
-                    }
-
-                // promote < 0  → HEAD is an ancestor of no newer tip: HEAD takes the trunk.
-                // promote > 0  → that tip takes the trunk; tips ahead of it shift one lane right.
-                // promote == 0 → HEAD is an ancestor of the newest tip: order is unchanged.
-                var move = promote < 0 ? headIdx : promote;
-                if (move > 0)
+                // That tip takes the trunk; the tips ahead of it shift one lane right.
+                var t = tips[promote];
+                tips.RemoveAt(promote);
+                tips.Insert(0, t);
+            }
+            else if (promote < 0)
+            {
+                // HEAD is an ancestor of no newer tip → HEAD itself takes the trunk. Only a leaf
+                // HEAD reaches here (a non-leaf HEAD always has a newer descendant tip it is an
+                // ancestor of), so it is already one of the candidates — just move it to front.
+                var hi = tips.FindIndex(x => x.Id.Equals(h.Id));
+                if (hi > 0)
                 {
-                    var t = tips[move];
-                    tips.RemoveAt(move);
+                    var t = tips[hi];
+                    tips.RemoveAt(hi);
                     tips.Insert(0, t);
                 }
             }
+            // promote == 0 → HEAD is an ancestor of the current newest tip: order is unchanged.
         }
 
         // Pin the first (MaxLanes-1) tips to lanes 0..n-1; any beyond that fall back to the
