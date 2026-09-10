@@ -133,6 +133,20 @@ public sealed partial class CommitGraphControl : Control
     private double _scrollOffset;
     private double _hScrollOffset;
 
+    // §V3.1 in-graph lane pan: scrolls the lanes INSIDE the Graph column without moving any
+    // other column, so any lane is reachable while Message stays on screen. In DIP, lane space.
+    // Per repo for the session only (reset to lane 0 at launch) — saved on repo switch, restored
+    // on Attach, never persisted.
+    private double _graphPanOffset;
+    private readonly Dictionary<string, double> _panByRepo = new(StringComparer.Ordinal);
+
+    /// <summary>Widest the lanes can be panned: the natural graph width minus what the column
+    /// shows. Zero when every lane already fits.</summary>
+    private double MaxPan =>
+        Math.Max(0, NaturalGraphWidth(_layout?.Layout.TotalLaneCount ?? 0) - _graphColWidth);
+
+    private void ClampPan() => _graphPanOffset = Math.Clamp(_graphPanOffset, 0, MaxPan);
+
     private int _hoverRow = -1;
     private int _selectedRow = -1;
     private readonly HashSet<int> _multiSelect = [];
@@ -478,6 +492,10 @@ public sealed partial class CommitGraphControl : Control
             _state.RevealCommitRequested -= OnRevealCommitRequested;
         }
 
+        // §V3.1: stash this repo's lane-pan offset for the session before switching away.
+        if (_context is { } leaving)
+            _panByRepo[Historia.Services.Settings.IRepoLayoutService.KeyFor(leaving.RepositoryPath)] = _graphPanOffset;
+
         CancelAndDisposeLayoutCts();
         SetLayout(null);               // release the commit-store lease before switching repos
         ClearReveal();                 // a running pump exits when it sees _revealTarget == null
@@ -495,11 +513,14 @@ public sealed partial class CommitGraphControl : Control
             _graphWidthPinned = layout.GraphWidthPinned;
             _manuallySized.Clear();
             _zoomOverridesPin = false;
+            _graphPanOffset = _panByRepo.GetValueOrDefault(
+                Historia.Services.Settings.IRepoLayoutService.KeyFor(context.RepositoryPath));
         }
         else
         {
             _columns = GraphColumnDefaults.All;
             _graphWidthPinned = false;
+            _graphPanOffset = 0;
         }
 
         if (_state is not null)
@@ -579,7 +600,17 @@ public sealed partial class CommitGraphControl : Control
     private void OnSelectedCommitChanged(object? sender, SelectionChangedEventArgs e)
     {
         _selectedRow = ResolveRow(e.CommitId);
+        AutoPanToSelectedRow();
         InvalidateVisual();
+    }
+
+    /// <summary>§V3.1: pan the Graph column so the selected commit's lane is visible. Runs from
+    /// the one place the selected row changes (row click, clamped-node click, keyboard nav,
+    /// Ctrl+F step, reveal) — never from hover.</summary>
+    private void AutoPanToSelectedRow()
+    {
+        if (_selectedRow >= 0 && _layout is { } l && _selectedRow < l.Layout.RowCount)
+            EnsureLaneInView(l.Layout.Rows[_selectedRow].LaneIndex);
     }
 
     private void OnRevealCommitRequested(object? sender, RevealCommitEventArgs e)
@@ -590,6 +621,7 @@ public sealed partial class CommitGraphControl : Control
             // Already loaded — jump straight there and drop any pending reveal.
             ClearReveal();
             _selectedRow = row;
+            AutoPanToSelectedRow();
             CenterRow(row);
             InvalidateVisual();
             return;
@@ -620,6 +652,7 @@ public sealed partial class CommitGraphControl : Control
                 if (row >= 0)
                 {
                     _selectedRow = row;
+                    AutoPanToSelectedRow();
                     if (!_revealUserTookOver)
                         CenterRow(row);
                     break;
@@ -1254,10 +1287,17 @@ public sealed partial class CommitGraphControl : Control
             var anchorY = e.GetPosition(this).Y;
             var rowAtAnchor = anchorY >= RowsTop ? (_scrollOffset + anchorY - RowsTop) / _rowHeight : (double?)null;
 
+            var laneBefore = _laneWidth;
             _rowHeight = Math.Clamp(_rowHeight * factor, MinRowHeight, MaxRowHeight);
             _laneWidth = Math.Clamp(_laneWidth * factor, MinLaneWidth, MaxLaneWidth);
             _zoomOverridesPin = true;
             _elbowGeometryCache.Clear();
+
+            // §V3.1: scale the pan by the same ratio the lane width actually changed by, so the
+            // same lanes stay in view; ClampPan again once the resolved column width settles.
+            if (laneBefore > 0)
+                _graphPanOffset *= _laneWidth / laneBefore;
+            ClampPan();
 
             if (rowAtAnchor is { } r)
                 _scrollOffset = Math.Max(0, r * _rowHeight - (anchorY - RowsTop));
@@ -1266,6 +1306,27 @@ public sealed partial class CommitGraphControl : Control
             InvalidateVisual();
             e.Handled = true;
             return;
+        }
+
+        // §V3.1: Shift+wheel, or a trackpad horizontal swipe, over the Graph column's rows pans
+        // the lanes. Some platforms deliver Shift+wheel as Delta.X already, so accept either.
+        // With no hidden lanes (MaxPan == 0) this falls through to vertical scrolling, as today.
+        if (MaxPan > 0)
+        {
+            var wpos = e.GetPosition(this);
+            if (wpos.Y >= RowsTop && ColumnKindAt(wpos.X) == GraphColumnKind.Graph)
+            {
+                var pan = e.Delta.X != 0 ? e.Delta.X
+                        : (e.KeyModifiers & KeyModifiers.Shift) != 0 ? delta
+                        : 0;
+                if (pan != 0)
+                {
+                    _graphPanOffset = Math.Clamp(_graphPanOffset - pan * 40, 0, MaxPan);
+                    InvalidateVisual();
+                    e.Handled = true;
+                    return;
+                }
+            }
         }
 
         _scrollOffset = Math.Clamp(_scrollOffset - delta * 40, 0, Math.Max(0, _scrollBar.Maximum));
@@ -2247,6 +2308,10 @@ public sealed partial class CommitGraphControl : Control
         foreach (var c in _resolvedColumns)
             if (c.Kind == GraphColumnKind.Graph) { _graphColLeft = c.Left; _graphColWidth = c.Width; }
 
+        // §V3.1: the lane count or the Graph column width may have changed since the last frame
+        // (resize, zoom, layout swap/extend, refs change) — keep the pan inside its range.
+        ClampPan();
+
         DrawHeaderBand(dc, size.Width);
 
         if (RevealBlanking)
@@ -2642,7 +2707,31 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
-    private double LaneX(int lane) => _graphColLeft + (lane + 0.5) * LaneWidth - _hScrollOffset;
+    // §V3.1: _hScrollOffset scrolls the whole column band; _graphPanOffset scrolls only the
+    // lanes inside the Graph column. Culling, NodeX edge-clamping, the lane wash, badge
+    // connectors and hover emphasis all derive from LaneX, so they follow the pan automatically.
+    private double LaneX(int lane) => _graphColLeft + (lane + 0.5) * LaneWidth - _hScrollOffset - _graphPanOffset;
+
+    /// <summary>§V3.1: pan just enough to bring <paramref name="lane"/> inside the visible part
+    /// of the Graph column, leaving one lane of margin. A no-op when the lane already shows or
+    /// nothing is hidden. Never called from hover.</summary>
+    private void EnsureLaneInView(int lane)
+    {
+        if (MaxPan <= 0)
+        {
+            if (_graphPanOffset != 0) { _graphPanOffset = 0; InvalidateVisual(); }
+            return;
+        }
+        var left = lane * LaneWidth;                    // lane's left edge in pan space
+        var right = left + LaneWidth;
+        var view = _graphColWidth - TickWidth;
+        if (left < _graphPanOffset)
+            _graphPanOffset = left - LaneWidth;         // one lane of margin
+        else if (right > _graphPanOffset + view)
+            _graphPanOffset = right - view + LaneWidth;
+        ClampPan();
+        InvalidateVisual();
+    }
 
     /// <summary>§V3.1: screen x of a commit node — its lane centre, or pinned just inside the
     /// Graph column's left/right edge when that lane is panned or clipped out of view. The
