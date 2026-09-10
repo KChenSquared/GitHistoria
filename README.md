@@ -11,7 +11,7 @@ A high-performance, open-source Windows Git client built with **C# (.NET 10)** a
 Our goal is to create the premier Windows Git GUI that unites:
 1. **Raw Speed and Responsiveness** — instant launch, lightweight memory usage, zero UI lag, and smooth handling of massive repositories (100k+ commits).
 2. **Feature Completeness & Simplicity** — advanced power tools (interactive rebase, line/hunk staging, cherry-pick, submodules, stash management) paired with an intuitive, clean workflow for everyday commits, branching, and conflict resolution.
-3. **Visual Elegance** — vivid, color-coded branch lanes, diamond commit nodes, branch/tag labels, merge arcs, and visual drag-and-drop actions — engineered for high-performance rendering.
+3. **Visual Elegance** — vivid, color-coded branch lanes, round commit nodes, branch/tag labels, merge arcs, and visual drag-and-drop actions — engineered for high-performance rendering.
 4. **Progressive Disclosure** — essential, everyday workflows (inspecting history, staging, committing, branch switching) remain immediate and distraction-free, while deep Git power tools (interactive rebase, conflict resolver, hunk staging, submodules, worktrees, terminal, error diagnostics) disclose on demand through context menus, collapsible drawers, and dedicated inspection panels without overwhelming the user.
 
 ---

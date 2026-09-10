@@ -11,10 +11,9 @@ public sealed partial class CommitGraphControl : Control
     private const double MaxRowHeight = 44;
     private const double MinLaneWidth = 15; // §V3.1: raised from 13 with the +2px lane width
     private const double MaxLaneWidth = 60;
-    /// <summary>§V3.1: commit nodes are vertically-elongated diamonds. Width equals the old
-    /// circle diameter (2 × 5.5); height is 2px taller.</summary>
-    private const double NodeRadiusX = 5.5;
-    private const double NodeRadiusY = 6.5;
+    /// <summary>§V3.2: commit nodes are round dots again (the §V3.1 diamond was reverted). The
+    /// radius is 7 — 1.5px larger than the pre-diamond 5.5, i.e. a diameter 3px wider.</summary>
+    private const double NodeRadius = 7;
     private const double RowTextSize = 14;
     private const double HeaderTextSize = 12;
     private const double BadgeLabelSize = 14;
@@ -29,26 +28,6 @@ public sealed partial class CommitGraphControl : Control
 
     private double _laneWidth = 18; // §V3.1: raised from 16 (+2px)
     private double LaneWidth => _laneWidth;
-
-    // §V3.1: vector diamond geometries, built once. The hover halo keeps a uniform ~2px gap
-    // around the diamond edge — a rhombus edge sits ab/√(a²+b²) ≈ 4.20px from centre, so a 2px
-    // outset scales both half-axes by ~1.476 (rx ≈ 8.12, ry ≈ 9.60).
-    private static readonly StreamGeometry DiamondGeometry = CreateDiamondGeometry(NodeRadiusX, NodeRadiusY);
-    private static readonly StreamGeometry DiamondHoverGeometry = CreateDiamondGeometry(8.12, 9.60);
-
-    private static StreamGeometry CreateDiamondGeometry(double rx, double ry)
-    {
-        var geo = new StreamGeometry();
-        using (var ctx = geo.Open())
-        {
-            ctx.BeginFigure(new Point(0, -ry), isFilled: true);
-            ctx.LineTo(new Point(rx, 0));
-            ctx.LineTo(new Point(0, ry));
-            ctx.LineTo(new Point(-rx, 0));
-            ctx.EndFigure(isClosed: true);
-        }
-        return geo;
-    }
 
     private IServiceProvider _services = default!;
     private IWorkspaceService _workspace = default!;
@@ -2000,10 +1979,10 @@ public sealed partial class CommitGraphControl : Control
             return false;
         var cx = NodeX(l.Layout.Rows[row].LaneIndex, out _);
         var cy = RowY(row) + _rowHeight / 2;
-        var dx = Math.Abs(p.X - cx);
-        var dy = Math.Abs(p.Y - cy);
-        // Diamond with a 3px grab margin on each half-axis.
-        return dx / (NodeRadiusX + 3.0) + dy / (NodeRadiusY + 3.0) <= 1.0;
+        var dx = p.X - cx;
+        var dy = p.Y - cy;
+        const double grab = NodeRadius + 3;
+        return dx * dx + dy * dy <= grab * grab;
     }
 
     private string? _lastTip;
@@ -2726,12 +2705,10 @@ public sealed partial class CommitGraphControl : Control
             var cx = NodeX(gr.LaneIndex, out var clamped);
             var cy = RowY(row) + _rowHeight / 2;
 
-            using (dc.PushTransform(Matrix.CreateTranslation(cx, cy)))
-            {
-                dc.DrawGeometry(LaneBrush(gr.ColorIndex), clamped ? _clampedNodePen : null, DiamondGeometry);
-                if (row == _hoverRow)
-                    dc.DrawGeometry(null, _hoverPen, DiamondHoverGeometry);
-            }
+            dc.DrawEllipse(LaneBrush(gr.ColorIndex), clamped ? _clampedNodePen : null,
+                new Point(cx, cy), NodeRadius, NodeRadius);
+            if (row == _hoverRow)
+                dc.DrawEllipse(null, _hoverPen, new Point(cx, cy), NodeRadius + 2, NodeRadius + 2);
         }
     }
 
@@ -2763,7 +2740,7 @@ public sealed partial class CommitGraphControl : Control
 
     /// <summary>§V3.1: screen x of a commit node — its lane centre, or pinned just inside the
     /// Graph column's left/right edge when that lane is panned or clipped out of view. The
-    /// single source of a node's x: the drawn diamond, its hit area, its lane wash and its badge
+    /// single source of a node's x: the drawn dot, its hit area, its lane wash and its badge
     /// connector all read from here so they always agree.</summary>
     private double NodeX(int laneIndex, out bool clamped)
     {
@@ -2773,8 +2750,8 @@ public sealed partial class CommitGraphControl : Control
             return naturalX;
 
         var gcx = _graphColLeft - _hScrollOffset;
-        var minX = gcx + NodeRadiusX + 2;
-        var maxX = gcx + _graphColWidth - TickWidth - NodeRadiusX - 2;
+        var minX = gcx + NodeRadius + 2;
+        var maxX = gcx + _graphColWidth - TickWidth - NodeRadius - 2;
         if (naturalX > maxX) { clamped = true; return maxX; }
         if (naturalX < minX) { clamped = true; return minX; }
         return naturalX;
