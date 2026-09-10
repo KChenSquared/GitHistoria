@@ -9,9 +9,12 @@ public sealed partial class CommitGraphControl : Control
 {
     private const double MinRowHeight = 20;
     private const double MaxRowHeight = 44;
-    private const double MinLaneWidth = 13;
+    private const double MinLaneWidth = 15; // §V3.1: raised from 13 with the +2px lane width
     private const double MaxLaneWidth = 60;
-    private const double NodeRadius = 5.5;
+    /// <summary>§V3.1: commit nodes are vertically-elongated diamonds. Width equals the old
+    /// circle diameter (2 × 5.5); height is 2px taller.</summary>
+    private const double NodeRadiusX = 5.5;
+    private const double NodeRadiusY = 6.5;
     private const double RowTextSize = 14;
     private const double HeaderTextSize = 12;
     private const double BadgeLabelSize = 14;
@@ -24,8 +27,28 @@ public sealed partial class CommitGraphControl : Control
     /// HEAD badge→node connector.</summary>
     private const double LaneStrokeWidth = 2.0;
 
-    private double _laneWidth = 16;
+    private double _laneWidth = 18; // §V3.1: raised from 16 (+2px)
     private double LaneWidth => _laneWidth;
+
+    // §V3.1: vector diamond geometries, built once. The hover halo keeps a uniform ~2px gap
+    // around the diamond edge — a rhombus edge sits ab/√(a²+b²) ≈ 4.20px from centre, so a 2px
+    // outset scales both half-axes by ~1.476 (rx ≈ 8.12, ry ≈ 9.60).
+    private static readonly StreamGeometry DiamondGeometry = CreateDiamondGeometry(NodeRadiusX, NodeRadiusY);
+    private static readonly StreamGeometry DiamondHoverGeometry = CreateDiamondGeometry(8.12, 9.60);
+
+    private static StreamGeometry CreateDiamondGeometry(double rx, double ry)
+    {
+        var geo = new StreamGeometry();
+        using (var ctx = geo.Open())
+        {
+            ctx.BeginFigure(new Point(0, -ry), isFilled: true);
+            ctx.LineTo(new Point(rx, 0));
+            ctx.LineTo(new Point(0, ry));
+            ctx.LineTo(new Point(-rx, 0));
+            ctx.EndFigure(isClosed: true);
+        }
+        return geo;
+    }
 
     private IServiceProvider _services = default!;
     private IWorkspaceService _workspace = default!;
@@ -235,6 +258,9 @@ public sealed partial class CommitGraphControl : Control
     private SolidColorBrush _selectionBar = new(Colors.SlateBlue);
     private SolidColorBrush _hoverFill = new(Colors.DimGray);
     private Pen _hoverPen = new(new SolidColorBrush(Colors.White), 1);
+    // §V3.1: accent stroke on a commit node pinned just inside the Graph column's left/right
+    // edge because its lane is panned or clipped out of view. Rebuilt on theme change.
+    private Pen _clampedNodePen = new(new SolidColorBrush(Colors.SlateBlue), 1.5);
     // v8.4: the repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
     private Pen _cogPen = new(new SolidColorBrush(Colors.DimGray), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
     private static readonly Geometry _cogGeo = Geometry.Parse(Historia.Components.IconPaths.Get("settings"));
@@ -1068,6 +1094,7 @@ public sealed partial class CommitGraphControl : Control
         _selectionBar = new SolidColorBrush(primary);
         _hoverPen = new Pen(new SolidColorBrush(primary), 2.0);
         _cogPen = new Pen(new SolidColorBrush(muted), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
+        _clampedNodePen = new Pen(new SolidColorBrush(primary), 1.5);
         var warn = palette["warning"];
         _matchFill = new SolidColorBrush(AvColor.FromArgb(0x30, warn.R, warn.G, warn.B));
 
@@ -1843,12 +1870,12 @@ public sealed partial class CommitGraphControl : Control
     {
         if (_layout is not { } l || row < 0 || row >= l.Layout.RowCount)
             return false;
-        var cx = LaneX(l.Layout.Rows[row].LaneIndex);
+        var cx = NodeX(l.Layout.Rows[row].LaneIndex, out _);
         var cy = RowY(row) + _rowHeight / 2;
-        var dx = p.X - cx;
-        var dy = p.Y - cy;
-        const double grab = NodeRadius + 3;
-        return dx * dx + dy * dy <= grab * grab;
+        var dx = Math.Abs(p.X - cx);
+        var dy = Math.Abs(p.Y - cy);
+        // Diamond with a 3px grab margin on each half-axis.
+        return dx / (NodeRadiusX + 3.0) + dy / (NodeRadiusY + 3.0) <= 1.0;
     }
 
     private string? _lastTip;
@@ -2279,7 +2306,7 @@ public sealed partial class CommitGraphControl : Control
             {
                 var gr = layout.Rows[row];
                 var colorIndex = gr.ColorIndex;
-                var rawLeft = _graphColLeft + gr.LaneIndex * LaneWidth - _hScrollOffset;
+                var rawLeft = NodeX(gr.LaneIndex, out _) - LaneWidth / 2;
                 var fillLeft = Math.Max(gx, rawLeft);
                 if (washRight > fillLeft)
                     dc.DrawRectangle(LaneFill(colorIndex), null, new Rect(fillLeft, y, washRight - fillLeft, _rowHeight));
@@ -2385,7 +2412,7 @@ public sealed partial class CommitGraphControl : Control
 
                 var gr = layout.Rows[row];
                 var startX = _badgeRightEdge.GetValueOrDefault(row, refsRightFallback);
-                var endX = LaneX(gr.LaneIndex);
+                var endX = NodeX(gr.LaneIndex, out _);
                 if (endX <= startX + 0.5)
                     continue;
 
@@ -2558,15 +2585,38 @@ public sealed partial class CommitGraphControl : Control
         for (var row = first; row <= last; row++)
         {
             var gr = layout.Rows[row];
-            var cx = LaneX(gr.LaneIndex);
+            var cx = NodeX(gr.LaneIndex, out var clamped);
             var cy = RowY(row) + _rowHeight / 2;
-            dc.DrawEllipse(LaneBrush(gr.ColorIndex), null, new Point(cx, cy), NodeRadius, NodeRadius);
-            if (row == _hoverRow)
-                dc.DrawEllipse(null, _hoverPen, new Point(cx, cy), NodeRadius + 2, NodeRadius + 2);
+
+            using (dc.PushTransform(Matrix.CreateTranslation(cx, cy)))
+            {
+                dc.DrawGeometry(LaneBrush(gr.ColorIndex), clamped ? _clampedNodePen : null, DiamondGeometry);
+                if (row == _hoverRow)
+                    dc.DrawGeometry(null, _hoverPen, DiamondHoverGeometry);
+            }
         }
     }
 
     private double LaneX(int lane) => _graphColLeft + (lane + 0.5) * LaneWidth - _hScrollOffset;
+
+    /// <summary>§V3.1: screen x of a commit node — its lane centre, or pinned just inside the
+    /// Graph column's left/right edge when that lane is panned or clipped out of view. The
+    /// single source of a node's x: the drawn diamond, its hit area, its lane wash and its badge
+    /// connector all read from here so they always agree.</summary>
+    private double NodeX(int laneIndex, out bool clamped)
+    {
+        var naturalX = LaneX(laneIndex);
+        clamped = false;
+        if (_graphColWidth <= 0)
+            return naturalX;
+
+        var gcx = _graphColLeft - _hScrollOffset;
+        var minX = gcx + NodeRadiusX + 2;
+        var maxX = gcx + _graphColWidth - TickWidth - NodeRadiusX - 2;
+        if (naturalX > maxX) { clamped = true; return maxX; }
+        if (naturalX < minX) { clamped = true; return minX; }
+        return naturalX;
+    }
 
     private const double IconBox = 12;
     private const double IconGap = 4;
