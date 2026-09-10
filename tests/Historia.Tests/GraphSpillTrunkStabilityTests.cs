@@ -53,6 +53,7 @@ public sealed class GraphSpillTrunkStabilityTests : IAsyncDisposable
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
         var svc = new GraphLayoutService(_host.Settings);
         await using var ctx = _host.Open(_repo.Path);
+        ctx.MarkFirstGraphPaintDone(); // no graph control here — stand in for its first-paint signal
 
         // First compute: real CommitWhen resident → main (newest, checked out) takes lane 0.
         var first = await svc.ComputeLayoutAsync(ctx, Q);
@@ -79,6 +80,7 @@ public sealed class GraphSpillTrunkStabilityTests : IAsyncDisposable
     {
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
         await using var ctx = _host.Open(_repo.Path);
+        ctx.MarkFirstGraphPaintDone(); // no graph control here — stand in for its first-paint signal
 
         // Session 1 walks, lays out, and persists the walk + spilled metadata to disk.
         var s1 = new GraphLayoutService(_host.Settings);

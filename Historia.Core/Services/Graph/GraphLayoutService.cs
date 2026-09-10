@@ -5,6 +5,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
 {
     private const int WalkOverscan = 2_000;
 
+    /// <summary>Safety net for <see cref="MaybeStartBackgroundSpill"/>: how long the background
+    /// full-history walk waits for <see cref="RepositoryContext.FirstGraphPaint"/> before it
+    /// starts anyway. A graph control always completes that signal (paint, failure, or cancel)
+    /// in well under this; the grace only bites a headless open where nothing ever raises it.
+    /// Mirrors <c>WorkspaceService.GraphPriorityTimeout</c>.</summary>
+    private static readonly TimeSpan SpillStartGrace = TimeSpan.FromSeconds(8);
+
     private readonly ISettingsService? _settings;
 
     /// <summary>§7.6: page per-commit metadata from a random-access file instead of keeping
@@ -266,8 +273,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// <summary>
     /// §7.6: once the visible window is spilled, keep walking + spilling the rest of the
     /// history in the background so the whole repo is cached on disk without the user
-    /// scrolling. One walk (not N re-walks), then batched append + stub; cancelled by
-    /// <see cref="Forget"/> when the ref set changes or the tab closes.
+    /// scrolling. Cancelled by <see cref="Forget"/> when the ref set changes or the tab closes.
+    /// <para>The heavy full-history walk does not start until this context's first graph paint
+    /// has landed (<see cref="SpillStartGrace"/> safety net) — on a large repo it can run for
+    /// tens of seconds and it serializes through the same single-access repo gate the quick +
+    /// extend paint needs, so racing it against first paint is what makes a cold open of a big
+    /// repo take far longer than the "small first window" design should ever cost.</para>
     /// </summary>
     private void MaybeStartBackgroundSpill(RepositoryContext context, RepoCache cache, GraphQuery query)
     {
@@ -293,6 +304,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         {
             try
             {
+                // Hold off until the user's first paint for this context is on screen. The walk
+                // below takes the repo gate for a long stretch on a big repo; starting it now
+                // would queue the quick-phase compute and the phase-2 extend behind it.
+                await Task.WhenAny(context.FirstGraphPaint, Task.Delay(SpillStartGrace, ct)).ConfigureAwait(false);
+                if (ct.IsCancellationRequested)
+                    return;
+
                 // One walk to the ceiling — Walk() restarts from the tips each call, so batching
                 // the *walk* would be quadratic. Batch only the append + stub afterwards.
                 await EnsureWalkedAsync(context, query, cache, cap + WalkOverscan, ct).ConfigureAwait(false);
