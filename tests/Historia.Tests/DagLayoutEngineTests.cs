@@ -23,9 +23,8 @@ public class DagLayoutEngineTests
 
     private GraphLayoutResult Compute(IReadOnlyList<RawCommit> commits, int maxRows = 1000,
         IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? deco = null,
-        Func<ObjectId, ObjectId, bool>? isAncestor = null,
-        IReadOnlyList<ObjectId>? tipOrderHint = null)
-        => _engine.Compute(commits, deco, maxRows, isAncestor: isAncestor, tipOrderHint: tipOrderHint);
+        Func<ObjectId, ObjectId, bool>? isAncestor = null)
+        => _engine.Compute(commits, deco, maxRows, isAncestor: isAncestor);
 
     /// <summary>An ancestry oracle over a synthetic commit list — <c>f(a, b)</c> is true when
     /// <c>a</c> is an ancestor of (or equal to) <c>b</c>, walking parent links.</summary>
@@ -468,92 +467,22 @@ public class DagLayoutEngineTests
     }
 
     [Fact]
-    public void Without_a_repo_oracle_the_bounded_in_window_fallback_still_applies_the_exception()
+    public void Without_an_ancestry_oracle_the_checked_out_branch_exception_is_skipped()
     {
-        // §V10.1 option 2: no live `isAncestor`, but the checked-out branch's ancestry to a newer
-        // tip is resolvable inside the loaded window, so the exception still fires.
-        // main (tip 20, checked out) is the base of feat-a (20 → 30 → 40); feat-c (1 → 70 → 80)
-        // is newer and unrelated.
-        var commits = new[] { C(80, 70), C(70, 1), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
+        // Same graph as the "ancestor of no newer tip" case, but no oracle: the stale first
+        // paint keeps the plain newest-first order until the verified recompute.
+        var commits = new[] { C(60, 50), C(50, 1), C(40, 30), C(30, 1), C(20, 10), C(10, 1), C(1) };
         var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
         {
-            [Sha(80)] = [new(DecorationType.LocalBranch, "feat-c")],
-            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-a")],
+            [Sha(60)] = [new(DecorationType.LocalBranch, "feat-y")],
+            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-x")],
             [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
         };
 
-        var r = Compute(commits, deco: deco); // no isAncestor → bounded fallback
+        var r = Compute(commits, deco: deco); // no isAncestor
 
-        // Same outcome as the with-oracle "ancestor of a non-newest tip" case.
-        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex); // feat-a → trunk
-        Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-c (row 0) → lane 1
-        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex);  // main rides the trunk
-    }
-
-    [Fact]
-    public void Bounded_fallback_that_cannot_reach_across_the_loaded_window_reads_as_not_an_ancestor()
-    {
-        // feat-c's history past its tip is not in the passed list, so the fallback can't prove
-        // main is (or isn't) its ancestor — it reads as "not an ancestor". main is still an
-        // in-window ancestor of feat-a, so feat-a takes the trunk (the exception's middle case).
-        var commits = new[] { C(80, 79), C(40, 20), C(20, 10), C(10, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
-        {
-            [Sha(80)] = [new(DecorationType.LocalBranch, "feat-c")],
-            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-a")],
-            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
-        };
-
-        var r = Compute(commits, deco: deco); // no isAncestor → bounded fallback
-
-        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex); // feat-a → trunk
-        Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-c (row 0) → lane 1
-    }
-
-    [Fact]
-    public void A_tip_order_hint_pins_the_trunk_and_overrides_both_the_sort_and_the_exception()
-    {
-        // Two candidate leaf tips: feat-c (80, newest) and feat-a (40). Plain newest-first would
-        // put feat-c on the trunk; the hint says feat-a is the trunk, so that is what gets pinned
-        // — no sort, no exception. main (20) is not a leaf, so it is not a candidate and a hint
-        // entry for it is simply ignored.
-        var commits = new[] { C(80, 70), C(70, 1), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
-        {
-            [Sha(80)] = [new(DecorationType.LocalBranch, "feat-c")],
-            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-a")],
-            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
-        };
-
-        var r = Compute(commits, deco: deco, isAncestor: AncestryOf(commits),
-            tipOrderHint: [Sha(40), Sha(20), Sha(80)]);
-
-        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex); // feat-a → trunk
-        Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-c (row 0) → lane 1
-        Assert.Equal([Sha(40), Sha(80)], r.State.SeededTipOrder);                   // candidates only, hint order
-    }
-
-    [Fact]
-    public void The_verified_seed_order_round_trips_as_a_hint_for_the_next_compute()
-    {
-        var commits = new[] { C(80, 70), C(70, 1), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
-        {
-            [Sha(80)] = [new(DecorationType.LocalBranch, "feat-c")],
-            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-a")],
-            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
-        };
-
-        var verified = Compute(commits, deco: deco, isAncestor: AncestryOf(commits));
-        var order = verified.State.SeededTipOrder;
-        Assert.NotNull(order);
-
-        // Replaying the recorded order (no oracle) reproduces the verified trunk exactly.
-        var snapshot = Compute(commits, deco: deco, tipOrderHint: order);
-
-        Assert.Equal(verified.Layout.Rows.Select(x => x.LaneIndex),
-            snapshot.Layout.Rows.Select(x => x.LaneIndex));
-        Assert.Equal(order, snapshot.State.SeededTipOrder);
+        Assert.Equal(0, r.Layout.Rows[0].LaneIndex);                                // feat-y (newest) → trunk
+        Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex);  // main stays last
     }
 
     [Fact]
