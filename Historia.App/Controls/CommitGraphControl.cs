@@ -580,12 +580,23 @@ public sealed partial class CommitGraphControl : Control
     private void OnRepoLayoutChanged(object? sender, Historia.Services.Settings.RepoLayoutChangedEventArgs e)
         => Dispatcher.UIThread.Post(() =>
         {
-            if (_context is null
-                || !string.Equals(e.RepoPath, Historia.Services.Settings.IRepoLayoutService.KeyFor(_context.RepositoryPath), StringComparison.Ordinal)
-                || ReferenceEquals(e.Layout.Columns, _columns))
+            if (_context is null)
                 return;
-            _columns = e.Layout.Columns;
-            _graphWidthPinned = e.Layout.GraphWidthPinned;
+            // §V3.1: accept this repo's own change and any application-wide column change.
+            var mine = string.Equals(e.RepoPath,
+                Historia.Services.Settings.IRepoLayoutService.KeyFor(_context.RepositoryPath), StringComparison.Ordinal);
+            var global = string.Equals(e.RepoPath,
+                Historia.Services.Settings.IRepoLayoutService.GlobalKey, StringComparison.Ordinal);
+            if (!mine && !global)
+                return;
+
+            // Re-read the merged view (global order + visibility with this repo's session
+            // widths) rather than trusting e.Layout, whose widths are defaults for a global change.
+            var layout = _repoLayout.Get(_context.RepositoryPath);
+            if (ReferenceEquals(layout.Columns, _columns))
+                return;
+            _columns = layout.Columns;
+            _graphWidthPinned = layout.GraphWidthPinned;
             InvalidateMeasure();
             InvalidateArrange();
             InvalidateVisual();

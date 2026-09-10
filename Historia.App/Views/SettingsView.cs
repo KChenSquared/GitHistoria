@@ -417,27 +417,24 @@ public sealed class RepoSettingsView : UserControl, IDisposable
     {
         _root.Children.Clear();
         var ctx = _workspace.Focused;
-        if (ctx is null)
-        {
-            _root.Children.Add(Text("Repository settings", "ColorText", 22, FontWeight.SemiBold));
-            _root.Children.Add(Text("Open a repository to configure it.", "ColorTextMuted", 13));
-            return;
-        }
 
-        _root.Children.Add(Text(ctx.DisplayName, "ColorText", 22, FontWeight.SemiBold));
-        _root.Children.Add(Text(ctx.RepositoryPath, "ColorTextMuted", 12));
+        _root.Children.Add(Text(ctx?.DisplayName ?? "Repository settings", "ColorText", 22, FontWeight.SemiBold));
+        if (ctx is not null)
+            _root.Children.Add(Text(ctx.RepositoryPath, "ColorTextMuted", 12));
+
         _root.Children.Add(Text("Graph columns", "ColorTextMuted", 13, FontWeight.SemiBold));
-        var hint = Text("Drag the ☰ handle to reorder, and use the checkboxes to show or hide columns. Column widths are set by dragging the column headers in the graph and reset on every launch.", "ColorTextMuted", 11);
+        var hint = Text("Order and visibility apply to every repository. Widths are per repository — drag the column headers — and reset on every launch.", "ColorTextMuted", 11);
         hint.TextWrapping = TextWrapping.Wrap;
         _root.Children.Add(hint);
 
-        var layout = _repoLayout.Get(ctx.RepositoryPath);
-        var path = ctx.RepositoryPath;
+        // §V3.1: the editor works on the application-wide column set and shows even with no repo.
+        var columns = _repoLayout.GlobalColumns;
+        var path = ctx?.RepositoryPath ?? "";
         _dragRepoPath = path;
         _columnRows.Clear();
         _columnsBaseIndex = _root.Children.Count;
 
-        foreach (var column in layout.Columns)
+        foreach (var column in columns)
         {
             var col = column;
             var kind = col.Kind;
@@ -461,10 +458,10 @@ public sealed class RepoSettingsView : UserControl, IDisposable
             cb.IsCheckedChanged += (_, _) =>
             {
                 var vis = cb.IsChecked == true;
-                var next = _repoLayout.Get(path).Columns.Select(c => c.Kind == kind ? c with { Visible = vis } : c).ToList();
+                var next = _repoLayout.GlobalColumns.Select(c => c.Kind == kind ? c with { Visible = vis } : c).ToList();
                 if (next.Count(c => c.Visible) == 0 || next.Count(c => c.Visible && c.IsFlex) != 1)
                     return; // never zero visible / non-unique flex
-                _ = _repoLayout.UpdateAsync(path, l => l with { Columns = GraphColumnDefaults.Normalize(next) });
+                _ = _repoLayout.UpdateGlobalAsync(_ => GraphColumnDefaults.Normalize(next));
             };
             Grid.SetColumn(cb, 1);
             rowGrid.Children.Add(cb);
@@ -472,9 +469,16 @@ public sealed class RepoSettingsView : UserControl, IDisposable
             _root.Children.Add(rowBorder);
         }
 
-        _root.Children.Add(TextButton("Reset to defaults", () => _ = _repoLayout.UpdateAsync(path,
-            l => l with { Columns = GraphColumnDefaults.All, GraphWidthPinned = false })));
-
+        _root.Children.Add(TextButton("Reset to defaults", () =>
+        {
+            _ = _repoLayout.UpdateGlobalAsync(_ => GraphColumnDefaults.All);
+            if (path.Length > 0)
+                _ = _repoLayout.UpdateAsync(path, l => l with
+                {
+                    Columns = GraphColumnDefaults.All,
+                    GraphWidthPinned = false,
+                });
+        }));
     }
 
     // ── column-row drag reorder ─────────────────────────────────────────────────────────
@@ -526,9 +530,9 @@ public sealed class RepoSettingsView : UserControl, IDisposable
         e.Handled = true;
 
         var order = _columnRows.Select(r => (GraphColumnKind)r.Tag!).ToList();
-        var byKind = _repoLayout.Get(_dragRepoPath).Columns.ToDictionary(c => c.Kind);
+        var byKind = _repoLayout.GlobalColumns.ToDictionary(c => c.Kind);
         var reordered = order.Where(byKind.ContainsKey).Select(k => byKind[k]).ToList();
-        _ = _repoLayout.UpdateAsync(_dragRepoPath, l => l with { Columns = GraphColumnDefaults.Normalize(reordered) });
+        _ = _repoLayout.UpdateGlobalAsync(_ => GraphColumnDefaults.Normalize(reordered));
     }
 
     private void OnRowsCaptureLost(object? sender, PointerCaptureLostEventArgs e)
