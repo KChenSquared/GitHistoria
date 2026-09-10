@@ -873,6 +873,8 @@ public sealed partial class CommitGraphControl : Control
         _selectedRow = ResolveRow(_state?.SelectedCommitId);
         RecomputeMatches();
         InvalidateMeasure();
+        // §V3.1: TotalLaneCount drives the auto Graph width — re-arrange, not just re-paint.
+        InvalidateArrange();
         InvalidateVisual();
     }
 
@@ -1010,6 +1012,7 @@ public sealed partial class CommitGraphControl : Control
 
                                 SetLayout(extended);
                                 InvalidateMeasure();
+                                InvalidateArrange(); // lane count can grow -> auto Graph width
                                 InvalidateVisual();
                             });
                         }
@@ -1102,7 +1105,8 @@ public sealed partial class CommitGraphControl : Control
         => Dispatcher.UIThread.Post(() =>
         {
             _themeMode = e.NewTheme;
-            RebuildThemeResources();
+            RebuildThemeResources(); // recomputes _refsBaseWidth, an input to Resolve
+            InvalidateArrange();
             InvalidateVisual();
         });
 
@@ -1224,9 +1228,32 @@ public sealed partial class CommitGraphControl : Control
             double.IsInfinity(availableSize.Height) ? 400 : availableSize.Height);
     }
 
+    /// <summary>§V3.1: resolve the column band into <see cref="_resolvedColumns"/>,
+    /// <see cref="_bandWidth"/>, <see cref="_graphColLeft"/>, <see cref="_graphColWidth"/> and
+    /// clamp the lane pan. Runs in <see cref="ArrangeOverride"/> (so the scrollbar logic there
+    /// sees this frame's band width, not last frame's) and again at the top of
+    /// <see cref="Render"/>. Pure geometry — safe to call more than once per frame.</summary>
+    private void ResolveColumnBand(double width)
+    {
+        var totalLanes = _layout?.Layout.TotalLaneCount ?? 0;
+        var res = GraphColumnLayout.Resolve(_columns, width, LaneWidth, totalLanes,
+            _graphWidthPinned && !_zoomOverridesPin, _refsBaseWidth, _manuallySized);
+        _resolvedColumns = res.Columns as ResolvedColumn[] ?? [.. res.Columns];
+        _bandWidth = res.BandWidth;
+        _graphColLeft = 0;
+        _graphColWidth = 0;
+        foreach (var c in _resolvedColumns)
+            if (c.Kind == GraphColumnKind.Graph) { _graphColLeft = c.Left; _graphColWidth = c.Width; }
+        ClampPan();
+    }
+
     protected override Size ArrangeOverride(Size finalSize)
     {
         _queryBar.Arrange(new Rect(0, HeaderHeight, finalSize.Width, QueryBarHeight));
+
+        // Resolve the band before the scrollbar logic below reads _bandWidth — during an
+        // interactive sidebar drag the arrange pass would otherwise see last frame's width.
+        ResolveColumnBand(finalSize.Width);
 
         var contentHeight = (_layout?.Layout.RowCount ?? 0) * _rowHeight;
         var rowArea = finalSize.Height - RowsTop;
@@ -2309,19 +2336,9 @@ public sealed partial class CommitGraphControl : Control
         var size = Bounds.Size;
         dc.DrawRectangle(_bg, null, new Rect(size));
 
-        var totalLanes = _layout?.Layout.TotalLaneCount ?? 0;
-        var res = GraphColumnLayout.Resolve(_columns, size.Width, LaneWidth, totalLanes,
-            _graphWidthPinned && !_zoomOverridesPin, _refsBaseWidth, _manuallySized);
-        _resolvedColumns = res.Columns as ResolvedColumn[] ?? [.. res.Columns];
-        _bandWidth = res.BandWidth;
-        _graphColLeft = 0;
-        _graphColWidth = 0;
-        foreach (var c in _resolvedColumns)
-            if (c.Kind == GraphColumnKind.Graph) { _graphColLeft = c.Left; _graphColWidth = c.Width; }
-
-        // §V3.1: the lane count or the Graph column width may have changed since the last frame
-        // (resize, zoom, layout swap/extend, refs change) — keep the pan inside its range.
-        ClampPan();
+        // Resolved in ArrangeOverride each frame; re-resolve here defensively (idempotent) so a
+        // Render that somehow precedes an arrange still has a band.
+        ResolveColumnBand(size.Width);
 
         DrawHeaderBand(dc, size.Width);
 

@@ -144,7 +144,10 @@ public partial class MainWindow : Window
 
     private const double DividerPx = 4;
     private const double LeftMin = 250;
-    private const double CentreMin = 250;
+    // §V3.1: floor the centre panel at the default columns' combined minimum plus padding
+    // (Refs 140 + Graph 150 + Message 150 + 40), so a sidebar-divider drag can't squeeze
+    // Message past the right edge. Both dividers clamp against it (§4.2.9).
+    private const double CentreMin = 480;
     private const double RightMin = 250;
 
     private double _leftW = 264;
