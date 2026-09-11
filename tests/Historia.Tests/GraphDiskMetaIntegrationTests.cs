@@ -101,6 +101,28 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task TryOptimisticSnapshot_paints_from_the_meta_store_on_a_fresh_session()
+    {
+        var svc = await DiskBackedServiceAsync();
+        await using var ctx = _host.Open(_repo.Path);
+        ctx.MarkFirstGraphPaintDone();
+        ctx.MarkFirstFullLoadDone();
+
+        var full = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
+        Assert.Equal(CommitCount, full.Layout.RowCount);
+
+        // A fresh GraphLayoutService instance has no in-memory RepoCache for ctx at all — same
+        // shape as a new launch reopening the same path. The optimistic path must seed itself
+        // from the .meta store the compute above just spilled, not require a live walk.
+        var cold = new GraphLayoutService(_host.Settings);
+        var snapshot = cold.TryOptimisticSnapshot(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs }, maxRows: 5);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(5, snapshot!.Layout.RowCount);
+        Assert.Equal($"commit {CommitCount - 1:D2}", snapshot.Layout.Commits[0].MessageShort);
+    }
+
+    [Fact]
     public async Task Falls_back_to_in_memory_when_the_setting_is_off()
     {
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });

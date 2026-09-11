@@ -38,7 +38,11 @@ internal static class GraphCachePaths
 /// </summary>
 internal sealed class GraphMetaStore
 {
-    internal const int Version = 1;
+    // v10.1.2: bumped 1 -> 2. Each .dat record now also carries its ParentCount parent SHAs (20
+    // bytes each) so the store can seed TryOptimisticSnapshot's first paint on its own, without
+    // depending on the bounded, less-reliable .gz walk cache. A v1 file has no parent bytes and
+    // is rejected outright (TryOpen/Probe/ProbeAny all gate on Version) rather than misread.
+    internal const int Version = 2;
     internal const string HdrExt = ".meta.hdr";
     internal const string DatExt = ".meta.dat";
     internal const string IdxExt = ".meta.idx";
@@ -113,6 +117,31 @@ internal sealed class GraphMetaStore
         }
     }
 
+    /// <summary>
+    /// v10.1.2: like <see cref="Probe"/> but WITHOUT a fingerprint check — for
+    /// <c>TryOptimisticSnapshot</c>'s stale-tolerant first paint, which runs before the fresh
+    /// ref-fingerprint check (a full <c>repo.Refs.ToList()</c>) even starts. The caller must
+    /// treat the result as provisional, exactly like <see cref="GraphWalkCache.TryLoadStale"/>.
+    /// </summary>
+    public static (bool Ok, int RowCount) ProbeAny(string repoPath, bool includeRemoteBranches)
+    {
+        try
+        {
+            var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
+            if (!File.Exists(hdrPath))
+                return (false, 0);
+            var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
+            if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
+                || hdr.RowCount <= 0)
+                return (false, 0);
+            return (true, hdr.RowCount);
+        }
+        catch
+        {
+            return (false, 0);
+        }
+    }
+
     /// <summary>Deletes every <c>graph-*.meta.*</c> file. Returns the count removed.</summary>
     public static int Wipe()
     {
@@ -158,15 +187,20 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     }
 
     /// <summary>Appends <paramref name="count"/> rows starting at <paramref name="start"/> to
-    /// <c>.dat</c>/<c>.idx</c>/<c>.search</c>.</summary>
+    /// <c>.dat</c>/<c>.idx</c>/<c>.search</c>. No real parent SHAs are available from a bare
+    /// <see cref="CommitMetadata"/> list — each parent slot is written as a zero SHA (v10.1.2's
+    /// <see cref="ReadRaw"/> only ever reads real spill data via the <see cref="RawCommit"/>
+    /// overload below, so this is harmless; kept for existing callers/tests).</summary>
     public void Append(IReadOnlyList<CommitMetadata> rows, int start, int count)
-        => Append(i => rows[i], start, count);
+        => Append(i => rows[i], _ => null, start, count);
 
-    /// <summary>Overload that reads metadata straight off the walk records (no projection copy).</summary>
+    /// <summary>Overload that reads metadata + real parent SHAs straight off the walk records
+    /// (no projection copy) — this is what the §7.6 spill uses, and what makes the store usable
+    /// as an optimistic-snapshot source (v10.1.2).</summary>
     public void Append(IReadOnlyList<RawCommit> rows, int start, int count)
-        => Append(i => rows[i].Metadata, start, count);
+        => Append(i => rows[i].Metadata, i => rows[i].ParentIds, start, count);
 
-    private void Append(Func<int, CommitMetadata> get, int start, int count)
+    private void Append(Func<int, CommitMetadata> get, Func<int, IReadOnlyList<ObjectId>?> getParents, int start, int count)
     {
         if (count <= 0)
             return;
@@ -178,10 +212,12 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             using var search = new StreamWriter(new FileStream(_search, FileMode.Append, FileAccess.Write, FileShare.Read), new UTF8Encoding(false));
             var bw = new BinaryWriter(dat, new UTF8Encoding(false), leaveOpen: true);
             var idxBuf = new byte[8];
+            Span<byte> zeroSha = stackalloc byte[20];
 
             for (var i = 0; i < count; i++)
             {
                 var m = get(start + i);
+                var parents = getParents(start + i);
                 BitConverter.TryWriteBytes(idxBuf, dat.Position);
                 idx.Write(idxBuf);
 
@@ -192,6 +228,13 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 WriteWhen(bw, m.AuthorWhen);
                 WriteWhen(bw, m.CommitWhen);
                 bw.Write(m.ParentCount);
+                for (var p = 0; p < m.ParentCount; p++)
+                {
+                    if (parents is not null && p < parents.Count)
+                        bw.Write(parents[p].RawId);
+                    else
+                        bw.Write(zeroSha); // no real parent SHA available for this record
+                }
 
                 // Full 40-char SHA so a Ctrl+F prefix of any length matches exactly as the
                 // in-memory store does.
@@ -326,7 +369,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                     return hit;
                 try
                 {
-                    var m = Decode(index);
+                    var (m, _) = Decode(index);
                     Cache(index, m);
                     return m;
                 }
@@ -338,6 +381,31 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                     // thread; the offset table is re-read on the next SetCount and reads recover.
                     return ClosedStoreStub;
                 }
+            }
+        }
+    }
+
+    /// <summary>v10.1.2: decodes row <paramref name="index"/> WITH its parent SHAs (persisted
+    /// since <see cref="GraphMetaStore.Version"/> 2) — used by <c>TryOptimisticSnapshot</c> to
+    /// seed a first paint straight from this store. Same fault handling as the indexer: a
+    /// concurrent spill rewrite serves a childless stub rather than throwing off the render
+    /// thread's caller.</summary>
+    public RawCommit ReadRaw(int index)
+    {
+        lock (_sync)
+        {
+            if (_closed)
+                return new RawCommit(ClosedStoreStub.Id, [], ClosedStoreStub);
+            try
+            {
+                var (m, parents) = Decode(index);
+                Cache(index, m);
+                return new RawCommit(m.Id, parents, m);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException
+                                       or ArgumentOutOfRangeException or IndexOutOfRangeException)
+            {
+                return new RawCommit(ClosedStoreStub.Id, [], ClosedStoreStub);
             }
         }
     }
@@ -367,7 +435,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                     var re = (row + 1 < _offsets.Length ? _offsets[row + 1] : _datLength) - start;
                     if (rs < 0 || re > read || re <= rs)
                         break;
-                    Cache(row, DecodeFrom(buf.AsSpan((int)rs, (int)(re - rs))));
+                    Cache(row, DecodeFrom(buf.AsSpan((int)rs, (int)(re - rs))).Meta);
                 }
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException
@@ -466,7 +534,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         return offsets;
     }
 
-    private CommitMetadata Decode(int index)
+    private (CommitMetadata Meta, ObjectId[] Parents) Decode(int index)
     {
         if (index < 0 || index >= _count)
             throw new ArgumentOutOfRangeException(nameof(index));
@@ -482,7 +550,10 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         return DecodeFrom(buf);
     }
 
-    private static CommitMetadata DecodeFrom(ReadOnlySpan<byte> record)
+    /// <summary>Parses one <c>.dat</c> record. Records written before <see cref="GraphMetaStore.Version"/>
+    /// 2 have no parent-SHA bytes; that format is rejected wholesale by the header version check
+    /// before any record is ever read, so a mismatch here would only mean real corruption.</summary>
+    private static (CommitMetadata Meta, ObjectId[] Parents) DecodeFrom(ReadOnlySpan<byte> record)
     {
         using var ms = new MemoryStream(record.ToArray(), writable: false);
         using var br = new BinaryReader(ms, new UTF8Encoding(false));
@@ -494,7 +565,10 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         var authorWhen = ReadWhen(br);
         var commitWhen = ReadWhen(br);
         var parentCount = br.ReadInt32();
-        return new CommitMetadata
+        var parents = new ObjectId[parentCount];
+        for (var i = 0; i < parentCount; i++)
+            parents[i] = new ObjectId(br.ReadBytes(20));
+        var meta = new CommitMetadata
         {
             Id = id,
             MessageShort = msg,
@@ -504,6 +578,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
             CommitWhen = commitWhen,
             ParentCount = parentCount,
         };
+        return (meta, parents);
     }
 
     private static DateTimeOffset ReadWhen(BinaryReader br)

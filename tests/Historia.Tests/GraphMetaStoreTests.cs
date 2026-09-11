@@ -25,6 +25,22 @@ public sealed class GraphMetaStoreTests : IDisposable
 
     private static List<CommitMetadata> Rows(int n) => Enumerable.Range(0, n).Select(Row).ToList();
 
+    // Row(i)'s parent i-1 (or i-1 and i-2 when ParentCount == 2) — a real chain, so ReadRaw can
+    // assert actual parent SHAs round-trip, not just ParentCount.
+    private static RawCommit RawRow(int i)
+    {
+        var m = Row(i);
+        IReadOnlyList<ObjectId> parents = m.ParentCount switch
+        {
+            0 => [],
+            2 => [Oid(i - 1), Oid(i - 2)],
+            _ => [Oid(i - 1)],
+        };
+        return new RawCommit(m.Id, parents, m);
+    }
+
+    private static List<RawCommit> RawRows(int n) => Enumerable.Range(0, n).Select(RawRow).ToList();
+
     private static void AssertRowEqual(CommitMetadata expected, CommitMetadata actual)
     {
         Assert.Equal(expected.Id, actual.Id);
@@ -198,6 +214,56 @@ public sealed class GraphMetaStoreTests : IDisposable
         mem.Dispose();
         Assert.Same(mem, mem.AddRef());         // nothing to close, so AddRef never returns null
         AssertRowEqual(Row(1), mem[1]);
+    }
+
+    [Fact]
+    public void ReadRaw_round_trips_real_parent_shas_from_a_RawCommit_spill()
+    {
+        var w = new GraphMetaWriter(Repo, Fp, true);
+        w.Reset();
+        var rows = RawRows(20);
+        w.Append(rows, 0, 20);
+        w.Commit(20, exhausted: true);
+
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 20)!;
+        for (var i = 0; i < 20; i++)
+        {
+            var raw = store.ReadRaw(i);
+            Assert.Equal(rows[i].Id, raw.Id);
+            Assert.Equal(rows[i].ParentIds, raw.ParentIds);
+            AssertRowEqual(rows[i].Metadata, raw.Metadata);
+        }
+    }
+
+    [Fact]
+    public void ReadRaw_zero_fills_parents_written_via_the_CommitMetadata_only_overload()
+    {
+        // The bare-CommitMetadata Append overload (no RawCommit available) has no real parent
+        // SHAs to write — ReadRaw must come back with ParentCount zero-SHA placeholders, not
+        // throw or truncate the record.
+        Write(10, exhausted: true);
+
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 10)!;
+        var raw = store.ReadRaw(6); // Row(6).ParentCount == 1 (6 % 7 != 0)
+        Assert.Equal(Row(6).ParentCount, raw.ParentIds.Count);
+        Assert.All(raw.ParentIds, p => Assert.Equal(ObjectId.Zero, p));
+    }
+
+    [Fact]
+    public void A_version_1_style_header_is_rejected_not_misread()
+    {
+        // Simulates a store written before v10.1.2 added parent bytes to .dat: same layout, one
+        // version number lower. TryOpen/Probe/ProbeAny must all treat it as absent, never try to
+        // decode records in the old (parent-less) shape.
+        Write(10, exhausted: true);
+        var hdrPath = GraphCachePaths.File(Repo, GraphMetaStore.HdrExt);
+        var hdr = JsonSerializer.Deserialize<GraphMetaStore.Header>(File.ReadAllBytes(hdrPath), GraphMetaStore.Json)!;
+        hdr.Version = GraphMetaStore.Version - 1;
+        File.WriteAllBytes(hdrPath, JsonSerializer.SerializeToUtf8Bytes(hdr, GraphMetaStore.Json));
+
+        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, true, 10));
+        Assert.Equal((false, 0, false), GraphMetaStore.Probe(Repo, Fp, true));
+        Assert.Equal((false, 0), GraphMetaStore.ProbeAny(Repo, true));
     }
 
     [Fact]

@@ -174,6 +174,37 @@ public sealed class GraphLayoutService : IGraphLayoutService
             if (_caches.TryGetValue(context, out var existing) && existing.Commits.Count > 0)
                 return null;
 
+        // §V10.1.2: try the §7.6 metadata store first. Unlike the .gz walk cache below, it is
+        // written incrementally to the FULL history by the background spill, isn't bounded by
+        // whatever a single foreground walk reached, and (since GraphMetaStore.Version 2) now
+        // carries real parent SHAs — enough to lay out a genuine DAG frame, not just a row list.
+        // Stale-tolerant like TryLoadStale: any fingerprint is fine, this frame is always
+        // replaced by the verified walk a moment later. Ref badges are not in this store, so the
+        // frame paints commits/lanes with no decorations for that one moment.
+        if (GraphWalkCache.Supports(query))
+        {
+            var probe = GraphMetaStore.ProbeAny(context.RepositoryPath, query.IncludeRemoteBranches);
+            if (probe.Ok)
+            {
+                DiskCommitStore? store = null;
+                try
+                {
+                    store = DiskCommitStore.Open(context.RepositoryPath, probe.RowCount);
+                    var take = Math.Min(maxRows, store.Count);
+                    if (take > 0)
+                    {
+                        var commits = new List<RawCommit>(take);
+                        for (var i = 0; i < take; i++)
+                            commits.Add(store.ReadRaw(i));
+                        Diagnostics.PerfLog.Mark($"optimistic snapshot HIT (meta): {commits.Count} commits (stale, unverified)");
+                        return _engine.Compute(commits, EmptyDecorations, maxRows, query.MaxLanes, CancellationToken.None, retainCommits: true);
+                    }
+                }
+                catch { /* fall through to the .gz path — the meta store is an optimisation */ }
+                finally { store?.Dispose(); }
+            }
+        }
+
         var loaded = _walkCache.TryLoadStale(context.RepositoryPath, query, metadataOnDisk: false);
         if (loaded is null)
             return null;
@@ -181,6 +212,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         Diagnostics.PerfLog.Mark($"optimistic snapshot HIT: {loaded.Commits.Count} commits (stale, unverified)");
         return _engine.Compute(loaded.Commits, loaded.Decorations, maxRows, query.MaxLanes, CancellationToken.None, retainCommits: true);
     }
+
+    private static readonly Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> EmptyDecorations = [];
 
     public async Task<GraphLayoutResult> ExtendLayoutAsync(
         RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default,
