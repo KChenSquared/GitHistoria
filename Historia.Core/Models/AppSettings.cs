@@ -137,6 +137,23 @@ public sealed record AppSettings
     /// </summary>
     public bool WriteCommitGraphForLargeRepos { get; init; } = true;
 
+    /// <summary>
+    /// v10.1.3: how many rows the graph's silent background crawler (§V10.1.2) pre-loads into
+    /// the resident layout before stopping, so scrolling stays responsive without loading the
+    /// full history's worth of rows up front. Deeper history still loads on scroll and reaches
+    /// disk in full via the §7.6 background spill regardless of this cap. <c>0</c> means
+    /// uncapped — the crawler runs all the way to the resident-row ceiling
+    /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 100,000.
+    /// </summary>
+    public int SilentCrawlRowCap { get; init; } = 100_000;
+
+    public const int MinSilentCrawlRowCap = 0;
+    public const int MaxSilentCrawlRowCap = GraphLimits.MaxResidentRowsDisk;
+
+    /// <summary>Math.Clamp to the accepted <see cref="SilentCrawlRowCap"/> range. Follows the
+    /// house style for a bounded numeric setting.</summary>
+    public static int ClampSilentCrawlRowCap(int value) => Math.Clamp(value, MinSilentCrawlRowCap, MaxSilentCrawlRowCap);
+
     /// <summary>Issue-key → URL rules applied to commit messages (§V2-17.6). Account-free.</summary>
     public IReadOnlyList<IssueAutolinkRule> IssueAutolinks { get; init; } = [];
 

@@ -307,6 +307,23 @@ public sealed class SettingsView : UserControl, IDisposable
         advBody.Children.Add(WithHint(Check("Write a commit-graph file for large repositories", c.WriteCommitGraphForLargeRepos,
             v => _ = _cfg.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = v })),
             "Once a large repository's full history has loaded, writes a commit-graph file if it doesn't already have one. Lets Git's own history walk skip straight to recent commits on the next open instead of scanning the whole history."));
+
+        var silentCrawlCap = new NumericUpDown
+        {
+            Minimum = AppSettings.MinSilentCrawlRowCap,
+            Maximum = AppSettings.MaxSilentCrawlRowCap,
+            Increment = 10_000,
+            Value = c.SilentCrawlRowCap,
+            FormatString = "0",
+            Width = 140,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        silentCrawlCap.ValueChanged += (_, _) => _ = _cfg.UpdateAsync(s => s with
+        {
+            SilentCrawlRowCap = AppSettings.ClampSilentCrawlRowCap((int)(silentCrawlCap.Value ?? 100_000)),
+        });
+        advBody.Children.Add(WithHint(LabeledRow("Background auto-load row cap", silentCrawlCap),
+            "How many rows the graph silently pre-loads in the background after first paint, before requiring you to scroll for more. 0 means uncapped. Applies after restart of Historia."));
         advBody.Margin = new Thickness(0, 10, 0, 0);
 
         AddCollapsibleSection("Advanced settings", advBody, () => _advExpanded, v => _advExpanded = v);

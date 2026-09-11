@@ -48,12 +48,16 @@ public sealed partial class CommitGraphControl : Control
     private bool _graphMetaFromDisk;
     private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk);
 
-    // §V10.1.2: the silent background crawler pre-loads only this many rows into the resident
-    // layout. Deeper history loads on demand as the user scrolls (EnsureExtendedAsync, up to
-    // ResidentRowCap) and reaches disk in full via the §7.6 background spill (which also feeds
-    // Ctrl+F search). Crawling all the way to ResidentRowCap (1,000,000 on a big repo) built a
-    // multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
-    private const int SilentCrawlRowCap = 20_000;
+    // §V10.1.2/v10.1.3: the silent background crawler pre-loads only this many rows into the
+    // resident layout. Deeper history loads on demand as the user scrolls (EnsureExtendedAsync,
+    // up to ResidentRowCap) and reaches disk in full via the §7.6 background spill (which also
+    // feeds Ctrl+F search). Crawling all the way to ResidentRowCap (1,000,000 on a big repo)
+    // built a multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
+    // Configurable (AppSettings.SilentCrawlRowCap, default 100,000); 0 means uncapped, i.e. the
+    // crawler runs to ResidentRowCap same as an explicit scroll would. Snapshotted at
+    // construction like _graphMetaFromDisk — a mid-session change takes effect on next launch.
+    private int _silentCrawlRowCap;
+    private int SilentCrawlRowCap => _silentCrawlRowCap <= 0 ? ResidentRowCap : Math.Min(_silentCrawlRowCap, ResidentRowCap);
 
     private IReadOnlyList<GraphColumn> _columns = GraphColumnDefaults.All;
     private bool _graphWidthPinned;
@@ -404,6 +408,7 @@ public sealed partial class CommitGraphControl : Control
         _settings = services.GetRequiredService<Historia.Services.Settings.ISettingsService>();
         _scrollProbe = services.GetRequiredService<Historia.Services.UI.IScrollDirectionProbe>();
         _graphMetaFromDisk = _settings.Current.GraphMetadataFromDisk;
+        _silentCrawlRowCap = _settings.Current.SilentCrawlRowCap;
         _repoLayout = services.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
 
         _repoLayout.Changed += OnRepoLayoutChanged;
@@ -979,7 +984,7 @@ public sealed partial class CommitGraphControl : Control
 
                     // The silent crawler stops at SilentCrawlRowCap (by design, not a memory
                     // limit — no toast); scroll-driven requests run to the true resident cap.
-                    var cap = req.Background ? Math.Min(SilentCrawlRowCap, ResidentRowCap) : ResidentRowCap;
+                    var cap = req.Background ? SilentCrawlRowCap : ResidentRowCap;
                     if (current.Layout.RowCount >= cap)
                     {
                         if (!req.Background)
@@ -1077,7 +1082,7 @@ public sealed partial class CommitGraphControl : Control
             if (ct.IsCancellationRequested || !ReferenceEquals(context, _context))
                 return;
 
-            var cap = Math.Min(SilentCrawlRowCap, ResidentRowCap);
+            var cap = SilentCrawlRowCap;
 
             while (!ct.IsCancellationRequested && ReferenceEquals(context, _context))
             {
