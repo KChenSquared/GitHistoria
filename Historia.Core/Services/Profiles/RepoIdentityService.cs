@@ -8,6 +8,8 @@ public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityServi
         if (context.IdentityKey is { } cached)
             return cached;
 
+        using var _ = Historia.Diagnostics.PerfLog.Scope($"RepoIdentityService.ResolveAsync({context.DisplayName})");
+
         // 1. Explicit override wins (§9.3.1).
         var explicitId = await ReadRepoIdAsync(context, ct).ConfigureAwait(false);
         if (explicitId is { } guid)

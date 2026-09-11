@@ -153,7 +153,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         }
         var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds;
         if (waitMs > 5)
-            Historia.Diagnostics.PerfLog.Mark($"repo gate wait {waitMs:F1}ms ({System.IO.Path.GetFileName(RepositoryPath)})");
+            Historia.Diagnostics.PerfLog.Mark($"repo gate wait {waitMs:F1}ms ({DisplayName})");
         try
         {
             return await Task.Run(() => work(_repository), linked.Token).ConfigureAwait(false);
@@ -262,7 +262,7 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        using var perfScope = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.DisposeAsync({System.IO.Path.GetFileName(RepositoryPath)})");
+        using var perfScope = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.DisposeAsync({DisplayName})");
         AppLog.Write(AppLogLevel.Info, "repo", $"Close({DisplayName})");
         try { _lifetimeCts.Cancel(); } catch { /* ignore */ }
 
@@ -281,7 +281,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         var gateWaitStart = System.Diagnostics.Stopwatch.GetTimestamp();
         var gotGate = await _repoGate.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         Historia.Diagnostics.PerfLog.Mark(
-            $"DisposeAsync repo gate {(gotGate ? "acquired" : "TIMED OUT")} after {System.Diagnostics.Stopwatch.GetElapsedTime(gateWaitStart).TotalMilliseconds:F1}ms ({System.IO.Path.GetFileName(RepositoryPath)})");
+            $"DisposeAsync repo gate {(gotGate ? "acquired" : "TIMED OUT")} after {System.Diagnostics.Stopwatch.GetElapsedTime(gateWaitStart).TotalMilliseconds:F1}ms ({DisplayName})");
         if (gotGate)
         {
             try
