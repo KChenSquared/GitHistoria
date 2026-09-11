@@ -1,12 +1,14 @@
 namespace Historia.Services.Graph;
 
 /// <summary>
-/// §4 of the linux cold-prime plan: once a large repository's full history has been walked and
-/// spilled to disk (§7.6), write a commit-graph file for it if it doesn't already have one. A
-/// commit-graph is what lets <c>git log --topo-order</c> (<see cref="GitLogStream"/>, the CLI
-/// walk engine) expand lazily by generation number instead of touching the whole reachable
-/// history up front — a repo that gets one here starts fast on every later open, not just the one
-/// that triggered the write.
+/// §4 of the linux cold-prime plan: once a repository is known to be large enough to be worth it
+/// (§7.6's background spill has walked at least <see cref="MinCommitsToWrite"/> commits — v10.1.3:
+/// checked as soon as that threshold is crossed, not only once the whole spill finishes, since the
+/// write below is a self-contained git operation that doesn't depend on Historia's own walk/spill
+/// completing), write a commit-graph file for it if it doesn't already have one. A commit-graph is
+/// what lets <c>git log --topo-order</c> (<see cref="GitLogStream"/>, the CLI walk engine) expand
+/// lazily by generation number instead of touching the whole reachable history up front — a repo
+/// that gets one here starts fast on every later open, not just the one that triggered the write.
 /// <para>
 /// Runs off the repo gate (a separate <c>git.exe</c> process) and one repo at a time app-wide, so
 /// a multi-tab session restore never fans out several concurrent <c>git commit-graph write</c>
@@ -15,7 +17,7 @@ namespace Historia.Services.Graph;
 /// </summary>
 internal sealed class CommitGraphMaintenance(IGitCliService cli, ISettingsService settings)
 {
-    private const int MinCommitsToWrite = 100_000;
+    private const int MinCommitsToWrite = 30_000;
 
     // App-wide serialization: only one `git commit-graph write` runs at a time.
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -26,8 +28,9 @@ internal sealed class CommitGraphMaintenance(IGitCliService cli, ISettingsServic
     /// <summary>
     /// Fire-and-forget: schedules a background <c>git commit-graph write --reachable</c> if this
     /// repo qualifies (≥ <see cref="MinCommitsToWrite"/> commits walked, the setting is on, git is
-    /// available, and no commit-graph exists yet). Safe to call repeatedly — e.g. every time the
-    /// §7.6 background spill reaches completion — only the first qualifying call per repo per
+    /// available, and no commit-graph exists yet). Safe to call repeatedly — the §7.6 background
+    /// spill calls this after every chunk it walks, as soon as the running total is known, rather
+    /// than waiting for the whole spill to finish — only the first qualifying call per repo per
     /// process does any work.
     /// </summary>
     public void MaybeSchedule(RepositoryContext context, int commitsWalked)

@@ -446,8 +446,21 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     lock (cache) target = Math.Min(cache.Commits.Count + SpillWalkChunkRows, ceiling);
                     await EnsureWalkedAsync(context, query, cache, target, ct, background: true, lowestPriority: true)
                         .ConfigureAwait(false);
+
+                    // v10.1.3: schedule commit-graph maintenance as soon as this repo is known to
+                    // be large (§9.3), rather than waiting for the whole spill loop below to also
+                    // finish — `git commit-graph write --reachable` is a self-contained git
+                    // operation that reads the ODB directly and does not depend on Historia's own
+                    // walk/spill being complete. Gating it on full exhaustion meant a repo the size
+                    // of linux needed 80s+ of the tab staying open before the write even started;
+                    // a session that closes before then never benefits, and pays the full
+                    // no-commit-graph cost on every future cold open. MaybeSchedule is idempotent
+                    // per repo per process (an `_attempted` set), so calling it every chunk here is
+                    // harmless once it has already fired.
+                    int walkedSoFar;
                     bool walkDone;
-                    lock (cache) walkDone = cache.Exhausted || cache.Commits.Count >= cap;
+                    lock (cache) { walkedSoFar = cache.Commits.Count; walkDone = cache.Exhausted || walkedSoFar >= cap; }
+                    _commitGraphMaintenance?.MaybeSchedule(context, walkedSoFar);
                     if (walkDone)
                         break;
                     await Task.Delay(150, ct).ConfigureAwait(false); // let foreground + crawl gate work in
@@ -486,10 +499,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 if (ct.IsCancellationRequested || cache.Exhausted || cache.MetaComplete)
                     cache.DisposeLiveWalk();
 
-                // §4: the whole history has now been walked AND spilled to disk — the point at
-                // which a large repo without a commit-graph file benefits from one. Not gated on
-                // ct — a tab close cancels the spill loop above but the repo is still worth
-                // maintaining for the next open.
+                // Safety net: the per-chunk call above already schedules commit-graph maintenance
+                // as soon as the repo crosses the size threshold, so this normally no-ops (already
+                // attempted). Kept for the case the walk loop above never ran at all this call
+                // (e.g. it was already fully spilled from a prior invocation this session) but
+                // exhaustion + full metadata spill are both true regardless. Not gated on ct — a
+                // tab close cancels the spill loop above but the repo is still worth maintaining
+                // for the next open.
                 if (cache.Exhausted && cache.MetaComplete)
                 {
                     int walked;
