@@ -2354,7 +2354,15 @@ public sealed partial class CommitGraphControl : Control
         }
 
         if (_layout is not { } result)
+        {
+            // §V10.1.2: nothing painted yet — the optimistic snapshot missed and the real walk
+            // is still priming (on a large, never-before-opened repo that can be tens of
+            // seconds; see GraphLayoutService.StartWalk's tip-priority prime). Previously this
+            // frame was just the background + header band, indistinguishable from "broken" for
+            // that whole stretch.
+            DrawInitialLoadingPlaceholder(dc, size);
             return;
+        }
 
         try
         {
@@ -2608,6 +2616,17 @@ public sealed partial class CommitGraphControl : Control
                 dc.DrawRectangle(_selectionBar, null, new Rect(caretX - 1, 0, 2, HeaderHeight));
             }
         }
+    }
+
+    /// <summary>§V10.1.2: shown instead of a blank graph body while this context has no layout
+    /// at all yet — the optimistic snapshot missed and the real walk hasn't produced its first
+    /// batch. Distinct from <see cref="DrawRevealPlaceholder"/> (which has a target commit and a
+    /// live row count to show); here there is nothing to report yet beyond "still working".</summary>
+    private void DrawInitialLoadingPlaceholder(DrawingContext dc, Size size)
+    {
+        var rowAreaH = Math.Max(0, size.Height - RowsTop);
+        var text = Text("Loading history…", _textMuted, size.Width - 80, HeaderTextSize);
+        dc.DrawText(text, new Point((size.Width - text.Width) / 2, RowsTop + rowAreaH * 0.45));
     }
 
     /// <summary>The blanked-graph placeholder: a stand-in ref badge centred in the Branch/Tags
