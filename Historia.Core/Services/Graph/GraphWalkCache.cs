@@ -60,14 +60,28 @@ internal sealed class GraphWalkCache
         using (Historia.Diagnostics.PerfLog.Scope("TryLoad ReadFile"))
             entry = GetCachedRead(repoPath);
         var dto = entry?.Dto;
-        if (dto is null
-            || dto.Fingerprint != fingerprint
-            || dto.IncludeRemoteBranches != query.IncludeRemoteBranches)
+        if (dto is null)
+        {
+            Historia.Diagnostics.PerfLog.Mark("walk cache MISS: no file / unreadable / wrong version");
             return null;
+        }
+        if (dto.Fingerprint != fingerprint)
+        {
+            Historia.Diagnostics.PerfLog.Mark("walk cache MISS: fingerprint changed (refs moved since save)");
+            return null;
+        }
+        if (dto.IncludeRemoteBranches != query.IncludeRemoteBranches)
+        {
+            Historia.Diagnostics.PerfLog.Mark("walk cache MISS: IncludeRemoteBranches mismatch");
+            return null;
+        }
 
         // Enough rows? Either the whole history is here, or it already holds what we need.
         if (!dto.Exhausted && dto.Commits.Count < wantCount)
+        {
+            Historia.Diagnostics.PerfLog.Mark($"walk cache MISS: only {dto.Commits.Count} rows saved, need {wantCount}");
             return null;
+        }
 
         using (Historia.Diagnostics.PerfLog.Scope("TryLoad ToLoaded"))
             return GetOrConvert(entry!, metadataOnDisk);
@@ -89,8 +103,21 @@ internal sealed class GraphWalkCache
 
         var entry = GetCachedRead(repoPath);
         var dto = entry?.Dto;
-        if (dto is null || dto.IncludeRemoteBranches != query.IncludeRemoteBranches || dto.Commits.Count == 0)
+        if (dto is null)
+        {
+            Historia.Diagnostics.PerfLog.Mark("optimistic snapshot MISS: no file / unreadable / wrong version");
             return null;
+        }
+        if (dto.IncludeRemoteBranches != query.IncludeRemoteBranches)
+        {
+            Historia.Diagnostics.PerfLog.Mark("optimistic snapshot MISS: IncludeRemoteBranches mismatch");
+            return null;
+        }
+        if (dto.Commits.Count == 0)
+        {
+            Historia.Diagnostics.PerfLog.Mark("optimistic snapshot MISS: saved file is empty");
+            return null;
+        }
 
         return GetOrConvert(entry!, metadataOnDisk);
     }
@@ -131,20 +158,34 @@ internal sealed class GraphWalkCache
 
     private static CacheFile? ReadFileFromDisk(string repoPath)
     {
+        var path = FileFor(repoPath);
         try
         {
-            var path = FileFor(repoPath);
             if (!File.Exists(path))
-                return null;
+                return null; // routine — nothing saved yet, not a fault
 
             using var fs = File.OpenRead(path);
             using var gz = new GZipStream(fs, CompressionMode.Decompress);
             var dto = JsonSerializer.Deserialize<CacheFile>(gz, Json);
-            return dto?.Version == Version ? dto : null;
+            if (dto is null)
+            {
+                Historia.Diagnostics.PerfLog.Mark($"walk cache file unreadable: null DTO ({Path.GetFileName(path)})");
+                return null;
+            }
+            if (dto.Version != Version)
+            {
+                Historia.Diagnostics.PerfLog.Mark(
+                    $"walk cache file schema mismatch: file v{dto.Version}, code v{Version} ({Path.GetFileName(path)})");
+                return null;
+            }
+            return dto;
         }
-        catch
+        catch (Exception ex)
         {
-            return null; // any corruption → treat as a miss
+            // A file that exists but fails to decompress/deserialize is a real fault (e.g. an
+            // interrupted write from an earlier build) — worth a loud mark, unlike "no file yet".
+            Historia.Diagnostics.PerfLog.Mark($"walk cache file CORRUPT: {ex.GetType().Name}: {ex.Message} ({Path.GetFileName(path)})");
+            return null;
         }
     }
 
