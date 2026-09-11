@@ -250,9 +250,6 @@ public sealed partial class CommitGraphControl : Control
     private SolidColorBrush _selectionBar = new(Colors.SlateBlue);
     private SolidColorBrush _hoverFill = new(Colors.DimGray);
     private Pen _hoverPen = new(new SolidColorBrush(Colors.White), 1);
-    // §V3.1: accent stroke on a commit node pinned just inside the Graph column's left/right
-    // edge because its lane is panned or clipped out of view. Rebuilt on theme change.
-    private Pen _clampedNodePen = new(new SolidColorBrush(Colors.SlateBlue), 1.5);
     // v8.4: the repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
     private Pen _cogPen = new(new SolidColorBrush(Colors.DimGray), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
     private static readonly Geometry _cogGeo = Geometry.Parse(Historia.Components.IconPaths.Get("settings"));
@@ -1129,7 +1126,6 @@ public sealed partial class CommitGraphControl : Control
         _selectionBar = new SolidColorBrush(primary);
         _hoverPen = new Pen(new SolidColorBrush(primary), 2.0);
         _cogPen = new Pen(new SolidColorBrush(muted), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
-        _clampedNodePen = new Pen(new SolidColorBrush(primary), 1.5);
         var warn = palette["warning"];
         _matchFill = new SolidColorBrush(AvColor.FromArgb(0x30, warn.R, warn.G, warn.B));
 
@@ -2714,10 +2710,10 @@ public sealed partial class CommitGraphControl : Control
         for (var row = first; row <= last; row++)
         {
             var gr = layout.Rows[row];
-            var cx = NodeX(gr.LaneIndex, out var clamped);
+            var cx = NodeX(gr.LaneIndex, out _);
             var cy = RowY(row) + _rowHeight / 2;
 
-            dc.DrawEllipse(LaneBrush(gr.ColorIndex), clamped ? _clampedNodePen : null,
+            dc.DrawEllipse(LaneBrush(gr.ColorIndex), null,
                 new Point(cx, cy), NodeRadius, NodeRadius);
             if (row == _hoverRow)
                 dc.DrawEllipse(null, _hoverPen, new Point(cx, cy), NodeRadius + 2, NodeRadius + 2);
@@ -2750,26 +2746,18 @@ public sealed partial class CommitGraphControl : Control
         InvalidateVisual();
     }
 
-    /// <summary>§V3.1: screen x of a commit node — its lane centre, or pinned just inside the
-    /// Graph column's left/right edge when that lane has been <b>panned</b> out of view. The
-    /// single source of a node's x: the drawn dot, its hit area, its lane wash and its badge
-    /// connector all read from here so they always agree.
-    /// <para>§V3.2: the edge-clamp only fires while the lanes are panned (<c>_graphPanOffset
-    /// != 0</c>). Merely narrowing the Graph column with the divider lets the rightmost dots
-    /// clip with the column instead of piling up against its edge.</para></summary>
+    /// <summary>§V3.1: screen x of a commit node — always its plain lane centre. The single
+    /// source of a node's x: the drawn dot, its hit area, its lane wash and its badge connector
+    /// all read from here so they always agree.
+    /// <para>§V10.1.2: there is no longer an edge-clamp while the lanes are panned
+    /// (<c>_graphPanOffset != 0</c>). It pinned the dot to the column edge but the lane
+    /// segments / elbows kept reading <see cref="LaneX"/>, so a shift+scroll pan visibly
+    /// detached the dots from their lines. Panned-out dots and lines now clip against the Graph
+    /// column together, exactly like narrowing the column with the divider.</para></summary>
     private double NodeX(int laneIndex, out bool clamped)
     {
-        var naturalX = LaneX(laneIndex);
         clamped = false;
-        if (_graphColWidth <= 0 || _graphPanOffset == 0)
-            return naturalX;
-
-        var gcx = _graphColLeft - _hScrollOffset;
-        var minX = gcx + NodeRadius + 2;
-        var maxX = gcx + _graphColWidth - TickWidth - NodeRadius - 2;
-        if (naturalX > maxX) { clamped = true; return maxX; }
-        if (naturalX < minX) { clamped = true; return minX; }
-        return naturalX;
+        return LaneX(laneIndex);
     }
 
     private const double IconBox = 12;
