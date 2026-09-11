@@ -5,25 +5,11 @@ public sealed class GitCliService : IGitCliService
 {
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
-    // Prepended to every invocation so output is machine-parseable and read-only commands
-    // never take the index lock (§6.5.1).
-    private static readonly string[] DeterministicPrefix =
-    [
-        "-c", "color.ui=false",
-        "-c", "core.pager=cat",
-        "-c", "core.quotepath=false",
-        "--no-optional-locks",
-    ];
-
     private readonly IGitExecutableLocator _locator;
-    private readonly string _askPassHelperPath;
 
     public GitCliService(IGitExecutableLocator locator)
     {
         _locator = locator;
-        // The Historia executable re-invoked with a private switch acts as the askpass helper
-        // (§6.5.2). No separate binary is installed.
-        _askPassHelperPath = Environment.ProcessPath ?? string.Empty;
     }
 
     public bool IsGitAvailable => _locator.Current.Found;
@@ -91,12 +77,12 @@ public sealed class GitCliService : IGitCliService
             RedirectStandardInput = request.StandardInput is not null,
         };
 
-        foreach (var arg in DeterministicPrefix)
+        foreach (var arg in GitCliProcessSetup.DeterministicPrefix)
             psi.ArgumentList.Add(arg);
         foreach (var arg in request.Arguments)
             psi.ArgumentList.Add(arg);
 
-        ComposeEnvironment(psi, request);
+        GitCliProcessSetup.ComposeEnvironment(psi, request.Profile, request.ExtraEnvironment);
 
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         var stdout = new StringBuilder();
@@ -158,7 +144,7 @@ public sealed class GitCliService : IGitCliService
         await using (linkedCts.Token.Register(() =>
         {
             cancelled = true;
-            TryKill(process);
+            GitCliProcessSetup.TryKill(process);
         }))
         {
             try
@@ -196,47 +182,6 @@ public sealed class GitCliService : IGitCliService
             : GitErrorClassifier.Classify(exitCode, stderr.ToString());
 
         return new GitCliResult(exitCode, stdout.ToString(), stderr.ToString(), kind, stopwatch.Elapsed);
-    }
-
-    private void ComposeEnvironment(ProcessStartInfo psi, GitCliRequest request)
-    {
-        // Built per invocation; the Historia process's own environment is never mutated (§6.5.2).
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        psi.Environment["LC_ALL"] = "C"; // Stable, parseable English message text.
-
-        if (!string.IsNullOrEmpty(_askPassHelperPath))
-        {
-            psi.Environment["GIT_ASKPASS"] = _askPassHelperPath;
-            psi.Environment["SSH_ASKPASS"] = _askPassHelperPath;
-            psi.Environment["HISTORIA_ASKPASS"] = "1"; // Marks a re-invocation as the helper.
-        }
-
-        if (request.Profile?.SshKeyPath is { } key && !string.IsNullOrWhiteSpace(key))
-        {
-            // The key path is passed via its own variable so a path with spaces or quotes is
-            // never substituted into the command string itself (§6.5.2).
-            psi.Environment["HISTORIA_SSH_KEY"] = key;
-            psi.Environment["GIT_SSH_COMMAND"] = "ssh -i \"$HISTORIA_SSH_KEY\" -o IdentitiesOnly=yes";
-        }
-
-        if (request.ExtraEnvironment is not null)
-        {
-            foreach (var (k, v) in request.ExtraEnvironment)
-                psi.Environment[k] = v;
-        }
-    }
-
-    private static void TryKill(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
-        {
-            // Process already gone.
-        }
     }
 
     private static int SafeExitCode(Process process)

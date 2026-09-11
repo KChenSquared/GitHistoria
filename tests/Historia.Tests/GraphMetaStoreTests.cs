@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>§7.6: the disk-backed <see cref="ICommitStore"/> — round-trip, append/grow,
 /// graceful misses, and Ctrl+F search parity with the in-memory store.</summary>
@@ -7,6 +7,7 @@ public sealed class GraphMetaStoreTests : IDisposable
     private readonly StateDir _state = new();
     private const long Fp = 0x0123_4567_89ab_cdef;
     private const string Repo = @"C:\repos\demo";
+    private const WalkEngine Engine = WalkEngine.LibGit2;
 
     public void Dispose() => _state.Dispose();
 
@@ -54,7 +55,7 @@ public sealed class GraphMetaStoreTests : IDisposable
 
     private static void Write(int n, bool exhausted, long fingerprint = Fp, bool includeRemotes = true)
     {
-        var w = new GraphMetaWriter(Repo, fingerprint, includeRemotes);
+        var w = new GraphMetaWriter(Repo, fingerprint, includeRemotes, Engine);
         w.Reset();
         var rows = Rows(n);
         w.Append(rows, 0, n);
@@ -66,7 +67,7 @@ public sealed class GraphMetaStoreTests : IDisposable
     {
         Write(200, exhausted: true);
 
-        using var store = GraphMetaStore.TryOpen(Repo, Fp, includeRemoteBranches: true, wantCount: 200);
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, includeRemoteBranches: true, wantCount: 200, Engine);
         Assert.NotNull(store);
         Assert.Equal(200, store!.Count);
 
@@ -79,7 +80,7 @@ public sealed class GraphMetaStoreTests : IDisposable
     public void Prefetch_then_index_returns_the_same_records()
     {
         Write(64, exhausted: true);
-        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 64)!;
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 64, Engine)!;
 
         store.Prefetch(10, 40);
         var src = Rows(64);
@@ -90,7 +91,7 @@ public sealed class GraphMetaStoreTests : IDisposable
     [Fact]
     public void Append_grows_the_store_across_reopen()
     {
-        var w = new GraphMetaWriter(Repo, Fp, true);
+        var w = new GraphMetaWriter(Repo, Fp, true, Engine);
         w.Reset();
         w.Append(Rows(10), 0, 10);
         w.Commit(10, exhausted: false);
@@ -98,7 +99,7 @@ public sealed class GraphMetaStoreTests : IDisposable
         w.Append(Rows(15), 10, 5);   // rows 10..14
         w.Commit(15, exhausted: true);
 
-        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 15)!;
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 15, Engine)!;
         Assert.Equal(15, store.Count);
         AssertRowEqual(Row(12), store[12]);
         AssertRowEqual(Row(0), store[0]);
@@ -107,12 +108,12 @@ public sealed class GraphMetaStoreTests : IDisposable
     [Fact]
     public void SetCount_adopts_rows_appended_after_open()
     {
-        var w = new GraphMetaWriter(Repo, Fp, true);
+        var w = new GraphMetaWriter(Repo, Fp, true, Engine);
         w.Reset();
         w.Append(Rows(10), 0, 10);
         w.Commit(10, exhausted: false);
 
-        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 10)!;
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 10, Engine)!;
         Assert.Equal(10, store.Count);
 
         w.Append(Rows(15), 10, 5);
@@ -128,9 +129,18 @@ public sealed class GraphMetaStoreTests : IDisposable
     {
         Write(50, exhausted: true);
 
-        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp + 1, true, 50));
-        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, includeRemoteBranches: false, 50));
-        Assert.Null(GraphMetaStore.TryOpen(@"C:\repos\other", Fp, true, 50));
+        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp + 1, true, 50, Engine));
+        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, includeRemoteBranches: false, 50, Engine));
+        Assert.Null(GraphMetaStore.TryOpen(@"C:\repos\other", Fp, true, 50, Engine));
+    }
+
+    [Fact]
+    public void TryOpen_misses_on_engine_mismatch()
+    {
+        Write(50, exhausted: true);
+
+        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, true, 50, WalkEngine.Cli));
+        Assert.NotNull(GraphMetaStore.TryOpen(Repo, Fp, true, 50, WalkEngine.LibGit2));
     }
 
     [Fact]
@@ -138,8 +148,8 @@ public sealed class GraphMetaStoreTests : IDisposable
     {
         Write(50, exhausted: false);
 
-        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, true, 100));
-        Assert.NotNull(GraphMetaStore.TryOpen(Repo, Fp, true, 40));
+        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, true, 100, Engine));
+        Assert.NotNull(GraphMetaStore.TryOpen(Repo, Fp, true, 40, Engine));
     }
 
     [Fact]
@@ -148,7 +158,7 @@ public sealed class GraphMetaStoreTests : IDisposable
         Write(20, exhausted: true);
         File.Delete(GraphCachePaths.File(Repo, GraphMetaStore.IdxExt));
 
-        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, true, 20));
+        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, true, 20, Engine));
     }
 
     [Fact]
@@ -156,7 +166,7 @@ public sealed class GraphMetaStoreTests : IDisposable
     {
         Write(300, exhausted: true);
         var mem = new ArrayCommitStore(Rows(300).ToArray());
-        using var disk = GraphMetaStore.TryOpen(Repo, Fp, true, 300)!;
+        using var disk = GraphMetaStore.TryOpen(Repo, Fp, true, 300, Engine)!;
 
         foreach (var term in new[] { "Alpha", "grace hopper", "widget beta", "commit number 42", Oid(42).Sha, Oid(7).Sha[..8] })
         {
@@ -168,7 +178,7 @@ public sealed class GraphMetaStoreTests : IDisposable
     public void Search_matches_sha_prefix()
     {
         Write(40, exhausted: true);
-        using var disk = GraphMetaStore.TryOpen(Repo, Fp, true, 40)!;
+        using var disk = GraphMetaStore.TryOpen(Repo, Fp, true, 40, Engine)!;
 
         // Every Oid(i).Sha is zero-padded, so a "0000" prefix hits every row while the full
         // 40-char SHA hits exactly one — same as the in-memory store.
@@ -180,7 +190,7 @@ public sealed class GraphMetaStoreTests : IDisposable
     public void Lease_keeps_the_store_readable_until_the_last_lease_is_released()
     {
         Write(20, exhausted: true);
-        var store = GraphMetaStore.TryOpen(Repo, Fp, true, 20)!;   // opens holding one lease
+        var store = GraphMetaStore.TryOpen(Repo, Fp, true, 20, Engine)!;   // opens holding one lease
 
         var extra = store.AddRef();                                // a second lease
         Assert.Same(store, extra);
@@ -196,7 +206,7 @@ public sealed class GraphMetaStoreTests : IDisposable
     public void AddRef_refuses_a_closed_store_and_never_resurrects_it()
     {
         Write(10, exhausted: true);
-        var store = GraphMetaStore.TryOpen(Repo, Fp, true, 10)!;
+        var store = GraphMetaStore.TryOpen(Repo, Fp, true, 10, Engine)!;
 
         store.Dispose();                        // last lease gone -> closed
         Assert.Null(store.AddRef());            // a closed store cannot hand out a new lease
@@ -219,13 +229,13 @@ public sealed class GraphMetaStoreTests : IDisposable
     [Fact]
     public void ReadRaw_round_trips_real_parent_shas_from_a_RawCommit_spill()
     {
-        var w = new GraphMetaWriter(Repo, Fp, true);
+        var w = new GraphMetaWriter(Repo, Fp, true, Engine);
         w.Reset();
         var rows = RawRows(20);
         w.Append(rows, 0, 20);
         w.Commit(20, exhausted: true);
 
-        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 20)!;
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 20, Engine)!;
         for (var i = 0; i < 20; i++)
         {
             var raw = store.ReadRaw(i);
@@ -243,7 +253,7 @@ public sealed class GraphMetaStoreTests : IDisposable
         // throw or truncate the record.
         Write(10, exhausted: true);
 
-        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 10)!;
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 10, Engine)!;
         var raw = store.ReadRaw(6); // Row(6).ParentCount == 1 (6 % 7 != 0)
         Assert.Equal(Row(6).ParentCount, raw.ParentIds.Count);
         Assert.All(raw.ParentIds, p => Assert.Equal(ObjectId.Zero, p));
@@ -261,9 +271,9 @@ public sealed class GraphMetaStoreTests : IDisposable
         hdr.Version = GraphMetaStore.Version - 1;
         File.WriteAllBytes(hdrPath, JsonSerializer.SerializeToUtf8Bytes(hdr, GraphMetaStore.Json));
 
-        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, true, 10));
-        Assert.Equal((false, 0, false), GraphMetaStore.Probe(Repo, Fp, true));
-        Assert.Equal((false, 0), GraphMetaStore.ProbeAny(Repo, true));
+        Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, true, 10, Engine));
+        Assert.Equal((false, 0, false), GraphMetaStore.Probe(Repo, Fp, true, Engine));
+        Assert.Equal((false, 0), GraphMetaStore.ProbeAny(Repo, true, Engine));
     }
 
     [Fact]

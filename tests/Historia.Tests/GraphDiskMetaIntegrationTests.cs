@@ -63,7 +63,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
         (bool Ok, int RowCount, bool Exhausted) probe = default;
         while (DateTime.UtcNow < deadline)
         {
-            probe = GraphMetaStore.Probe(_repo.Path, FingerprintOf(svc, ctx), includeRemoteBranches: true);
+            probe = GraphMetaStore.Probe(_repo.Path, FingerprintOf(svc, ctx), includeRemoteBranches: true, WalkEngine.LibGit2);
             if (probe is { Ok: true, Exhausted: true })
                 break;
             await Task.Delay(100);

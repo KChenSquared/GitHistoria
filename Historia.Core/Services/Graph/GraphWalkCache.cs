@@ -1,14 +1,29 @@
 ﻿namespace Historia.Services.Graph;
 
+/// <summary>Which engine produced a persisted walk / metadata store: the CLI streaming
+/// <c>git log --topo-order</c> walk (primary, v10.1.3+) or the libgit2 revwalk (fallback). The two
+/// engines can disagree on row order for the same ref set, so a cache written by one must never be
+/// resumed (<c>skip: have</c>) by the other — see <see cref="GraphWalkCache"/> and
+/// <see cref="GraphMetaStore"/>.</summary>
+internal enum WalkEngine
+{
+    LibGit2 = 0,
+    Cli = 1,
+}
+
 /// <summary>
 /// On-disk persistence of the raw graph walk (commits + decorations) keyed by a fingerprint of
-/// the repo's refs. A hit skips the whole libgit2 revwalk on the next launch — only
+/// the repo's refs. A hit skips the whole revwalk on the next launch — only
 /// <see cref="DagLayoutEngine.Compute"/> (~tens of ms) still runs. Cached only for the plain
 /// all-refs, no-path-filter, no-stashes query; anything else re-walks.
 /// </summary>
 internal sealed class GraphWalkCache
 {
-    private const int Version = 2;
+    // v10.1.3: bumped 2 -> 3 to add WalkEngine (see that enum) — a file written by one walk
+    // engine must never be treated as resumable by the other, since their row orders can differ
+    // for the same ref set. A v2 file predates the marker and is rejected outright, forcing a
+    // one-time re-walk per repo.
+    private const int Version = 3;
     private const int MaxFiles = 40;
 
     private static readonly JsonSerializerOptions Json = new() { IncludeFields = false };
@@ -51,7 +66,10 @@ internal sealed class GraphWalkCache
     /// <param name="metadataOnDisk">§7.6: when true the per-commit strings are served from the
     /// paged <c>DiskCommitStore</c>, so a warm load only needs id + parent count here — skip
     /// materialising the message/author/email text for a whole huge history.</param>
-    public Loaded? TryLoad(string repoPath, GraphQuery query, int wantCount, long fingerprint, bool metadataOnDisk = false)
+    /// <param name="engine">The walk engine that WOULD run a fresh prime right now. A saved file
+    /// from the other engine is rejected outright when it is not exhausted — resuming it with
+    /// <c>skip: have</c> would assume a row order only the file's own engine actually produced.</param>
+    public Loaded? TryLoad(string repoPath, GraphQuery query, int wantCount, long fingerprint, WalkEngine engine, bool metadataOnDisk = false)
     {
         if (!Supports(query))
             return null;
@@ -73,6 +91,12 @@ internal sealed class GraphWalkCache
         if (dto.IncludeRemoteBranches != query.IncludeRemoteBranches)
         {
             Historia.Diagnostics.PerfLog.Mark("walk cache MISS: IncludeRemoteBranches mismatch");
+            return null;
+        }
+        if (!dto.Exhausted && (WalkEngine)dto.WalkEngine != engine)
+        {
+            Historia.Diagnostics.PerfLog.Mark(
+                $"walk cache MISS: engine mismatch (file={(WalkEngine)dto.WalkEngine}, current={engine}) on a non-exhausted save");
             return null;
         }
 
@@ -253,7 +277,8 @@ internal sealed class GraphWalkCache
     public void Save(
         string repoPath, GraphQuery query, long fingerprint, bool exhausted,
         IReadOnlyList<RawCommit> commits,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations)
+        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations,
+        WalkEngine engine)
     {
         if (!Supports(query))
             return;
@@ -268,6 +293,7 @@ internal sealed class GraphWalkCache
                 Fingerprint = fingerprint,
                 IncludeRemoteBranches = query.IncludeRemoteBranches,
                 Exhausted = exhausted,
+                WalkEngine = (int)engine,
                 Commits = commits.Select(c => new CommitDto
                 {
                     Id = c.Id.Sha,
@@ -349,6 +375,7 @@ internal sealed class GraphWalkCache
         public long Fingerprint { get; set; }
         public bool IncludeRemoteBranches { get; set; }
         public bool Exhausted { get; set; }
+        public int WalkEngine { get; set; }
         public List<CommitDto> Commits { get; set; } = [];
         public Dictionary<string, List<DecoDto>> Decorations { get; set; } = [];
     }

@@ -42,7 +42,11 @@ internal sealed class GraphMetaStore
     // bytes each) so the store can seed TryOptimisticSnapshot's first paint on its own, without
     // depending on the bounded, less-reliable .gz walk cache. A v1 file has no parent bytes and
     // is rejected outright (TryOpen/Probe/ProbeAny all gate on Version) rather than misread.
-    internal const int Version = 2;
+    // v10.1.3: bumped 2 -> 3 to add WalkEngine to the header — the CLI streaming walk and the
+    // libgit2 revwalk can order the same ref set's history differently, so a store the background
+    // spill keeps appending to must never mix rows from both. A mismatch (or a pre-marker v2 file)
+    // is rejected outright, forcing a one-time full re-spill per repo.
+    internal const int Version = 3;
     internal const string HdrExt = ".meta.hdr";
     internal const string DatExt = ".meta.dat";
     internal const string IdxExt = ".meta.idx";
@@ -60,16 +64,17 @@ internal sealed class GraphMetaStore
         public bool IncludeRemoteBranches { get; set; }
         public int RowCount { get; set; }
         public bool Exhausted { get; set; }
+        public int WalkEngine { get; set; }
     }
 
     /// <summary>
     /// Opens the on-disk store for <paramref name="repoPath"/> if it is present, matches
-    /// <paramref name="fingerprint"/> / <paramref name="includeRemoteBranches"/>, and already
-    /// holds at least <paramref name="wantCount"/> rows (or is exhausted). Returns null on any
-    /// miss — a fresh walk then re-spills.
+    /// <paramref name="fingerprint"/> / <paramref name="includeRemoteBranches"/> / <paramref
+    /// name="engine"/>, and already holds at least <paramref name="wantCount"/> rows (or is
+    /// exhausted). Returns null on any miss — a fresh walk then re-spills.
     /// </summary>
     public static DiskCommitStore? TryOpen(
-        string repoPath, long fingerprint, bool includeRemoteBranches, int wantCount)
+        string repoPath, long fingerprint, bool includeRemoteBranches, int wantCount, WalkEngine engine)
     {
         try
         {
@@ -81,7 +86,8 @@ internal sealed class GraphMetaStore
             if (hdr is null
                 || hdr.Version != Version
                 || hdr.Fingerprint != fingerprint
-                || hdr.IncludeRemoteBranches != includeRemoteBranches)
+                || hdr.IncludeRemoteBranches != includeRemoteBranches
+                || (WalkEngine)hdr.WalkEngine != engine)
                 return null;
             if (!hdr.Exhausted && hdr.RowCount < wantCount)
                 return null;
@@ -95,10 +101,10 @@ internal sealed class GraphMetaStore
     }
 
     /// <summary>Cheap header-only probe: does a store for <paramref name="repoPath"/> exist and
-    /// match this fingerprint / remote-branch flag? Returns its row count and exhausted flag.
-    /// No file handle is opened (unlike <see cref="TryOpen"/>).</summary>
+    /// match this fingerprint / remote-branch flag / engine? Returns its row count and exhausted
+    /// flag. No file handle is opened (unlike <see cref="TryOpen"/>).</summary>
     public static (bool Ok, int RowCount, bool Exhausted) Probe(
-        string repoPath, long fingerprint, bool includeRemoteBranches)
+        string repoPath, long fingerprint, bool includeRemoteBranches, WalkEngine engine)
     {
         try
         {
@@ -107,7 +113,7 @@ internal sealed class GraphMetaStore
                 return (false, 0, false);
             var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.Fingerprint != fingerprint
-                || hdr.IncludeRemoteBranches != includeRemoteBranches)
+                || hdr.IncludeRemoteBranches != includeRemoteBranches || (WalkEngine)hdr.WalkEngine != engine)
                 return (false, 0, false);
             return (true, hdr.RowCount, hdr.Exhausted);
         }
@@ -122,8 +128,11 @@ internal sealed class GraphMetaStore
     /// <c>TryOptimisticSnapshot</c>'s stale-tolerant first paint, which runs before the fresh
     /// ref-fingerprint check (a full <c>repo.Refs.ToList()</c>) even starts. The caller must
     /// treat the result as provisional, exactly like <see cref="GraphWalkCache.TryLoadStale"/>.
+    /// v10.1.3: still gated on <paramref name="engine"/> — the engine that WOULD run right now is
+    /// known cheaply (locator + query, no repo access), so an optimistic frame is never seeded
+    /// from a store the other engine wrote.
     /// </summary>
-    public static (bool Ok, int RowCount) ProbeAny(string repoPath, bool includeRemoteBranches)
+    public static (bool Ok, int RowCount) ProbeAny(string repoPath, bool includeRemoteBranches, WalkEngine engine)
     {
         try
         {
@@ -132,7 +141,7 @@ internal sealed class GraphMetaStore
                 return (false, 0);
             var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
-                || hdr.RowCount <= 0)
+                || (WalkEngine)hdr.WalkEngine != engine || hdr.RowCount <= 0)
                 return (false, 0);
             return (true, hdr.RowCount);
         }
@@ -167,7 +176,7 @@ internal sealed class GraphMetaStore
 /// header. All operations swallow IO errors — the cache is an optimisation, never a
 /// correctness dependency.
 /// </summary>
-internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool includeRemoteBranches)
+internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool includeRemoteBranches, WalkEngine engine)
 {
     private readonly string _hdr = GraphCachePaths.File(repoPath, GraphMetaStore.HdrExt);
     private readonly string _dat = GraphCachePaths.File(repoPath, GraphMetaStore.DatExt);
@@ -262,6 +271,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 IncludeRemoteBranches = includeRemoteBranches,
                 RowCount = rowCount,
                 Exhausted = exhausted,
+                WalkEngine = (int)engine,
             };
             var tmp = $"{_hdr}.{Guid.NewGuid():N}.tmp";
             File.WriteAllBytes(tmp, JsonSerializer.SerializeToUtf8Bytes(hdr, GraphMetaStore.Json));
