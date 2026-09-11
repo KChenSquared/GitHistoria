@@ -128,6 +128,15 @@ public sealed record AppSettings
     /// </summary>
     public bool GraphMetadataFromDisk { get; init; } = true;
 
+    /// <summary>
+    /// v10.1.3: when on (default), a large repository (≥ 100k commits walked) that has no
+    /// commit-graph file yet gets one written in the background (<c>git commit-graph write
+    /// --reachable</c>) once its first full history walk and §7.6 spill have both finished. A
+    /// commit-graph is what lets Git's own <c>--topo-order</c> walk (the CLI graph engine)
+    /// expand lazily by generation number instead of touching the whole history up front.
+    /// </summary>
+    public bool WriteCommitGraphForLargeRepos { get; init; } = true;
+
     /// <summary>Issue-key → URL rules applied to commit messages (§V2-17.6). Account-free.</summary>
     public IReadOnlyList<IssueAutolinkRule> IssueAutolinks { get; init; } = [];
 

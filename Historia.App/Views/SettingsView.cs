@@ -303,6 +303,10 @@ public sealed class SettingsView : UserControl, IDisposable
         advBody.Children.Add(WithHint(Check("Read graph metadata from disk instead of memory", c.GraphMetadataFromDisk,
             v => _ = _cfg.UpdateAsync(s => s with { GraphMetadataFromDisk = v })),
             "Pages commit metadata (messages, author, dates) from the local cache folder to minimize memory usage on large repositories. Applies after restart of Historia."));
+
+        advBody.Children.Add(WithHint(Check("Write a commit-graph file for large repositories", c.WriteCommitGraphForLargeRepos,
+            v => _ = _cfg.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = v })),
+            "Once a large repository's full history has loaded, writes a commit-graph file if it doesn't already have one. Lets Git's own history walk skip straight to recent commits on the next open instead of scanning the whole history."));
         advBody.Margin = new Thickness(0, 10, 0, 0);
 
         AddCollapsibleSection("Advanced settings", advBody, () => _advExpanded, v => _advExpanded = v);

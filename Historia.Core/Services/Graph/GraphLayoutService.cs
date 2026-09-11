@@ -24,6 +24,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
     private readonly ISettingsService? _settings;
     private readonly IGitExecutableLocator? _locator;
+    private readonly CommitGraphMaintenance? _commitGraphMaintenance;
 
     /// <summary>§7.6: page per-commit metadata from a random-access file instead of keeping
     /// it resident. Read once — the setting takes effect on the next launch.</summary>
@@ -44,6 +45,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
     public GraphLayoutService(ISettingsService settings, IGitExecutableLocator locator) : this(settings)
     {
         _locator = locator;
+    }
+
+    /// <summary>DI ctor (§4 linux cold-prime plan): additionally wires up
+    /// <see cref="CommitGraphMaintenance"/>, scheduled once a repo's background history spill
+    /// (§7.6) reaches completion. The 2-arg ctor above keeps working with no commit-graph
+    /// maintenance — used by tests that don't care about it.</summary>
+    public GraphLayoutService(ISettingsService settings, IGitExecutableLocator locator, IGitCliService cli)
+        : this(settings, locator)
+    {
+        _commitGraphMaintenance = new CommitGraphMaintenance(cli, settings);
     }
 
     /// <summary>The engine a FRESH prime would use right now — decidable with no repo access
@@ -474,6 +485,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // ceiling stays primed for later foreground Extends and is freed at tab close.
                 if (ct.IsCancellationRequested || cache.Exhausted || cache.MetaComplete)
                     cache.DisposeLiveWalk();
+
+                // §4: the whole history has now been walked AND spilled to disk — the point at
+                // which a large repo without a commit-graph file benefits from one. Not gated on
+                // ct — a tab close cancels the spill loop above but the repo is still worth
+                // maintaining for the next open.
+                if (cache.Exhausted && cache.MetaComplete)
+                {
+                    int walked;
+                    lock (cache) walked = cache.Commits.Count;
+                    _commitGraphMaintenance?.MaybeSchedule(context, walked);
+                }
             }
         }, ct);
     }
