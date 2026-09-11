@@ -13,9 +13,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private static readonly TimeSpan SpillStartGrace = TimeSpan.FromSeconds(8);
 
     /// <summary>Rows per chunk of the background full-history walk (§7.6). Each chunk is a
-    /// separate low-priority repo-gate acquisition, so this also bounds how long a foreground
-    /// caller that has already started waiting can be stuck behind the spill.</summary>
-    private const int SpillWalkChunkRows = 150_000;
+    /// separate low-priority repo-gate acquisition that *resumes* the primed revwalk (cheap —
+    /// no tip reseed), so this bounds how long a foreground caller that has already started
+    /// waiting can be stuck behind the spill to roughly one chunk's pull.</summary>
+    private const int SpillWalkChunkRows = 25_000;
 
     private readonly ISettingsService? _settings;
 
@@ -48,6 +49,38 @@ public sealed class GraphLayoutService : IGraphLayoutService
         public DiskCommitStore? MetaStore { get; set; }
         public readonly object SpillSync = new();
         public readonly CancellationTokenSource Cts = new();
+
+        // ── resumable topological walk (v10.1.2) ──
+        // A live LibGit2Sharp revwalk enumerator, primed once (the multi-second tip-priority
+        // cost on a big repo) and then pulled forward in chunks by EnsureWalkedAsync — the
+        // quick phase, each scroll Extend, the silent crawler and the §7.6 background spill all
+        // continue this ONE walk instead of restarting from the tips every time. It is a
+        // libgit2-backed object, so it is ONLY ever touched inside RepositoryContext's gate
+        // (WalkFrom points at the next row it will yield). Disposed on reset / Forget /
+        // exhaustion / a fingerprint change.
+        public IEnumerator<Commit>? LiveWalk { get; set; }
+        public long LiveWalkFingerprint { get; set; }
+        public int LiveWalkPos { get; set; } // rows already pulled from LiveWalk
+
+        /// <summary>Dispose the revwalk enumerator and forget it. Only safe on the repo gate
+        /// (i.e. from inside a WithRepository* callback) or after Cts has been cancelled and the
+        /// spill task has observed it — never while another thread may be mid-MoveNext.</summary>
+        public void DisposeLiveWalk()
+        {
+            var w = LiveWalk;
+            DropLiveWalk();
+            try { w?.Dispose(); } catch { /* best effort */ }
+        }
+
+        /// <summary>Forget the enumerator without disposing it — for off-gate callers (Forget /
+        /// reset). The orphaned CommitEnumerator frees its git_revwalk from its finalizer, so
+        /// this trades a brief native leak for never racing a Dispose against an in-flight walk.</summary>
+        public void DropLiveWalk()
+        {
+            LiveWalk = null;
+            LiveWalkFingerprint = 0;
+            LiveWalkPos = 0;
+        }
     }
 
     /// <summary>
@@ -316,18 +349,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 if (ct.IsCancellationRequested)
                     return;
 
-                // Walk to the ceiling in chunks, each its own low-priority gate turn. Walk()
-                // restarts from the tips every call so this re-pays the walk setup per chunk
-                // (~seconds even on a big repo) — a deliberate trade for not holding the single
-                // repo gate for the whole tens-of-seconds full-history walk, which would make a
-                // tab switch / scroll / status refresh on this repo wait the entire time. The
-                // gate itself hands foreground callers priority (WithRepositoryBackgroundAsync);
-                // the chunking is what bounds how long any one of them can already be committed
-                // to waiting.
+                // Walk to the ceiling in chunks, each a low-priority gate turn that *resumes*
+                // the primed revwalk (EnsureWalkedAsync continues cache.LiveWalk — no tip
+                // reseed, no BuildDecorations), yielding the gate between chunks so a tab
+                // switch / scroll / status refresh on this repo waits at most one chunk's pull.
                 var ceiling = cap + WalkOverscan;
-                for (var target = SpillWalkChunkRows; ; target += SpillWalkChunkRows)
+                while (true)
                 {
-                    await EnsureWalkedAsync(context, query, cache, Math.Min(target, ceiling), ct, background: true)
+                    int target;
+                    lock (cache) target = Math.Min(cache.Commits.Count + SpillWalkChunkRows, ceiling);
+                    await EnsureWalkedAsync(context, query, cache, target, ct, background: true)
                         .ConfigureAwait(false);
                     bool walkDone;
                     lock (cache) walkDone = cache.Exhausted || cache.Commits.Count >= cap;
@@ -359,7 +390,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
             catch (OperationCanceledException) { }
             catch { /* best-effort background caching */ }
-            finally { cache.BackgroundSpillRunning = false; }
+            finally
+            {
+                cache.BackgroundSpillRunning = false;
+                // On exhaustion PumpCommits already disposed the walk on the gate; on an
+                // external cancel Forget/reset already DropLiveWalk'd it. This is just a
+                // belt-and-braces no-op for those paths — a walk that only reached the resident
+                // ceiling stays primed for later foreground Extends and is freed at tab close.
+                if (ct.IsCancellationRequested || cache.Exhausted || cache.MetaComplete)
+                    cache.DisposeLiveWalk();
+            }
         }, ct);
     }
 
@@ -424,6 +464,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 try { cache.Cts.Cancel(); } catch (ObjectDisposedException) { }
                 cache.Cts.Dispose();
                 cache.MetaStore?.Dispose();
+                cache.DropLiveWalk(); // off-gate: don't Dispose a walk another thread may hold
             }
             _caches.Remove(context);
         }
@@ -455,6 +496,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 try { stale.Cts.Cancel(); } catch (ObjectDisposedException) { }
                 stale.Cts.Dispose();
                 stale.MetaStore?.Dispose();
+                stale.DropLiveWalk(); // off-gate: don't Dispose a walk another thread may hold
             }
 
             _caches.Remove(context);
@@ -483,11 +525,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
         var walked = await WithRepo(repo =>
         {
             var fp = ComputeFingerprint(repo, query, out var allRefs);
+            // Read fresh on the gate — a concurrent EnsureWalkedAsync (foreground extend vs the
+            // background spill) serialises here and may have appended since the outer check.
+            var have = cache.Commits.Count;
+            if (have >= wantCount || cache.Exhausted)
+                return new WalkResult([], cache.Decorations, cache.Exhausted, fp, DecosFresh: false);
 
-            // Fresh cache: try the on-disk walk before touching the revwalk at all. When the
-            // paged metadata store opens for this fingerprint, load id + parents only — the
-            // strings come from the store, not a resident copy of the whole history.
-            if (cache.Commits.Count == 0)
+            // Fresh cache, nothing primed: try the on-disk walk before touching the revwalk at
+            // all. When the paged metadata store opens for this fingerprint, load id + parents
+            // only — the strings come from the store, not a resident copy of the whole history.
+            if (have == 0 && cache.LiveWalk is null)
             {
                 var probe = _metaFromDisk
                     ? GraphMetaStore.Probe(repoPath, fp, query.IncludeRemoteBranches)
@@ -506,13 +553,28 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 store?.Dispose(); // TryLoad missed — don't leak the handle
             }
 
-            return Walk(repo, query, wantCount, deco, allRefs, fp);
+            // Continue the ONE primed topological walk for this fingerprint — no tip reseed, no
+            // BuildDecorations. This is what makes an Extend / silent-crawl / spill chunk cheap
+            // on a big repo after the first (unavoidably expensive) prime.
+            if (cache.LiveWalk is { } live && cache.LiveWalkFingerprint == fp)
+            {
+                var need = wantCount - have;
+                var delta = new List<RawCommit>(Math.Min(need, 8192));
+                var exhaustedNow = PumpCommits(live, delta, skip: 0, want: need, cache, ct);
+                if (exhaustedNow)
+                    cache.DisposeLiveWalk();
+                Diagnostics.PerfLog.Mark($"walk resumed +{delta.Count} (pos {cache.LiveWalkPos}, exhausted={exhaustedNow})");
+                return new WalkResult(delta, cache.Decorations, exhaustedNow, fp, DecosFresh: false);
+            }
+
+            // No usable primed walk (first walk, or the ref set changed): prime a fresh one.
+            cache.DisposeLiveWalk();
+            return StartWalk(repo, query, wantCount, have, deco, allRefs, fp, cache, ct);
         }).ConfigureAwait(false);
 
         lock (cache)
         {
-            if (walked.Commits.Count > cache.Commits.Count)
-                cache.Commits.AddRange(walked.Commits.Skip(cache.Commits.Count));
+            cache.Commits.AddRange(walked.Commits);
             cache.Decorations = walked.Decorations;
             cache.Exhausted = walked.Exhausted;
             if (walked.Fingerprint != 0)
@@ -536,15 +598,64 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
         }
 
-        // Persist a freshly-walked window for the next launch (best-effort, off the gate).
-        if (!walked.FromDisk && walked.Fingerprint != 0 && GraphWalkCache.Supports(query))
+        // Persist a freshly-walked window for the next launch (best-effort, off the gate). Only
+        // the bounded foreground walks do this — a background spill chunk's rows already reach
+        // disk via the §7.6 MetaStore, and snapshotting cache.Commits per chunk would be O(n²).
+        if (!background && !walked.FromDisk && walked.Fingerprint != 0 && GraphWalkCache.Supports(query))
         {
-            var commits = walked.Commits;
-            var decos = walked.Decorations;
-            var exhausted = walked.Exhausted;
-            var fp = walked.Fingerprint;
+            List<RawCommit> commits;
+            Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decos;
+            bool exhausted;
+            long fp;
+            lock (cache)
+            {
+                commits = [.. cache.Commits];
+                decos = cache.Decorations;
+                exhausted = cache.Exhausted;
+                fp = cache.Fingerprint;
+            }
             _ = Task.Run(() => _walkCache.Save(repoPath, query, fp, exhausted, commits, decos));
         }
+    }
+
+    /// <summary>Pull up to <paramref name="want"/> commits from an already-positioned revwalk
+    /// enumerator into <paramref name="into"/>, discarding the first <paramref name="skip"/>
+    /// still-unconsumed rows (used once, when a partial on-disk cache seeded
+    /// <c>cache.Commits</c> and the fresh walk has to re-skip them). Returns true when the walk
+    /// ran out. Cooperative: a cancelled <paramref name="ct"/> stops early and leaves the
+    /// enumerator valid for the next call. Caller holds the repo gate.</summary>
+    private static bool PumpCommits(
+        IEnumerator<Commit> walk, List<RawCommit> into, int skip, int want, RepoCache cache, CancellationToken ct)
+    {
+        var collected = 0;
+        while (collected < want)
+        {
+            if (ct.IsCancellationRequested)
+                return false;
+            if (!walk.MoveNext())
+                return true;
+            var pos = cache.LiveWalkPos++;
+            if (pos < skip)
+                continue;
+            var commit = walk.Current;
+            // Enumerate Parents once — each access re-parses the commit object in libgit2.
+            var parentIds = commit.Parents.Select(p => p.Id).ToList();
+            into.Add(new RawCommit(
+                commit.Id,
+                parentIds,
+                new CommitMetadata
+                {
+                    Id = commit.Id,
+                    MessageShort = commit.MessageShort,
+                    AuthorName = commit.Author.Name,
+                    AuthorEmail = commit.Author.Email,
+                    AuthorWhen = commit.Author.When,
+                    CommitWhen = commit.Committer.When,
+                    ParentCount = parentIds.Count,
+                }));
+            collected++;
+        }
+        return false;
     }
 
     private readonly record struct WalkResult(
@@ -599,9 +710,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
         return unchecked((long)h);
     }
 
-    private static WalkResult Walk(
-        Repository repo, GraphQuery query, int wantCount, DecoCache? decoCache,
-        List<Reference> allRefs, long fingerprint)
+    /// <summary>Primes a fresh topological revwalk (the expensive tip-priority setup on a large
+    /// repo), stores its enumerator on <paramref name="cache"/> so later Extends / spill chunks
+    /// continue it instead of re-priming, and pulls the first <c>wantCount - have</c> rows.
+    /// <paramref name="have"/> rows are re-skipped when a partial on-disk cache already seeded
+    /// <c>cache.Commits</c>. Caller holds the repo gate.</summary>
+    private static WalkResult StartWalk(
+        Repository repo, GraphQuery query, int wantCount, int have, DecoCache? decoCache,
+        List<Reference> allRefs, long fingerprint, RepoCache cache, CancellationToken ct)
     {
         // A ref whose target object is missing (a corrupt packed-refs, a half-deleted branch)
         // makes repo.Commits.QueryBy throw and blanks the whole graph — drop it from the tips.
@@ -641,7 +757,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         object[] tips = [.. tipList];
         Diagnostics.PerfLog.Mark($"Walk tips resolved: {tips.Length}, decosFresh={decosFresh}");
 
-        var result = new List<RawCommit>(Math.Min(wantCount, 4096));
+        var result = new List<RawCommit>(Math.Min(Math.Max(wantCount - have, 0), 8192));
         if (tips.Length == 0)
             return new WalkResult(result, decorations, true, fingerprint, decosFresh);
 
@@ -657,34 +773,18 @@ public sealed class GraphLayoutService : IGraphLayoutService
             ? repo.Commits.QueryBy(filter)
             : repo.Commits.QueryBy(query.PathFilter, filter).Select(e => e.Commit);
 
-        var walkTimer = Diagnostics.PerfLog.Scope($"Walk loop (sort={filter.SortBy})");
-        var exhausted = true;
-        foreach (var commit in walk)
-        {
-            if (result.Count >= wantCount)
-            {
-                exhausted = false;
-                break;
-            }
+        // Keep the enumerator alive on the cache — the first MoveNext() below pays the topo
+        // tip-priority prime; every later Extend / silent-crawl / spill chunk resumes from here.
+        var walkEnum = walk.GetEnumerator();
+        cache.LiveWalk = walkEnum;
+        cache.LiveWalkFingerprint = fingerprint;
+        cache.LiveWalkPos = 0;
 
-            // Enumerate Parents once — each access re-parses the commit object in libgit2.
-            var parentIds = commit.Parents.Select(p => p.Id).ToList();
-            result.Add(new RawCommit(
-                commit.Id,
-                parentIds,
-                new CommitMetadata
-                {
-                    Id = commit.Id,
-                    MessageShort = commit.MessageShort,
-                    AuthorName = commit.Author.Name,
-                    AuthorEmail = commit.Author.Email,
-                    AuthorWhen = commit.Author.When,
-                    CommitWhen = commit.Committer.When,
-                    ParentCount = parentIds.Count,
-                }));
-        }
-        walkTimer.Dispose();
-        Diagnostics.PerfLog.Mark($"Walk loop read {result.Count} commits (exhausted={exhausted})");
+        using var walkTimer = Diagnostics.PerfLog.Scope($"Walk loop (sort={filter.SortBy})");
+        var exhausted = PumpCommits(walkEnum, result, skip: have, want: wantCount - have, cache, ct);
+        if (exhausted)
+            cache.DisposeLiveWalk();
+        Diagnostics.PerfLog.Mark($"Walk loop read {result.Count} commits (pos {cache.LiveWalkPos}, exhausted={exhausted})");
 
         return new WalkResult(result, decorations, exhausted, fingerprint, decosFresh);
     }
