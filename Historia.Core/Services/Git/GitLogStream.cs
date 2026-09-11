@@ -26,14 +26,9 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
     private const char FieldSep = '\x1f';
 
     private readonly Process _process;
-    private readonly Stream _stdout;
+    private readonly NulRecordReader _reader;
     private readonly StringBuilder _stderr;
     private readonly Task _stderrDrain;
-    private readonly MemoryStream _recordBuf = new(256);
-    private readonly byte[] _readBuf = new byte[64 * 1024];
-    private int _readPos;
-    private int _readLen;
-    private bool _eofSeen;
     private bool _disposed;
 
     public RawCommit Current { get; private set; }
@@ -47,7 +42,7 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
     private GitLogStream(Process process, Task stderrDrain, StringBuilder stderr)
     {
         _process = process;
-        _stdout = process.StandardOutput.BaseStream;
+        _reader = new NulRecordReader(process.StandardOutput.BaseStream);
         _stderrDrain = stderrDrain;
         _stderr = stderr;
     }
@@ -141,7 +136,7 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
         string? record;
         try
         {
-            record = ReadRecord();
+            record = _reader.ReadRecord();
         }
         catch (Exception ex)
         {
@@ -193,48 +188,9 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
         catch (InvalidOperationException) { return -1; }
     }
 
-    /// <summary>Reads up to the next NUL byte (the <c>-z</c> record terminator) and decodes it as
-    /// UTF-8. Returns null at end of stream (no more bytes, including a trailing terminator-less
-    /// final record — git always terminates the last record too, but this is defensive).</summary>
-    private string? ReadRecord()
-    {
-        _recordBuf.SetLength(0);
-        while (true)
-        {
-            if (_readPos >= _readLen)
-            {
-                if (_eofSeen)
-                    break;
-                _readLen = _stdout.Read(_readBuf, 0, _readBuf.Length);
-                _readPos = 0;
-                if (_readLen <= 0)
-                {
-                    _eofSeen = true;
-                    break;
-                }
-            }
-
-            var start = _readPos;
-            var span = new ReadOnlySpan<byte>(_readBuf, start, _readLen - start);
-            var nul = span.IndexOf((byte)0);
-            if (nul < 0)
-            {
-                _recordBuf.Write(_readBuf, start, _readLen - start);
-                _readPos = _readLen;
-                continue;
-            }
-
-            _recordBuf.Write(_readBuf, start, nul);
-            _readPos = start + nul + 1;
-            return Encoding.UTF8.GetString(_recordBuf.GetBuffer(), 0, (int)_recordBuf.Length);
-        }
-
-        return _recordBuf.Length > 0
-            ? Encoding.UTF8.GetString(_recordBuf.GetBuffer(), 0, (int)_recordBuf.Length)
-            : null;
-    }
-
-    private static RawCommit ParseRecord(string record)
+    /// <summary>Splits <see cref="RawCommit"/> field text — internal (not private) so tests can
+    /// feed it fixture records directly without spawning a process.</summary>
+    internal static RawCommit ParseRecord(string record)
     {
         var parts = record.Split(FieldSep);
         if (parts.Length < 7)
@@ -272,6 +228,64 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
         GitCliProcessSetup.TryKill(_process);
         try { _stderrDrain.Wait(1_000); } catch { /* best effort */ }
         try { _process.Dispose(); } catch { /* best effort */ }
-        _recordBuf.Dispose();
+        _reader.Dispose();
     }
+}
+
+/// <summary>
+/// Reads NUL-delimited (<c>git log -z</c>) UTF-8 text records out of a <see cref="Stream"/>, one
+/// at a time, buffering only the bytes of the record currently being assembled. Internal (not
+/// private to <see cref="GitLogStream"/>) so a test can feed it a <see cref="MemoryStream"/> of
+/// fixture bytes without spawning a real git process.
+/// </summary>
+internal sealed class NulRecordReader(Stream stream) : IDisposable
+{
+    private readonly MemoryStream _recordBuf = new(256);
+    private readonly byte[] _readBuf = new byte[64 * 1024];
+    private int _readPos;
+    private int _readLen;
+    private bool _eofSeen;
+
+    /// <summary>Reads up to the next NUL byte and decodes it as UTF-8. Returns null at end of
+    /// stream (no more bytes, including a trailing terminator-less final record — git always
+    /// terminates the last record too, but this is defensive).</summary>
+    public string? ReadRecord()
+    {
+        _recordBuf.SetLength(0);
+        while (true)
+        {
+            if (_readPos >= _readLen)
+            {
+                if (_eofSeen)
+                    break;
+                _readLen = stream.Read(_readBuf, 0, _readBuf.Length);
+                _readPos = 0;
+                if (_readLen <= 0)
+                {
+                    _eofSeen = true;
+                    break;
+                }
+            }
+
+            var start = _readPos;
+            var span = new ReadOnlySpan<byte>(_readBuf, start, _readLen - start);
+            var nul = span.IndexOf((byte)0);
+            if (nul < 0)
+            {
+                _recordBuf.Write(_readBuf, start, _readLen - start);
+                _readPos = _readLen;
+                continue;
+            }
+
+            _recordBuf.Write(_readBuf, start, nul);
+            _readPos = start + nul + 1;
+            return Encoding.UTF8.GetString(_recordBuf.GetBuffer(), 0, (int)_recordBuf.Length);
+        }
+
+        return _recordBuf.Length > 0
+            ? Encoding.UTF8.GetString(_recordBuf.GetBuffer(), 0, (int)_recordBuf.Length)
+            : null;
+    }
+
+    public void Dispose() => _recordBuf.Dispose();
 }
