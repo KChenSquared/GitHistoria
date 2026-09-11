@@ -143,9 +143,11 @@ public sealed record AppSettings
     /// full history's worth of rows up front. Deeper history still loads on scroll and reaches
     /// disk in full via the §7.6 background spill regardless of this cap. <c>0</c> means
     /// uncapped — the crawler runs all the way to the resident-row ceiling
-    /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 100,000.
+    /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 0 (uncapped): the gate-tier fix
+    /// (v10.1.3) that stopped the §7.6 spill from starving this crawler removed the main reason
+    /// to bound it in the first place.
     /// </summary>
-    public int SilentCrawlRowCap { get; init; } = 100_000;
+    public int SilentCrawlRowCap { get; init; } = 0;
 
     public const int MinSilentCrawlRowCap = 0;
     public const int MaxSilentCrawlRowCap = GraphLimits.MaxResidentRowsDisk;

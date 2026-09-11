@@ -320,7 +320,7 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         silentCrawlCap.ValueChanged += (_, _) => _ = _cfg.UpdateAsync(s => s with
         {
-            SilentCrawlRowCap = AppSettings.ClampSilentCrawlRowCap((int)(silentCrawlCap.Value ?? 100_000)),
+            SilentCrawlRowCap = AppSettings.ClampSilentCrawlRowCap((int)(silentCrawlCap.Value ?? 0)),
         });
         advBody.Children.Add(WithHint(LabeledRow("Background auto-load row cap", silentCrawlCap),
             "How many rows the graph silently pre-loads in the background after first paint, before requiring you to scroll for more. 0 means uncapped. Applies after restart of Historia."));
