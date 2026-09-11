@@ -403,7 +403,15 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             && string.Equals(p, focusedPath, StringComparison.OrdinalIgnoreCase));
         var focusTarget = existing ?? paths.FirstOrDefault(System.IO.Directory.Exists);
         _restoredFocusPath = focusTarget;
-        Historia.Diagnostics.PerfLog.Mark($"RestoreSessionAsync focusTarget resolved ({paths.Count} paths, focus={System.IO.Path.GetFileName(focusTarget)})");
+        // Trim a trailing separator before GetFileName: RepositoryPath (the source of both
+        // "paths" and "focusedPath" once persisted) is libgit2's WorkingDirectory, which always
+        // ends in one, and GetFileName returns "" for a path ending in a separator — this used
+        // to make a perfectly-resolved focusTarget print as empty here and look like a resolution
+        // bug when it wasn't one.
+        var focusTargetName = focusTarget is null
+            ? "(none)"
+            : System.IO.Path.GetFileName(focusTarget.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
+        Historia.Diagnostics.PerfLog.Mark($"RestoreSessionAsync focusTarget resolved ({paths.Count} paths, focus={focusTargetName})");
 
         // v8.2: kick off every existing path's RepositoryContext.Open concurrently right away,
         // instead of opening them one at a time as the loop below reaches each in its turn --
