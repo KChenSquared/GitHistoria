@@ -285,14 +285,23 @@ public sealed partial class CommitGraphControl : Control
         };
 
         _scrollBar = new ScrollBar { Orientation = Orientation.Vertical, Width = 12, IsVisible = false, [Grid.ColumnProperty] = 0 };
-        _scrollBar.Scroll += (_, _) => { _scrollOffset = _scrollBar.Value; OnScrolled(); };
-        // While the user is pressing/dragging the bar, background row-loading can still trigger
-        // ArrangeOverride passes (as more rows stream in). Those used to reassert Maximum/Value
-        // from our own stale `_scrollOffset` every single pass, fighting the ScrollBar's internal
-        // Track drag math and leaving the thumb desynced from the pointer — it would then eat
-        // clicks until a wheel scroll forced a clean resync. Suppress that clobbering while the
-        // pointer is down on the bar; the Scroll event above keeps `_scrollOffset` in sync anyway.
-        _scrollBar.AddHandler(PointerPressedEvent, (_, _) => _scrollBarUserActive = true, RoutingStrategies.Tunnel);
+        // While the user is dragging the thumb, background row-loading keeps triggering
+        // ArrangeOverride passes (more rows stream in). Those must not reassert Maximum/Value
+        // from our own stale `_scrollOffset`, which fights the ScrollBar's internal Track drag
+        // math and desyncs the thumb from the pointer. `_scrollBarUserActive` gates that — and
+        // it is driven by the ScrollBar's OWN Scroll event type, not pointer capture: a
+        // ThumbTrack means a drag is in progress, and EVERY drag ends with EndScroll regardless
+        // of where the pointer is released. (An earlier version latched on PointerPressed and
+        // cleared on PointerReleased/CaptureLost on the bar; releasing the mouse away from the
+        // bar fired neither, so the latch stuck on forever and the bar froze until a wheel
+        // scroll forced a resync — the "scrollbar stuck at the bottom" bug.)
+        _scrollBar.Scroll += (_, e) =>
+        {
+            _scrollBarUserActive = e.ScrollEventType == ScrollEventType.ThumbTrack;
+            _scrollOffset = _scrollBar.Value;
+            OnScrolled();
+        };
+        // Belt-and-braces: any of these unlatch too, and can never leave it stuck.
         _scrollBar.AddHandler(PointerReleasedEvent, (_, _) => _scrollBarUserActive = false, RoutingStrategies.Tunnel);
         _scrollBar.PointerCaptureLost += (_, _) => _scrollBarUserActive = false;
         _hScrollBar = new ScrollBar { Orientation = Orientation.Horizontal, Height = 12, IsVisible = false };
@@ -1250,11 +1259,13 @@ public sealed partial class CommitGraphControl : Control
             _scrollBar.ViewportSize = viewport;
             _scrollBar.LargeChange = viewport;
             _scrollBar.SmallChange = _rowHeight;
+            // Always keep our mirror inside the (possibly just-grown or just-shrunk) range —
+            // an out-of-range `_scrollOffset` is what left the bar unusable when Maximum moved
+            // under a drag. Only push the value back into the ScrollBar when the user is NOT
+            // mid-drag, so we never fight its Track math.
+            _scrollOffset = Math.Clamp(_scrollOffset, 0, _scrollBar.Maximum);
             if (!_scrollBarUserActive)
-            {
-                _scrollOffset = Math.Min(_scrollOffset, _scrollBar.Maximum);
                 _scrollBar.Value = _scrollOffset;
-            }
         }
         else
         {
