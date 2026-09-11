@@ -18,6 +18,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// waiting can be stuck behind the spill to roughly one chunk's pull.</summary>
     private const int SpillWalkChunkRows = 25_000;
 
+    /// <summary>Minimum row-count growth between debounced <see cref="GraphWalkCache.Save"/>
+    /// calls for the same cache (see <see cref="RepoCache.WalkCacheSavedRows"/>).</summary>
+    private const int WalkCacheSaveStride = 5_000;
+
     private readonly ISettingsService? _settings;
 
     /// <summary>§7.6: page per-commit metadata from a random-access file instead of keeping
@@ -49,6 +53,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
         public DiskCommitStore? MetaStore { get; set; }
         public readonly object SpillSync = new();
         public readonly CancellationTokenSource Cts = new();
+
+        // §V10.1.2: row count as of the last queued GraphWalkCache.Save — debounces the .gz
+        // rewrite so a long run of small foreground extends (the silent crawler) doesn't
+        // re-snapshot + re-gzip the whole window on every one.
+        public int WalkCacheSavedRows { get; set; }
 
         // ── resumable topological walk (v10.1.2) ──
         // A live LibGit2Sharp revwalk enumerator, primed once (the multi-second tip-priority
@@ -609,20 +618,31 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // Persist a freshly-walked window for the next launch (best-effort, off the gate). Only
         // the bounded foreground walks do this — a background spill chunk's rows already reach
         // disk via the §7.6 MetaStore, and snapshotting cache.Commits per chunk would be O(n²).
+        // Debounced: the silent crawler drives many small extends in a row, and re-snapshotting
+        // + re-gzipping the whole window on every one is pure waste (and a kill mid-write can
+        // leave a bad .gz). Save on exhaustion, the first fill, or every WalkCacheSaveStride rows.
         if (!background && !walked.FromDisk && walked.Fingerprint != 0 && GraphWalkCache.Supports(query))
         {
             List<RawCommit> commits;
             Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decos;
             bool exhausted;
             long fp;
+            var save = false;
             lock (cache)
             {
-                commits = [.. cache.Commits];
-                decos = cache.Decorations;
                 exhausted = cache.Exhausted;
+                var rows = cache.Commits.Count;
+                if (exhausted || cache.WalkCacheSavedRows == 0 || rows - cache.WalkCacheSavedRows >= WalkCacheSaveStride)
+                {
+                    cache.WalkCacheSavedRows = rows;
+                    save = true;
+                }
+                commits = save ? [.. cache.Commits] : [];
+                decos = cache.Decorations;
                 fp = cache.Fingerprint;
             }
-            _ = Task.Run(() => _walkCache.Save(repoPath, query, fp, exhausted, commits, decos));
+            if (save)
+                _ = Task.Run(() => _walkCache.Save(repoPath, query, fp, exhausted, commits, decos));
         }
     }
 
