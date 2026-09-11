@@ -16,6 +16,15 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // §V3-9.3: restored-but-not-yet-focused tabs whose InitializeContextAsync has been deferred.
     // They get the ordinary open path on first focus, exactly once.
     private readonly HashSet<RepositoryContext> _deferredInit = [];
+
+    // §V10.1.2: serial background-init pump. Auto-fetch (§12.1) force-initialises every restored
+    // tab; doing that concurrently fanned out ~11 identity history-walks + status refreshes at
+    // once and starved the tab the user is actually staring at (observed: linux first paint ~86s
+    // on an 11-tab restore). These now drain one at a time, and not until the focused tab has
+    // fully loaded. A newly focused deferred tab jumps the queue (FocusInternal).
+    private readonly List<RepositoryContext> _bgInitQueue = [];
+    private bool _bgInitPumpIdle = true;
+    private RepositoryContext? _foregroundInit; // the focused/opened tab currently initialising
     private AtomicFileWriter? _sessionWriter;
     private AtomicFileWriter SessionWriter => _sessionWriter ??= new AtomicFileWriter(AppPaths.SessionFile);
     private string? _restoredFocusPath;
@@ -24,11 +33,15 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // briefly before opening the rest of the session's tabs -- see RestoreSessionAsync for why.
     private static readonly TimeSpan FocusPriorityYield = TimeSpan.FromMilliseconds(60);
 
-    // v8.2: InitializeContextAsync waits up to this long for the graph control's first paint
-    // before touching the repo itself -- see InitializeContextAsync for why. Generous on purpose:
-    // it only matters when nothing ever signals (no graph control attached -- a headless open, a
-    // test), where it's a one-time ceiling rather than a typical wait.
+    // v8.2: a background (force-initialised, no graph control attached) tab waits at most this
+    // long for a first-paint signal that will never come before its identity/refresh runs.
     private static readonly TimeSpan GraphPriorityTimeout = TimeSpan.FromSeconds(8);
+
+    // §V10.1.2: the FOCUSED tab's graph control WILL paint — wait for that, not a short guess,
+    // before its identity resolution + RefreshAllAsync take the repo gate. 8s was far too short
+    // on a big repo (linux first paint alone is tens of seconds), so identity/refresh jumped the
+    // gate mid-first-walk and stalled it for ~60s. This ceiling is only a stuck-guard.
+    private static readonly TimeSpan GraphFirstPaintCeiling = TimeSpan.FromSeconds(120);
 
     public WorkspaceService(
         IServiceProvider services,
@@ -112,7 +125,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         if (recordRecent)
             await _recents.AddAsync(context.RepositoryPath, context.DisplayName, ct).ConfigureAwait(false);
         if (initialize)
-            _ = InitializeContextAsync(context);
+        {
+            lock (_sync) _foregroundInit = context;
+            _ = InitializeContextAsync(context, foreground: true);
+        }
 
         return context;
     }
@@ -122,17 +138,35 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     /// performs the first full state refresh. Runs off the open path so a large repo does not
     /// hold up the tab appearing.
     /// </summary>
-    private async Task InitializeContextAsync(RepositoryContext context)
+    private async Task InitializeContextAsync(RepositoryContext context, bool foreground)
+    {
+        try
+        {
+            await InitializeContextCoreAsync(context, foreground).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (foreground)
+                lock (_sync)
+                    if (ReferenceEquals(_foregroundInit, context))
+                        _foregroundInit = null;
+        }
+    }
+
+    private async Task InitializeContextCoreAsync(RepositoryContext context, bool foreground)
     {
         // Let the graph control's own first walk for this context claim the repo's single-access
         // gate uncontended. Without this, identity resolution below (and RefreshAllAsync after
         // it) starts within a few hundred ms of the tab opening and can hold that gate for
         // seconds on a large repo -- observed: 3+s of the graph's fingerprint+load work sitting
         // in the queue behind it, on a repo where the graph's own paint takes barely over a
-        // second once it actually gets a turn. Task.WhenAny never throws or propagates either
-        // branch's outcome, so no try/catch is needed here -- a cancelled Lifetime is caught by
-        // the identity-resolution try/catch right below instead.
-        await Task.WhenAny(context.FirstGraphPaint, Task.Delay(GraphPriorityTimeout, context.Lifetime)).ConfigureAwait(false);
+        // second once it actually gets a turn. §V10.1.2: the focused tab's graph WILL paint, so
+        // wait for that (large stuck-guard ceiling); a background force-init has no graph
+        // attached, so only the short ceiling applies. Task.WhenAny never throws or propagates
+        // either branch's outcome, so no try/catch is needed here -- a cancelled Lifetime is
+        // caught by the identity-resolution try/catch right below instead.
+        var ceiling = foreground ? GraphFirstPaintCeiling : GraphPriorityTimeout;
+        await Task.WhenAny(context.FirstGraphPaint, Task.Delay(ceiling, context.Lifetime)).ConfigureAwait(false);
 
         try
         {
@@ -461,15 +495,59 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     }
 
     /// <summary>§12.1 (AF4): force a still-deferred session-restore tab through the ordinary
-    /// initialize path now, instead of waiting for its first focus — auto-fetch needs every open
-    /// repo fully loaded before its loop starts. No-op for a tab that is already initializing.</summary>
+    /// initialize path, instead of waiting for its first focus — auto-fetch needs every open
+    /// repo fully loaded before its loop starts. §V10.1.2: enqueued onto the serial background
+    /// pump rather than fired immediately, so a restore does not fan every tab's identity walk +
+    /// status refresh out at once. No-op for a tab that is already initialising.</summary>
     public void EnsureInitialized(RepositoryContext context)
     {
-        bool needsInit;
         lock (_sync)
-            needsInit = _deferredInit.Remove(context);
-        if (needsInit)
-            _ = InitializeContextAsync(context);
+        {
+            if (!_deferredInit.Remove(context))
+                return;
+            _bgInitQueue.Add(context);
+            if (_bgInitPumpIdle)
+            {
+                _bgInitPumpIdle = false;
+                _ = Task.Run(DrainBackgroundInitQueueAsync);
+            }
+        }
+    }
+
+    /// <summary>Initialises the queued background tabs one at a time, and never before the
+    /// focused tab has fully loaded — that tab is what the user is waiting on.</summary>
+    private async Task DrainBackgroundInitQueueAsync()
+    {
+        while (true)
+        {
+            RepositoryContext? foreground, next;
+            lock (_sync)
+            {
+                if (_bgInitQueue.Count == 0) { _bgInitPumpIdle = true; return; }
+                foreground = _foregroundInit;
+                next = _bgInitQueue[0];
+            }
+
+            // Let the focused tab finish loading first (its own graph paint + identity +
+            // RefreshAllAsync). If it is itself the next queued item, don't wait on it here.
+            if (foreground is not null && !ReferenceEquals(foreground, next))
+            {
+                try { await foreground.FirstFullLoad.WaitAsync(foreground.Lifetime).ConfigureAwait(false); }
+                catch { /* focused tab closed before it finished — carry on */ }
+            }
+
+            lock (_sync)
+            {
+                if (_bgInitQueue.Count == 0) { _bgInitPumpIdle = true; return; }
+                next = _bgInitQueue[0];
+                _bgInitQueue.RemoveAt(0);
+                if (!_open.Contains(next))
+                    continue; // closed while queued
+            }
+
+            try { await InitializeContextAsync(next, foreground: false).ConfigureAwait(false); }
+            catch { /* one tab's init failing must not stall the rest */ }
+        }
     }
 
     private void FocusInternal(RepositoryContext context)
@@ -483,11 +561,18 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             old = _focused;
             _focused = context;
             needsInit = _deferredInit.Remove(context);
+            if (needsInit)
+            {
+                // §V10.1.2: a freshly focused deferred tab jumps the background pump — the user
+                // is looking at it now — and becomes the tab the pump waits on before resuming.
+                _bgInitQueue.Remove(context);
+                _foregroundInit = context;
+            }
         }
 
         // §V3-9.3: a placeholder tab initialises through the ordinary open path on first focus.
         if (needsInit)
-            _ = InitializeContextAsync(context);
+            _ = InitializeContextAsync(context, foreground: true);
 
         PersistSession(); // §V3-9.3: focus is recorded, not only tab-set changes.
         FocusedRepositoryChanged?.Invoke(this, new FocusedRepositoryChangedEventArgs(old, context));

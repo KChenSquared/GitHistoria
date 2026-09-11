@@ -54,7 +54,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
     {
         var svc = await DiskBackedServiceAsync();
         await using var ctx = _host.Open(_repo.Path);
-        ctx.MarkFirstGraphPaintDone(); // no graph control here — stand in for its first-paint signal
+        ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone(); // no graph control / workspace here — stand in for the load signals
 
         // Small visible window — the rest must reach disk on its own.
         await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs }, maxRows: 5);

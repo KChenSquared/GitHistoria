@@ -5,12 +5,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
 {
     private const int WalkOverscan = 2_000;
 
-    /// <summary>Safety net for <see cref="MaybeStartBackgroundSpill"/>: how long the background
-    /// full-history walk waits for <see cref="RepositoryContext.FirstGraphPaint"/> before it
-    /// starts anyway. A graph control always completes that signal (paint, failure, or cancel)
-    /// in well under this; the grace only bites a headless open where nothing ever raises it.
-    /// Mirrors <c>WorkspaceService.GraphPriorityTimeout</c>.</summary>
-    private static readonly TimeSpan SpillStartGrace = TimeSpan.FromSeconds(8);
+    /// <summary>Stuck-guard for <see cref="MaybeStartBackgroundSpill"/>: how long the background
+    /// full-history walk waits for this tab to fully load (<see cref="RepositoryContext.FirstGraphPaint"/>
+    /// + <see cref="RepositoryContext.FirstFullLoad"/>) before it starts anyway. In the running
+    /// app both signals always complete; this only bites a headless open where nothing raises
+    /// them — deliberately long so a slow-but-progressing large repo is never cut short.</summary>
+    private static readonly TimeSpan SpillStartGrace = TimeSpan.FromSeconds(180);
 
     /// <summary>Rows per chunk of the background full-history walk (§7.6). Each chunk is a
     /// separate low-priority repo-gate acquisition that *resumes* the primed revwalk (cheap —
@@ -342,10 +342,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
         {
             try
             {
-                // Hold off until the user's first paint for this context is on screen. The walk
-                // below takes the repo gate for a long stretch on a big repo; starting it now
-                // would queue the quick-phase compute and the phase-2 extend behind it.
-                await Task.WhenAny(context.FirstGraphPaint, Task.Delay(SpillStartGrace, ct)).ConfigureAwait(false);
+                // Hold off until this tab is fully loaded — first paint on screen AND its
+                // identity resolution + first RefreshAllAsync done (§12.1 FirstFullLoad). The
+                // walk below still holds the repo gate in bursts and burns CPU; starting it
+                // before the tab has settled would race the quick/extend paint and the tab's
+                // own status/branch work. FirstFullLoad also gates the cross-tab init pump
+                // (WorkspaceService), so by the time it completes the machine is no longer
+                // fanning every restored tab's load out at once. SpillStartGrace is the
+                // headless/no-signal safety net.
+                await Task.WhenAny(
+                    Task.WhenAll(context.FirstGraphPaint, context.FirstFullLoad),
+                    Task.Delay(SpillStartGrace, ct)).ConfigureAwait(false);
                 if (ct.IsCancellationRequested)
                     return;
 
