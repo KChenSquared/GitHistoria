@@ -51,9 +51,9 @@ public sealed partial class CommitGraphControl : Control
     // §V10.1.2/v10.1.3: the silent background crawler pre-loads only this many rows into the
     // resident layout. Deeper history loads on demand as the user scrolls (EnsureExtendedAsync,
     // up to ResidentRowCap) and reaches disk in full via the §7.6 background spill (which also
-    // feeds Ctrl+F search). Crawling all the way to ResidentRowCap (1,000,000 on a big repo)
+    // feeds Ctrl+F search). Crawling all the way to ResidentRowCap (2,000,000 on a big repo)
     // built a multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
-    // Configurable (AppSettings.SilentCrawlRowCap, default 100,000); 0 means uncapped, i.e. the
+    // Configurable (AppSettings.SilentCrawlRowCap, default 300,000); 0 means uncapped, i.e. the
     // crawler runs to ResidentRowCap same as an explicit scroll would. Snapshotted at
     // construction like _graphMetaFromDisk — a mid-session change takes effect on next launch.
     private int _silentCrawlRowCap;
