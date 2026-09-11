@@ -18,6 +18,11 @@ public sealed class RepositoryContext : IAsyncDisposable
     // status refresh, or diff never queues behind the §7.6 background history spill.
     private int _foregroundGateWaiters;
 
+    // Count of callers currently blocked in (or about to enter) WithRepositoryBackgroundAsync.
+    // WithRepositorySpillAsync stands aside while this is non-zero, in addition to standing
+    // aside for genuine foreground work — see its doc comment for why a third tier exists.
+    private int _backgroundGateWaiters;
+
     /// <summary>Longest a <see cref="WithRepositoryBackgroundAsync{T}"/> caller will keep yielding
     /// to foreground work before it forces its own turn — bounds background-spill starvation when
     /// the user is continuously interacting with the tab.</summary>
@@ -179,17 +184,69 @@ public sealed class RepositoryContext : IAsyncDisposable
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
         var yieldStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        Interlocked.Increment(ref _backgroundGateWaiters);
+        try
+        {
+            while (true)
+            {
+                while (Volatile.Read(ref _foregroundGateWaiters) > 0
+                       && System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart) < BackgroundGateMaxYield)
+                    await Task.Delay(20, linked.Token).ConfigureAwait(false);
+
+                await _repoGate.WaitAsync(linked.Token).ConfigureAwait(false);
+
+                // A foreground caller queued between the check above and the acquire — hand it the
+                // turn, unless we have already yielded for as long as we are willing to.
+                if (Volatile.Read(ref _foregroundGateWaiters) > 0
+                    && System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart) < BackgroundGateMaxYield)
+                {
+                    _repoGate.Release();
+                    await Task.Delay(20, linked.Token).ConfigureAwait(false);
+                    continue;
+                }
+                break;
+            }
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _backgroundGateWaiters);
+        }
+        try
+        {
+            return await Task.Run(() => work(_repository), linked.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            _repoGate.Release();
+        }
+    }
+
+    public Task WithRepositoryBackgroundAsync(Action<Repository> work, CancellationToken ct = default)
+        => WithRepositoryBackgroundAsync(repo => { work(repo); return true; }, ct);
+
+    /// <summary>
+    /// Like <see cref="WithRepositoryBackgroundAsync{T}"/> but lower priority still: yields to a
+    /// foreground caller AND to a <see cref="WithRepositoryBackgroundAsync{T}"/> caller, up to
+    /// <see cref="BackgroundGateMaxYield"/>, before taking its own turn. Used by the §7.6
+    /// full-history disk spill, which otherwise sits at the same tier as (and can starve) the
+    /// commit-graph's own silent crawl (also a <see cref="WithRepositoryBackgroundAsync{T}"/>
+    /// caller) — both count as "background" to a genuine foreground request, but the spill has no
+    /// user-visible urgency of its own and the crawl does (it is what grows the scrollbar while
+    /// the graph loads in the background), so the spill is the one that must stand aside here.
+    /// </summary>
+    public async Task<T> WithRepositorySpillAsync<T>(Func<Repository, T> work, CancellationToken ct = default)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
+        var yieldStart = System.Diagnostics.Stopwatch.GetTimestamp();
         while (true)
         {
-            while (Volatile.Read(ref _foregroundGateWaiters) > 0
+            while ((Volatile.Read(ref _foregroundGateWaiters) > 0 || Volatile.Read(ref _backgroundGateWaiters) > 0)
                    && System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart) < BackgroundGateMaxYield)
                 await Task.Delay(20, linked.Token).ConfigureAwait(false);
 
             await _repoGate.WaitAsync(linked.Token).ConfigureAwait(false);
 
-            // A foreground caller queued between the check above and the acquire — hand it the
-            // turn, unless we have already yielded for as long as we are willing to.
-            if (Volatile.Read(ref _foregroundGateWaiters) > 0
+            if ((Volatile.Read(ref _foregroundGateWaiters) > 0 || Volatile.Read(ref _backgroundGateWaiters) > 0)
                 && System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart) < BackgroundGateMaxYield)
             {
                 _repoGate.Release();
@@ -208,8 +265,8 @@ public sealed class RepositoryContext : IAsyncDisposable
         }
     }
 
-    public Task WithRepositoryBackgroundAsync(Action<Repository> work, CancellationToken ct = default)
-        => WithRepositoryBackgroundAsync(repo => { work(repo); return true; }, ct);
+    public Task WithRepositorySpillAsync(Action<Repository> work, CancellationToken ct = default)
+        => WithRepositorySpillAsync(repo => { work(repo); return true; }, ct);
 
     /// <summary>
     /// Marks a scope as one of Historia's own Git operations so the watcher suppresses the

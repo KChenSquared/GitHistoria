@@ -444,13 +444,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 {
                     int target;
                     lock (cache) target = Math.Min(cache.Commits.Count + SpillWalkChunkRows, ceiling);
-                    await EnsureWalkedAsync(context, query, cache, target, ct, background: true)
+                    await EnsureWalkedAsync(context, query, cache, target, ct, background: true, lowestPriority: true)
                         .ConfigureAwait(false);
                     bool walkDone;
                     lock (cache) walkDone = cache.Exhausted || cache.Commits.Count >= cap;
                     if (walkDone)
                         break;
-                    await Task.Delay(150, ct).ConfigureAwait(false); // let foreground gate work in
+                    await Task.Delay(150, ct).ConfigureAwait(false); // let foreground + crawl gate work in
                 }
 
                 while (!ct.IsCancellationRequested)
@@ -605,7 +605,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
     private async Task EnsureWalkedAsync(
         RepositoryContext context, GraphQuery query, RepoCache cache, int wantCount, CancellationToken ct,
-        bool background = false)
+        bool background = false, bool lowestPriority = false)
     {
         if (cache.Exhausted || cache.Commits.Count >= wantCount)
             return;
@@ -617,9 +617,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
         Diagnostics.PerfLog.Mark($"EnsureWalked need {wantCount}, have {cache.Commits.Count}, decoFp={deco?.Fingerprint ?? 0}");
         var repoPath = context.RepositoryPath;
         var expectedEngine = ExpectedEngine(query);
-        Task<GatePrep> WithRepo(Func<Repository, GatePrep> work) => background
-            ? context.WithRepositoryBackgroundAsync(work, ct)
-            : context.WithRepositoryAsync(work, ct);
+        // §V10.1.2: three gate tiers, not two — a genuine foreground caller always wins; the
+        // commit-graph's own silent crawl (background, but user-visible — it grows the
+        // scrollbar) comes next; the §7.6 full-history disk spill (background, no urgency of its
+        // own) is lowestPriority and stands aside for either of the other two so it can never
+        // starve the crawl the way it used to when both were the same tier.
+        Task<GatePrep> WithRepo(Func<Repository, GatePrep> work) => (background, lowestPriority) switch
+        {
+            (true, true) => context.WithRepositorySpillAsync(work, ct),
+            (true, false) => context.WithRepositoryBackgroundAsync(work, ct),
+            _ => context.WithRepositoryAsync(work, ct),
+        };
 
         // Step 1 — on the repo gate: fingerprint, the on-disk cache probe, and (only for the
         // libgit2 engine) the actual walk pull. For the CLI engine this deliberately stops short
