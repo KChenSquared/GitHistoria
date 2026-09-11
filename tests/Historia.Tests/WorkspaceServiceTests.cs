@@ -5,12 +5,12 @@ public class WorkspaceServiceTests : IAsyncDisposable
     private readonly MiniHost _host = new();
     private RecentRepositoryService? _recents;
 
-    private WorkspaceService NewWorkspace()
+    private WorkspaceService NewWorkspace(IRepoIdentityService? identity = null)
     {
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
         var recents = _recents = new RecentRepositoryService(_host.Settings);
         var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
-        var identity = new RepoIdentityService(cli);
+        identity ??= new RepoIdentityService(cli);
         return new WorkspaceService(_host.Provider, cli, recents, profiles, identity);
     }
 
@@ -254,6 +254,136 @@ public class WorkspaceServiceTests : IAsyncDisposable
         Assert.Equal(2, node["schemaVersion"]!.GetValue<int>());
         Assert.Equal(Norm(r1.Path), Norm(node["focusedPath"]!.GetValue<string>()));
         Assert.Single(node["paths"]!.AsArray());
+    }
+
+    // ── v10.1.3: focus-priority interrupt-and-promote ──
+
+    [Fact(Timeout = 20000)]
+    public async Task Focusing_away_mid_init_leaves_FirstFullLoad_incomplete_until_retried()
+    {
+        var identity = new SlowIdentityService();
+        var ws = NewWorkspace(identity);
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone(); // skip the first-paint ceiling wait — no graph control here
+        var ctx2 = await ws.OpenAsync(r2.Path); // focus switch: interrupts ctx1's in-flight identity resolution
+        ctx2.MarkFirstGraphPaintDone();
+        identity.Release(r2.Path); // ctx2 resolves quickly and finishes on its own
+
+        Assert.False(ctx1.FirstFullLoad.IsCompleted, "an interrupted attempt must not be marked done");
+
+        identity.Release(r1.Path); // let the pump's retry of ctx1 proceed
+        await ctx1.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(ctx1.FirstFullLoad.IsCompleted);
+
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task Focusing_a_previously_interrupted_tab_is_promoted_ahead_of_the_tab_that_displaced_it()
+    {
+        var identity = new SlowIdentityService();
+        var ws = NewWorkspace(identity);
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone();
+        var ctx2 = await ws.OpenAsync(r2.Path); // interrupts ctx1, ctx2 becomes foreground
+        ctx2.MarkFirstGraphPaintDone();
+
+        ws.Focus(ctx1); // interrupts ctx2 in turn, promotes ctx1 back to foreground immediately
+
+        Assert.False(ctx2.FirstFullLoad.IsCompleted);
+
+        identity.Release(r1.Path); // only ctx1's gate — ctx2's stays blocked the whole test
+        await ctx1.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(ctx1.FirstFullLoad.IsCompleted, "promoted tab must not wait behind the tab it displaced");
+        Assert.False(ctx2.FirstFullLoad.IsCompleted, "the displaced tab was never released and must still be pending");
+
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task Rapid_focus_toggling_between_two_loading_tabs_does_not_hang_and_both_eventually_finish()
+    {
+        var identity = new SlowIdentityService();
+        var ws = NewWorkspace(identity);
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone();
+        var ctx2 = await ws.OpenAsync(r2.Path);
+        ctx2.MarkFirstGraphPaintDone();
+
+        for (var i = 0; i < 5; i++)
+        {
+            ws.Focus(ctx1);
+            ws.Focus(ctx2);
+        }
+
+        identity.Release(r1.Path);
+        identity.Release(r2.Path);
+
+        await ctx1.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(15));
+        await ctx2.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.True(ctx1.FirstFullLoad.IsCompleted);
+        Assert.True(ctx2.FirstFullLoad.IsCompleted);
+
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task Closing_a_tab_while_its_interrupted_attempt_is_queued_does_not_resurrect_it()
+    {
+        var identity = new SlowIdentityService();
+        var ws = NewWorkspace(identity);
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone();
+        var ctx2 = await ws.OpenAsync(r2.Path); // interrupts + requeues ctx1
+        ctx2.MarkFirstGraphPaintDone();
+        identity.Release(r2.Path);
+
+        await ws.CloseAsync(ctx1); // closed while its interrupted attempt sits in _bgInitQueue
+
+        identity.Release(r1.Path);
+        await Task.Delay(500); // give the pump a chance to (wrongly) resurrect it, if it were going to
+        Assert.DoesNotContain(ctx1, ws.OpenRepositories);
+
+        await ws.DisposeAsync();
+    }
+
+    // ── v10.1.3: identity resolution runs concurrently with the first refs/status refresh ──
+
+    [Fact(Timeout = 20000)]
+    public async Task RefreshAllAsync_runs_concurrently_with_identity_resolution_not_after_it()
+    {
+        var identity = new SlowIdentityService(); // blocks every context until released
+        var ws = NewWorkspace(identity);
+        using var r1 = Repo("a.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone();
+
+        var statusRaised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx1.State.StatusChanged += (_, _) => statusRaised.TrySetResult();
+
+        // Identity resolution is still blocked (never released) — if RefreshAllAsync waited for it
+        // to finish first (the old sequential behavior), this would time out.
+        await statusRaised.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(ctx1.FirstFullLoad.IsCompleted, "identity is still blocked, so the attempt as a whole isn't done");
+        identity.Release(r1.Path);
+        await ctx1.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await ws.DisposeAsync();
     }
 
     public async ValueTask DisposeAsync() => await _host.DisposeAsync();

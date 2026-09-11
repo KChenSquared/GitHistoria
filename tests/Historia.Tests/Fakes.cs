@@ -186,3 +186,37 @@ public sealed class RecordingGitCliService : IGitCliService
         return Task.FromResult(new GitCliResult(0, "", "", GitErrorKind.None, TimeSpan.Zero));
     }
 }
+
+/// <summary>An <see cref="IRepoIdentityService"/> that blocks resolution for a given repository
+/// path until <see cref="Release"/> is called for that path (or the caller's token is cancelled)
+/// — for tests that need a deterministic window where a specific context's identity resolution
+/// is known to still be in flight, independent of any other context's.</summary>
+public sealed class SlowIdentityService : IRepoIdentityService
+{
+    private readonly Dictionary<string, TaskCompletionSource> _gates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _sync = new();
+
+    // RepositoryContext.RepositoryPath is libgit2's WorkingDirectory, which always ends in a
+    // trailing separator and is a fully-qualified path — normalize so a caller's plain test path
+    // (e.g. TestRepositoryBuilder.Path) keys to the same gate.
+    private static string Norm(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    private TaskCompletionSource GateFor(string path)
+    {
+        var key = Norm(path);
+        lock (_sync)
+        {
+            if (!_gates.TryGetValue(key, out var tcs))
+                _gates[key] = tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            return tcs;
+        }
+    }
+
+    public void Release(string path) => GateFor(path).TrySetResult();
+
+    public async Task<RepoIdentityKey> ResolveAsync(RepositoryContext context, CancellationToken ct = default)
+    {
+        await GateFor(context.RepositoryPath).Task.WaitAsync(ct).ConfigureAwait(false);
+        return new RepoIdentityKey(context.RepositoryPath);
+    }
+}
