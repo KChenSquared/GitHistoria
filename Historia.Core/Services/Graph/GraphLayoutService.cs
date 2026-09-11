@@ -174,7 +174,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     public async Task<GraphLayoutResult> ExtendLayoutAsync(
-        RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default)
+        RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default,
+        bool background = false)
     {
         RepoCache? cache;
         lock (_sync)
@@ -184,7 +185,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         var want = existing.State.Rows.Count + additionalRows + WalkOverscan;
         await EnsureWalkedAsync(context, new GraphQuery { RefScope = cache.Scope, IncludeRemoteBranches = cache.IncludeRemotes },
-            cache, want, ct).ConfigureAwait(false);
+            cache, want, ct, background).ConfigureAwait(false);
 
         // Extend mutates existing.State in place; run it to completion (a handful of ms for
         // <=5k rows) rather than risk a cancellation leaving that shared state half-updated.

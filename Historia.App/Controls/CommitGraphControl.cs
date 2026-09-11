@@ -48,6 +48,13 @@ public sealed partial class CommitGraphControl : Control
     private bool _graphMetaFromDisk;
     private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk);
 
+    // §V10.1.2: the silent background crawler pre-loads only this many rows into the resident
+    // layout. Deeper history loads on demand as the user scrolls (EnsureExtendedAsync, up to
+    // ResidentRowCap) and reaches disk in full via the §7.6 background spill (which also feeds
+    // Ctrl+F search). Crawling all the way to ResidentRowCap (1,000,000 on a big repo) built a
+    // multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
+    private const int SilentCrawlRowCap = 20_000;
+
     private IReadOnlyList<GraphColumn> _columns = GraphColumnDefaults.All;
     private bool _graphWidthPinned;
 
@@ -102,7 +109,8 @@ public sealed partial class CommitGraphControl : Control
         int TargetRow,
         int BatchSize,
         TaskCompletionSource? Completion,
-        CancellationToken Token);
+        CancellationToken Token,
+        bool Background = false); // silent crawler → low-priority repo gate; scroll → foreground
 
     private Channel<ExtendRequest>? _extendChannel;
     private int _cappedNotified;
@@ -969,10 +977,13 @@ public sealed partial class CommitGraphControl : Control
                         continue;
                     }
 
-                    var cap = ResidentRowCap;
+                    // The silent crawler stops at SilentCrawlRowCap (by design, not a memory
+                    // limit — no toast); scroll-driven requests run to the true resident cap.
+                    var cap = req.Background ? Math.Min(SilentCrawlRowCap, ResidentRowCap) : ResidentRowCap;
                     if (current.Layout.RowCount >= cap)
                     {
-                        NotifyResidentCapReached(current.Layout.RowCount);
+                        if (!req.Background)
+                            NotifyResidentCapReached(current.Layout.RowCount);
                         req.Completion?.TrySetResult();
                         break;
                     }
@@ -986,7 +997,7 @@ public sealed partial class CommitGraphControl : Control
 
                     try
                     {
-                        var extended = await _layoutService.ExtendLayoutAsync(req.Context, current, batch, ct).ConfigureAwait(false);
+                        var extended = await _layoutService.ExtendLayoutAsync(req.Context, current, batch, ct, req.Background).ConfigureAwait(false);
                         if (extended.Layout.RowCount > current.Layout.RowCount && ReferenceEquals(req.Context, _context))
                         {
                             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -1056,24 +1067,31 @@ public sealed partial class CommitGraphControl : Control
         try
         {
             await Task.Yield();
-            var cap = ResidentRowCap;
+
+            // §V10.1.2: don't pre-load history until this tab has fully loaded (first paint +
+            // its own identity resolution + first RefreshAllAsync). Otherwise the crawl floods
+            // the foreground repo gate with ~1 request/second and the tab's own status/branch
+            // work is starved (observed: a 47 s footer freeze mid-crawl on linux). Bounded
+            // guard for a headless/no-signal path. Mirrors MaybeStartBackgroundSpill.
+            await Task.WhenAny(context.FirstFullLoad, Task.Delay(TimeSpan.FromSeconds(30), ct)).ConfigureAwait(false);
+            if (ct.IsCancellationRequested || !ReferenceEquals(context, _context))
+                return;
+
+            var cap = Math.Min(SilentCrawlRowCap, ResidentRowCap);
 
             while (!ct.IsCancellationRequested && ReferenceEquals(context, _context))
             {
                 if (_layout is not { } current || current.Layout.IsComplete)
                     break;
                 if (current.Layout.RowCount >= cap)
-                {
-                    NotifyResidentCapReached(current.Layout.RowCount);
-                    break;
-                }
+                    break; // reached the silent pre-load ceiling — deeper history loads on scroll
 
                 if (_extendChannel is not { } channel)
                     break;
 
                 var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 const int batch = 5_000;
-                if (!channel.Writer.TryWrite(new ExtendRequest(context, -1, batch, tcs, ct)))
+                if (!channel.Writer.TryWrite(new ExtendRequest(context, -1, batch, tcs, ct, Background: true)))
                     break;
 
                 await tcs.Task.WaitAsync(ct).ConfigureAwait(false);

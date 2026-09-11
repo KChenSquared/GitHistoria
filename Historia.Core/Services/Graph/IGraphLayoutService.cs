@@ -29,10 +29,12 @@ public interface IGraphLayoutService
     /// <summary>
     /// Continues the walk from where <paramref name="existing"/> left off, appending up to
     /// <paramref name="additionalRows"/> rows. Lane indices already assigned are never
-    /// renumbered.
+    /// renumbered. <paramref name="background"/> routes the walk through the low-priority repo
+    /// gate (the silent pre-load crawler); scroll-driven extends leave it false.
     /// </summary>
     Task<GraphLayoutResult> ExtendLayoutAsync(
-        RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default);
+        RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default,
+        bool background = false);
 
     /// <summary>
     /// Recomputes the layout after a history change (§7.3 invalidation table). Appended commits
