@@ -385,6 +385,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         cache.SpilledRows = to;
         cache.MetaComplete = exhausted;
         cache.MetaStore?.SetCount(to);
+        Diagnostics.PerfLog.Mark($"graph cache write: spill {snap.Count} rows ({repoPath})");
     }
 
     /// <summary>
@@ -440,6 +441,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // reseed, no BuildDecorations), yielding the gate between chunks so a tab
                 // switch / scroll / status refresh on this repo waits at most one chunk's pull.
                 var ceiling = cap + WalkOverscan;
+                var lastPreloadMemoryMark = 0;
                 while (true)
                 {
                     int target;
@@ -460,12 +462,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     int walkedSoFar;
                     bool walkDone;
                     lock (cache) { walkedSoFar = cache.Commits.Count; walkDone = cache.Exhausted || walkedSoFar >= cap; }
+                    if (walkedSoFar / 50_000 != lastPreloadMemoryMark / 50_000)
+                        Diagnostics.PerfLog.Memory($"silent pre-load {walkedSoFar} rows ({context.DisplayName})");
+                    lastPreloadMemoryMark = walkedSoFar;
                     _commitGraphMaintenance?.MaybeSchedule(context, walkedSoFar);
                     if (walkDone)
                         break;
                     await Task.Delay(150, ct).ConfigureAwait(false); // let foreground + crawl gate work in
                 }
 
+                var lastDiskWriterMemoryMark = 0;
                 while (!ct.IsCancellationRequested)
                 {
                     int from, to;
@@ -482,6 +488,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
                         if (to > 0)
                             StubResidentMetadata(cache, to);
                     }
+                    if (to / 100_000 != lastDiskWriterMemoryMark / 100_000)
+                        Diagnostics.PerfLog.Memory($"disk writer {to} rows ({context.DisplayName})");
+                    lastDiskWriterMemoryMark = to;
                     if (to <= from || done)
                         break;
                     await Task.Delay(150, ct).ConfigureAwait(false); // let UI git ops interleave

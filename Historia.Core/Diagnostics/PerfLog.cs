@@ -57,6 +57,33 @@ public static class PerfLog
     public static IDisposable Scope(string label) =>
         Enabled ? new Timer(label) : Noop.Instance;
 
+    /// <summary>
+    /// v10.1.4 (graph memory footprint plan, Phase 0): one line of GC/process memory stats,
+    /// tagged with <paramref name="label"/> so a run can be sliced by phase (quick paint, first
+    /// paint, every 50k rows of silent pre-load, every 100k rows of the disk writer, before/after
+    /// a tab-switch purge, 60s idle). Cheap enough to call from a hot loop when disabled — the
+    /// early-out below is the only cost — but every field here is itself a GC query, so callers
+    /// still gate frequent call sites behind a row-count stride rather than calling per row.
+    /// </summary>
+    public static void Memory(string label)
+    {
+        if (!Enabled)
+            return;
+        try
+        {
+            var info = GC.GetGCMemoryInfo();
+            var gen = info.GenerationInfo;
+            var loh = gen.Length > 3 ? gen[3].SizeAfterBytes : 0L;
+            var poh = gen.Length > 4 ? gen[4].SizeAfterBytes : 0L;
+            static long Mb(long bytes) => bytes / (1024 * 1024);
+            Mark(
+                $"memory: {label}  heap={Mb(info.HeapSizeBytes)}MB  frag={Mb(info.FragmentedBytes)}MB  " +
+                $"loh={Mb(loh)}MB  poh={Mb(poh)}MB  committed={Mb(info.TotalCommittedBytes)}MB  " +
+                $"workingSet={Mb(Environment.WorkingSet)}MB  totalAllocated={Mb(GC.GetTotalAllocatedBytes())}MB");
+        }
+        catch { /* diagnostics must never throw */ }
+    }
+
     private sealed class Timer(string label) : IDisposable
     {
         private readonly long _start = Stopwatch.GetTimestamp();
