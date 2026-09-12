@@ -31,6 +31,7 @@ public sealed partial class CommitGraphControl : Control
     private IServiceProvider _services = default!;
     private IWorkspaceService _workspace = default!;
     private IGraphLayoutService _layoutService = default!;
+    private IBackgroundWorkGate? _backgroundWorkGate;
     private IThemeService _theme = default!;
     private IDialogService _dialogs = default!;
     private INotificationService _notifications = default!;
@@ -399,6 +400,7 @@ public sealed partial class CommitGraphControl : Control
         _services = services;
         _workspace = services.GetRequiredService<IWorkspaceService>();
         _layoutService = services.GetRequiredService<IGraphLayoutService>();
+        _backgroundWorkGate = services.GetService<IBackgroundWorkGate>();
         _theme = services.GetRequiredService<IThemeService>();
         _dialogs = services.GetRequiredService<IDialogService>();
         _notifications = services.GetRequiredService<INotificationService>();
@@ -854,6 +856,11 @@ public sealed partial class CommitGraphControl : Control
             // graph-paint attempt is done. WorkspaceService.InitializeContextAsync is waiting on
             // this (bounded by its own timeout) before it starts touching the repo itself.
             context.MarkFirstGraphPaintDone();
+
+            // v10 graph memory footprint plan, Phase 1: the background-write gate's other half
+            // of "done loading" -- this context's first-paint attempt FOR THE CURRENT FOCUS,
+            // whether it painted, was cancelled, or failed.
+            _backgroundWorkGate?.ReportGraphSettled(context);
         }
     }
 

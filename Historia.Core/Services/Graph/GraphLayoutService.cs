@@ -26,6 +26,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private readonly IGitExecutableLocator? _locator;
     private readonly CommitGraphMaintenance? _commitGraphMaintenance;
 
+    /// <summary>v10 graph memory footprint plan, Phase 1: null in every ctor except the 4-arg DI
+    /// one below — tests that don't pass a gate keep today's un-gated behaviour (an "always open"
+    /// gate), matching the plan's own recommendation for test constructors.</summary>
+    private readonly IBackgroundWorkGate? _gate;
+
     /// <summary>§7.6: page per-commit metadata from a random-access file instead of keeping
     /// it resident. Read once — the setting takes effect on the next launch.</summary>
     private readonly bool _metaFromDisk;
@@ -57,6 +62,21 @@ public sealed class GraphLayoutService : IGraphLayoutService
         _commitGraphMaintenance = new CommitGraphMaintenance(cli, settings);
     }
 
+    /// <summary>DI ctor (v10 graph memory footprint plan, Phase 1): additionally routes every
+    /// background writer through <see cref="IBackgroundWorkGate"/> — no commit-graph write and no
+    /// graph disk-cache write starts, for any tab, until the focused tab is done loading.</summary>
+    public GraphLayoutService(ISettingsService settings, IGitExecutableLocator locator, IGitCliService cli, IBackgroundWorkGate gate)
+        : this(settings, locator)
+    {
+        _gate = gate;
+        _commitGraphMaintenance = new CommitGraphMaintenance(cli, settings, gate);
+    }
+
+    /// <summary>Awaits the gate if one was supplied; a no-op ("always open") for the test ctors
+    /// above that never received one.</summary>
+    private Task WaitForGateAsync(CancellationToken ct) =>
+        _gate?.WaitUntilOpenAsync(ct) ?? Task.CompletedTask;
+
     /// <summary>The engine a FRESH prime would use right now — decidable with no repo access
     /// (locator + query only), so it can gate a disk-cache probe before the repo gate is even
     /// taken, and gate the optimistic (pre-fingerprint) snapshot path too.</summary>
@@ -80,6 +100,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
         public DiskCommitStore? MetaStore { get; set; }
         public readonly object SpillSync = new();
         public readonly CancellationTokenSource Cts = new();
+
+        /// <summary>v10 graph memory footprint plan, Phase 1: the background spill's own Task, so
+        /// <see cref="IGraphLayoutService.Hibernate"/> can cancel <see cref="Cts"/> and then await
+        /// this before disposing <see cref="LiveWalk"/> — never racing a Dispose against a spill
+        /// chunk that may still be mid-<c>MoveNext</c>.</summary>
+        public Task? BackgroundSpillTask { get; set; }
 
         // §V10.1.2: row count as of the last queued GraphWalkCache.Save — debounces the .gz
         // rewrite so a long run of small foreground extends (the silent crawler) doesn't
@@ -312,6 +338,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     {
         var rowCount = result.Layout.RowCount;
         var repoPath = context.RepositoryPath;
+        // Phase 1 background-write gate: opening an EXISTING matching store below is a read and
+        // always allowed; only a fresh SpillRange write waits for the gate. When the gate is
+        // closed and there is nothing to open yet, this call falls through to the in-memory
+        // ArrayCommitStore fallback further down — exactly the "resident metadata" frame the
+        // plan specifies for first paint while the gate is still closed.
+        var gateOpen = _gate?.IsOpen ?? true;
 
         try
         {
@@ -326,7 +358,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     cache.SpilledRows = warm.Count;
                 }
 
-                if (cache.Fingerprint != 0 && rowCount > cache.SpilledRows)
+                if (gateOpen && cache.Fingerprint != 0 && rowCount > cache.SpilledRows)
                     SpillRange(cache, repoPath, includeRemotes, cache.SpilledRows, rowCount, result.Layout.IsComplete);
                 else
                     cache.MetaStore?.SetCount(Math.Max(cache.MetaStore.Count, rowCount));
@@ -418,21 +450,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
 
         var ct = cache.Cts.Token;
-        _ = Task.Run(async () =>
+        var spillTask = Task.Run(async () =>
         {
             try
             {
-                // Hold off until this tab is fully loaded — first paint on screen AND its
-                // identity resolution + first RefreshAllAsync done (§12.1 FirstFullLoad). The
-                // walk below still holds the repo gate in bursts and burns CPU; starting it
-                // before the tab has settled would race the quick/extend paint and the tab's
-                // own status/branch work. FirstFullLoad also gates the cross-tab init pump
-                // (WorkspaceService), so by the time it completes the machine is no longer
-                // fanning every restored tab's load out at once. SpillStartGrace is the
-                // headless/no-signal safety net.
-                await Task.WhenAny(
-                    Task.WhenAll(context.FirstGraphPaint, context.FirstFullLoad),
-                    Task.Delay(SpillStartGrace, ct)).ConfigureAwait(false);
+                // v10 graph memory footprint plan, Phase 1: no start-anyway timeout in the app —
+                // this waits on IBackgroundWorkGate, which is the same "focused tab is done
+                // loading" definition SpillStartGrace used to approximate with a 180s fallback.
+                // A gate-less test ctor (no IBackgroundWorkGate supplied) behaves as "always
+                // open", matching every existing test's expectations.
+                await WaitForGateAsync(ct).ConfigureAwait(false);
                 if (ct.IsCancellationRequested)
                     return;
 
@@ -474,6 +501,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 var lastDiskWriterMemoryMark = 0;
                 while (!ct.IsCancellationRequested)
                 {
+                    // Phase 1: every writer awaits the gate before it starts AND between
+                    // batches — a tab switch pauses this loop within one batch's write.
+                    await WaitForGateAsync(ct).ConfigureAwait(false);
+                    if (ct.IsCancellationRequested)
+                        break;
+
                     int from, to;
                     bool done;
                     lock (cache.SpillSync)
@@ -523,6 +556,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 }
             }
         }, ct);
+        cache.BackgroundSpillTask = spillTask;
     }
 
     /// <summary>Replace the resident <see cref="CommitMetadata"/> <b>strings</b> for rows already
@@ -590,6 +624,76 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
             _caches.Remove(context);
         }
+    }
+
+    /// <inheritdoc/>
+    public async Task Hibernate(RepositoryContext context)
+    {
+        RepoCache? cache;
+        lock (_sync)
+        {
+            if (!_caches.TryGetValue(context, out cache))
+                return;
+            _caches.Remove(context);
+        }
+
+        try { cache.Cts.Cancel(); } catch (ObjectDisposedException) { }
+
+        // R3a: let the background spill observe the cancellation and finish its own turn before
+        // this touches LiveWalk — disposing it while a chunk may still be mid-MoveNext is exactly
+        // the race DropLiveWalk exists to avoid. A stuck spill (repo gate never freed) falls back
+        // to the same off-gate drop Forget already uses, rather than hanging tab-switch forever.
+        if (cache.BackgroundSpillTask is { } spillTask)
+        {
+            try { await spillTask.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
+            catch { /* timed out or faulted — best effort, DropLiveWalk below is the fallback */ }
+        }
+
+        cache.MetaStore?.Dispose();
+        cache.MetaStore = null;
+        cache.MetaWriter = null;
+
+        if (cache.LiveWalk is { } walk)
+        {
+            try
+            {
+                if (cache.Engine == WalkEngine.Cli)
+                {
+                    // GitLogStream is a separate process, not libgit2-backed — no repo gate
+                    // needed, only serialization against a concurrent foreground pull.
+                    await cache.WalkLock.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        if (ReferenceEquals(cache.LiveWalk, walk))
+                            cache.DisposeLiveWalk();
+                    }
+                    finally { cache.WalkLock.Release(); }
+                }
+                else
+                {
+                    // The libgit2 revwalk enumerator holds native handles — dispose it from
+                    // inside a repo-gate turn like every other libgit2 access.
+                    await context.WithRepositoryBackgroundAsync(_ =>
+                    {
+                        if (ReferenceEquals(cache.LiveWalk, walk))
+                            cache.DisposeLiveWalk();
+                        return true;
+                    }).ConfigureAwait(false);
+                }
+            }
+            catch { cache.DropLiveWalk(); } // repo already closing / gate unavailable — best effort
+        }
+
+        lock (cache)
+        {
+            cache.Commits.Clear();
+            cache.Decorations = [];
+        }
+        try { cache.Cts.Dispose(); } catch { /* best effort */ }
+
+        // R4: drop this repo's .gz read-cache entry too — kept resident it would outlive the tab
+        // switch for the rest of the session.
+        _walkCache.Evict(context.RepositoryPath);
     }
 
     public int ClearPersistentCache()
@@ -724,7 +828,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 engine = cache.Engine;
             }
             if (save)
-                _ = Task.Run(() => _walkCache.Save(repoPath, query, fp, exhausted, commits, decos, engine));
+                // Phase 1 background-write gate: queued until the gate opens rather than fired
+                // immediately — during first paint this used to run inside the gate-closed
+                // window (R7b).
+                _ = Task.Run(async () =>
+                {
+                    await WaitForGateAsync(CancellationToken.None).ConfigureAwait(false);
+                    _walkCache.Save(repoPath, query, fp, exhausted, commits, decos, engine);
+                });
         }
     }
 

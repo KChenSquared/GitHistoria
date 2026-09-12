@@ -49,6 +49,17 @@ public interface IGraphLayoutService
     void Forget(RepositoryContext context);
 
     /// <summary>
+    /// v10 graph memory footprint plan, Phase 1: releases everything a tab's graph holds in
+    /// memory when the user switches away from it — cancels its background disk-cache spill,
+    /// disposes its live walk (killing the CLI engine's <c>git.exe</c> if one is running), drops
+    /// its resident commit list and decorations, and evicts its <c>.gz</c> read-cache entry.
+    /// Unlike <see cref="Forget"/> this is NOT a full teardown: a partial on-disk cache is left in
+    /// place for the next focus to resume from, and returning to the tab is a normal
+    /// <see cref="ComputeLayoutAsync"/>. Safe to call for a context with no cache (no-op).
+    /// </summary>
+    Task Hibernate(RepositoryContext context);
+
+    /// <summary>
     /// Deletes the on-disk persisted graph walk and drops the in-memory decoration caches.
     /// The next graph open re-walks from scratch. Returns the number of files removed.
     /// </summary>

@@ -693,6 +693,51 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
         PersistSession(); // §V3-9.3: focus is recorded, not only tab-set changes.
         FocusedRepositoryChanged?.Invoke(this, new FocusedRepositoryChangedEventArgs(old, context));
+
+        // v10 graph memory footprint plan, Phase 1b/1c: release the outgoing tab's graph memory
+        // and, once the newly focused tab is done loading, hand the freed heap back to the OS.
+        if (old is not null)
+            _ = HibernateAndReclaimAsync(old, context);
+    }
+
+    /// <summary>Phase 1b: releases everything the outgoing tab's graph held in memory (cancels its
+    /// background spill, disposes its live walk, drops its resident commit list). Phase 1c: once
+    /// the newly focused tab's background-write gate opens (so the pause never lands inside its
+    /// own first paint) and focus has been stable for 2s (so a burst of switches triggers one
+    /// collection, not several), runs a compacting GC to actually shrink the working set — below
+    /// ~90% memory load the GC prefers background collections that free live objects without
+    /// returning the heap size to the OS.</summary>
+    private async Task HibernateAndReclaimAsync(RepositoryContext old, RepositoryContext newContext)
+    {
+        if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
+            is Historia.Services.Graph.IGraphLayoutService graphSvc)
+        {
+            try { await graphSvc.Hibernate(old).ConfigureAwait(false); }
+            catch { /* best effort — memory release must never surface as a fatal error */ }
+        }
+
+        if (_services.GetService(typeof(IBackgroundWorkGate)) is IBackgroundWorkGate gate)
+        {
+            try { await gate.WaitUntilOpenAsync(newContext.Lifetime).ConfigureAwait(false); }
+            catch { return; } // the new tab closed before it finished loading
+        }
+
+        try { await Task.Delay(TimeSpan.FromSeconds(2), newContext.Lifetime).ConfigureAwait(false); }
+        catch { return; } // focus moved again (or the tab closed) during the debounce
+
+        lock (_sync)
+        {
+            if (!ReferenceEquals(_focused, newContext))
+                return; // focus moved again right at the debounce boundary
+        }
+
+        Historia.Diagnostics.PerfLog.Memory("before tab-switch GC compaction");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+        sw.Stop();
+        Historia.Diagnostics.PerfLog.Memory("after tab-switch GC compaction");
+        Historia.Diagnostics.PerfLog.Mark($"tab-switch GC compaction: {sw.Elapsed.TotalMilliseconds:F1}ms");
     }
 
     private void RaiseOpenChanged()

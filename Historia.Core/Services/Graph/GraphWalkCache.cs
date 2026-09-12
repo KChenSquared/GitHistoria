@@ -150,6 +150,17 @@ internal sealed class GraphWalkCache
         return GetOrConvert(entry!, metadataOnDisk);
     }
 
+    /// <summary>v10 graph memory footprint plan, Phase 1 (R4): drops this repo's cached read
+    /// entry (the raw DTO plus up to two converted <see cref="Loaded"/> commit lists) — called on
+    /// <see cref="GraphLayoutService.Hibernate"/> so a warm-loaded repo's walk cache doesn't stay
+    /// resident for the rest of the session after the tab is switched away from. A miss on the
+    /// next read is no different from one past <see cref="ReadCacheTtl"/> — just a re-read.</summary>
+    public void Evict(string repoPath)
+    {
+        lock (_readCacheSync)
+            _readCache.Remove(repoPath);
+    }
+
     private CachedRead? GetCachedRead(string repoPath)
     {
         lock (_readCacheSync)

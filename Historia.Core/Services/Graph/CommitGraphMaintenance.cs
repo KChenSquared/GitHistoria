@@ -15,7 +15,7 @@ namespace Historia.Services.Graph;
 /// invocations. Each repository is attempted at most once per process lifetime.
 /// </para>
 /// </summary>
-internal sealed class CommitGraphMaintenance(IGitCliService cli, ISettingsService settings)
+internal sealed class CommitGraphMaintenance(IGitCliService cli, ISettingsService settings, IBackgroundWorkGate? gate = null)
 {
     private const int MinCommitsToWrite = 30_000;
 
@@ -55,6 +55,12 @@ internal sealed class CommitGraphMaintenance(IGitCliService cli, ISettingsServic
         {
             if (HasCommitGraph(context.GitDirectory))
                 return;
+
+            // v10 graph memory footprint plan, Phase 1: `git commit-graph write` awaits the gate
+            // before starting only — once running it is never killed (see the plan's
+            // documentation check on git's lockfile cleanup and Process.Kill/TerminateProcess).
+            if (gate is not null)
+                await gate.WaitUntilOpenAsync(context.Lifetime).ConfigureAwait(false);
 
             await Gate.WaitAsync(context.Lifetime).ConfigureAwait(false);
             try
