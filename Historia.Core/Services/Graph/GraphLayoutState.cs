@@ -25,6 +25,15 @@ public sealed class GraphLayoutState
     /// <summary>parent id → the child reservations expecting it.</summary>
     internal readonly Dictionary<ObjectId, List<Reservation>> Reservations = [];
 
+    /// <summary>Phase 5(a) (v10 graph memory footprint plan): canonicalizes <see cref="ObjectId"/>
+    /// instances across <see cref="Reservations"/> and <see cref="RowByCommitId"/> — a commit is
+    /// first seen as a reservation key (via its child's own, separately-parsed
+    /// <c>ParentIds</c> entry) rows before it is ever seen as a row itself (in a topo walk, a
+    /// parent's row always comes after its children's), so without this, <c>RowByCommitId</c>
+    /// would key on yet another freshly-parsed instance of the same SHA instead of reusing the one
+    /// already resident. See <c>DagLayoutEngine.Intern</c>.</summary>
+    internal readonly Dictionary<ObjectId, ObjectId> InternedIds = [];
+
     /// <summary>
     /// raw lane → how many pending reservations name it as their parent lane (i.e. entries with
     /// <see cref="Reservation.RawLane"/> ≥ 0). Lets <c>ReleaseLane</c> answer "is this lane still

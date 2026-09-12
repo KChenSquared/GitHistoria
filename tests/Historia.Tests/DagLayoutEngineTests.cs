@@ -886,4 +886,57 @@ public class DagLayoutEngineTests
         forward.Reverse(); // newest first
         return forward;
     }
+
+    // ── Phase 5(a) (v10 graph memory footprint plan): canonicalized commit ids ──
+
+    /// <summary>A commit reachable from two children (a merge convergence, or here just two
+    /// independent tips landing on the same ancestor) is referenced by a SEPARATELY-parsed
+    /// <see cref="ObjectId"/> instance from each caller — its own <c>RawCommit.Id</c>, and each
+    /// child's own <c>ParentIds</c> entry for it (<c>Sha(n)</c> here always allocates fresh,
+    /// mirroring how the real walk parses ids independently per record). Once laid out, the row's
+    /// entry in <c>RowByCommitId</c> must key on WHICHEVER instance a reservation already
+    /// interned first — not hold yet another separately-parsed copy of the same SHA.</summary>
+    [Fact]
+    public void RowByCommitId_keys_on_the_same_ObjectId_instance_a_reservation_already_interned()
+    {
+        // 10 and 11 both point at 5 as their parent — two independently-parsed ObjectId
+        // instances for "5", neither of which is 5's own RawCommit.Id (a third instance).
+        var commits = new List<RawCommit>
+        {
+            C(11, 5),
+            C(10, 5),
+            C(5),
+        };
+
+        var result = Compute(commits);
+        var row5 = result.Layout.RowByCommitId[Sha(5)];
+
+        var storedKey = ((IReadOnlyDictionary<ObjectId, int>)result.Layout.RowByCommitId)
+            .Keys.Single(k => k.Equals(Sha(5)));
+
+        var childReservationInstances = new[] { commits[0].ParentIds[0], commits[1].ParentIds[0] };
+        Assert.Contains(childReservationInstances, parentInstance => ReferenceEquals(parentInstance, storedKey));
+
+        // And it did NOT fall back to row 5's own separately-parsed RawCommit.Id.
+        Assert.False(ReferenceEquals(commits[2].Id, storedKey));
+
+        // Sanity: the layout itself is unaffected — same row assignment either way.
+        Assert.Equal(2, row5);
+    }
+
+    /// <summary>Canonicalization must never change the actual layout — same lanes, same rows,
+    /// same edges — only which object instance a key happens to be.</summary>
+    [Fact]
+    public void Canonicalized_ids_produce_the_identical_layout_to_the_legacy_shape()
+    {
+        var commits = BuildGnarlyChain(200);
+        var isAnc = AncestryOf(commits);
+
+        var a = Compute(commits, isAncestor: isAnc);
+        var b = Compute(commits, isAncestor: isAnc);
+
+        AssertSameLines(a.Layout, b.Layout);
+        for (var i = 0; i < a.Layout.RowCount; i++)
+            Assert.Equal(a.Layout.Rows[i].LaneIndex, b.Layout.Rows[i].LaneIndex);
+    }
 }

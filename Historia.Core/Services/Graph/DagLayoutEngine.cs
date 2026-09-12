@@ -171,7 +171,10 @@ public sealed class DagLayoutEngine
             });
             if (s.RetainCommits)
                 s.Commits.Add(commit.Metadata);
-            s.RowByCommitId[commit.Id] = row;
+            // Phase 5(a): reuse whatever instance a child's reservation already interned for this
+            // SHA (the common case — a parent's reservation exists before the parent's own row
+            // does, in a topo walk) instead of keeping commit.Id's own freshly-parsed copy too.
+            s.RowByCommitId[Intern(s, commit.Id)] = row;
 
             if (deco is not null)
                 foreach (var x in deco)
@@ -709,11 +712,24 @@ public sealed class DagLayoutEngine
 
     private static void AddReservation(GraphLayoutState s, ObjectId parent, Res res)
     {
+        parent = Intern(s, parent);
         if (!s.Reservations.TryGetValue(parent, out var list))
             s.Reservations[parent] = list = [];
         list.Add(res);
         if (res.RawLane >= 0)
             s.ReservedLaneCount[res.RawLane] = s.ReservedLaneCount.GetValueOrDefault(res.RawLane) + 1;
+    }
+
+    /// <summary>Phase 5(a): returns the one canonical <see cref="ObjectId"/> instance for this
+    /// SHA — the first instance ever seen for it, whether that was as a reservation key or a row.
+    /// Every later reference to the same commit reuses it instead of holding its own separately
+    /// parsed copy.</summary>
+    private static ObjectId Intern(GraphLayoutState s, ObjectId id)
+    {
+        if (s.InternedIds.TryGetValue(id, out var canonical))
+            return canonical;
+        s.InternedIds[id] = id;
+        return id;
     }
 
     private static void RemoveReservationsFor(GraphLayoutState s, ObjectId id, List<Res> removed)
