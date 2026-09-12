@@ -306,33 +306,42 @@ public sealed class DagLayoutEngine
         const int stride = GraphLayoutState.CheckpointStride;
         var checkpoint = a / stride;
 
-        var candidates = new SortedSet<int>();
-        if (state.CheckpointCrossing.TryGetValue(checkpoint, out var crossing))
-            foreach (var i in crossing)
-                if (i < realEdgeCap)
-                    candidates.Add(i);
-
-        var startBlock = checkpoint;
-        var endBlock = b / stride;
-        for (var blk = startBlock; blk <= endBlock; blk++)
+        // §Bugfix: GraphLayoutService.ExtendLayoutAsync mutates this same state object (appending
+        // to CheckpointCrossing/EdgesByFromBlock/RealEdges via IndexNewRealEdge) under
+        // `lock (existing.State)` while a background walk streams in more commits. This method
+        // runs on the render thread against that same live state, so it must take the same lock
+        // or a scroll-triggered extend can mutate a List<int> mid-enumeration here
+        // (InvalidOperationException: "Collection was modified").
+        lock (state)
         {
-            if (!state.EdgesByFromBlock.TryGetValue(blk, out var blockList))
-                continue;
-            foreach (var i in blockList)
+            var candidates = new SortedSet<int>();
+            if (state.CheckpointCrossing.TryGetValue(checkpoint, out var crossing))
+                foreach (var i in crossing)
+                    if (i < realEdgeCap)
+                        candidates.Add(i);
+
+            var startBlock = checkpoint;
+            var endBlock = b / stride;
+            for (var blk = startBlock; blk <= endBlock; blk++)
             {
-                if (i >= realEdgeCap)
+                if (!state.EdgesByFromBlock.TryGetValue(blk, out var blockList))
                     continue;
-                if (state.RealEdges[i].FromRow <= b)
-                    candidates.Add(i);
+                foreach (var i in blockList)
+                {
+                    if (i >= realEdgeCap)
+                        continue;
+                    if (state.RealEdges[i].FromRow <= b)
+                        candidates.Add(i);
+                }
             }
+
+            var edges = new List<GraphEdge>(candidates.Count + offWindowEdges.Length);
+            foreach (var i in candidates)
+                edges.Add(state.RealEdges[i]);
+            edges.AddRange(offWindowEdges);
+
+            return ComputeWindowVisuals(edges, rowCount, a, b);
         }
-
-        var edges = new List<GraphEdge>(candidates.Count + offWindowEdges.Length);
-        foreach (var i in candidates)
-            edges.Add(state.RealEdges[i]);
-        edges.AddRange(offWindowEdges);
-
-        return ComputeWindowVisuals(edges, rowCount, a, b);
     }
 
     /// <summary>Same per-edge rules as <see cref="DeriveVisuals"/>, restricted to emitting rows
