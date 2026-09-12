@@ -44,8 +44,9 @@ public sealed partial class CommitGraphControl : Control
 
     // §7.6 takes effect on the next launch, and GraphLayoutService snapshots it at construction.
     // Snapshot it here too so the control's resident-row ceiling always matches the service's —
-    // a mid-session toggle must not make the control cap at the 1M disk limit while metadata is
-    // still fully resident (the 250k memory limit exists precisely to bound that allocation).
+    // a mid-session toggle must not make the control cap at the configurable disk-mode ceiling
+    // (AppSettings.ResidentRowCap, clamped to 500k..10M) while metadata is still fully resident
+    // (the 500k memory limit exists precisely to bound that allocation).
     private bool _graphMetaFromDisk;
     private int _residentRowCapSetting;
     private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk, _residentRowCapSetting);

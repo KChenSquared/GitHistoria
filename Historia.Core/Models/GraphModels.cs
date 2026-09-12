@@ -286,8 +286,100 @@ public sealed class GraphLayout : IDisposable
     public required int TotalLaneCount { get; init; }
     public required bool IsComplete { get; init; }
 
-    /// <summary>Maps <see cref="ObjectId"/> → row index. Built once; used for selection sync only.</summary>
-    public required IReadOnlyDictionary<ObjectId, int> RowByCommitId { get; init; }
+    /// <summary>
+    /// Maps <see cref="ObjectId"/> → row index. Built once; used for selection sync only.
+    /// <see cref="DagLayoutEngine.Build"/> hands this the accumulator's own, still-growing
+    /// dictionary rather than a per-snapshot copy (see its comment) — safe for this snapshot's
+    /// own <see cref="Consume"/> writer, but not for an unsynchronized reader while a background
+    /// <c>ExtendLayoutAsync</c> is inserting into the very same instance under
+    /// <c>lock (existing.State)</c> (#3, 2026-09-12 memory review: <c>CommitGraphControl
+    /// .ResolveRow</c> / <c>FindSubject</c> read it from the render thread with no lock at all —
+    /// an unsynchronized <see cref="Dictionary{TKey,TValue}"/> read concurrent with an insert
+    /// that resizes it can return a wrong row or throw). The value stored here is wrapped so
+    /// every lookup — through this property's own <c>TryGetValue</c>/indexer, or through <see
+    /// cref="TryGetRow"/> (the preferred call for new code) — takes <c>lock (SourceState)</c>
+    /// when this snapshot still has one, and ignores any row at or past this snapshot's own
+    /// <see cref="RowCount"/> (an older snapshot must not resolve a row a later extend appended).
+    /// Existing callers become safe without themselves changing.
+    /// </summary>
+    public required IReadOnlyDictionary<ObjectId, int> RowByCommitId
+    {
+        get => _rowByCommitIdView;
+        init { _rawRowByCommitId = value; _rowByCommitIdView = new RowByCommitIdView(this); }
+    }
+
+    private IReadOnlyDictionary<ObjectId, int> _rawRowByCommitId = EmptyRowMap;
+    private IReadOnlyDictionary<ObjectId, int> _rowByCommitIdView = EmptyRowMap;
+    private static readonly IReadOnlyDictionary<ObjectId, int> EmptyRowMap = new Dictionary<ObjectId, int>();
+
+    /// <summary>Locked, bounds-checked row lookup (#3, #13 — 2026-09-12 memory review). Takes
+    /// <c>lock (SourceState)</c> when this snapshot has one (every layout except <see
+    /// cref="Empty"/>), so it never races the accumulator's writer; ignores any row at or past
+    /// this snapshot's own <see cref="RowCount"/>. Preferred over <see cref="RowByCommitId"/>'s
+    /// <c>TryGetValue</c> for new code — that property routes through this same method.</summary>
+    public bool TryGetRow(ObjectId id, out int row)
+    {
+        bool found;
+        int value;
+        if (SourceState is { } state)
+        {
+            lock (state)
+                found = _rawRowByCommitId.TryGetValue(id, out value);
+        }
+        else
+        {
+            found = _rawRowByCommitId.TryGetValue(id, out value);
+        }
+
+        if (found && value < RowCount)
+        {
+            row = value;
+            return true;
+        }
+
+        row = -1;
+        return false;
+    }
+
+    /// <summary>Thin <see cref="IReadOnlyDictionary{TKey,TValue}"/> facade over <see
+    /// cref="RowByCommitId"/> that routes every lookup through <see cref="TryGetRow"/> (see that
+    /// property's doc comment). Only <see cref="TryGetValue"/> and the indexer sit on any real
+    /// call path; <see cref="Count"/>/<see cref="Keys"/>/<see cref="Values"/>/enumeration exist
+    /// for interface completeness (exercised by tests, not by App code) and take the same lock
+    /// for a single consistent snapshot.</summary>
+    private sealed class RowByCommitIdView(GraphLayout owner) : IReadOnlyDictionary<ObjectId, int>
+    {
+        public int this[ObjectId key] =>
+            owner.TryGetRow(key, out var row) ? row : throw new KeyNotFoundException();
+
+        public bool ContainsKey(ObjectId key) => owner.TryGetRow(key, out _);
+        public bool TryGetValue(ObjectId key, out int value) => owner.TryGetRow(key, out value);
+
+        public IEnumerable<ObjectId> Keys => Snapshot().Select(kv => kv.Key);
+        public IEnumerable<int> Values => Snapshot().Select(kv => kv.Value);
+        public int Count => Snapshot().Count;
+
+        public IEnumerator<KeyValuePair<ObjectId, int>> GetEnumerator() => Snapshot().GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        private List<KeyValuePair<ObjectId, int>> Snapshot()
+        {
+            if (owner.SourceState is { } state)
+                lock (state)
+                    return Filter();
+            return Filter();
+        }
+
+        private List<KeyValuePair<ObjectId, int>> Filter()
+        {
+            var rowCount = owner.RowCount;
+            var list = new List<KeyValuePair<ObjectId, int>>();
+            foreach (var kv in owner._rawRowByCommitId)
+                if (kv.Value < rowCount)
+                    list.Add(kv);
+            return list;
+        }
+    }
 
     public ReadOnlySpan<RowLaneSegment> GetRowSegments(int row)
     {
