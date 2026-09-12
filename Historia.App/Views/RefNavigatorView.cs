@@ -275,7 +275,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 var mf = new MenuFlyout();
                 AddMi(mf, "Init & update", () => _ = PowerOp(r => _submodules.InitAndUpdateAsync(r, sm.Path, recursive: true, r.Lifetime)));
                 AddMi(mf, "Sync URL", () => _ = PowerOp(r => _submodules.SyncAsync(r, sm.Path, r.Lifetime)));
-                AddMi(mf, "Remove", () => _ = PowerOp(r => _submodules.RemoveAsync(r, sm, r.Lifetime)));
+                AddMi(mf, "Remove", () => _ = SubmoduleRemoveAsync(sm));
                 menuBtn.Flyout = mf;
                 subBody.Children.Add(Leaf($"{m.Name}  ({m.Status})", 0, "ColorText", null, menuBtn));
             }
@@ -555,6 +555,20 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         if (_repo is null) return;
         if (!await _dialogs.ConfirmDestructiveAsync("Remove worktree", $"Remove the worktree at '{wt.Path}'?", "Remove")) return;
         await PowerOp(r => _worktrees.RemoveAsync(r, wt.Path, force: false, r.Lifetime));
+    }
+
+    /// <summary>#19 (Rule 00): removing a submodule deinitialises it, removes it from the index
+    /// and deletes .git/modules/&lt;name&gt; — the submodule's own repository — so its
+    /// uncommitted changes and unpushed commits are gone for good.</summary>
+    private async Task SubmoduleRemoveAsync(SubmoduleInfo sm)
+    {
+        if (_repo is null) return;
+        if (!await _dialogs.ConfirmDestructiveAsync("Remove submodule",
+                $"Remove submodule '{sm.Path}'? This deinitialises it, removes it from the " +
+                $"index and deletes .git/modules/{sm.Name} — uncommitted changes and unpushed " +
+                "commits inside the submodule are lost.", "Remove"))
+            return;
+        await PowerOp(r => _submodules.RemoveAsync(r, sm, r.Lifetime));
     }
 
     private async Task StashOp(Func<Task> op)

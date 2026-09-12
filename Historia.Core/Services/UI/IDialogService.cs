@@ -46,7 +46,11 @@ public interface IDialogService
     /// <para>When <paramref name="destructiveIndex"/> is set, pass
     /// <paramref name="icon"/> = <see cref="DialogIcon.Warning"/> (constitution Rule 00): the
     /// dialog then shows the red <c>triangle-alert</c>, <c>Cancel</c> becomes the primary /
-    /// Enter button, and no option carries the primary styling.</para>
+    /// Enter button, and no option carries the primary styling. <b>Exemption:</b> when the
+    /// destructive option itself opens <see cref="ConfirmDestructiveAsync"/> before acting (the
+    /// chooser only offers the destructive path, it doesn't take it), the chooser may keep its
+    /// ordinary default and omit the icon — the red treatment then lands on the dialog that
+    /// actually performs the destructive step.</para>
     /// </summary>
     Task<int> ChooseAsync(string title, string message, IReadOnlyList<string> options,
         int defaultIndex = 0, int destructiveIndex = -1, DialogIcon icon = DialogIcon.None);

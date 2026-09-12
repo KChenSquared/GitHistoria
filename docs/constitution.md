@@ -29,35 +29,51 @@ uncommitted work:
 - discard / checkout-over working-tree changes, delete untracked files, `git clean`
 - hard reset, any reset that drops commits, branch or tag deletion (including `-D`
   force-delete)
-- history rewrites: interactive rebase, an amend that abandons commits, `push --force*`
-- stash drop / clear, worktree removal, submodule deinit
+- history rewrites: an interactive rebase that rewrites anything (drops, squashes, rewords,
+  reorders — the pick-only, unchanged-order fast path is the one exception), an amend that
+  rewrites a commit already on its upstream, `push --force*`
+- stash drop / clear, worktree removal, submodule deinit (deinitialises it, removes it from the
+  index and deletes its own `.git/modules/<name>` repository)
 - deleting a profile, a theme, a saved session; wiping Historia's local data
 - overwriting a shared external resource such as `~/.gitconfig`
 
 When it is arguable whether an action belongs here, it does. *(§I-6.9.1, §I-6.13, §I-6.15.1)*
 
 **00.2 — The confirmation is a modal alert, not a toast and not a one-click inline control.**
-It routes through `IDialogService.ConfirmAsync` (or `ChooseAsync` when there are several
-remedies) and:
-- carries the large red `triangle-alert` glyph — `DialogIcon.Warning`;
-- names the exact effect (the files, the branch, the commit count), never a bare "Are you
+It routes through `IDialogService.ConfirmDestructiveAsync` (or `ChooseAsync` with
+`DialogIcon.Warning`, when there are several remedies) — never the plain `ConfirmAsync`
+overload hand-rolled to look the same. The one entry point hard-wires:
+- the large red `triangle-alert` glyph;
+- naming the exact effect (the files, the branch, the commit count), never a bare "Are you
   sure?";
-- makes **Cancel** the primary (blue / accent) button *and* the keyboard default
-  (`defaultToCancel: true`), so a reflexive Enter or click lands on the safe choice;
-- keeps **Cancel** as the **rightmost** button — Windows `[Action] [Cancel]` order. Primary
-  styling changes Cancel's colour, never its position;
-- labels the confirming button with its verb ("Delete", "Discard", "Force push"), styled plain
+- **Cancel** as the primary (blue / accent) button *and* the keyboard default, so a reflexive
+  Enter or click lands on the safe choice;
+- **Cancel** as the **rightmost** button — Windows `[Action] [Cancel]` order. Primary styling
+  changes Cancel's colour, never its position;
+- the confirming button labelled with its verb ("Delete", "Discard", "Force push"), styled plain
   or `danger` — never primary.
+
+**Exemption.** A `ChooseAsync` chooser may keep its ordinary (non-destructive) default and icon
+when its destructive option itself opens `ConfirmDestructiveAsync` before acting — the red
+treatment then lands on the dialog that actually performs the destructive step, not on the
+chooser that merely offers it. The push-rejection chooser (force-push vs. pull vs. cancel) is
+the current example.
 
 **00.3 — "Don't ask again this session" is the only permitted suppression.** It is
 per-session and per-operation-class, it is never the default, and it never persists to disk.
 There is no global "turn off confirmations" setting.
 
-**00.4 — Guard it with a test.** `DestructiveConfirmationTests` asserts that every destructive
-call site goes through the one destructive-confirm entry point (`ConfirmDestructiveAsync` /
-`ChooseAsync` with `DialogIcon.Warning`), and that the dialog builder gives Cancel the primary
-class while keeping it rightmost. A destructive call site that regresses to a bare confirm
-fails the build. *(Rule 36.)* Implementation and the current call-site inventory:
+**00.4 — Guard it with a test.** `DestructiveConfirmationTests` runs two checks: that no call
+site hand-rolls the destructive treatment on the plain `ConfirmAsync` overload (`destructive:
+true`, `defaultToCancel:`, `DialogIcon.Warning` outside the one entry point's own
+implementation), and a call-site guard scanning every listed destructive service call (submodule
+`RemoveAsync`, rebase `StartAsync`, `DiscardAsync`, `DeleteBranchAsync`, `DeleteTagAsync`, stash
+`DropAsync`/`ClearAsync`, worktree `RemoveAsync`, hard `ResetAsync`, force `PushAsync`) so it must
+sit in a method that also calls `ConfirmDestructiveAsync`, or be on an explicit, commented
+allowlist. `HistoriaApp.Tests.DestructiveConfirmDialogTests` guards the dialog builder itself —
+that Cancel gets the primary class while staying rightmost. A destructive call site with no
+confirm at all, or one that regresses to a bare confirm, fails the build. *(Rule 36.)*
+Implementation and the current call-site inventory:
 [`versionPlans/v10-destructive-action-confirmation-plan.md`](../Historia-DevDocs/versionPlans/v10-destructive-action-confirmation-plan.md).
 
 ---

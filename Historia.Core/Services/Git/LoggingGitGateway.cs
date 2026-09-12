@@ -117,6 +117,9 @@ public sealed class LoggingGitGateway(IGitGateway inner, string repositoryPath) 
     public Task ResetAsync(string target, GitResetMode mode, CancellationToken ct = default)
         => Run($"ResetAsync({target}, {mode})", () => inner.ResetAsync(target, mode, ct));
 
+    public Task<int> CountCommitsLeavingAsync(string target, CancellationToken ct = default)
+        => Run($"CountCommitsLeavingAsync({target})", () => inner.CountCommitsLeavingAsync(target, ct), n => n.ToString());
+
     // ── Ref mutations ──
 
     public Task CheckoutAsync(string refName, GitCheckoutOptions options, CancellationToken ct = default)

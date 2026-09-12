@@ -222,6 +222,20 @@ public sealed class GitGateway(
             throw HistoriaGitException.FromCli(result, "Reset");
     }
 
+    public async Task<int> CountCommitsLeavingAsync(string target, CancellationToken ct = default)
+    {
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-list", "--count", $"{target}..HEAD"],
+            WorkingDirectory = context.RepositoryPath,
+        }, ct).ConfigureAwait(false);
+
+        if (!result.IsSuccess)
+            throw HistoriaGitException.FromCli(result, "Count commits");
+
+        return int.TryParse(result.StandardOutput.Trim(), out var n) ? n : 0;
+    }
+
     // ── Ref mutations ──
 
     public async Task CheckoutAsync(string refName, GitCheckoutOptions options, CancellationToken ct = default)

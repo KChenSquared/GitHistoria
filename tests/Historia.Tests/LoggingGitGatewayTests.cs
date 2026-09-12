@@ -84,6 +84,20 @@ public sealed class LoggingGitGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task CountCommitsLeavingAsync_delegates_and_logs_the_count()
+    {
+        AppLog.Enabled = true;
+        var gw = new LoggingGitGateway(new FakeGateway { CountCommitsLeavingResult = 3 }, @"C:\repos\demo");
+
+        var n = await gw.CountCommitsLeavingAsync("origin/main");
+
+        Assert.Equal(3, n);
+        var text = SessionText();
+        Assert.Contains("CountCommitsLeavingAsync(origin/main)", text);
+        Assert.Contains("(3,", text);
+    }
+
+    [Fact]
     public async Task Pure_passthrough_when_logging_is_disabled()
     {
         var inner = new FakeGateway { Branches = [Branch("main")] };
@@ -143,6 +157,9 @@ public sealed class LoggingGitGatewayTests : IDisposable
         public Task<ObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default) => No<Task<ObjectId>>();
         public Task MergeAsync(string refish, bool noFastForward, CancellationToken ct = default) => No<Task>();
         public Task ResetAsync(string target, GitResetMode mode, CancellationToken ct = default) => No<Task>();
+        public int? CountCommitsLeavingResult { get; set; }
+        public Task<int> CountCommitsLeavingAsync(string target, CancellationToken ct = default)
+            => CountCommitsLeavingResult is { } n ? Task.FromResult(n) : No<Task<int>>();
         public Task<BranchInfo> CreateBranchAsync(string name, string startPoint, bool checkout, CancellationToken ct = default) => No<Task<BranchInfo>>();
         public Task DeleteBranchAsync(string name, bool force, CancellationToken ct = default) => No<Task>();
         public Task RenameBranchAsync(string oldName, string newName, CancellationToken ct = default) => No<Task>();

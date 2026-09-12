@@ -250,10 +250,29 @@ public sealed partial class CommitGraphControl
                     $"Move {target} to {shortSha} (hard)? Uncommitted changes will be lost.", "Reset"))
                 return;
         }
-        else if (!await _dialogs.ConfirmAsync("Reset branch",
-                     $"Move {target} to {shortSha} ({mode})?", confirmLabel: "Reset"))
+        else
         {
-            return;
+            // #21 (Rule 00): soft/mixed only rewrites the branch pointer, but when the target
+            // isn't an ancestor of HEAD the commits between them leave the branch — reflog-
+            // recoverable, but no longer reachable from any branch. Count with `rev-list --count`
+            // (not libgit2's CalculateHistoryDivergence — #15 measured ~22 s on far-apart
+            // commits) and only escalate to the Rule 00 dialog when commits actually leave. If
+            // the count itself fails, fall back to the ordinary confirm rather than block reset.
+            int leaving;
+            try { leaving = await ctx.Gateway.CountCommitsLeavingAsync(sha, ctx.Lifetime); }
+            catch { leaving = 0; }
+            if (leaving > 0)
+            {
+                if (!await _dialogs.ConfirmDestructiveAsync("Reset branch",
+                        $"Move {target} to {shortSha} ({mode})? {leaving} commit(s) will leave " +
+                        $"{target}; they stay recoverable only through the reflog.", "Reset"))
+                    return;
+            }
+            else if (!await _dialogs.ConfirmAsync("Reset branch",
+                         $"Move {target} to {shortSha} ({mode})?", confirmLabel: "Reset"))
+            {
+                return;
+            }
         }
         await Guard(() => ctx.Gateway.ResetAsync(sha, mode, ctx.Lifetime), ctx, "Reset");
     }
