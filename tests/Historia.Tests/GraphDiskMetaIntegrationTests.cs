@@ -122,6 +122,47 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
         Assert.Equal($"commit {CommitCount - 1:D2}", snapshot.Layout.Commits[0].MessageShort);
     }
 
+    /// <summary>§Phase 3 (3b): the disk cache is keyed on the sorted tip SET, not on every ref +
+    /// HEAD. Checking out between two branches that both already existed (and so were both
+    /// already part of the walk's tip set) moves HEAD but changes neither the ref list nor the
+    /// walk key — the on-disk `.meta.*` files must not be rewritten.</summary>
+    [Fact]
+    public async Task Checkout_between_existing_branches_does_not_rewrite_the_disk_cache()
+    {
+        _repo.Checkout("feature", create: true);
+        _repo.WriteFile("f.txt", "feature work\n").Stage();
+        _repo.Commit("feature commit");
+        _repo.Checkout("main");
+
+        var svc = await DiskBackedServiceAsync();
+        await using var ctx = _host.Open(_repo.Path);
+        ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone();
+
+        await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
+
+        var datPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.DatExt);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline && !File.Exists(datPath))
+            await Task.Delay(50);
+        Assert.True(File.Exists(datPath));
+
+        // Let the background spill settle (its own header write) before taking the baseline.
+        await Task.Delay(500);
+        var before = File.GetLastWriteTimeUtc(datPath);
+        var beforeBytes = await File.ReadAllBytesAsync(datPath);
+
+        svc.Forget(ctx);
+        await using var ctx2 = _host.Open(_repo.Path);
+        _repo.Checkout("feature");
+        await svc.ComputeLayoutAsync(ctx2, new GraphQuery { RefScope = GraphRefScope.AllRefs });
+        await Task.Delay(500);
+
+        var after = File.GetLastWriteTimeUtc(datPath);
+        var afterBytes = await File.ReadAllBytesAsync(datPath);
+        Assert.Equal(before, after);
+        Assert.Equal(beforeBytes, afterBytes);
+    }
+
     [Fact]
     public async Task Falls_back_to_in_memory_when_the_setting_is_off()
     {
