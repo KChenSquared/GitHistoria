@@ -97,7 +97,15 @@ public sealed class SettingsView : UserControl, IDisposable
         if (c.EnableMultiLineTabs)
         {
             var maxRows = new NumericUpDown { Minimum = 2, Maximum = 5, Value = c.MaxTabRows, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-            maxRows.ValueChanged += (_, e) => _ = _cfg.UpdateAsync(s => s with { MaxTabRows = (int)Math.Clamp(e.NewValue ?? 3, 2, 5) });
+            var maxRowsPrev = c.MaxTabRows;
+            maxRows.LostFocus += (_, _) =>
+            {
+                var next = (int)Math.Clamp(maxRows.Value ?? maxRowsPrev, 2, 5);
+                if (next == maxRowsPrev)
+                    return;
+                maxRowsPrev = next;
+                _ = _cfg.UpdateAsync(s => s with { MaxTabRows = next });
+            };
             _root.Children.Add(LabeledRow("Max tab rows", maxRows));
         }
         _root.Children.Add(Check("Fixed-width repository tabs", c.TabWidthMode == TabWidthMode.Fixed,
@@ -114,10 +122,15 @@ public sealed class SettingsView : UserControl, IDisposable
                 Width = 120,
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
-            tabLen.ValueChanged += (_, e) => _ = _cfg.UpdateAsync(s => s with
+            var tabLenPrev = c.FixedTabWidth;
+            tabLen.LostFocus += (_, _) =>
             {
-                FixedTabWidth = AppSettings.ClampFixedTabWidth((int)(e.NewValue ?? AppSettings.DefaultFixedTabWidth)),
-            });
+                var next = AppSettings.ClampFixedTabWidth((int)(tabLen.Value ?? tabLenPrev));
+                if (next == tabLenPrev)
+                    return;
+                tabLenPrev = next;
+                _ = _cfg.UpdateAsync(s => s with { FixedTabWidth = next });
+            };
             _root.Children.Add(LabeledRow("Tab width (px)", tabLen));
         }
         else
@@ -176,15 +189,39 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         _root.Children.Add(LabeledRow("Default diff view", diffView));
         var ctxLines = new NumericUpDown { Minimum = 0, Maximum = 20, Value = c.DiffContextLines, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        ctxLines.ValueChanged += (_, e) => _ = _cfg.UpdateAsync(s => s with { DiffContextLines = (int)(e.NewValue ?? 3) });
+        var ctxLinesPrev = c.DiffContextLines;
+        ctxLines.LostFocus += (_, _) =>
+        {
+            var next = (int)(ctxLines.Value ?? ctxLinesPrev);
+            if (next == ctxLinesPrev)
+                return;
+            ctxLinesPrev = next;
+            _ = _cfg.UpdateAsync(s => s with { DiffContextLines = next });
+        };
         _root.Children.Add(LabeledRow("Context lines", ctxLines));
         var tabW = new NumericUpDown { Minimum = 1, Maximum = 8, Value = c.TabWidth, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        tabW.ValueChanged += (_, e) => _ = _cfg.UpdateAsync(s => s with { TabWidth = (int)(e.NewValue ?? 4) });
+        var tabWPrev = c.TabWidth;
+        tabW.LostFocus += (_, _) =>
+        {
+            var next = (int)(tabW.Value ?? tabWPrev);
+            if (next == tabWPrev)
+                return;
+            tabWPrev = next;
+            _ = _cfg.UpdateAsync(s => s with { TabWidth = next });
+        };
         _root.Children.Add(LabeledRow("Tab width", tabW));
         _root.Children.Add(Check("Word-wrap diff lines", c.DiffWordWrap,
             v => _ = _cfg.UpdateAsync(s => s with { DiffWordWrap = v })));
         var commitFont = new NumericUpDown { Minimum = 10, Maximum = 24, Value = c.CommitDetailFontSize, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        commitFont.ValueChanged += (_, e) => _ = _cfg.UpdateAsync(s => s with { CommitDetailFontSize = (int)(e.NewValue ?? 14) });
+        var commitFontPrev = c.CommitDetailFontSize;
+        commitFont.LostFocus += (_, _) =>
+        {
+            var next = (int)(commitFont.Value ?? commitFontPrev);
+            if (next == commitFontPrev)
+                return;
+            commitFontPrev = next;
+            _ = _cfg.UpdateAsync(s => s with { CommitDetailFontSize = next });
+        };
         _root.Children.Add(LabeledRow("Commit-detail font size", commitFont));
 
         // ── Issue autolinks ──
@@ -246,7 +283,15 @@ public sealed class SettingsView : UserControl, IDisposable
         termBody.Children.Add(LabeledRow("Font family", fontFamily));
 
         var fontSize = new NumericUpDown { Minimum = 8, Maximum = 32, Value = c.TerminalFontSize, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        fontSize.ValueChanged += (_, _) => _ = _cfg.UpdateAsync(s => s with { TerminalFontSize = (int)(fontSize.Value ?? 13) });
+        var fontSizePrev = c.TerminalFontSize;
+        fontSize.LostFocus += (_, _) =>
+        {
+            var next = (int)(fontSize.Value ?? fontSizePrev);
+            if (next == fontSizePrev)
+                return;
+            fontSizePrev = next;
+            _ = _cfg.UpdateAsync(s => s with { TerminalFontSize = next });
+        };
         termBody.Children.Add(LabeledRow("Font size", fontSize));
 
         var scrollback = new NumericUpDown
@@ -259,10 +304,15 @@ public sealed class SettingsView : UserControl, IDisposable
             Width = 140,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        scrollback.ValueChanged += (_, _) => _ = _cfg.UpdateAsync(s => s with
+        var scrollbackPrev = c.TerminalScrollbackLines;
+        scrollback.LostFocus += (_, _) =>
         {
-            TerminalScrollbackLines = AppSettings.ClampTerminalScrollback((int)(scrollback.Value ?? 5000)),
-        });
+            var next = AppSettings.ClampTerminalScrollback((int)(scrollback.Value ?? scrollbackPrev));
+            if (next == scrollbackPrev)
+                return;
+            scrollbackPrev = next;
+            _ = _cfg.UpdateAsync(s => s with { TerminalScrollbackLines = next });
+        };
         termBody.Children.Add(WithHint(LabeledRow("Scrollback lines", scrollback),
             "Memory ≈ lines × columns × ~8 bytes, per session — a 5,000-line buffer on a 120-column grid is ~5 MB, and this multiplies by the number of open terminal sessions."));
 
@@ -318,12 +368,77 @@ public sealed class SettingsView : UserControl, IDisposable
             Width = 140,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        silentCrawlCap.ValueChanged += (_, _) => _ = _cfg.UpdateAsync(s => s with
+        var silentCrawlCapPrev = c.SilentCrawlRowCap;
+        silentCrawlCap.LostFocus += (_, _) =>
         {
-            SilentCrawlRowCap = AppSettings.ClampSilentCrawlRowCap((int)(silentCrawlCap.Value ?? 300_000)),
-        });
+            var next = AppSettings.ClampSilentCrawlRowCap((int)(silentCrawlCap.Value ?? silentCrawlCapPrev));
+            if (next == silentCrawlCapPrev)
+                return;
+            silentCrawlCapPrev = next;
+            _ = _cfg.UpdateAsync(s => s with { SilentCrawlRowCap = next });
+        };
         advBody.Children.Add(WithHint(LabeledRow("Background auto-load row cap", silentCrawlCap),
             "How many rows the graph silently pre-loads in the background after first paint, before requiring you to scroll for more. 0 means uncapped. Applies after restart of Historia."));
+
+        var residentRowCap = new NumericUpDown
+        {
+            Minimum = AppSettings.MinResidentRowCap,
+            Maximum = AppSettings.MaxResidentRowCap,
+            Increment = 100_000,
+            Value = c.ResidentRowCap,
+            FormatString = "0",
+            Width = 140,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        var residentRowCapPrev = c.ResidentRowCap;
+        var residentRowCapDialogOpen = false;
+        residentRowCap.LostFocus += async (_, _) =>
+        {
+            // Re-entrancy guard: reverting the value on Cancel below can itself provoke a
+            // second LostFocus while the first dialog is still closing — ignore it.
+            if (residentRowCapDialogOpen)
+                return;
+
+            var next = AppSettings.ClampResidentRowCap((int)(residentRowCap.Value ?? residentRowCapPrev));
+            if (next == residentRowCapPrev)
+                return;
+
+            residentRowCapDialogOpen = true;
+            try
+            {
+                // A click on the spin-button arrows moves focus in/out of the control's internal
+                // TextBox, which fires this same LostFocus — while its RepeatButton's own pointer
+                // capture is still active. Opening a modal dialog right away can strand that
+                // capture (the button reads as permanently pressed, repeating forever) because the
+                // dialog's nested loop takes over before the pending PointerReleased is processed.
+                // Flushing the Input-priority queue first lets that release land normally.
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, Avalonia.Threading.DispatcherPriority.Input);
+
+                next = AppSettings.ClampResidentRowCap((int)(residentRowCap.Value ?? residentRowCapPrev));
+                if (next == residentRowCapPrev)
+                    return;
+
+                var proceed = await _dialogs.ConfirmAsync(
+                    "Change the resident row cap?",
+                    "Changing this value will increase the amount of memory a large repository can use.",
+                    confirmLabel: "Continue", defaultToCancel: true, icon: DialogIcon.Warning);
+
+                if (!proceed)
+                {
+                    residentRowCap.Value = residentRowCapPrev;
+                    return;
+                }
+
+                residentRowCapPrev = next;
+                await _cfg.UpdateAsync(s => s with { ResidentRowCap = next });
+            }
+            finally
+            {
+                residentRowCapDialogOpen = false;
+            }
+        };
+        advBody.Children.Add(WithHint(LabeledRow("Resident row cap", residentRowCap),
+            "The absolute ceiling on how many rows the graph will keep resident for one repository, regardless of scrolling. Applies after restart of Historia."));
         advBody.Margin = new Thickness(0, 10, 0, 0);
 
         AddCollapsibleSection("Advanced settings", advBody, () => _advExpanded, v => _advExpanded = v);

@@ -47,7 +47,8 @@ public sealed partial class CommitGraphControl : Control
     // a mid-session toggle must not make the control cap at the 1M disk limit while metadata is
     // still fully resident (the 250k memory limit exists precisely to bound that allocation).
     private bool _graphMetaFromDisk;
-    private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk);
+    private int _residentRowCapSetting;
+    private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk, _residentRowCapSetting);
 
     // §V10.1.2/v10.1.3: the silent background crawler pre-loads only this many rows into the
     // resident layout. Deeper history loads on demand as the user scrolls (EnsureExtendedAsync,
@@ -410,6 +411,7 @@ public sealed partial class CommitGraphControl : Control
         _settings = services.GetRequiredService<Historia.Services.Settings.ISettingsService>();
         _scrollProbe = services.GetRequiredService<Historia.Services.UI.IScrollDirectionProbe>();
         _graphMetaFromDisk = _settings.Current.GraphMetadataFromDisk;
+        _residentRowCapSetting = _settings.Current.ResidentRowCap;
         _silentCrawlRowCap = _settings.Current.SilentCrawlRowCap;
         _repoLayout = services.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
 

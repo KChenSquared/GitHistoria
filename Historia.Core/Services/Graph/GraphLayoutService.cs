@@ -35,12 +35,18 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// it resident. Read once — the setting takes effect on the next launch.</summary>
     private readonly bool _metaFromDisk;
 
+    /// <summary>v10.1.3: configurable resident-row hardcap (AppSettings.ResidentRowCap), used
+    /// as the disk-mode ceiling in place of the hardcoded default. Read once — the setting
+    /// takes effect on the next launch.</summary>
+    private readonly int _residentRowCap = GraphLimits.MaxResidentRowsDisk;
+
     public GraphLayoutService() { }
     public GraphLayoutService(ISettingsService settings)
     {
         _settings = settings;
         // Disk-backed metadata pages from the graph cache folder.
         _metaFromDisk = settings.Current.GraphMetadataFromDisk;
+        _residentRowCap = settings.Current.ResidentRowCap;
     }
 
     /// <summary>DI ctor (§3 linux cold-prime plan): with a working <see cref="IGitExecutableLocator"/>
@@ -539,7 +545,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private void MaybeStartBackgroundSpill(RepositoryContext context, RepoCache cache, GraphQuery query)
     {
         const int BatchRows = 25_000;
-        var cap = GraphLimits.GetMaxResidentRows(_metaFromDisk);
+        var cap = GraphLimits.GetMaxResidentRows(_metaFromDisk, _residentRowCap);
 
         lock (cache.SpillSync)
         {

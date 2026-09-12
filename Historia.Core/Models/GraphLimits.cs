@@ -12,7 +12,9 @@ public static class GraphLimits
     /// <summary>Maximum resident rows when full CommitMetadata is resident in memory.</summary>
     public const int MaxResidentRowsMemory = 500_000;
 
-    /// <summary>Returns the ceiling on resident layout rows given the metadata storage mode.</summary>
-    public static int GetMaxResidentRows(bool metaFromDisk) =>
-        metaFromDisk ? MaxResidentRowsDisk : MaxResidentRowsMemory;
+    /// <summary>Returns the ceiling on resident layout rows given the metadata storage mode,
+    /// using <paramref name="residentRowCapDisk"/> (AppSettings.ResidentRowCap) as the
+    /// disk-mode ceiling.</summary>
+    public static int GetMaxResidentRows(bool metaFromDisk, int residentRowCapDisk) =>
+        metaFromDisk ? residentRowCapDisk : MaxResidentRowsMemory;
 }

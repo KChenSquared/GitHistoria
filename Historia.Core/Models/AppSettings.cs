@@ -154,6 +154,23 @@ public sealed record AppSettings
     /// house style for a bounded numeric setting.</summary>
     public static int ClampSilentCrawlRowCap(int value) => Math.Clamp(value, MinSilentCrawlRowCap, MaxSilentCrawlRowCap);
 
+    /// <summary>
+    /// v10.1.3: the resident-row hardcap (§7.3, §7.6) applied when
+    /// <see cref="GraphMetadataFromDisk"/> is on — the absolute ceiling on how many rows the
+    /// graph layout will ever keep resident for one repository, regardless of scrolling or the
+    /// background crawler/spill. Raising it lets a very large repository's full history become
+    /// reachable at the cost of more resident memory; lowering it tightens the memory ceiling at
+    /// the cost of capping history earlier. Read once at startup — a change takes effect on the
+    /// next launch. Default 2,000,000 (<see cref="GraphLimits.MaxResidentRowsDisk"/>).
+    /// </summary>
+    public int ResidentRowCap { get; init; } = GraphLimits.MaxResidentRowsDisk;
+
+    public const int MinResidentRowCap = GraphLimits.MaxResidentRowsMemory;
+    public const int MaxResidentRowCap = 10_000_000;
+
+    /// <summary>Math.Clamp to the accepted <see cref="ResidentRowCap"/> range.</summary>
+    public static int ClampResidentRowCap(int value) => Math.Clamp(value, MinResidentRowCap, MaxResidentRowCap);
+
     /// <summary>Issue-key → URL rules applied to commit messages (§V2-17.6). Account-free.</summary>
     public IReadOnlyList<IssueAutolinkRule> IssueAutolinks { get; init; } = [];
 
