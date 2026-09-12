@@ -59,6 +59,25 @@ public sealed class GraphLayoutState
     internal readonly List<GraphDecoration> Decorations = [];
     internal readonly Dictionary<ObjectId, int> RowByCommitId = [];
 
+    /// <summary>§Phase 2 crossing index: boundary rows are multiples of this stride. Sized so a
+    /// window's checkpoint lookup costs about (concurrent lanes) work, not (total rows) — linux
+    /// at 300k rows / 637 lanes gives ~1,172 checkpoints of a few hundred entries each, versus
+    /// re-deriving 106M segment entries per <c>Build</c>.</summary>
+    internal const int CheckpointStride = 256;
+
+    /// <summary>checkpoint index (boundary row = index × <see cref="CheckpointStride"/>) → the
+    /// indices into <see cref="RealEdges"/> of every real edge spanning that boundary
+    /// (<c>FromRow &lt; boundary ≤ ToRow</c>). Append-only: populated once, when the edge is
+    /// created, for every boundary it will ever cross — a long-lived branch's edge is written
+    /// into potentially many checkpoints at creation time, but each checkpoint is then never
+    /// touched again.</summary>
+    internal readonly Dictionary<int, List<int>> CheckpointCrossing = [];
+
+    /// <summary>(FromRow ÷ <see cref="CheckpointStride"/>) → the indices into <see
+    /// cref="RealEdges"/> of every real edge whose <c>FromRow</c> falls in that block. Lets a
+    /// window derivation find "edges starting in [checkpoint, b]" without scanning every edge.</summary>
+    internal readonly Dictionary<int, List<int>> EdgesByFromBlock = [];
+
     /// <param name="RawLane">The raw lane reserved for the PARENT.</param>
     /// <param name="ChildLane">The raw lane the CHILD occupies — equal to <paramref name="RawLane"/>
     /// for a first parent; for a second-or-later parent it is the merge commit's own raw lane, so

@@ -779,7 +779,10 @@ public sealed partial class CommitGraphControl : Control
     }
 
     private int ResolveRow(ObjectId? id)
-        => id is not null && _layout is { } l && l.Layout.RowByCommitId.TryGetValue(id, out var row) ? row : -1;
+        // §Phase 2: RowByCommitId is shared with the layout service's still-growing accumulator
+        // (not copied per snapshot), so an older layout must ignore rows beyond its own RowCount.
+        => id is not null && _layout is { } l && l.Layout.RowByCommitId.TryGetValue(id, out var row)
+            && row < l.Layout.RowCount ? row : -1;
 
     /// <summary>§7.3: rows laid out in the first, fast phase before the configured
     /// "Initial rows loaded" batch, so a repo open / switch paints almost immediately.</summary>

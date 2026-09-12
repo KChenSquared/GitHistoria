@@ -66,10 +66,6 @@ public readonly record struct GraphRow
     public required int ColorIndex { get; init; }
     public required int ParentCount { get; init; }
     public required RowFlags Flags { get; init; }
-    public int SegmentStart { get; init; }
-    public int SegmentCount { get; init; }
-    public int ElbowStart { get; init; }
-    public int ElbowCount { get; init; }
 }
 
 [Flags]
@@ -253,8 +249,28 @@ public sealed class ArrayCommitStore(CommitMetadata[] items) : ICommitStore
 public sealed class GraphLayout : IDisposable
 {
     public required GraphRow[] Rows { get; init; }
-    public required RowLaneSegment[] Segments { get; init; }
-    public required RowElbow[] Elbows { get; init; }
+
+    /// <summary>Phase 2: the shared, append-only accumulator that <see cref="DagLayoutEngine"/>
+    /// derives lines from on demand. Null only for a layout with no engine behind it (<see
+    /// cref="Empty"/>) — there are no rows to derive lines for either way.</summary>
+    internal GraphLayoutState? SourceState { get; init; }
+
+    /// <summary>How many of <see cref="SourceState"/>'s real edges existed when this snapshot
+    /// was built. Later <c>Extend</c> calls on the same state only append — capping reads here
+    /// gives an older snapshot the same lines forever, even while the shared accumulator keeps
+    /// growing underneath it (snapshot isolation, §Phase 2).</summary>
+    internal int RealEdgeCap { get; init; }
+
+    /// <summary>This snapshot's own off-window stub edges, regenerated fresh at build time from
+    /// whichever reservations were still open then — never shared with another snapshot.</summary>
+    internal GraphEdge[] OffWindowEdges { get; init; } = [];
+
+    /// <summary>Rows pulled either side of a requested row into one cached derivation, so
+    /// scrolling a screenful at a time rarely re-derives (§Phase 2).</summary>
+    private const int WindowOverscan = 1_000;
+
+    private (int A, int B, RowLaneSegment[] Segs, int[] SegStart, int[] SegCount,
+        RowElbow[] Elbs, int[] ElbStart, int[] ElbCount)? _window;
 
     /// <summary>Per-row commit metadata. Usually an <see cref="ArrayCommitStore"/>; a
     /// disk-backed store when the graph-from-disk setting is on (§7.6). Settable within Core
@@ -273,21 +289,44 @@ public sealed class GraphLayout : IDisposable
     /// <summary>Maps <see cref="ObjectId"/> → row index. Built once; used for selection sync only.</summary>
     public required IReadOnlyDictionary<ObjectId, int> RowByCommitId { get; init; }
 
-    public ReadOnlySpan<RowLaneSegment> GetRowSegments(int row) =>
-        (uint)row < (uint)RowCount && Rows[row].SegmentCount > 0
-            ? Segments.AsSpan(Rows[row].SegmentStart, Rows[row].SegmentCount)
-            : [];
+    public ReadOnlySpan<RowLaneSegment> GetRowSegments(int row)
+    {
+        if ((uint)row >= (uint)RowCount) return [];
+        EnsureWindow(row);
+        var w = _window!.Value;
+        var i = row - w.A;
+        return w.SegCount[i] > 0 ? w.Segs.AsSpan(w.SegStart[i], w.SegCount[i]) : [];
+    }
 
-    public ReadOnlySpan<RowElbow> GetRowElbows(int row) =>
-        (uint)row < (uint)RowCount && Rows[row].ElbowCount > 0
-            ? Elbows.AsSpan(Rows[row].ElbowStart, Rows[row].ElbowCount)
-            : [];
+    public ReadOnlySpan<RowElbow> GetRowElbows(int row)
+    {
+        if ((uint)row >= (uint)RowCount) return [];
+        EnsureWindow(row);
+        var w = _window!.Value;
+        var i = row - w.A;
+        return w.ElbCount[i] > 0 ? w.Elbs.AsSpan(w.ElbStart[i], w.ElbCount[i]) : [];
+    }
+
+    private void EnsureWindow(int row)
+    {
+        if (_window is { } cur && row >= cur.A && row <= cur.B) return;
+
+        if (SourceState is null || RowCount == 0)
+        {
+            _window = (row, row, [], [0], [0], [], [0], [0]);
+            return;
+        }
+
+        var a = Math.Max(0, row - WindowOverscan);
+        var b = Math.Min(RowCount - 1, row + WindowOverscan);
+        var (segs, segStart, segCount, elbs, elbStart, elbCount) =
+            DagLayoutEngine.DeriveWindow(SourceState, RealEdgeCap, OffWindowEdges, RowCount, a, b);
+        _window = (a, b, segs, segStart, segCount, elbs, elbStart, elbCount);
+    }
 
     public static GraphLayout Empty { get; } = new()
     {
         Rows = [],
-        Segments = [],
-        Elbows = [],
         Commits = ArrayCommitStore.Empty,
         Edges = [],
         Decorations = [],
@@ -298,7 +337,10 @@ public sealed class GraphLayout : IDisposable
         RowByCommitId = new Dictionary<ObjectId, int>(),
     };
 
-    public void Dispose() { /* Phase 2 renderer pools arrays; nothing to free yet. */ }
+    /// <summary>Drops this snapshot's cached derivation window. The shared <see
+    /// cref="SourceState"/> is owned by the layout service, not this snapshot, so it is never
+    /// disposed here.</summary>
+    public void Dispose() { _window = null; }
 }
 
 public enum GraphRefScope { AllRefs, CurrentBranch, Selected }

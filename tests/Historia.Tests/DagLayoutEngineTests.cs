@@ -26,6 +26,19 @@ public class DagLayoutEngineTests
         Func<ObjectId, ObjectId, bool>? isAncestor = null)
         => _engine.Compute(commits, deco, maxRows, isAncestor: isAncestor);
 
+    /// <summary>§Phase 2: Segments/Elbows are no longer flat arrays on <see cref="GraphLayout"/>
+    /// — they're derived per row window on demand. Asserts the two layouts produce byte-identical
+    /// segments and elbows for every row, the same equality the old whole-array comparison gave.</summary>
+    private static void AssertSameLines(GraphLayout expected, GraphLayout actual)
+    {
+        Assert.Equal(expected.RowCount, actual.RowCount);
+        for (var row = 0; row < expected.RowCount; row++)
+        {
+            Assert.Equal(expected.GetRowSegments(row).ToArray(), actual.GetRowSegments(row).ToArray());
+            Assert.Equal(expected.GetRowElbows(row).ToArray(), actual.GetRowElbows(row).ToArray());
+        }
+    }
+
     /// <summary>An ancestry oracle over a synthetic commit list — <c>f(a, b)</c> is true when
     /// <c>a</c> is an ancestor of (or equal to) <c>b</c>, walking parent links.</summary>
     private static Func<ObjectId, ObjectId, bool> AncestryOf(IReadOnlyList<RawCommit> commits)
@@ -672,8 +685,7 @@ public class DagLayoutEngineTests
 
         Assert.Equal(full.Layout.Rows, s3.Layout.Rows);
         Assert.Equal(full.Layout.Edges, s3.Layout.Edges);
-        Assert.Equal(full.Layout.Segments, s3.Layout.Segments);
-        Assert.Equal(full.Layout.Elbows, s3.Layout.Elbows);
+        AssertSameLines(full.Layout, s3.Layout);
     }
 
     [Fact]
@@ -778,8 +790,56 @@ public class DagLayoutEngineTests
 
         Assert.Equal(full.Layout.Rows, s2.Layout.Rows);
         Assert.Equal(full.Layout.Edges, s2.Layout.Edges);
-        Assert.Equal(full.Layout.Segments, s2.Layout.Segments);
-        Assert.Equal(full.Layout.Elbows, s2.Layout.Elbows);
+        AssertSameLines(full.Layout, s2.Layout);
+    }
+
+    [Fact]
+    public void Windowed_derivation_matches_full_derivation_for_every_row_range()
+    {
+        // A long gnarly chain spans many checkpoint boundaries (§Phase 2 CheckpointStride = 256),
+        // and BuildWideFan gives hundreds of concurrent lanes whose long-lived edges cross many
+        // checkpoints at once — exactly the shapes the crossing index has to get right. Each
+        // layout's GraphLayout.GetRowSegments/Elbows internally derives a small overscan window
+        // around whatever row is asked for (via the checkpoint-based candidate gather in
+        // DagLayoutEngine.DeriveWindow); comparing that against DeriveWindow called once for the
+        // FULL row range (which, spanning every checkpoint block, is provably equivalent to
+        // passing every edge — same as the legacy DeriveVisuals) catches any bug where the
+        // candidate gather drops or duplicates an edge for a genuinely partial window.
+        var chain = BuildGnarlyChain(1200);
+        var full = Compute(chain, maxRows: chain.Count);
+
+        var fan = BuildWideFan(300);
+        var fanFull = Compute(fan, maxRows: fan.Count);
+
+        foreach (var result in new[] { full, fanFull })
+        {
+            var layout = result.Layout;
+            var (fullSegs, fullSegStart, fullSegCount, fullElbs, fullElbStart, fullElbCount) =
+                DagLayoutEngine.DeriveWindow(result.State, layout.RealEdgeCap, layout.OffWindowEdges,
+                    layout.RowCount, 0, layout.RowCount - 1);
+
+            // Rows chosen to straddle checkpoint boundaries at various offsets: right at the
+            // start, mid-block, spanning the history's midpoint, and right at the end.
+            int[] probeRows =
+            [
+                0, 1,
+                Math.Min(100, layout.RowCount - 1),
+                Math.Min(257, layout.RowCount - 1), // just past a checkpoint boundary
+                layout.RowCount / 2,
+                Math.Max(0, layout.RowCount - 2), layout.RowCount - 1,
+            ];
+
+            foreach (var row in probeRows.Distinct())
+            {
+                var expectedSegs = fullSegCount[row] > 0
+                    ? fullSegs.AsSpan(fullSegStart[row], fullSegCount[row]).ToArray() : [];
+                var expectedElbs = fullElbCount[row] > 0
+                    ? fullElbs.AsSpan(fullElbStart[row], fullElbCount[row]).ToArray() : [];
+
+                Assert.Equal(expectedSegs, layout.GetRowSegments(row).ToArray());
+                Assert.Equal(expectedElbs, layout.GetRowElbows(row).ToArray());
+            }
+        }
     }
 
     [Fact]

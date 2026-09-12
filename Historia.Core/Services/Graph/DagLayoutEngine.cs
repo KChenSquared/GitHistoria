@@ -129,7 +129,7 @@ public sealed class DagLayoutEngine
                     // MergeIn edge is drawn in the SOURCE (merged-in) branch's colour — this
                     // commit's own lane colour — not the destination (merge commit's) lane.
                     var fromColor = s.LaneColor.GetValueOrDefault(fromLane, color);
-                    s.RealEdges.Add(new GraphEdge
+                    var newEdge = new GraphEdge
                     {
                         FromRow = res.ChildRow,
                         FromLane = fromLane,
@@ -143,7 +143,9 @@ public sealed class DagLayoutEngine
                         // (the first-parent edge continues straight through the same lane).
                         // Only the elbow at ToRow switches to the merged-in branch's colour.
                         LeadColorIndex = fromColor,
-                    });
+                    };
+                    s.RealEdges.Add(newEdge);
+                    IndexNewRealEdge(s, s.RealEdges.Count - 1, newEdge);
                 }
             }
 
@@ -222,18 +224,24 @@ public sealed class DagLayoutEngine
 
     private static GraphLayoutResult Build(GraphLayoutState s, bool complete)
     {
-        var offWindow = RegenerateOffWindow(s);
-        var edges = new GraphEdge[s.RealEdges.Count + offWindow.Count];
+        var offWindowList = RegenerateOffWindow(s);
+        var offWindow = offWindowList.ToArray();
+        var edges = new GraphEdge[s.RealEdges.Count + offWindow.Length];
         s.RealEdges.CopyTo(edges, 0);
         offWindow.CopyTo(edges, s.RealEdges.Count);
 
-        var (finalizedRows, segments, elbows) = DeriveVisuals(s.Rows, edges);
+        // §Phase 2: Rows no longer carry Segment/Elbow slice indices — GraphLayout derives lines
+        // for a row window on demand from the shared crossing index (DeriveWindow), instead of
+        // DeriveVisuals materialising flat Segments/Elbows arrays sized to every resident row on
+        // every Build/Extend call.
+        var finalizedRows = s.Rows.ToArray();
 
         var layout = new GraphLayout
         {
             Rows = finalizedRows,
-            Segments = segments,
-            Elbows = elbows,
+            SourceState = s,
+            RealEdgeCap = s.RealEdges.Count,
+            OffWindowEdges = offWindow,
             Commits = new ArrayCommitStore(s.Commits.ToArray()),
             Edges = edges,
             Decorations = s.Decorations.ToArray(),
@@ -241,10 +249,214 @@ public sealed class DagLayoutEngine
             EdgeCount = edges.Length,
             TotalLaneCount = s.NextCompactedLane,
             IsComplete = complete && s.Reservations.Count == 0,
-            RowByCommitId = new Dictionary<ObjectId, int>(s.RowByCommitId),
+            // §Phase 2 / S4: share the accumulator's dictionary instead of copying it wholesale
+            // on every Build — it only ever grows, and a lookup against an older snapshot is
+            // bounds-checked by the caller against that snapshot's own RowCount.
+            RowByCommitId = s.RowByCommitId,
         };
 
         return new GraphLayoutResult(layout, s);
+    }
+
+    /// <summary>§Phase 2: indexes a newly created real edge into the crossing checkpoints it
+    /// will span and the from-row block it starts in, so a later window derivation can find it
+    /// without scanning every edge ever created.</summary>
+    private static void IndexNewRealEdge(GraphLayoutState s, int index, GraphEdge edge)
+    {
+        const int stride = GraphLayoutState.CheckpointStride;
+
+        var block = edge.FromRow / stride;
+        if (!s.EdgesByFromBlock.TryGetValue(block, out var blockList))
+            s.EdgesByFromBlock[block] = blockList = [];
+        blockList.Add(index);
+
+        var firstCheckpoint = edge.FromRow / stride + 1; // first boundary strictly after FromRow
+        var lastCheckpoint = edge.ToRow / stride;         // last boundary at or before ToRow
+        for (var cp = firstCheckpoint; cp <= lastCheckpoint; cp++)
+        {
+            if (!s.CheckpointCrossing.TryGetValue(cp, out var list))
+                s.CheckpointCrossing[cp] = list = [];
+            list.Add(index);
+        }
+    }
+
+    /// <summary>
+    /// §Phase 2: derives <see cref="RowLaneSegment"/>/<see cref="RowElbow"/> data for rows
+    /// <paramref name="a"/>..<paramref name="b"/> only, using <paramref name="state"/>'s crossing
+    /// index to gather just the edges that can touch that range instead of every edge ever laid
+    /// out. Produces byte-identical per-row content to a full <see cref="DeriveVisuals"/> over
+    /// the same rows, because edges outside the gathered set cannot contribute to any row in
+    /// [a, b] (a real edge spans a contiguous row range; an edge not selected either never
+    /// touches [a, b] or was excluded from a checkpoint it doesn't actually cross), and the
+    /// gathered edges are processed in the same relative order (ascending <c>RealEdges</c> index,
+    /// then off-window edges) as the full derivation would visit them.
+    /// </summary>
+    internal static (RowLaneSegment[] Segments, int[] SegStart, int[] SegCount,
+        RowElbow[] Elbows, int[] ElbStart, int[] ElbCount) DeriveWindow(
+        GraphLayoutState state, int realEdgeCap, GraphEdge[] offWindowEdges, int rowCount, int a, int b)
+    {
+        a = Math.Max(0, a);
+        b = Math.Min(rowCount - 1, b);
+        if (b < a)
+            return ([], [], [], [], [], []);
+
+        const int stride = GraphLayoutState.CheckpointStride;
+        var checkpoint = a / stride;
+
+        var candidates = new SortedSet<int>();
+        if (state.CheckpointCrossing.TryGetValue(checkpoint, out var crossing))
+            foreach (var i in crossing)
+                if (i < realEdgeCap)
+                    candidates.Add(i);
+
+        var startBlock = checkpoint;
+        var endBlock = b / stride;
+        for (var blk = startBlock; blk <= endBlock; blk++)
+        {
+            if (!state.EdgesByFromBlock.TryGetValue(blk, out var blockList))
+                continue;
+            foreach (var i in blockList)
+            {
+                if (i >= realEdgeCap)
+                    continue;
+                if (state.RealEdges[i].FromRow <= b)
+                    candidates.Add(i);
+            }
+        }
+
+        var edges = new List<GraphEdge>(candidates.Count + offWindowEdges.Length);
+        foreach (var i in candidates)
+            edges.Add(state.RealEdges[i]);
+        edges.AddRange(offWindowEdges);
+
+        return ComputeWindowVisuals(edges, rowCount, a, b);
+    }
+
+    /// <summary>Same per-edge rules as <see cref="DeriveVisuals"/>, restricted to emitting rows
+    /// in [<paramref name="a"/>, <paramref name="b"/>] — <paramref name="rowCount"/> is the
+    /// layout's true total row count, used (as in <see cref="DeriveVisuals"/>) to decide whether
+    /// an edge's endpoint is a real row at all, which is independent of the render window.</summary>
+    private static (RowLaneSegment[] Segments, int[] SegStart, int[] SegCount,
+        RowElbow[] Elbows, int[] ElbStart, int[] ElbCount) ComputeWindowVisuals(
+        List<GraphEdge> edges, int rowCount, int a, int b)
+    {
+        var winLen = b - a + 1;
+        var segCounts = new int[winLen];
+        var elbCounts = new int[winLen];
+
+        bool InWin(int r) => r >= a && r <= b;
+
+        foreach (var edge in edges)
+        {
+            var fromIsRealRow = edge.FromRow >= 0 && edge.FromRow < rowCount;
+            var mergeTurn = edge.Type == EdgeType.MergeIn && edge.FromLane != edge.ToLane && fromIsRealRow;
+
+            if (fromIsRealRow && InWin(edge.FromRow))
+            {
+                if (mergeTurn) elbCounts[edge.FromRow - a]++;
+                else segCounts[edge.FromRow - a]++;
+            }
+
+            var passEnd = Math.Min(edge.ToRow, rowCount);
+            var passFrom = Math.Max(edge.FromRow + 1, a);
+            var passTo = Math.Min(passEnd - 1, b);
+            for (var r = passFrom; r <= passTo; r++)
+                segCounts[r - a]++;
+
+            if (edge.ToRow >= 0 && edge.ToRow < rowCount && edge.Type != EdgeType.OffWindow && InWin(edge.ToRow))
+            {
+                if (edge.FromLane == edge.ToLane || mergeTurn) segCounts[edge.ToRow - a]++;
+                else elbCounts[edge.ToRow - a]++;
+            }
+        }
+
+        var totalSegs = 0;
+        var totalElbs = 0;
+        var segStarts = new int[winLen];
+        var elbStarts = new int[winLen];
+        for (var r = 0; r < winLen; r++)
+        {
+            segStarts[r] = totalSegs;
+            totalSegs += segCounts[r];
+            elbStarts[r] = totalElbs;
+            totalElbs += elbCounts[r];
+        }
+
+        var allSegments = new RowLaneSegment[totalSegs];
+        var allElbows = new RowElbow[totalElbs];
+        var segHeads = (int[])segStarts.Clone();
+        var elbHeads = (int[])elbStarts.Clone();
+
+        foreach (var edge in edges)
+        {
+            var leadColor = edge.LeadColorIndex;
+            var color = edge.ColorIndex;
+            var fromIsRealRow = edge.FromRow >= 0 && edge.FromRow < rowCount;
+            var mergeTurn = edge.Type == EdgeType.MergeIn && edge.FromLane != edge.ToLane && fromIsRealRow;
+            var passLane = mergeTurn ? edge.ToLane : edge.FromLane;
+            var passColor = mergeTurn ? color : leadColor;
+
+            if (fromIsRealRow && InWin(edge.FromRow))
+            {
+                if (mergeTurn)
+                {
+                    allElbows[elbHeads[edge.FromRow - a]++] = new RowElbow
+                    {
+                        FromLane = edge.FromLane,
+                        ToLane = edge.ToLane,
+                        ColorIndex = color,
+                        Kind = ElbowKind.LeaveBottom,
+                    };
+                }
+                else
+                {
+                    allSegments[segHeads[edge.FromRow - a]++] = new RowLaneSegment
+                    {
+                        Lane = edge.FromLane,
+                        ColorIndex = leadColor,
+                        Type = LaneSegmentType.NodeToBottom
+                    };
+                }
+            }
+
+            var passEnd = Math.Min(edge.ToRow, rowCount);
+            var passFrom = Math.Max(edge.FromRow + 1, a);
+            var passTo = Math.Min(passEnd - 1, b);
+            for (var r = passFrom; r <= passTo; r++)
+            {
+                allSegments[segHeads[r - a]++] = new RowLaneSegment
+                {
+                    Lane = passLane,
+                    ColorIndex = passColor,
+                    Type = LaneSegmentType.Full
+                };
+            }
+
+            if (edge.ToRow >= 0 && edge.ToRow < rowCount && edge.Type != EdgeType.OffWindow && InWin(edge.ToRow))
+            {
+                if (edge.FromLane == edge.ToLane || mergeTurn)
+                {
+                    allSegments[segHeads[edge.ToRow - a]++] = new RowLaneSegment
+                    {
+                        Lane = edge.ToLane,
+                        ColorIndex = color,
+                        Type = LaneSegmentType.TopToNode
+                    };
+                }
+                else
+                {
+                    allElbows[elbHeads[edge.ToRow - a]++] = new RowElbow
+                    {
+                        FromLane = edge.FromLane,
+                        ToLane = edge.ToLane,
+                        ColorIndex = color,
+                        Kind = ElbowKind.EnterTop,
+                    };
+                }
+            }
+        }
+
+        return (allSegments, segStarts, segCounts, allElbows, elbStarts, elbCounts);
     }
 
     private static List<GraphEdge> RegenerateOffWindow(GraphLayoutState s)
@@ -278,157 +490,22 @@ public sealed class DagLayoutEngine
         return offWindow;
     }
 
-    private static (GraphRow[] Rows, RowLaneSegment[] Segments, RowElbow[] Elbows) DeriveVisuals(
+    /// <summary>
+    /// Test oracle only (§Phase 2 acceptance: "derived lines are identical to the legacy
+    /// DeriveVisuals for every row"). Delegates to the same <see cref="ComputeWindowVisuals"/>
+    /// used by the real, windowed path (<see cref="DeriveWindow"/>), just called for the whole
+    /// row range at once, so there is exactly one implementation of the per-edge line rules to
+    /// keep correct.
+    /// </summary>
+    internal static (GraphRow[] Rows, RowLaneSegment[] Segments, RowElbow[] Elbows) DeriveVisuals(
         List<GraphRow> rawRows, GraphEdge[] edges)
     {
         var rowCount = rawRows.Count;
         if (rowCount == 0)
             return ([], [], []);
 
-        var segCounts = new int[rowCount];
-        var elbCounts = new int[rowCount];
-
-        foreach (var edge in edges)
-        {
-            var fromInWindow = edge.FromRow >= 0 && edge.FromRow < rowCount;
-
-            // §V3-3.2: a merge edge turns out of the merge commit's OWN lane at the merge row and
-            // then runs straight down the merged-in branch's lane to the far parent — it does not
-            // trail the merge lane all the way down and jog sideways only at the parent (that
-            // reads as every merge line "sagging down and to the right"). So the elbow lands on
-            // FromRow, and both the pass-through and the terminal segment sit in ToLane.
-            var mergeTurn = edge.Type == EdgeType.MergeIn && edge.FromLane != edge.ToLane && fromInWindow;
-
-            if (fromInWindow)
-            {
-                if (mergeTurn)
-                    elbCounts[edge.FromRow]++;
-                else
-                    segCounts[edge.FromRow]++;
-            }
-
-            var passEnd = Math.Min(edge.ToRow, rowCount);
-            for (var r = edge.FromRow + 1; r < passEnd; r++)
-                segCounts[r]++;
-
-            if (edge.ToRow >= 0 && edge.ToRow < rowCount && edge.Type != EdgeType.OffWindow)
-            {
-                if (edge.FromLane == edge.ToLane || mergeTurn)
-                    segCounts[edge.ToRow]++;
-                else
-                    elbCounts[edge.ToRow]++;
-            }
-        }
-
-        var totalSegs = 0;
-        var totalElbs = 0;
-        var segStarts = new int[rowCount];
-        var elbStarts = new int[rowCount];
-        for (var r = 0; r < rowCount; r++)
-        {
-            segStarts[r] = totalSegs;
-            totalSegs += segCounts[r];
-            elbStarts[r] = totalElbs;
-            totalElbs += elbCounts[r];
-        }
-
-        var allSegments = new RowLaneSegment[totalSegs];
-        var allElbows = new RowElbow[totalElbs];
-
-        var segHeads = (int[])segStarts.Clone();
-        var elbHeads = (int[])elbStarts.Clone();
-
-        foreach (var edge in edges)
-        {
-            // §V6-G7 fix: the lead-in (NodeToBottom/Full, before the edge reaches its parent)
-            // is coloured with LeadColorIndex — whatever already occupies edge.FromLane — since a
-            // MergeIn edge's lead-in runs through the merge commit's OWN lane, still carrying that
-            // lane's own line for the same row span. Only the terminal segment/elbow at ToRow
-            // switches to ColorIndex (the merged-in branch's own colour for a MergeIn edge).
-            var leadColor = edge.LeadColorIndex;
-            var color = edge.ColorIndex;
-            var fromInWindow = edge.FromRow >= 0 && edge.FromRow < rowCount;
-
-            // See the matching note in the counting pass: a merge edge bends at FromRow and runs
-            // down ToLane. Its whole visible run is then the merged-in branch's own lane, so it is
-            // drawn end to end in that branch's colour (ColorIndex) — LeadColorIndex only mattered
-            // while the lead-in shared the merge commit's lane, which it no longer does.
-            var mergeTurn = edge.Type == EdgeType.MergeIn && edge.FromLane != edge.ToLane && fromInWindow;
-            var passLane = mergeTurn ? edge.ToLane : edge.FromLane;
-            var passColor = mergeTurn ? color : leadColor;
-
-            if (fromInWindow)
-            {
-                if (mergeTurn)
-                {
-                    allElbows[elbHeads[edge.FromRow]++] = new RowElbow
-                    {
-                        FromLane = edge.FromLane,
-                        ToLane = edge.ToLane,
-                        ColorIndex = color,
-                        Kind = ElbowKind.LeaveBottom,
-                    };
-                }
-                else
-                {
-                    allSegments[segHeads[edge.FromRow]++] = new RowLaneSegment
-                    {
-                        Lane = edge.FromLane,
-                        ColorIndex = leadColor,
-                        Type = LaneSegmentType.NodeToBottom
-                    };
-                }
-            }
-
-            var passEnd = Math.Min(edge.ToRow, rowCount);
-            for (var r = edge.FromRow + 1; r < passEnd; r++)
-            {
-                allSegments[segHeads[r]++] = new RowLaneSegment
-                {
-                    Lane = passLane,
-                    ColorIndex = passColor,
-                    Type = LaneSegmentType.Full
-                };
-            }
-
-            if (edge.ToRow >= 0 && edge.ToRow < rowCount && edge.Type != EdgeType.OffWindow)
-            {
-                if (edge.FromLane == edge.ToLane || mergeTurn)
-                {
-                    allSegments[segHeads[edge.ToRow]++] = new RowLaneSegment
-                    {
-                        Lane = edge.ToLane,
-                        ColorIndex = color,
-                        Type = LaneSegmentType.TopToNode
-                    };
-                }
-                else
-                {
-                    allElbows[elbHeads[edge.ToRow]++] = new RowElbow
-                    {
-                        FromLane = edge.FromLane,
-                        ToLane = edge.ToLane,
-                        ColorIndex = color,
-                        Kind = ElbowKind.EnterTop,
-                    };
-                }
-            }
-        }
-
-        var finalizedRows = new GraphRow[rowCount];
-        for (var r = 0; r < rowCount; r++)
-        {
-            var raw = rawRows[r];
-            finalizedRows[r] = raw with
-            {
-                SegmentStart = segStarts[r],
-                SegmentCount = segCounts[r],
-                ElbowStart = elbStarts[r],
-                ElbowCount = elbCounts[r],
-            };
-        }
-
-        return (finalizedRows, allSegments, allElbows);
+        var (segments, _, _, elbows, _, _) = ComputeWindowVisuals([.. edges], rowCount, 0, rowCount - 1);
+        return ([.. rawRows], segments, elbows);
     }
 
     // ── Lane allocation ──
