@@ -26,12 +26,22 @@ internal static class GraphCachePaths
 /// "Read commit details from disk" setting is on, <see cref="GraphLayoutService"/> spills the
 /// laid-out rows here and points <see cref="GraphLayout.Commits"/> at a
 /// <see cref="DiskCommitStore"/>, so only the fixed-size layout arrays stay resident on a
-/// large history. Four siblings per repo:
+/// large history. Siblings per repo:
 /// <list type="bullet">
-/// <item><c>.meta.hdr</c> — JSON: version, fingerprint, remote-branch flag, row count, exhausted.</item>
-/// <item><c>.meta.dat</c> — one binary record per row (sha, three strings, two timestamps, parent count).</item>
-/// <item><c>.meta.idx</c> — one <see cref="long"/> per row: the record's start offset in <c>.meta.dat</c>.</item>
-/// <item><c>.meta.search</c> — one lowercased line per row (<c>sha ␟ message ␟ author</c>) for Ctrl+F.</item>
+/// <item><c>.meta.hdr</c> — JSON: version, walk key, remote-branch flag, row count, record
+/// count, order version, exhausted.</item>
+/// <item><c>.meta.dat</c> — one binary RECORD per distinct commit (sha, three strings, two
+/// timestamps, parent count) — append-only, never rewritten by a ref change (Phase 3c).</item>
+/// <item><c>.meta.idx</c> — one <see cref="long"/> per RECORD: its start offset in
+/// <c>.meta.dat</c>.</item>
+/// <item><c>.meta.search</c> — one lowercased line per RECORD (<c>sha ␟ message ␟ author</c>)
+/// for Ctrl+F.</item>
+/// <item><c>.meta.order.&lt;n&gt;</c> (Phase 3c, only once a ref change has actually reordered
+/// history) — one <see cref="int"/> per ROW: which record occupies that row. Absent
+/// (<c>OrderVersion == 0</c>) means the identity order — row <c>i</c> IS record <c>i</c>, exactly
+/// as before Phase 3c; the common case, and the only one before any reorder has ever run.</item>
+/// <item><c>.meta.tips</c> (Phase 3c) — the sorted tip SHAs (20 bytes each) the current order was
+/// built from; not versioned, always describes the CURRENT order.</item>
 /// </list>
 /// All writes are append-only and best-effort; any read fault downgrades the caller to the
 /// in-memory path.
@@ -50,16 +60,25 @@ internal sealed class GraphMetaStore
     // GraphWalkCache.Version — the CLI prime resume-skip fix and the canonical sorted tip order
     // both change a repo's walk output for an unchanged fingerprint, so a v3 store is rejected
     // outright and re-spills once.
-    internal const int Version = 4;
+    // Phase 3c (v10 graph memory footprint plan): bumped 4 -> 5 to add RecordCount and
+    // OrderVersion to the header — a v4 file has no order indirection (every row IS its record)
+    // and no RecordCount field; rejected outright, one more one-time re-spill per repo.
+    internal const int Version = 5;
     internal const string HdrExt = ".meta.hdr";
     internal const string DatExt = ".meta.dat";
     internal const string IdxExt = ".meta.idx";
     internal const string SearchExt = ".meta.search";
+    internal const string TipsExt = ".meta.tips";
 
     /// <summary>Field separator in <c>.meta.search</c> lines — US (unit separator).</summary>
     internal const char Sep = (char)0x1f;
 
     internal static readonly JsonSerializerOptions Json = new() { IncludeFields = false };
+
+    /// <summary>Phase 3c: the versioned order file for this repo — <c>version == 0</c> never
+    /// exists on disk (0 means "identity order", encoded by the header alone).</summary>
+    internal static string OrderFile(string repoPath, int version) =>
+        GraphCachePaths.File(repoPath, $".meta.order.{version}");
 
     internal sealed class Header
     {
@@ -69,6 +88,16 @@ internal sealed class GraphMetaStore
         public int RowCount { get; set; }
         public bool Exhausted { get; set; }
         public int WalkEngine { get; set; }
+
+        /// <summary>Phase 3c: total distinct commit records ever appended to <c>.meta.dat</c> —
+        /// equals <see cref="RowCount"/> until the first reorder, after which it can exceed it
+        /// (new commits get new records; unreachable ones' old records just aren't referenced by
+        /// the current order any more, until compaction).</summary>
+        public int RecordCount { get; set; }
+
+        /// <summary>Phase 3c: which <c>.meta.order.&lt;n&gt;</c> file maps rows to records.
+        /// <c>0</c> means identity — row <c>i</c> is record <c>i</c>, no order file exists.</summary>
+        public int OrderVersion { get; set; }
     }
 
     /// <summary>
@@ -96,7 +125,7 @@ internal sealed class GraphMetaStore
             if (!hdr.Exhausted && hdr.RowCount < wantCount)
                 return null;
 
-            return DiskCommitStore.Open(repoPath, hdr.RowCount);
+            return DiskCommitStore.Open(repoPath, hdr.RowCount, hdr.RecordCount, hdr.OrderVersion);
         }
         catch
         {
@@ -186,15 +215,32 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     private readonly string _dat = GraphCachePaths.File(repoPath, GraphMetaStore.DatExt);
     private readonly string _idx = GraphCachePaths.File(repoPath, GraphMetaStore.IdxExt);
     private readonly string _search = GraphCachePaths.File(repoPath, GraphMetaStore.SearchExt);
+    private readonly string _tips = GraphCachePaths.File(repoPath, GraphMetaStore.TipsExt);
 
-    /// <summary>Truncates every sibling file. Call before appending row 0 of a fresh walk.</summary>
+    /// <summary>Truncates every sibling file, including any Phase 3c order files (a from-row-0
+    /// re-spill starts the order over at identity too). Call before appending row 0 of a fresh
+    /// walk.</summary>
     public void Reset()
     {
         try
         {
             Directory.CreateDirectory(AppPaths.CacheDirectory);
-            foreach (var p in new[] { _hdr, _dat, _idx, _search })
+            foreach (var p in new[] { _hdr, _dat, _idx, _search, _tips })
                 try { File.Delete(p); } catch { }
+            DeleteOrderFiles(repoPath);
+        }
+        catch { }
+    }
+
+    private static void DeleteOrderFiles(string repoPath)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(AppPaths.CacheDirectory);
+            if (!dir.Exists)
+                return;
+            foreach (var f in dir.GetFiles($"{GraphCachePaths.Stem(repoPath)}.meta.order.*"))
+                try { f.Delete(); } catch { }
         }
         catch { }
     }
@@ -263,8 +309,24 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         catch { }
     }
 
-    /// <summary>Rewrites the header. Call after the matching <see cref="Append"/>(s).</summary>
-    public void Commit(int rowCount, bool exhausted)
+    /// <summary>Rewrites the header for the IDENTITY order — row <c>i</c> is record <c>i</c>,
+    /// <c>RecordCount == rowCount</c>, no order file. Call after the matching
+    /// <see cref="Append"/>(s). This is every writer before Phase 3c's reorder ever runs.</summary>
+    public void Commit(int rowCount, bool exhausted) =>
+        WriteHeader(rowCount, recordCount: rowCount, orderVersion: 0, exhausted);
+
+    /// <summary>Phase 3c: rewrites the header to point at a new order version, after
+    /// <see cref="WriteOrder"/> has written it and any genuinely-new commits have already been
+    /// appended via <see cref="Append(IReadOnlyList{RawCommit},int,int)"/>. <paramref
+    /// name="recordCount"/> is the TOTAL distinct records now in <c>.meta.dat</c> (can exceed
+    /// <paramref name="rowCount"/> once history has been rewritten). Call after
+    /// <see cref="WriteOrder"/> and <see cref="WriteTips"/> — this is the atomic switch-over: a
+    /// reader that opened the store under the old header keeps reading the old order until it
+    /// reopens.</summary>
+    public void CommitReorder(int rowCount, int recordCount, int orderVersion, bool exhausted) =>
+        WriteHeader(rowCount, recordCount, orderVersion, exhausted);
+
+    private void WriteHeader(int rowCount, int recordCount, int orderVersion, bool exhausted)
     {
         try
         {
@@ -274,12 +336,56 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 Fingerprint = fingerprint,
                 IncludeRemoteBranches = includeRemoteBranches,
                 RowCount = rowCount,
+                RecordCount = recordCount,
+                OrderVersion = orderVersion,
                 Exhausted = exhausted,
                 WalkEngine = (int)engine,
             };
             var tmp = $"{_hdr}.{Guid.NewGuid():N}.tmp";
             File.WriteAllBytes(tmp, JsonSerializer.SerializeToUtf8Bytes(hdr, GraphMetaStore.Json));
             File.Move(tmp, _hdr, overwrite: true);
+        }
+        catch { }
+    }
+
+    /// <summary>Phase 3c: writes a new, versioned row -&gt; record order file. Doesn't touch the
+    /// header — call <see cref="CommitReorder"/> after this (and after <see cref="WriteTips"/>)
+    /// to switch over. Versioned so a reader mid-read of the current order is never affected;
+    /// stale versions are removed by <see cref="Reset"/> or (compaction) explicit cleanup.</summary>
+    public bool WriteOrder(int version, int[] order)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppPaths.CacheDirectory);
+            var path = GraphMetaStore.OrderFile(repoPath, version);
+            var bytes = new byte[order.Length * 4];
+            Buffer.BlockCopy(order, 0, bytes, 0, bytes.Length);
+            var tmp = $"{path}.{Guid.NewGuid():N}.tmp";
+            File.WriteAllBytes(tmp, bytes);
+            File.Move(tmp, path, overwrite: true);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Phase 3c: writes the sorted tip SHAs the CURRENT order was built from — read back
+    /// by a future reorder/splice to decide whether it can trust the existing order as a
+    /// starting point. Not versioned; always describes whatever order the header currently
+    /// points at.</summary>
+    public void WriteTips(IReadOnlyList<ObjectId> sortedTips)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppPaths.CacheDirectory);
+            var bytes = new byte[sortedTips.Count * 20];
+            for (var i = 0; i < sortedTips.Count; i++)
+                sortedTips[i].RawId.CopyTo(bytes.AsSpan(i * 20, 20));
+            var tmp = $"{_tips}.{Guid.NewGuid():N}.tmp";
+            File.WriteAllBytes(tmp, bytes);
+            File.Move(tmp, _tips, overwrite: true);
         }
         catch { }
     }
@@ -307,9 +413,16 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 
     private readonly string _repoPath;
     private readonly SafeFileHandle _dat;
-    private long[] _offsets;            // [row] -> start byte in .dat
+    private long[] _offsets;            // [record] -> start byte in .dat
     private long _datLength;
-    private int _count;
+    private int _count;                 // row count (== record count until the first reorder)
+
+    /// <summary>Phase 3c: [row] -&gt; record index, or null for the identity order (row IS
+    /// record — every store before its first reorder, and the overwhelming majority always).
+    /// Loaded once at <see cref="Open"/> and never mutated in place — a reorder always produces a
+    /// freshly-opened store (see <c>GraphLayoutService</c>'s reorder job), so a reader never needs
+    /// to see an order file change under it.</summary>
+    private readonly int[]? _order;
 
     private readonly Dictionary<int, CommitMetadata> _decoded = new(DecodeCacheCap);
     private readonly Queue<int> _decodedOrder = new(DecodeCacheCap);
@@ -337,34 +450,62 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         ParentCount = 0,
     };
 
-    private DiskCommitStore(string repoPath, SafeFileHandle dat, long[] offsets, long datLength, int count)
+    private DiskCommitStore(string repoPath, SafeFileHandle dat, long[] offsets, long datLength, int count, int[]? order)
     {
         _repoPath = repoPath;
         _dat = dat;
         _offsets = offsets;
         _datLength = datLength;
         _count = count;
+        _order = order;
     }
 
-    public static DiskCommitStore Open(string repoPath, int rowCount)
+    /// <summary>Opens a store at the IDENTITY order — row <c>i</c> IS record <c>i</c>. Every
+    /// caller before Phase 3c's reorder ever runs, and the only shape <see cref="SetCount"/>
+    /// supports growing in place.</summary>
+    public static DiskCommitStore Open(string repoPath, int rowCount) => Open(repoPath, rowCount, rowCount, orderVersion: 0);
+
+    /// <summary>Phase 3c: opens a store whose current header names an explicit order version.
+    /// <paramref name="recordCount"/> sizes the <c>.idx</c>/offset table (records, not rows);
+    /// <paramref name="orderVersion"/> 0 means identity (no order file to load).</summary>
+    public static DiskCommitStore Open(string repoPath, int rowCount, int recordCount, int orderVersion)
     {
         var datPath = GraphCachePaths.File(repoPath, GraphMetaStore.DatExt);
         var idxPath = GraphCachePaths.File(repoPath, GraphMetaStore.IdxExt);
-        var offsets = ReadOffsets(idxPath, rowCount);
+        var offsets = ReadOffsets(idxPath, recordCount);
         var dat = File.OpenHandle(datPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         var len = RandomAccess.GetLength(dat);
-        return new DiskCommitStore(repoPath, dat, offsets, len, Math.Min(rowCount, offsets.Length));
+        int[]? order = null;
+        if (orderVersion > 0)
+        {
+            var orderPath = GraphMetaStore.OrderFile(repoPath, orderVersion);
+            order = ReadOrder(orderPath, rowCount);
+        }
+        var count = order is not null ? Math.Min(rowCount, order.Length) : Math.Min(rowCount, offsets.Length);
+        return new DiskCommitStore(repoPath, dat, offsets, len, count, order);
+    }
+
+    private static int[] ReadOrder(string orderPath, int rowCount)
+    {
+        var bytes = File.ReadAllBytes(orderPath);
+        var n = Math.Min(rowCount, bytes.Length / 4);
+        var order = new int[n];
+        Buffer.BlockCopy(bytes, 0, order, 0, n * 4);
+        return order;
     }
 
     /// <summary>Adopt rows appended since <see cref="Open"/> (called after an Extend spill).
     /// Phase 3a: reads only the <c>.idx</c> bytes appended since the last call instead of
     /// re-reading the whole file (11.8 MB on linux, previously re-read on every spill batch and
-    /// every Extend) — the existing offsets are kept and only the new tail is appended.</summary>
+    /// every Extend) — the existing offsets are kept and only the new tail is appended.
+    /// Phase 3c: only valid for an identity-order store (<see cref="_order"/> null) — a store
+    /// opened at an explicit order version never grows in place; the layout service reopens a
+    /// fresh store after a reorder instead.</summary>
     public void SetCount(int rowCount)
     {
         lock (_sync)
         {
-            if (_closed || rowCount <= _count)
+            if (_closed || _order is not null || rowCount <= _count)
                 return;
             var tail = ReadOffsetsFrom(GraphCachePaths.File(_repoPath, GraphMetaStore.IdxExt), _offsets.Length, rowCount);
             if (tail.Length > 0)
@@ -380,6 +521,40 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     }
 
     public int Count => Volatile.Read(ref _count);
+
+    /// <summary>Phase 3c: total distinct commit records in <c>.meta.dat</c> right now (can exceed
+    /// <see cref="Count"/> once history has been reordered — old records superseded by a reorder
+    /// stay in the file, unreferenced, until compaction).</summary>
+    public int RecordCount => _offsets.Length;
+
+    /// <summary>Row <paramref name="row"/>'s record index — identity unless an order file is
+    /// loaded.</summary>
+    private int RecordOf(int row) => _order is null ? row : _order[row];
+
+    /// <summary>Phase 3c: builds a SHA -&gt; record-index table by reading just the leading
+    /// 20-byte SHA of every existing record (skips message/author/parent bytes entirely) — used
+    /// by the reorder job to find which commits in a freshly walked history already have a
+    /// durable record, so it only appends genuinely new ones. One small read per record; this is
+    /// a background, gated, lowest-priority job (never on the render thread), so it trades read
+    /// count for simplicity rather than batching — the plan's own repo-scale numbers (measured on
+    /// linux/vscode) are for the reorder as a whole, not this specific pass.</summary>
+    public Dictionary<string, int> BuildShaIndex()
+    {
+        var map = new Dictionary<string, int>(RecordCount, StringComparer.Ordinal);
+        lock (_sync)
+        {
+            if (_closed)
+                return map;
+            Span<byte> shaBuf = stackalloc byte[20];
+            for (var rec = 0; rec < _offsets.Length; rec++)
+            {
+                if (RandomAccess.Read(_dat, shaBuf, _offsets[rec]) != 20)
+                    continue;
+                map[Convert.ToHexStringLower(shaBuf)] = rec;
+            }
+        }
+        return map;
+    }
 
     public CommitMetadata this[int index]
     {
@@ -431,6 +606,21 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                 return [];
             try
             {
+                // Phase 3c: an explicit order means consecutive ROWS need not be consecutive
+                // RECORDS (or even increasing ones) — the one-big-read trick below only holds for
+                // the identity order. Reordered stores fall back to one read per row; simpler and
+                // correct, at the cost of the batching this method exists for. A reorder is rare
+                // (a fetch/branch-create/branch-delete, not every extend), so this only bites the
+                // rows read right after one, before the layout's own decode cache warms up.
+                if (_order is not null)
+                {
+                    // ReadRaw re-enters this same lock (Monitor is reentrant per-thread) — safe.
+                    var perRow = new List<RawCommit>(last - first + 1);
+                    for (var row = first; row <= last; row++)
+                        perRow.Add(ReadRaw(row));
+                    return perRow;
+                }
+
                 var start = _offsets[first];
                 var end = last + 1 < _offsets.Length ? _offsets[last + 1] : _datLength;
                 var span = (int)(end - start);
@@ -496,6 +686,19 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                 return;
             try
             {
+                // Phase 3c: same "identity order only" restriction as ReadRawRange — a reordered
+                // store falls back to one decode per row via the indexer's own path.
+                if (_order is not null)
+                {
+                    for (var row = firstRow; row <= lastRow; row++)
+                    {
+                        if (_decoded.ContainsKey(row))
+                            continue;
+                        Cache(row, Decode(row).Meta);
+                    }
+                    return;
+                }
+
                 var start = _offsets[firstRow];
                 var end = lastRow + 1 < _offsets.Length ? _offsets[lastRow + 1] : _datLength;
                 var span = (int)Math.Min(end - start, 1 << 22); // cap a pathological single read at 4 MB
@@ -530,34 +733,55 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 
     /// <summary>
-    /// Ctrl+F backing scan (§7.5): streams <c>.meta.search</c>, one line per row. Matches the
-    /// in-memory find exactly — substring on message or author, prefix on the SHA.
+    /// Ctrl+F backing scan (§7.5): streams <c>.meta.search</c>, one line per RECORD (Phase 3c —
+    /// the file is record-indexed, like <c>.dat</c>/<c>.idx</c>, so it is never rewritten by a
+    /// reorder). Matches the in-memory find exactly — substring on message or author, prefix on
+    /// the SHA. For an identity-order store a record index IS the row; otherwise the hits are
+    /// mapped back to rows via the inverse of the current order, built once per call (no
+    /// persisted reverse map — the plan's own recommendation), and a record no longer referenced
+    /// by the current order (superseded by a reorder, not yet compacted) is dropped.
     /// </summary>
     public IReadOnlyList<int> Search(string term)
     {
-        var hits = new List<int>();
         var t = term.Trim().ToLowerInvariant();
         if (t.Length == 0 || _closed)
-            return hits;
+            return [];
+
+        Dictionary<int, int>? recordToRow = null;
+        if (_order is not null)
+        {
+            recordToRow = new Dictionary<int, int>(_order.Length);
+            for (var row = 0; row < _order.Length; row++)
+                recordToRow[_order[row]] = row;
+        }
+
+        var hits = new List<int>();
         try
         {
             var path = GraphCachePaths.File(_repoPath, GraphMetaStore.SearchExt);
             using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite), Encoding.UTF8);
-            var row = -1;
+            var record = -1;
             string? line;
             while ((line = reader.ReadLine()) is not null)
             {
-                row++;
-                if (row >= _count)
+                record++;
+                if (record >= RecordCount)
                     break;
                 var sep = line.IndexOf(GraphMetaStore.Sep);
                 if (sep < 0)
                     continue;
                 var sha = line.AsSpan(0, sep);
                 var rest = line.AsSpan(sep + 1);
-                if (rest.Contains(t, StringComparison.Ordinal) || sha.StartsWith(t, StringComparison.Ordinal))
+                if (!rest.Contains(t, StringComparison.Ordinal) && !sha.StartsWith(t, StringComparison.Ordinal))
+                    continue;
+
+                if (recordToRow is null)
+                    hits.Add(record);
+                else if (recordToRow.TryGetValue(record, out var row))
                     hits.Add(row);
             }
+            if (recordToRow is not null)
+                hits.Sort();
         }
         catch
         {
@@ -635,12 +859,19 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         return offsets;
     }
 
-    private (CommitMetadata Meta, ObjectId[] Parents) Decode(int index)
+    /// <summary>Decodes ROW <paramref name="row"/> — translated to its record via
+    /// <see cref="RecordOf"/> (identity unless an order file is loaded). A record's byte length
+    /// is always bounded by the NEXT RECORD's offset regardless of row order, since
+    /// <c>.meta.idx</c>/<c>.dat</c> are append-ordered by record, never by row.</summary>
+    private (CommitMetadata Meta, ObjectId[] Parents) Decode(int row)
     {
-        if (index < 0 || index >= _count)
-            throw new ArgumentOutOfRangeException(nameof(index));
-        var start = _offsets[index];
-        var end = index + 1 < _offsets.Length ? _offsets[index + 1] : _datLength;
+        if (row < 0 || row >= _count)
+            throw new ArgumentOutOfRangeException(nameof(row));
+        var rec = RecordOf(row);
+        if (rec < 0 || rec >= _offsets.Length)
+            throw new InvalidDataException("graph meta order points at an unknown record");
+        var start = _offsets[rec];
+        var end = rec + 1 < _offsets.Length ? _offsets[rec + 1] : _datLength;
         var len = (int)(end - start);
         if (len <= 0 || start < 0 || end > _datLength)
             throw new InvalidDataException("graph meta record out of range");
@@ -698,5 +929,59 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
             _decoded.Remove(_decodedOrder.Dequeue());
         _decoded[index] = m;
         _decodedOrder.Enqueue(index);
+    }
+}
+
+/// <summary>
+/// Phase 3c (v10 graph memory footprint plan): the pure, storage-agnostic half of "reorder
+/// instead of re-spill" — given the existing store's SHA -&gt; record-index table and a freshly
+/// walked history in the new order, decides which rows can reuse an existing record and which
+/// commits genuinely need a new one. Deliberately has no file or git access: the caller
+/// (<see cref="GraphLayoutService"/>'s reorder job) is responsible for building
+/// <paramref name="existingRecords"/> (<see cref="DiskCommitStore.BuildShaIndex"/>), streaming
+/// the new walk, and afterwards appending <c>NewRecords</c> and writing the order — this class
+/// only computes what those steps should be, so it can be unit-tested without a live git process
+/// or real files, the same way <see cref="GraphMetaStore"/>'s own tests work against synthetic
+/// records.
+/// </summary>
+internal static class GraphMetaReorder
+{
+    public readonly record struct Plan(int[] Order, IReadOnlyList<RawCommit> NewRecords);
+
+    /// <summary>
+    /// <paramref name="existingRecords"/>: every commit sha already durable in the store, mapped
+    /// to its record index (<see cref="DiskCommitStore.RecordCount"/> is the count BEFORE this
+    /// call — new records are numbered starting there). <paramref name="newWalkCommits"/>: the
+    /// new history, in the new walk's real row order. Returns the row -&gt; record order to write
+    /// and the commits (in walk order) that need a brand-new record appended — a commit whose sha
+    /// already has a record, whether from <paramref name="existingRecords"/> or from earlier in
+    /// this very walk (a defensive case; the walk itself should never revisit a sha), is never
+    /// duplicated.
+    /// </summary>
+    public static Plan Build(
+        IReadOnlyDictionary<string, int> existingRecords, int existingRecordCount,
+        IReadOnlyList<RawCommit> newWalkCommits)
+    {
+        var order = new int[newWalkCommits.Count];
+        var newRecords = new List<RawCommit>();
+        var assignedThisWalk = new Dictionary<string, int>(StringComparer.Ordinal);
+        var nextRecord = existingRecordCount;
+
+        for (var row = 0; row < newWalkCommits.Count; row++)
+        {
+            var commit = newWalkCommits[row];
+            var sha = commit.Id.Sha;
+            if (existingRecords.TryGetValue(sha, out var rec) || assignedThisWalk.TryGetValue(sha, out rec))
+            {
+                order[row] = rec;
+                continue;
+            }
+            order[row] = nextRecord;
+            assignedThisWalk[sha] = nextRecord;
+            newRecords.Add(commit);
+            nextRecord++;
+        }
+
+        return new Plan(order, newRecords);
     }
 }
