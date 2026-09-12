@@ -58,7 +58,7 @@ public static class PerfLog
         Enabled ? new Timer(label) : Noop.Instance;
 
     /// <summary>
-    /// v10.1.4 (graph memory footprint plan, Phase 0): one line of GC/process memory stats,
+    /// v10.1.3 (graph memory footprint plan, Phase 0): one line of GC/process memory stats,
     /// tagged with <paramref name="label"/> so a run can be sliced by phase (quick paint, first
     /// paint, every 50k rows of silent pre-load, every 100k rows of the disk writer, before/after
     /// a tab-switch purge, 60s idle). Cheap enough to call from a hot loop when disabled — the

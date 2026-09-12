@@ -129,11 +129,11 @@ public sealed record AppSettings
     public bool GraphMetadataFromDisk { get; init; } = true;
 
     /// <summary>
-    /// v10.1.3: when on (default), a large repository (≥ 100k commits walked) that has no
-    /// commit-graph file yet gets one written in the background (<c>git commit-graph write
-    /// --reachable</c>) once its first full history walk and §7.6 spill have both finished. A
-    /// commit-graph is what lets Git's own <c>--topo-order</c> walk (the CLI graph engine)
-    /// expand lazily by generation number instead of touching the whole history up front.
+    /// v10.1.3: when on (default), a large repository (≥ 30,000 commits walked, checked as the
+    /// §7.6 background spill proceeds in 25k-row chunks) that has no commit-graph file yet gets
+    /// one written in the background (<c>git commit-graph write --reachable</c>). A commit-graph
+    /// is what lets Git's own <c>--topo-order</c> walk (the CLI graph engine) expand lazily by
+    /// generation number instead of touching the whole history up front.
     /// </summary>
     public bool WriteCommitGraphForLargeRepos { get; init; } = true;
 
@@ -148,7 +148,13 @@ public sealed record AppSettings
     public int SilentCrawlRowCap { get; init; } = 300_000;
 
     public const int MinSilentCrawlRowCap = 0;
-    public const int MaxSilentCrawlRowCap = GraphLimits.MaxResidentRowsDisk;
+
+    /// <summary>
+    /// #25: was pinned to <see cref="GraphLimits.MaxResidentRowsDisk"/> (2,000,000), which left no
+    /// way to set the crawl cap between that and <see cref="MaxResidentRowCap"/> (10,000,000)
+    /// except through <c>0</c> (uncapped). Matches the resident-cap maximum instead.
+    /// </summary>
+    public const int MaxSilentCrawlRowCap = MaxResidentRowCap;
 
     /// <summary>Math.Clamp to the accepted <see cref="SilentCrawlRowCap"/> range. Follows the
     /// house style for a bounded numeric setting.</summary>

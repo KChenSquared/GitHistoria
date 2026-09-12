@@ -97,15 +97,8 @@ public sealed class SettingsView : UserControl, IDisposable
         if (c.EnableMultiLineTabs)
         {
             var maxRows = new NumericUpDown { Minimum = 2, Maximum = 5, Value = c.MaxTabRows, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-            var maxRowsPrev = c.MaxTabRows;
-            maxRows.LostFocus += (_, _) =>
-            {
-                var next = (int)Math.Clamp(maxRows.Value ?? maxRowsPrev, 2, 5);
-                if (next == maxRowsPrev)
-                    return;
-                maxRowsPrev = next;
-                _ = _cfg.UpdateAsync(s => s with { MaxTabRows = next });
-            };
+            WireNumericCommit(maxRows, c.MaxTabRows, v => Math.Clamp(v, 2, 5),
+                next => _ = _cfg.UpdateAsync(s => s with { MaxTabRows = next }));
             _root.Children.Add(LabeledRow("Max tab rows", maxRows));
         }
         _root.Children.Add(Check("Fixed-width repository tabs", c.TabWidthMode == TabWidthMode.Fixed,
@@ -122,15 +115,8 @@ public sealed class SettingsView : UserControl, IDisposable
                 Width = 120,
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
-            var tabLenPrev = c.FixedTabWidth;
-            tabLen.LostFocus += (_, _) =>
-            {
-                var next = AppSettings.ClampFixedTabWidth((int)(tabLen.Value ?? tabLenPrev));
-                if (next == tabLenPrev)
-                    return;
-                tabLenPrev = next;
-                _ = _cfg.UpdateAsync(s => s with { FixedTabWidth = next });
-            };
+            WireNumericCommit(tabLen, c.FixedTabWidth, AppSettings.ClampFixedTabWidth,
+                next => _ = _cfg.UpdateAsync(s => s with { FixedTabWidth = next }));
             _root.Children.Add(LabeledRow("Tab width (px)", tabLen));
         }
         else
@@ -189,39 +175,18 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         _root.Children.Add(LabeledRow("Default diff view", diffView));
         var ctxLines = new NumericUpDown { Minimum = 0, Maximum = 20, Value = c.DiffContextLines, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        var ctxLinesPrev = c.DiffContextLines;
-        ctxLines.LostFocus += (_, _) =>
-        {
-            var next = (int)(ctxLines.Value ?? ctxLinesPrev);
-            if (next == ctxLinesPrev)
-                return;
-            ctxLinesPrev = next;
-            _ = _cfg.UpdateAsync(s => s with { DiffContextLines = next });
-        };
+        WireNumericCommit(ctxLines, c.DiffContextLines, v => v,
+            next => _ = _cfg.UpdateAsync(s => s with { DiffContextLines = next }));
         _root.Children.Add(LabeledRow("Context lines", ctxLines));
         var tabW = new NumericUpDown { Minimum = 1, Maximum = 8, Value = c.TabWidth, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        var tabWPrev = c.TabWidth;
-        tabW.LostFocus += (_, _) =>
-        {
-            var next = (int)(tabW.Value ?? tabWPrev);
-            if (next == tabWPrev)
-                return;
-            tabWPrev = next;
-            _ = _cfg.UpdateAsync(s => s with { TabWidth = next });
-        };
+        WireNumericCommit(tabW, c.TabWidth, v => v,
+            next => _ = _cfg.UpdateAsync(s => s with { TabWidth = next }));
         _root.Children.Add(LabeledRow("Tab width", tabW));
         _root.Children.Add(Check("Word-wrap diff lines", c.DiffWordWrap,
             v => _ = _cfg.UpdateAsync(s => s with { DiffWordWrap = v })));
         var commitFont = new NumericUpDown { Minimum = 10, Maximum = 24, Value = c.CommitDetailFontSize, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        var commitFontPrev = c.CommitDetailFontSize;
-        commitFont.LostFocus += (_, _) =>
-        {
-            var next = (int)(commitFont.Value ?? commitFontPrev);
-            if (next == commitFontPrev)
-                return;
-            commitFontPrev = next;
-            _ = _cfg.UpdateAsync(s => s with { CommitDetailFontSize = next });
-        };
+        WireNumericCommit(commitFont, c.CommitDetailFontSize, v => v,
+            next => _ = _cfg.UpdateAsync(s => s with { CommitDetailFontSize = next }));
         _root.Children.Add(LabeledRow("Commit-detail font size", commitFont));
 
         // ── Issue autolinks ──
@@ -283,15 +248,8 @@ public sealed class SettingsView : UserControl, IDisposable
         termBody.Children.Add(LabeledRow("Font family", fontFamily));
 
         var fontSize = new NumericUpDown { Minimum = 8, Maximum = 32, Value = c.TerminalFontSize, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        var fontSizePrev = c.TerminalFontSize;
-        fontSize.LostFocus += (_, _) =>
-        {
-            var next = (int)(fontSize.Value ?? fontSizePrev);
-            if (next == fontSizePrev)
-                return;
-            fontSizePrev = next;
-            _ = _cfg.UpdateAsync(s => s with { TerminalFontSize = next });
-        };
+        WireNumericCommit(fontSize, c.TerminalFontSize, v => v,
+            next => _ = _cfg.UpdateAsync(s => s with { TerminalFontSize = next }));
         termBody.Children.Add(LabeledRow("Font size", fontSize));
 
         var scrollback = new NumericUpDown
@@ -304,15 +262,8 @@ public sealed class SettingsView : UserControl, IDisposable
             Width = 140,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        var scrollbackPrev = c.TerminalScrollbackLines;
-        scrollback.LostFocus += (_, _) =>
-        {
-            var next = AppSettings.ClampTerminalScrollback((int)(scrollback.Value ?? scrollbackPrev));
-            if (next == scrollbackPrev)
-                return;
-            scrollbackPrev = next;
-            _ = _cfg.UpdateAsync(s => s with { TerminalScrollbackLines = next });
-        };
+        WireNumericCommit(scrollback, c.TerminalScrollbackLines, AppSettings.ClampTerminalScrollback,
+            next => _ = _cfg.UpdateAsync(s => s with { TerminalScrollbackLines = next }));
         termBody.Children.Add(WithHint(LabeledRow("Scrollback lines", scrollback),
             "Memory ≈ lines × columns × ~8 bytes, per session — a 5,000-line buffer on a 120-column grid is ~5 MB, and this multiplies by the number of open terminal sessions."));
 
@@ -368,15 +319,8 @@ public sealed class SettingsView : UserControl, IDisposable
             Width = 140,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        var silentCrawlCapPrev = c.SilentCrawlRowCap;
-        silentCrawlCap.LostFocus += (_, _) =>
-        {
-            var next = AppSettings.ClampSilentCrawlRowCap((int)(silentCrawlCap.Value ?? silentCrawlCapPrev));
-            if (next == silentCrawlCapPrev)
-                return;
-            silentCrawlCapPrev = next;
-            _ = _cfg.UpdateAsync(s => s with { SilentCrawlRowCap = next });
-        };
+        WireNumericCommit(silentCrawlCap, c.SilentCrawlRowCap, AppSettings.ClampSilentCrawlRowCap,
+            next => _ = _cfg.UpdateAsync(s => s with { SilentCrawlRowCap = next }));
         advBody.Children.Add(WithHint(LabeledRow("Background auto-load row cap", silentCrawlCap),
             "How many rows the graph silently pre-loads in the background after first paint, before requiring you to scroll for more. 0 means uncapped. Applies after restart of Historia."));
 
@@ -392,10 +336,10 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         var residentRowCapPrev = c.ResidentRowCap;
         var residentRowCapDialogOpen = false;
-        residentRowCap.LostFocus += async (_, _) =>
+        async void CommitResidentRowCap()
         {
             // Re-entrancy guard: reverting the value on Cancel below can itself provoke a
-            // second LostFocus while the first dialog is still closing — ignore it.
+            // second LostFocus/Enter while the first dialog is still closing — ignore it.
             if (residentRowCapDialogOpen)
                 return;
 
@@ -418,15 +362,20 @@ public sealed class SettingsView : UserControl, IDisposable
                 if (next == residentRowCapPrev)
                     return;
 
-                var proceed = await _dialogs.ConfirmAsync(
-                    "Change the resident row cap?",
-                    "Changing this value will increase the amount of memory a large repository can use.",
-                    confirmLabel: "Continue", defaultToCancel: true, icon: DialogIcon.Warning);
-
-                if (!proceed)
+                // #4: raising the cap is not destructive — a plain confirm, and only when the
+                // committed value is higher than the saved one. Lowering saves silently.
+                if (next > residentRowCapPrev)
                 {
-                    residentRowCap.Value = residentRowCapPrev;
-                    return;
+                    var proceed = await _dialogs.ConfirmAsync(
+                        "Change the resident row cap?",
+                        "Raising this value lets a very large repository keep more rows in memory. Applies after restart of Historia.",
+                        confirmLabel: "Continue");
+
+                    if (!proceed)
+                    {
+                        residentRowCap.Value = residentRowCapPrev;
+                        return;
+                    }
                 }
 
                 residentRowCapPrev = next;
@@ -436,7 +385,13 @@ public sealed class SettingsView : UserControl, IDisposable
             {
                 residentRowCapDialogOpen = false;
             }
-        };
+        }
+        residentRowCap.LostFocus += (_, _) => CommitResidentRowCap();
+        residentRowCap.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+                CommitResidentRowCap();
+        }, handledEventsToo: true);
         advBody.Children.Add(WithHint(LabeledRow("Resident row cap", residentRowCap),
             "The absolute ceiling on how many rows the graph will keep resident for one repository, regardless of scrolling. Applies after restart of Historia."));
         advBody.Margin = new Thickness(0, 10, 0, 0);
@@ -483,6 +438,38 @@ public sealed class SettingsView : UserControl, IDisposable
 
         _root.Children.Add(header);
         _root.Children.Add(body);
+    }
+
+    /// <summary>
+    /// Commits a <see cref="NumericUpDown"/>'s value through <paramref name="clamp"/> to
+    /// <paramref name="commit"/> on <c>LostFocus</c> and on Enter, only when the clamped value
+    /// changed. Enter is caught with <c>AddHandler(KeyDownEvent, …, handledEventsToo: true)</c> so
+    /// an inner <c>TextBox</c> can't swallow it first (#14).
+    ///
+    /// Verified against Avalonia 11.3.20's <c>NumericUpDown.OnKeyDown</c> source: its own
+    /// <c>Key.Enter</c> case calls <c>CommitInput()</c> → <c>SyncTextAndValueProperties</c>, which
+    /// parses the typed text into <c>Value</c> synchronously before returning. That runs as
+    /// <c>NumericUpDown</c>'s own KeyDown handling on the same routed event, ahead of any instance
+    /// handler added here on the same control, so by the time this fires <c>nud.Value</c> already
+    /// reflects what's on screen — no extra text-to-value step is needed.
+    /// </summary>
+    private static void WireNumericCommit(NumericUpDown nud, int initial, Func<int, int> clamp, Action<int> commit)
+    {
+        var prev = initial;
+        void TryCommit()
+        {
+            var next = clamp((int)(nud.Value ?? prev));
+            if (next == prev)
+                return;
+            prev = next;
+            commit(next);
+        }
+        nud.LostFocus += (_, _) => TryCommit();
+        nud.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+                TryCommit();
+        }, handledEventsToo: true);
     }
 
     private static Control Section(string title) => Text(title, "ColorTextMuted", 13, FontWeight.SemiBold);
