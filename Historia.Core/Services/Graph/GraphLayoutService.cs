@@ -188,7 +188,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     {
         Diagnostics.PerfLog.Mark($"ComputeLayout enter (maxRows={maxRows})");
         var cache = GetOrResetCache(context, query, force: false);
-        if (cache.Commits.Count > 0 && cache.Fingerprint != 0)
+        if (TotalWalked(cache) > 0 && cache.Fingerprint != 0)
         {
             var currentFp = await context.WithRepositoryAsync(repo =>
                 ComputeFingerprint(repo, query, out _), ct).ConfigureAwait(false);
@@ -196,15 +196,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 cache = GetOrResetCache(context, query, force: true);
         }
         await EnsureWalkedAsync(context, query, cache, maxRows + WalkOverscan, ct).ConfigureAwait(false);
-        Diagnostics.PerfLog.Mark($"ComputeLayout walked ({cache.Commits.Count} commits cached)");
+        Diagnostics.PerfLog.Mark($"ComputeLayout walked ({TotalWalked(cache)} commits cached)");
 
         var spill = SpillEnabled(query);
 
-        // Snapshot the rows the engine needs under the cache lock: the background spill task
-        // (§7.6) can be mutating cache.Commits (AddRange / metadata stub) on another thread.
-        List<RawCommit> input;
-        lock (cache)
-            input = cache.Commits.GetRange(0, Math.Min(cache.Commits.Count, maxRows + WalkOverscan));
+        // Phase 3a: cache.Commits no longer holds the whole walked history once rows are
+        // confirmed spilled (see TrimConfirmedSpilled) — ReadWindow stitches the on-disk store
+        // and the resident pending buffer back into one absolute-row-indexed list.
+        var input = ReadWindow(cache, 0, maxRows + WalkOverscan);
 
         // §V10.1: the trunk pre-pass needs a full-history ancestry oracle for the checked-out
         // branch. Keep one repo handle open across the (synchronous, few-ms) engine run and
@@ -246,7 +245,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // exists (this session's own earlier walk, or the real ComputeLayoutAsync already
         // finished), it is already at least as fresh as a stale on-disk snapshot.
         lock (_sync)
-            if (_caches.TryGetValue(context, out var existing) && existing.Commits.Count > 0)
+            if (_caches.TryGetValue(context, out var existing) && TotalWalked(existing) > 0)
                 return null;
 
         // §V10.1.2: try the §7.6 metadata store first. Unlike the .gz walk cache below, it is
@@ -279,6 +278,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 finally { store?.Dispose(); }
             }
         }
+
+        // Phase 3a: the .gz walk cache is retired once disk-backed metadata is on (its save is
+        // skipped in EnsureWalkedAsync below) — no point reading a file nothing writes anymore.
+        if (_metaFromDisk)
+            return null;
 
         var loaded = _walkCache.TryLoadStale(context.RepositoryPath, query, metadataOnDisk: false);
         if (loaded is null)
@@ -315,16 +319,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         lock (existing.State)
         {
             var consumed = existing.State.Rows.Count;
-            List<RawCommit> next;
-            lock (cache) // guard against a concurrent background-spill AddRange (§7.6)
-            {
-                if (cache.Commits.Count <= consumed)
-                    return existing;
-                // Only what this extend consumes (+ overscan) — the background spill can have grown
-                // cache.Commits to the hard cap, and copying all of it here would be pointless.
-                var take = Math.Min(cache.Commits.Count - consumed, additionalRows + WalkOverscan);
-                next = cache.Commits.GetRange(consumed, take);
-            }
+            if (TotalWalked(cache) <= consumed)
+                return existing;
+            // Only what this extend consumes (+ overscan) — the background spill can have walked
+            // (and spilled) far past this, and reading all of it here would be pointless.
+            // Phase 3a: ReadWindow reads confirmed-spilled rows from disk and the rest from the
+            // resident pending buffer, since cache.Commits no longer holds the whole history.
+            var next = ReadWindow(cache, consumed, additionalRows + WalkOverscan);
             result = _engine.Extend(existing, next, cache.Decorations, additionalRows, CancellationToken.None);
         }
 
@@ -363,12 +364,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
             lock (cache.SpillSync)
             {
                 // Warm launch: a matching store from a previous session already holds these rows.
+                // (Usually already handled by PrepareWalk's own warm-store hit — Phase 3a — so
+                // this is a defensive fallback for the paths that don't go through it.)
                 if (cache is { SpilledRows: 0, MetaStore: null } && cache.WalkKey != 0
                     && GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount, cache.Engine) is { } warm
                     && warm.Count >= rowCount)
                 {
                     cache.MetaStore = warm;
-                    cache.SpilledRows = warm.Count;
+                    AdoptDurableStore(cache, warm.Count);
                 }
 
                 if (gateOpen && cache.WalkKey != 0 && rowCount > cache.SpilledRows)
@@ -382,29 +385,32 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 if (cache.MetaStore is not null && cache.MetaStore.Count >= rowCount)
                 {
                     result.Layout.Commits = cache.MetaStore;
-                    StubResidentMetadata(cache, rowCount);
                     return result;
                 }
             }
         }
         catch { /* fall through to the in-memory rebuild */ }
 
-        // Disk store unavailable — hand back an array built from the resident walk records.
-        // (If those were loaded id/parents-only, a Recompute re-walks and re-spills.)
-        CommitMetadata[] arr;
-        lock (cache)
-        {
-            arr = new CommitMetadata[Math.Min(rowCount, cache.Commits.Count)];
-            for (var i = 0; i < arr.Length; i++)
-                arr[i] = cache.Commits[i].Metadata;
-        }
+        // Disk store unavailable or insufficient — hand back an array assembled from whatever is
+        // confirmed on disk plus the resident pending buffer (Phase 3a: cache.Commits alone is no
+        // longer a valid absolute-row-indexed view once earlier rows have been trimmed).
+        // (If the disk rows were id/parents-only, a Recompute re-walks and re-spills.)
+        var rows = ReadWindow(cache, 0, rowCount);
+        var arr = new CommitMetadata[rows.Count];
+        for (var i = 0; i < arr.Length; i++)
+            arr[i] = rows[i].Metadata;
         result.Layout.Commits = new ArrayCommitStore(arr);
         return result;
     }
 
-    /// <summary>Appends rows <paramref name="from"/>..<paramref name="to"/> of
-    /// <c>cache.Commits</c> to the on-disk store and advances <c>SpilledRows</c>. Caller holds
-    /// <c>cache.SpillSync</c>.</summary>
+    /// <summary>Appends rows <paramref name="from"/>..<paramref name="to"/> — always
+    /// <c>cache.SpilledRows</c>..<paramref name="to"/> at call time, since
+    /// <c>cache.Commits[0]</c> is row <c>cache.SpilledRows</c> once anything has been trimmed
+    /// (Phase 3a) — to the on-disk store. Only on CONFIRMED durability (re-opening/re-reading
+    /// through <see cref="DiskCommitStore"/>, since <see cref="GraphMetaWriter"/> swallows IO
+    /// errors and <c>cache.SpilledRows</c> must never advance on faith alone — "the disk cache is
+    /// never a correctness dependency") does it also drop those rows from the resident pending
+    /// buffer via <see cref="TrimConfirmedSpilled"/>. Caller holds <c>cache.SpillSync</c>.</summary>
     private static void SpillRange(
         RepoCache cache, string repoPath, bool includeRemotes, int from, int to, bool exhausted)
     {
@@ -413,10 +419,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
         List<RawCommit> snap;
         lock (cache)
         {
-            to = Math.Min(to, cache.Commits.Count);
+            to = Math.Min(to, from + cache.Commits.Count);
             if (to <= from)
                 return;
-            snap = cache.Commits.GetRange(from, to - from);
+            snap = cache.Commits.GetRange(0, to - from);
         }
         cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, includeRemotes, cache.Engine);
         if (from == 0)
@@ -427,10 +433,97 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
         cache.MetaWriter.Append(snap, 0, snap.Count);
         cache.MetaWriter.Commit(to, exhausted);
-        cache.SpilledRows = to;
         cache.MetaComplete = exhausted;
-        cache.MetaStore?.SetCount(to);
         Diagnostics.PerfLog.Mark($"graph cache write: spill {snap.Count} rows ({repoPath})");
+
+        cache.MetaStore ??= GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, to, cache.Engine);
+        cache.MetaStore?.SetCount(to);
+        if (cache.MetaStore is { } store && store.Count >= to)
+            TrimConfirmedSpilled(cache, to);
+        // else: the write or the read-back didn't confirm — leave cache.Commits and
+        // cache.SpilledRows where they are; SpillAndSwap's ReadWindow-based fallback and the
+        // next spill attempt both cope, and no data is lost.
+    }
+
+    /// <summary>Phase 3a: once <paramref name="confirmedRows"/> leading rows THIS SESSION JUST
+    /// WROTE are confirmed durable in <c>cache.MetaStore</c>, drop them from the resident pending
+    /// buffer (<c>cache.Commits</c>) and advance <c>cache.SpilledRows</c> to match, so
+    /// <c>cache.Commits</c> always holds exactly rows <c>[cache.SpilledRows, TotalWalked)</c>.
+    /// Bounded by <c>TotalWalked</c> — this only ever confirms rows this cache actually walked.
+    /// Idempotent. For adopting a store that already held rows before this cache walked anything
+    /// (a warm launch), use <see cref="AdoptDurableStore"/> instead.</summary>
+    private static void TrimConfirmedSpilled(RepoCache cache, int confirmedRows)
+    {
+        lock (cache)
+        {
+            if (confirmedRows <= cache.SpilledRows)
+                return;
+            var removable = Math.Min(confirmedRows, cache.SpilledRows + cache.Commits.Count) - cache.SpilledRows;
+            if (removable <= 0)
+                return;
+            cache.Commits.RemoveRange(0, removable);
+            cache.SpilledRows += removable;
+        }
+    }
+
+    /// <summary>Phase 3a: adopt a pre-existing on-disk store as the durable prefix for a cache
+    /// that hasn't walked anything itself yet (a warm launch) — unlike
+    /// <see cref="TrimConfirmedSpilled"/>, <paramref name="confirmedRows"/> here can exceed
+    /// whatever this session has walked so far, since the store's history predates this cache.
+    /// Any rows already resident (there normally are none, at the point this is called) that fall
+    /// within the adopted prefix are dropped to keep the invariant that <c>cache.Commits</c> never
+    /// duplicates rows the store already serves.</summary>
+    private static void AdoptDurableStore(RepoCache cache, int confirmedRows)
+    {
+        lock (cache)
+        {
+            if (confirmedRows <= cache.SpilledRows)
+                return;
+            var overlap = Math.Min(cache.Commits.Count, confirmedRows - cache.SpilledRows);
+            if (overlap > 0)
+                cache.Commits.RemoveRange(0, overlap);
+            cache.SpilledRows = confirmedRows;
+        }
+    }
+
+    /// <summary>Phase 3a: total rows the walk has produced so far, whether resident (pending) or
+    /// already confirmed on disk. Replaces the old <c>cache.Commits.Count</c> reads that meant
+    /// "rows walked" rather than "rows resident" — now that confirmed-spilled rows are trimmed
+    /// out of <c>cache.Commits</c>, the two are no longer the same number.</summary>
+    private static int TotalWalked(RepoCache cache)
+    {
+        lock (cache)
+            return cache.SpilledRows + cache.Commits.Count;
+    }
+
+    /// <summary>Phase 3a: reads absolute rows [<paramref name="start"/>, <paramref name="start"/>
+    /// + <paramref name="count"/>) by splitting between the on-disk store (rows below
+    /// <c>cache.SpilledRows</c>, confirmed durable — see <see cref="TrimConfirmedSpilled"/>) and
+    /// the resident pending buffer (<c>cache.Commits</c>, which holds only rows
+    /// <c>[cache.SpilledRows, TotalWalked)</c>). Replaces every old "GetRange straight off
+    /// cache.Commits by absolute row" read now that spilled rows no longer stay resident.</summary>
+    private static List<RawCommit> ReadWindow(RepoCache cache, int start, int count)
+    {
+        lock (cache)
+        {
+            var spilledRows = cache.SpilledRows;
+            var totalWalked = spilledRows + cache.Commits.Count;
+            count = Math.Min(count, totalWalked - start);
+            if (count <= 0)
+                return [];
+
+            var result = new List<RawCommit>(count);
+            if (start < spilledRows && cache.MetaStore is { } store)
+            {
+                var diskCount = Math.Min(count, spilledRows - start);
+                result.AddRange(store.ReadRawRange(start, diskCount));
+            }
+            var residentStart = Math.Max(0, start - spilledRows);
+            var residentTakeCount = (start + count) - Math.Max(start, spilledRows);
+            if (residentTakeCount > 0)
+                result.AddRange(cache.Commits.GetRange(residentStart, residentTakeCount));
+            return result;
+        }
     }
 
     /// <summary>
@@ -451,12 +544,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
         lock (cache.SpillSync)
         {
             // Note: cache.Exhausted (the walk finished) is NOT a reason to skip — that is exactly
-            // when the remaining rows are already in cache.Commits and just need spilling.
+            // when the remaining rows are already walked and just need spilling.
             if (!SpillEnabled(query) || cache.Fingerprint == 0 || cache.BackgroundSpillRunning
                 || cache.MetaComplete || cache.SpilledRows >= cap)
                 return;
-            int have;
-            lock (cache) have = Math.Min(cache.Commits.Count, cap);
+            var have = Math.Min(TotalWalked(cache), cap);
             if (cache.SpilledRows >= have && cache.Exhausted)
                 return; // everything walked so far is already on disk and there is no more
             cache.BackgroundSpillRunning = true;
@@ -476,70 +568,69 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 if (ct.IsCancellationRequested)
                     return;
 
-                // Walk to the ceiling in chunks, each a low-priority gate turn that *resumes*
-                // the primed revwalk (EnsureWalkedAsync continues cache.LiveWalk — no tip
-                // reseed, no BuildDecorations), yielding the gate between chunks so a tab
-                // switch / scroll / status refresh on this repo waits at most one chunk's pull.
+                // Phase 3a: walk one chunk, then spill (and trim) that same chunk, then loop —
+                // instead of walking all the way to the ceiling before spilling anything. The old
+                // two-loop shape let cache.Commits balloon to the whole pre-load cap (up to
+                // 300k rows) before the disk writer ever ran; interleaving keeps the resident
+                // pending buffer bounded to roughly one batch at a time, which is the whole point
+                // of the streaming spool (see the plan's Phase 3a acceptance criteria).
                 var ceiling = cap + WalkOverscan;
                 var lastPreloadMemoryMark = 0;
+                var lastDiskWriterMemoryMark = 0;
                 while (true)
                 {
-                    int target;
-                    lock (cache) target = Math.Min(cache.Commits.Count + SpillWalkChunkRows, ceiling);
-                    await EnsureWalkedAsync(context, query, cache, target, ct, background: true, lowestPriority: true)
+                    int walkTarget;
+                    lock (cache) walkTarget = Math.Min(cache.SpilledRows + cache.Commits.Count + SpillWalkChunkRows, ceiling);
+                    await EnsureWalkedAsync(context, query, cache, walkTarget, ct, background: true, lowestPriority: true)
                         .ConfigureAwait(false);
 
                     // v10.1.3: schedule commit-graph maintenance as soon as this repo is known to
-                    // be large (§9.3), rather than waiting for the whole spill loop below to also
-                    // finish — `git commit-graph write --reachable` is a self-contained git
-                    // operation that reads the ODB directly and does not depend on Historia's own
-                    // walk/spill being complete. Gating it on full exhaustion meant a repo the size
-                    // of linux needed 80s+ of the tab staying open before the write even started;
-                    // a session that closes before then never benefits, and pays the full
-                    // no-commit-graph cost on every future cold open. MaybeSchedule is idempotent
-                    // per repo per process (an `_attempted` set), so calling it every chunk here is
-                    // harmless once it has already fired.
+                    // be large (§9.3), rather than waiting for spilling to also finish —
+                    // `git commit-graph write --reachable` is a self-contained git operation that
+                    // reads the ODB directly and does not depend on Historia's own walk/spill
+                    // being complete. MaybeSchedule is idempotent per repo per process (an
+                    // `_attempted` set), so calling it every chunk here is harmless once it has
+                    // already fired.
                     int walkedSoFar;
                     bool walkDone;
-                    lock (cache) { walkedSoFar = cache.Commits.Count; walkDone = cache.Exhausted || walkedSoFar >= cap; }
+                    lock (cache) { walkedSoFar = TotalWalked(cache); walkDone = cache.Exhausted || walkedSoFar >= cap; }
                     if (walkedSoFar / 50_000 != lastPreloadMemoryMark / 50_000)
                         Diagnostics.PerfLog.Memory($"silent pre-load {walkedSoFar} rows ({context.DisplayName})");
                     lastPreloadMemoryMark = walkedSoFar;
                     _commitGraphMaintenance?.MaybeSchedule(context, walkedSoFar);
-                    if (walkDone)
+
+                    // Spill whatever this chunk produced, in <= BatchRows batches, before walking
+                    // further — Phase 1: every writer awaits the gate before it starts AND
+                    // between batches, so a tab switch pauses within one batch's write.
+                    while (true)
+                    {
+                        await WaitForGateAsync(ct).ConfigureAwait(false);
+                        if (ct.IsCancellationRequested)
+                            break;
+
+                        int from, to;
+                        bool doneSpilling;
+                        lock (cache.SpillSync)
+                        {
+                            var total = Math.Min(TotalWalked(cache), cap);
+                            from = cache.SpilledRows;
+                            to = Math.Min(total, from + BatchRows);
+                            doneSpilling = to >= total;
+                            if (to > from)
+                                SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to,
+                                    exhausted: doneSpilling && walkDone && cache.Exhausted);
+                        }
+                        if (to / 100_000 != lastDiskWriterMemoryMark / 100_000)
+                            Diagnostics.PerfLog.Memory($"disk writer {to} rows ({context.DisplayName})");
+                        lastDiskWriterMemoryMark = to;
+                        if (to <= from || doneSpilling)
+                            break;
+                        await Task.Delay(150, ct).ConfigureAwait(false); // let UI git ops interleave
+                    }
+
+                    if (walkDone || ct.IsCancellationRequested)
                         break;
                     await Task.Delay(150, ct).ConfigureAwait(false); // let foreground + crawl gate work in
-                }
-
-                var lastDiskWriterMemoryMark = 0;
-                while (!ct.IsCancellationRequested)
-                {
-                    // Phase 1: every writer awaits the gate before it starts AND between
-                    // batches — a tab switch pauses this loop within one batch's write.
-                    await WaitForGateAsync(ct).ConfigureAwait(false);
-                    if (ct.IsCancellationRequested)
-                        break;
-
-                    int from, to;
-                    bool done;
-                    lock (cache.SpillSync)
-                    {
-                        var total = Math.Min(cache.Commits.Count, cap);
-                        from = cache.SpilledRows;
-                        to = Math.Min(total, from + BatchRows);
-                        done = to >= total;
-                        if (to > from)
-                            SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to,
-                                exhausted: done && cache.Exhausted);
-                        if (to > 0)
-                            StubResidentMetadata(cache, to);
-                    }
-                    if (to / 100_000 != lastDiskWriterMemoryMark / 100_000)
-                        Diagnostics.PerfLog.Memory($"disk writer {to} rows ({context.DisplayName})");
-                    lastDiskWriterMemoryMark = to;
-                    if (to <= from || done)
-                        break;
-                    await Task.Delay(150, ct).ConfigureAwait(false); // let UI git ops interleave
                 }
             }
             catch (OperationCanceledException) { }
@@ -562,48 +653,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // tab close cancels the spill loop above but the repo is still worth maintaining
                 // for the next open.
                 if (cache.Exhausted && cache.MetaComplete)
-                {
-                    int walked;
-                    lock (cache) walked = cache.Commits.Count;
-                    _commitGraphMaintenance?.MaybeSchedule(context, walked);
-                }
+                    _commitGraphMaintenance?.MaybeSchedule(context, TotalWalked(cache));
             }
         }, ct);
         cache.BackgroundSpillTask = spillTask;
-    }
-
-    /// <summary>Replace the resident <see cref="CommitMetadata"/> <b>strings</b> for rows already
-    /// spilled to disk with a stub — the paged store serves the real text. Id, parent count and
-    /// the two timestamps are kept: they are 16 bytes/row and <see cref="DagLayoutEngine"/>'s
-    /// tip-priority pre-pass sorts candidate tips by <see cref="CommitMetadata.CommitWhen"/>
-    /// (§V10.1). Zeroing it here made every re-layout after the first spill fall back to SHA
-    /// order and pin the trunk to the wrong lane — see
-    /// <c>GraphSpillTrunkStabilityTests</c>.</summary>
-    private static void StubResidentMetadata(RepoCache cache, int uptoRow)
-    {
-        lock (cache)
-        {
-            var n = Math.Min(uptoRow, cache.Commits.Count);
-            for (var i = 0; i < n; i++)
-            {
-                var rc = cache.Commits[i];
-                if (rc.Metadata.MessageShort.Length == 0 && rc.Metadata.AuthorName.Length == 0)
-                    continue; // already stubbed
-                cache.Commits[i] = rc with
-                {
-                    Metadata = new CommitMetadata
-                    {
-                        Id = rc.Id,
-                        MessageShort = "",
-                        AuthorName = "",
-                        AuthorEmail = "",
-                        AuthorWhen = rc.Metadata.AuthorWhen,
-                        CommitWhen = rc.Metadata.CommitWhen,
-                        ParentCount = rc.Metadata.ParentCount,
-                    },
-                };
-            }
-        }
     }
 
     public async Task<GraphLayoutResult> RecomputeAsync(
@@ -749,14 +802,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
         RepositoryContext context, GraphQuery query, RepoCache cache, int wantCount, CancellationToken ct,
         bool background = false, bool lowestPriority = false)
     {
-        if (cache.Exhausted || cache.Commits.Count >= wantCount)
+        if (cache.Exhausted || TotalWalked(cache) >= wantCount)
             return;
 
         DecoCache? deco;
         lock (_sync)
             _decoByPath.TryGetValue(context.RepositoryPath, out deco);
 
-        Diagnostics.PerfLog.Mark($"EnsureWalked need {wantCount}, have {cache.Commits.Count}, decoFp={deco?.Fingerprint ?? 0}");
+        Diagnostics.PerfLog.Mark($"EnsureWalked need {wantCount}, have {TotalWalked(cache)}, decoFp={deco?.Fingerprint ?? 0}");
         var repoPath = context.RepositoryPath;
         var expectedEngine = ExpectedEngine(query);
         // §V10.1.2: three gate tiers, not two — a genuine foreground caller always wins; the
@@ -798,7 +851,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
             if (walked.MetaStore is not null && cache.MetaStore is null)
             {
                 cache.MetaStore = walked.MetaStore;
-                cache.SpilledRows = walked.MetaStore.Count; // these rows are already on disk
+                // Phase 3a: adopting a pre-existing store the walk didn't write itself this
+                // session (a warm launch) — AdoptDurableStore, not TrimConfirmedSpilled, since
+                // the store's row count can exceed anything this cache has walked so far.
+                AdoptDurableStore(cache, walked.MetaStore.Count);
                 cache.MetaComplete = walked.MetaExhausted;
                 cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, cache.IncludeRemotes, cache.Engine);
             }
@@ -820,7 +876,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // Debounced: the silent crawler drives many small extends in a row, and re-snapshotting
         // + re-gzipping the whole window on every one is pure waste (and a kill mid-write can
         // leave a bad .gz). Save on exhaustion, the first fill, or every WalkCacheSaveStride rows.
-        if (!background && !walked.FromDisk && walked.Fingerprint != 0 && GraphWalkCache.Supports(query))
+        // Phase 3a: retired once disk-backed metadata is on — the §7.6 MetaStore (with its walk
+        // key, exhausted flag, and now ReadRawRange) is a strictly better warm-start source, and
+        // this avoids ever building `[.. cache.Commits]` (an O(n) copy of the pending buffer)
+        // for a file nothing reads anymore in disk mode (see PrepareWalk / TryOptimisticSnapshot).
+        if (!background && !_metaFromDisk && !walked.FromDisk && walked.Fingerprint != 0 && GraphWalkCache.Supports(query))
         {
             List<RawCommit> commits;
             Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decos;
@@ -904,31 +964,58 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         // Read fresh on the gate — a concurrent EnsureWalkedAsync (foreground extend vs the
         // background spill) serialises here and may have appended since the outer check.
-        var have = cache.Commits.Count;
+        // Phase 3a: "have" is TOTAL rows walked (spilled + resident pending), not
+        // cache.Commits.Count alone — confirmed-spilled rows no longer stay resident.
+        var have = cache.SpilledRows + cache.Commits.Count;
         if (have >= wantCount || cache.Exhausted)
             return GatePrep.Done(new WalkResult([], cache.Decorations, cache.Exhausted, fp, DecosFresh: false, WalkKey: walkKey));
 
         // Fresh cache, nothing primed: try the on-disk walk before touching either engine at all.
-        // When the paged metadata store opens for this walk key, load id + parents only — the
-        // strings come from the store, not a resident copy of the whole history.
         if (have == 0 && cache.LiveWalk is null)
         {
-            var probe = metaFromDisk
-                ? GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches, expectedEngine)
-                : default;
-            var store = probe.Ok
-                ? GraphMetaStore.TryOpen(repoPath, walkKey, query.IncludeRemoteBranches, wantCount, expectedEngine)
-                : null;
-            // Load id/parents only when the store already holds the WHOLE history — otherwise
-            // the background spill still needs real metadata in cache.Commits to fill the gap.
-            var lite = store is not null && probe.Exhausted;
-            if (walkCache.TryLoad(repoPath, query, wantCount, walkKey, expectedEngine, metadataOnDisk: lite) is { } hit)
+            // Phase 3a: prefer the §7.6 meta store over the (in disk mode, retired) .gz walk
+            // cache — it never needs a resident copy of rows already durable. An exhausted store
+            // serves every row straight off disk (WalkResult.Commits stays empty: nothing to add
+            // to the pending buffer); a partial store resumes the walk with skip = store.Count
+            // instead of reloading any of its rows into memory.
+            if (metaFromDisk)
             {
-                Diagnostics.PerfLog.Mark($"walk cache HIT: {hit.Commits.Count} commits, exhausted={hit.Exhausted}, lite={lite}");
-                cache.Engine = expectedEngine;
-                return GatePrep.Done(new WalkResult(hit.Commits, hit.Decorations, hit.Exhausted, fp, DecosFresh: true, FromDisk: true, MetaStore: store, MetaExhausted: probe.Exhausted, WalkKey: walkKey));
+                var probe = GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches, expectedEngine);
+                if (probe.Ok && probe.RowCount > 0
+                    && GraphMetaStore.TryOpen(repoPath, walkKey, query.IncludeRemoteBranches,
+                        probe.Exhausted ? probe.RowCount : 0, expectedEngine) is { } store)
+                {
+                    cache.Engine = expectedEngine;
+                    if (probe.Exhausted)
+                    {
+                        // The .meta store has no decoration data (unlike the retired .gz DTO) —
+                        // resolve it the same way a fresh walk would, so a warm reopen doesn't
+                        // paint with empty ref badges (GraphSpillTrunkStabilityTests: the tip-
+                        // priority pre-pass also depends on which commit is decorated).
+                        var (decorations, decosFresh) = ResolveDecorations(repo, query, allRefs, decoCache, fp);
+                        Diagnostics.PerfLog.Mark($"meta store HIT (exhausted): {store.Count} rows on disk, no resident copy");
+                        return GatePrep.Done(new WalkResult([], decorations, true, fp, decosFresh, FromDisk: true, MetaStore: store, MetaExhausted: true, WalkKey: walkKey));
+                    }
+
+                    cache.MetaStore = store;
+                    cache.MetaWriter ??= new GraphMetaWriter(repoPath, walkKey, query.IncludeRemoteBranches, expectedEngine);
+                    AdoptDurableStore(cache, store.Count);
+                    have = store.Count;
+                    Diagnostics.PerfLog.Mark($"meta store HIT (partial): resuming walk after {store.Count} durable rows");
+                    if (have >= wantCount)
+                    {
+                        var (decorations, decosFresh) = ResolveDecorations(repo, query, allRefs, decoCache, fp);
+                        return GatePrep.Done(new WalkResult([], decorations, false, fp, decosFresh, FromDisk: true, WalkKey: walkKey));
+                    }
+                    // fall through below to prime/continue a walk with skip = have
+                }
             }
-            store?.Dispose(); // TryLoad missed — don't leak the handle
+            else if (walkCache.TryLoad(repoPath, query, wantCount, walkKey, expectedEngine, metadataOnDisk: false) is { } hit)
+            {
+                Diagnostics.PerfLog.Mark($"walk cache HIT: {hit.Commits.Count} commits, exhausted={hit.Exhausted}");
+                cache.Engine = expectedEngine;
+                return GatePrep.Done(new WalkResult(hit.Commits, hit.Decorations, hit.Exhausted, fp, DecosFresh: true, FromDisk: true, WalkKey: walkKey));
+            }
         }
 
         // Continue the ONE primed walk for this walk key — no tip reseed, no BuildDecorations.

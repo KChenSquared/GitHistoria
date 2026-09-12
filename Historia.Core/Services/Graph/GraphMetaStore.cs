@@ -356,14 +356,24 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         return new DiskCommitStore(repoPath, dat, offsets, len, Math.Min(rowCount, offsets.Length));
     }
 
-    /// <summary>Adopt rows appended since <see cref="Open"/> (called after an Extend spill).</summary>
+    /// <summary>Adopt rows appended since <see cref="Open"/> (called after an Extend spill).
+    /// Phase 3a: reads only the <c>.idx</c> bytes appended since the last call instead of
+    /// re-reading the whole file (11.8 MB on linux, previously re-read on every spill batch and
+    /// every Extend) — the existing offsets are kept and only the new tail is appended.</summary>
     public void SetCount(int rowCount)
     {
         lock (_sync)
         {
             if (_closed || rowCount <= _count)
                 return;
-            _offsets = ReadOffsets(GraphCachePaths.File(_repoPath, GraphMetaStore.IdxExt), rowCount);
+            var tail = ReadOffsetsFrom(GraphCachePaths.File(_repoPath, GraphMetaStore.IdxExt), _offsets.Length, rowCount);
+            if (tail.Length > 0)
+            {
+                var merged = new long[_offsets.Length + tail.Length];
+                Array.Copy(_offsets, merged, _offsets.Length);
+                Array.Copy(tail, 0, merged, _offsets.Length, tail.Length);
+                _offsets = merged;
+            }
             _datLength = RandomAccess.GetLength(_dat);
             _count = Math.Min(rowCount, _offsets.Length);
         }
@@ -395,6 +405,56 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                     // thread; the offset table is re-read on the next SetCount and reads recover.
                     return ClosedStoreStub;
                 }
+            }
+        }
+    }
+
+    /// <summary>Phase 3a: reads rows [<paramref name="first"/>, <paramref name="first"/> +
+    /// <paramref name="count"/>) with full parent SHAs and timestamps — the batch form of
+    /// <see cref="ReadRaw"/>, used to serve a whole already-spilled range straight from disk
+    /// instead of keeping it resident in <c>RepoCache.Commits</c> (see
+    /// <c>GraphLayoutService.ReadWindow</c>). One <see cref="RandomAccess.Read"/> covering every
+    /// record in range, then per-row decode from the buffer — same shape as
+    /// <see cref="Prefetch"/>. Faults the same way as every other reader here: a concurrent
+    /// from-row-0 re-spill returns whatever was already decoded rather than throwing.</summary>
+    public IReadOnlyList<RawCommit> ReadRawRange(int first, int count)
+    {
+        if (count <= 0)
+            return [];
+        lock (_sync)
+        {
+            if (_closed)
+                return [];
+            first = Math.Max(0, first);
+            var last = Math.Min(first + count, _count) - 1;
+            if (last < first)
+                return [];
+            try
+            {
+                var start = _offsets[first];
+                var end = last + 1 < _offsets.Length ? _offsets[last + 1] : _datLength;
+                var span = (int)(end - start);
+                if (span <= 0)
+                    return [];
+                var buf = new byte[span];
+                var read = RandomAccess.Read(_dat, buf, start);
+                var result = new List<RawCommit>(last - first + 1);
+                for (var row = first; row <= last; row++)
+                {
+                    var rs = _offsets[row] - start;
+                    var re = (row + 1 < _offsets.Length ? _offsets[row + 1] : _datLength) - start;
+                    if (rs < 0 || re > read || re <= rs)
+                        break;
+                    var (meta, parents) = DecodeFrom(buf.AsSpan((int)rs, (int)(re - rs)));
+                    Cache(row, meta);
+                    result.Add(new RawCommit(meta.Id, parents, meta));
+                }
+                return result;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException
+                                       or ArgumentOutOfRangeException or IndexOutOfRangeException)
+            {
+                return [];
             }
         }
     }
@@ -545,6 +605,33 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         var offsets = new long[n];
         for (var i = 0; i < n; i++)
             offsets[i] = BitConverter.ToInt64(bytes, i * 8);
+        return offsets;
+    }
+
+    /// <summary>Phase 3a: reads only the offsets for rows [<paramref name="fromRow"/>,
+    /// <paramref name="rowCount"/>) — the tail appended since the caller last read this file —
+    /// instead of <see cref="ReadOffsets"/>'s whole-file read.</summary>
+    private static long[] ReadOffsetsFrom(string idxPath, int fromRow, int rowCount)
+    {
+        using var fs = new FileStream(idxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var startByte = (long)fromRow * 8;
+        if (startByte >= fs.Length)
+            return [];
+        fs.Position = startByte;
+        var wantBytes = (int)Math.Min(fs.Length - startByte, (long)(rowCount - fromRow) * 8);
+        var buf = new byte[wantBytes];
+        var readTotal = 0;
+        while (readTotal < buf.Length)
+        {
+            var r = fs.Read(buf, readTotal, buf.Length - readTotal);
+            if (r <= 0)
+                break;
+            readTotal += r;
+        }
+        var n = readTotal / 8;
+        var offsets = new long[n];
+        for (var i = 0; i < n; i++)
+            offsets[i] = BitConverter.ToInt64(buf, i * 8);
         return offsets;
     }
 

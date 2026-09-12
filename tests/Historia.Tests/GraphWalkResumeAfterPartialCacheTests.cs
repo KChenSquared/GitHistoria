@@ -57,6 +57,13 @@ public sealed class GraphWalkResumeAfterPartialCacheTests : IAsyncDisposable
         if (!locator.Current.Found)
             return; // git.exe not discoverable — the CLI engine never engages (see class doc elsewhere)
 
+        // Phase 3a (v10 graph memory footprint plan): with disk-backed metadata on (the
+        // default), a background spill trims confirmed-durable rows out of cache.Commits, so
+        // "cache.Commits.Count == every row ever walked" no longer holds — that's covered by its
+        // own tests (GraphSpoolTests). This test is specifically about the CLI prime's resume
+        // skip logic (Phase 0.5), which is orthogonal to disk spilling — keep it in memory mode
+        // so cache.Commits still means "the whole walked history", as the assertions below assume.
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
         var svc = new GraphLayoutService(_host.Settings, locator);
         await using var ctx = _host.Open(_repo.Path);
         ctx.MarkFirstGraphPaintDone();

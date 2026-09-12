@@ -124,6 +124,38 @@ public sealed class GraphMetaStoreTests : IDisposable
         AssertRowEqual(Row(13), store[13]);
     }
 
+    /// <summary>Phase 3a: <c>SetCount</c> reads only the <c>.idx</c> tail appended since the
+    /// last call (a background spill calls it once per batch) instead of re-reading the whole
+    /// file every time. This is a correctness check across several incremental calls — every
+    /// previously-adopted row must still resolve correctly after each new tail read merges in.</summary>
+    [Fact]
+    public void SetCount_called_repeatedly_across_many_small_appends_stays_correct()
+    {
+        var w = new GraphMetaWriter(Repo, Fp, true, Engine);
+        w.Reset();
+        w.Append(Rows(5), 0, 5);
+        w.Commit(5, exhausted: false);
+
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 5, Engine)!;
+        Assert.Equal(5, store.Count);
+
+        for (var batch = 1; batch <= 6; batch++)
+        {
+            var from = 5 * batch;
+            w.Append(Rows(from + 5), from, 5);
+            w.Commit(from + 5, exhausted: batch == 6);
+            store.SetCount(from + 5);
+            Assert.Equal(from + 5, store.Count);
+
+            // Every row adopted so far — not just the newest batch — must still decode
+            // correctly; a tail-only re-read that mishandles the merge would corrupt earlier
+            // offsets.
+            AssertRowEqual(Row(0), store[0]);
+            AssertRowEqual(Row(from + 2), store[from + 2]);
+            AssertRowEqual(Row(from + 4), store[from + 4]);
+        }
+    }
+
     [Fact]
     public void TryOpen_misses_on_fingerprint_or_flag_mismatch()
     {
@@ -243,6 +275,57 @@ public sealed class GraphMetaStoreTests : IDisposable
             Assert.Equal(rows[i].ParentIds, raw.ParentIds);
             AssertRowEqual(rows[i].Metadata, raw.Metadata);
         }
+    }
+
+    [Fact]
+    public void ReadRawRange_matches_ReadRaw_for_every_row_in_a_contiguous_span()
+    {
+        var w = new GraphMetaWriter(Repo, Fp, true, Engine);
+        w.Reset();
+        var rows = RawRows(50);
+        w.Append(rows, 0, 50);
+        w.Commit(50, exhausted: true);
+
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 50, Engine)!;
+        var range = store.ReadRawRange(10, 20); // rows [10, 30)
+        Assert.Equal(20, range.Count);
+        for (var i = 0; i < range.Count; i++)
+        {
+            var expected = store.ReadRaw(10 + i);
+            Assert.Equal(expected.Id, range[i].Id);
+            Assert.Equal(expected.ParentIds, range[i].ParentIds);
+            AssertRowEqual(expected.Metadata, range[i].Metadata);
+        }
+    }
+
+    [Fact]
+    public void ReadRawRange_clamps_to_the_store_count()
+    {
+        var w = new GraphMetaWriter(Repo, Fp, true, Engine);
+        w.Reset();
+        var rows = RawRows(10);
+        w.Append(rows, 0, 10);
+        w.Commit(10, exhausted: true);
+
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 10, Engine)!;
+        var range = store.ReadRawRange(5, 100); // asks for far more than exists
+        Assert.Equal(5, range.Count); // rows [5, 10)
+        for (var i = 0; i < range.Count; i++)
+            Assert.Equal(rows[5 + i].Id, range[i].Id);
+    }
+
+    [Fact]
+    public void ReadRawRange_returns_empty_for_an_out_of_range_or_empty_request()
+    {
+        var w = new GraphMetaWriter(Repo, Fp, true, Engine);
+        w.Reset();
+        w.Append(RawRows(5), 0, 5);
+        w.Commit(5, exhausted: true);
+
+        using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 5, Engine)!;
+        Assert.Empty(store.ReadRawRange(5, 10));  // starts at Count
+        Assert.Empty(store.ReadRawRange(0, 0));   // zero count
+        Assert.Empty(store.ReadRawRange(2, -1));  // negative count
     }
 
     [Fact]
