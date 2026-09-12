@@ -738,7 +738,81 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         sw.Stop();
         Historia.Diagnostics.PerfLog.Memory("after tab-switch GC compaction");
         Historia.Diagnostics.PerfLog.Mark($"tab-switch GC compaction: {sw.Elapsed.TotalMilliseconds:F1}ms");
+
+        // v10 graph memory footprint plan, Phase 4: once the active tab is settled (gate open,
+        // focus stable, its own reclaim done), queue every OTHER open tab for the headless
+        // commit-graph + disk-cache pipeline. GraphBackgroundWriter runs them one at a time,
+        // behind the same gate, so this never contends with the active tab's own work.
+        _ = RunInactiveTabPipelineAsync(newContext);
     }
+
+    /// <summary>Phase 4: queues every open tab except <paramref name="activeContext"/> for
+    /// <c>IGraphLayoutService.RunHeadlessCacheAsync</c>. Waits for the background-init pump to be
+    /// idle first — a session restore's own identity/status work takes priority over this purely
+    /// optional caching. Simplification versus the plan's exact recipe: a job is stopped only by
+    /// its own tab closing (<c>RepositoryContext.Lifetime</c>), not by that tab being focused
+    /// mid-job — since a headless job never touches this service's live <c>_caches</c> entries or
+    /// produces a layout, a tab focused while its own headless pass is still running just finishes
+    /// that pass in the background rather than being cut off at the next batch boundary; nothing
+    /// is corrupted or duplicated, only briefly redundant.</summary>
+    private async Task RunInactiveTabPipelineAsync(RepositoryContext activeContext)
+    {
+        try
+        {
+            if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
+                is not Historia.Services.Graph.IGraphLayoutService graphSvc)
+                return;
+
+            if (!await WaitForBackgroundInitIdleAsync(activeContext.Lifetime).ConfigureAwait(false))
+                return;
+
+            List<RepositoryContext> targets;
+            lock (_sync)
+            {
+                if (!ReferenceEquals(_focused, activeContext))
+                    return; // focus moved again while this waited
+                targets = [.. _open.Where(c => !ReferenceEquals(c, activeContext))];
+            }
+
+            var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeRemoteBranches = true };
+            foreach (var context in targets)
+                graphSvc.EnqueueInactiveTabCaching(context, query);
+        }
+        catch (OperationCanceledException)
+        {
+            // The active tab closed while this waited — nothing left to queue for.
+        }
+        catch (Exception ex)
+        {
+            // Headless caching is a pure optimisation; never let it surface as a fatal error.
+            Historia.Diagnostics.PerfLog.Mark($"RunInactiveTabPipelineAsync failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Waits until <see cref="_bgInitPumpIdle"/> is true, <paramref name="ct"/> is
+    /// cancelled, or <see cref="BackgroundInitIdleWaitCap"/> elapses. Polling rather than a
+    /// signal: this is a low-urgency background optimisation (Phase 4), not on any user-visible
+    /// latency path, so a short delay loop is simpler and no less correct than threading a new
+    /// completion source through every one of the pump's several mutation points. Capped rather
+    /// than unconditional: this is a best-effort caching pass, not a correctness dependency, and
+    /// must never wait forever on an internal signal — the next focus change tries again.</summary>
+    private async Task<bool> WaitForBackgroundInitIdleAsync(CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + BackgroundInitIdleWaitCap;
+        while (true)
+        {
+            bool idle;
+            lock (_sync) idle = _bgInitPumpIdle;
+            if (idle)
+                return true;
+            if (DateTime.UtcNow >= deadline)
+                return false;
+            try { await Task.Delay(250, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return false; }
+        }
+    }
+
+    private static readonly TimeSpan BackgroundInitIdleWaitCap = TimeSpan.FromSeconds(30);
 
     private void RaiseOpenChanged()
     {

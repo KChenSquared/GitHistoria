@@ -386,5 +386,73 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
+    // ── v10 graph memory footprint plan, Phase 4: headless caching for inactive tabs ──
+
+    /// <summary>Overrides one service type while delegating everything else to a real provider —
+    /// so <see cref="WorkspaceService"/>'s <c>IGraphLayoutService</c> can be swapped for a
+    /// recording fake without standing up a whole second DI container.</summary>
+    private sealed class OverrideServiceProvider(IServiceProvider inner, Type overriddenType, object overriddenInstance)
+        : IServiceProvider
+    {
+        public object? GetService(Type serviceType) =>
+            serviceType == overriddenType ? overriddenInstance : inner.GetService(serviceType);
+    }
+
+    private sealed class RecordingGraphLayoutService : IGraphLayoutService
+    {
+        public List<RepositoryContext> Enqueued { get; } = [];
+
+        public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query) => Enqueued.Add(context);
+
+        public Task<GraphLayoutResult> ComputeLayoutAsync(RepositoryContext context, GraphQuery query, int maxRows = 10000, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public GraphLayoutResult? TryOptimisticSnapshot(RepositoryContext context, GraphQuery query, int maxRows) => null;
+        public Task<GraphLayoutResult> ExtendLayoutAsync(RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default, bool background = false)
+            => throw new NotImplementedException();
+        public Task<GraphLayoutResult> RecomputeAsync(RepositoryContext context, GraphQuery query, GraphLayoutResult previous, InvalidationReason reason, int maxRows = 10000, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public void Forget(RepositoryContext context) { }
+        public Task Hibernate(RepositoryContext context) => Task.CompletedTask;
+        public int ClearPersistentCache() => 0;
+        public Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task Focusing_a_tab_queues_every_other_open_tab_for_headless_caching_but_not_itself()
+    {
+        var fakeGraph = new RecordingGraphLayoutService();
+        var provider = new OverrideServiceProvider(_host.Provider, typeof(IGraphLayoutService), fakeGraph);
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var recents = _recents = new RecentRepositoryService(_host.Settings);
+        var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
+        var identity = new RepoIdentityService(cli);
+        var ws = new WorkspaceService(provider, cli, recents, profiles, identity);
+
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+        using var r3 = Repo("c.txt");
+
+        // Force each tab's FirstFullLoad done immediately after it opens, before opening the
+        // next one: FocusInternal only requeues an outgoing tab onto WorkspaceService's OWN
+        // background-init pump when it's STILL loading, and that pump's own timing is unrelated
+        // to what this test cares about (the headless-caching pipeline).
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstFullLoadDone();
+        var ctx2 = await ws.OpenAsync(r2.Path);
+        ctx2.MarkFirstFullLoadDone();
+        var ctx3 = await ws.OpenAsync(r3.Path); // focus now r3 — this is what triggers the pipeline
+        ctx3.MarkFirstGraphPaintDone();
+        ctx3.MarkFirstFullLoadDone();
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (fakeGraph.Enqueued.Count < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+
+        Assert.Equal(2, fakeGraph.Enqueued.Count);
+        Assert.DoesNotContain(fakeGraph.Enqueued, c => Norm(c.RepositoryPath) == Norm(r3.Path));
+
+        await ws.DisposeAsync();
+    }
+
     public async ValueTask DisposeAsync() => await _host.DisposeAsync();
 }

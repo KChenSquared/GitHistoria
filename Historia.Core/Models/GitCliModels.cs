@@ -40,6 +40,14 @@ public sealed record GitCliRequest
 
     /// <summary>When set, written to the process's stdin and then closed (e.g. a patch for <c>git apply -</c>).</summary>
     public string? StandardInput { get; init; }
+
+    /// <summary>v10 graph memory footprint plan, Phase 4: run the process at
+    /// <see cref="System.Diagnostics.ProcessPriorityClass.BelowNormal"/> — for background,
+    /// self-contained git operations (a commit-graph write) that should never contend with a
+    /// user-driven git invocation for CPU. Never killed once started regardless of this flag
+    /// (see the plan's documentation check on git's lockfile cleanup and
+    /// <see cref="System.Diagnostics.Process.Kill()"/>/<c>TerminateProcess</c>).</summary>
+    public bool LowerPriority { get; init; }
 }
 
 /// <summary>Phase-aware progress for a streamed network operation (§6.6.2).</summary>

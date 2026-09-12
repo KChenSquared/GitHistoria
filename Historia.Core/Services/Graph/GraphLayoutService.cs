@@ -24,7 +24,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
     private readonly ISettingsService? _settings;
     private readonly IGitExecutableLocator? _locator;
-    private readonly CommitGraphMaintenance? _commitGraphMaintenance;
+    private readonly GraphBackgroundWriter? _backgroundWriter;
 
     /// <summary>v10 graph memory footprint plan, Phase 1: null in every ctor except the 4-arg DI
     /// one below — tests that don't pass a gate keep today's un-gated behaviour (an "always open"
@@ -53,13 +53,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     /// <summary>DI ctor (§4 linux cold-prime plan): additionally wires up
-    /// <see cref="CommitGraphMaintenance"/>, scheduled once a repo's background history spill
+    /// <see cref="GraphBackgroundWriter"/>, scheduled once a repo's background history spill
     /// (§7.6) reaches completion. The 2-arg ctor above keeps working with no commit-graph
     /// maintenance — used by tests that don't care about it.</summary>
     public GraphLayoutService(ISettingsService settings, IGitExecutableLocator locator, IGitCliService cli)
         : this(settings, locator)
     {
-        _commitGraphMaintenance = new CommitGraphMaintenance(cli, settings);
+        _backgroundWriter = new GraphBackgroundWriter(cli, settings);
     }
 
     /// <summary>DI ctor (v10 graph memory footprint plan, Phase 1): additionally routes every
@@ -69,7 +69,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         : this(settings, locator)
     {
         _gate = gate;
-        _commitGraphMaintenance = new CommitGraphMaintenance(cli, settings, gate);
+        _backgroundWriter = new GraphBackgroundWriter(cli, settings, gate);
     }
 
     /// <summary>Awaits the gate if one was supplied; a no-op ("always open") for the test ctors
@@ -597,7 +597,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     if (walkedSoFar / 50_000 != lastPreloadMemoryMark / 50_000)
                         Diagnostics.PerfLog.Memory($"silent pre-load {walkedSoFar} rows ({context.DisplayName})");
                     lastPreloadMemoryMark = walkedSoFar;
-                    _commitGraphMaintenance?.MaybeSchedule(context, walkedSoFar);
+                    _backgroundWriter?.MaybeSchedule(context, walkedSoFar);
 
                     // Spill whatever this chunk produced, in <= BatchRows batches, before walking
                     // further — Phase 1: every writer awaits the gate before it starts AND
@@ -653,10 +653,189 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // tab close cancels the spill loop above but the repo is still worth maintaining
                 // for the next open.
                 if (cache.Exhausted && cache.MetaComplete)
-                    _commitGraphMaintenance?.MaybeSchedule(context, TotalWalked(cache));
+                    _backgroundWriter?.MaybeSchedule(context, TotalWalked(cache));
             }
         }, ct);
         cache.BackgroundSpillTask = spillTask;
+    }
+
+    /// <inheritdoc/>
+    public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query) =>
+        _backgroundWriter?.EnqueueInactiveTab(context, ct => RunHeadlessCacheAsync(context, query, ct));
+
+    /// <inheritdoc/>
+    public async Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct)
+    {
+        if (!SpillEnabled(query))
+            return; // disk-backed metadata off, or an unsupported query shape — nothing to do headlessly
+
+        var repoPath = context.RepositoryPath;
+        var expectedEngine = ExpectedEngine(query);
+
+        // Step 1 — one low-priority gate turn: tip resolution + walk key (ms even at linux's 948
+        // refs) and a header-only probe both at the current key and (Phase 3c) at whatever key
+        // the store was last written under, regardless of match.
+        var probe = await context.WithRepositoryBackgroundAsync(repo =>
+        {
+            var fp = ComputeFingerprint(repo, query, out var allRefs);
+            var tips = ResolveTipShas(repo, query, allRefs);
+            var walkKey = ComputeWalkKey(tips, query);
+            return (
+                WalkKey: walkKey,
+                Tips: tips,
+                Current: GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches, expectedEngine),
+                Existing: GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches, expectedEngine));
+        }, ct).ConfigureAwait(false);
+
+        if (probe.Current is { Ok: true, Exhausted: true })
+        {
+            // Already fully cached at the current walk key — still worth a commit-graph
+            // staleness check now that its exact row count is known for free.
+            _backgroundWriter?.MaybeSchedule(context, probe.Current.RowCount);
+            return;
+        }
+
+        ct.ThrowIfCancellationRequested();
+
+        // Step 2 — commit-graph, if the repo's size is already known from ANY prior header,
+        // regardless of key: a stale walk key doesn't mean a small repo. If unknown, the spool
+        // below schedules it itself once exhausted (mirrors the active tab's own ordering).
+        if (probe.Existing is { Ok: true, RowCount: var knownRows } && knownRows >= GraphBackgroundWriter.MinCommitsToWrite)
+            _backgroundWriter?.MaybeSchedule(context, knownRows);
+
+        // Step 3 — headless spool (store missing, or partial at the CURRENT key) or reorder
+        // (Phase 3c: an exhausted store exists, but under a DIFFERENT key — a fetch, a new
+        // branch). Reordering needs no concurrent foreground reader to protect, which is exactly
+        // why this headless pipeline — not the active tab's gate/spill loop — is where Phase 3c's
+        // live trigger lands.
+        if (!probe.Current.Ok && probe.Existing is { Ok: true, Exhausted: true })
+            await RunHeadlessReorderAsync(context, query, repoPath, probe.Tips, probe.WalkKey, ct).ConfigureAwait(false);
+        else
+            await RunHeadlessSpoolAsync(context, query, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Phase 4: streams a walk into the on-disk store for an inactive tab, one batch at
+    /// a time, holding no more than one batch resident between spills — the same interleaved
+    /// walk-then-spill shape as the active tab's <see cref="MaybeStartBackgroundSpill"/>, but with
+    /// no <see cref="RepoCache"/> ever added to <see cref="_caches"/> and no layout produced.
+    /// Cancelling <paramref name="ct"/> stops at the next batch boundary; whatever was already
+    /// spilled stays on disk.</summary>
+    private async Task RunHeadlessSpoolAsync(RepositoryContext context, GraphQuery query, CancellationToken ct)
+    {
+        const int BatchRows = 25_000;
+        var cache = new RepoCache { Scope = query.RefScope, IncludeRemotes = query.IncludeRemoteBranches };
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await WaitForGateAsync(ct).ConfigureAwait(false);
+                if (ct.IsCancellationRequested)
+                    break;
+
+                int target;
+                lock (cache) target = cache.SpilledRows + cache.Commits.Count + BatchRows;
+                await EnsureWalkedAsync(context, query, cache, target, ct, background: true, lowestPriority: true)
+                    .ConfigureAwait(false);
+
+                bool walkDone;
+                lock (cache) walkDone = cache.Exhausted;
+
+                await WaitForGateAsync(ct).ConfigureAwait(false);
+                if (ct.IsCancellationRequested)
+                    break;
+
+                int from, to;
+                lock (cache.SpillSync)
+                {
+                    lock (cache) { from = cache.SpilledRows; to = cache.SpilledRows + cache.Commits.Count; }
+                    if (to > from)
+                        SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to, exhausted: walkDone);
+                }
+                if (walkDone)
+                {
+                    _backgroundWriter?.MaybeSchedule(context, TotalWalked(cache));
+                    break;
+                }
+                await Task.Delay(150, ct).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            cache.DisposeLiveWalk();
+            cache.MetaStore?.Dispose();
+            try { cache.Cts.Dispose(); } catch { /* best effort */ }
+        }
+    }
+
+    /// <summary>Phase 3c's live trigger: walks the ENTIRE new history first (a reorder's row →
+    /// record order isn't knowable until the walk is exhausted — a partial reorder has no valid
+    /// order to write), then reuses whatever of the old store's records match by SHA and appends
+    /// only genuinely new ones. Never touches <c>.meta.dat</c>/<c>.meta.idx</c>/<c>.meta.search</c>
+    /// destructively — only <see cref="GraphMetaWriter.Append"/> (pure append) and a new versioned
+    /// order file. Cancelling <paramref name="ct"/> at any point before the final
+    /// <see cref="GraphMetaWriter.CommitReorder"/> discards the whole attempt; the old order stays
+    /// authoritative until that one atomic header write.</summary>
+    private async Task RunHeadlessReorderAsync(
+        RepositoryContext context, GraphQuery query, string repoPath, string[] sortedTips, long newWalkKey,
+        CancellationToken ct)
+    {
+        var cache = new RepoCache { Scope = query.RefScope, IncludeRemotes = query.IncludeRemoteBranches };
+        try
+        {
+            while (!cache.Exhausted && !ct.IsCancellationRequested)
+            {
+                await WaitForGateAsync(ct).ConfigureAwait(false);
+                if (ct.IsCancellationRequested)
+                    return;
+                int target;
+                lock (cache) target = cache.Commits.Count + 25_000;
+                await EnsureWalkedAsync(context, query, cache, target, ct, background: true, lowestPriority: true)
+                    .ConfigureAwait(false);
+                if (!cache.Exhausted)
+                    await Task.Delay(150, ct).ConfigureAwait(false);
+            }
+            if (ct.IsCancellationRequested || !cache.Exhausted)
+                return; // cancelled mid-walk — nothing durable was ever touched, the old order stands
+
+            List<RawCommit> newWalkCommits;
+            lock (cache) newWalkCommits = [.. cache.Commits];
+
+            // Re-probe right before committing: the old store must still be exactly what step 1
+            // saw (another job, or a live foreground open of this same repo, could have changed
+            // it while this walk ran) or this reorder's base table no longer applies.
+            var oldProbe = GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches, cache.Engine);
+            if (!oldProbe.Ok || !oldProbe.Exhausted || oldProbe.WalkKey == newWalkKey)
+                return; // stale, gone, or someone else already brought it up to date
+
+            using var oldStore = DiskCommitStore.Open(repoPath, oldProbe.RowCount, oldProbe.RecordCount, oldProbe.OrderVersion);
+            var existingRecords = oldStore.BuildShaIndex();
+            var plan = GraphMetaReorder.Build(existingRecords, oldStore.RecordCount, newWalkCommits);
+
+            if (ct.IsCancellationRequested)
+                return;
+
+            var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches, cache.Engine);
+            writer.Append(plan.NewRecords, 0, plan.NewRecords.Count);
+            var newOrderVersion = oldProbe.OrderVersion + 1;
+            if (!writer.WriteOrder(newOrderVersion, plan.Order))
+                return; // best-effort — the old order stays authoritative on any write failure
+            writer.WriteTips([.. sortedTips.Select(sha => new ObjectId(sha))]);
+            writer.CommitReorder(
+                rowCount: plan.Order.Length,
+                recordCount: oldStore.RecordCount + plan.NewRecords.Count,
+                orderVersion: newOrderVersion,
+                exhausted: true);
+
+            Diagnostics.PerfLog.Mark(
+                $"graph cache write: reorder {plan.NewRecords.Count} new records, {plan.Order.Length} rows ({repoPath})");
+            _backgroundWriter?.MaybeSchedule(context, plan.Order.Length);
+        }
+        finally
+        {
+            cache.DisposeLiveWalk();
+            cache.MetaStore?.Dispose();
+            try { cache.Cts.Dispose(); } catch { /* best effort */ }
+        }
     }
 
     public async Task<GraphLayoutResult> RecomputeAsync(

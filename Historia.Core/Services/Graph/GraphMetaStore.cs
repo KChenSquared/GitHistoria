@@ -184,6 +184,32 @@ internal sealed class GraphMetaStore
         }
     }
 
+    /// <summary>
+    /// Phase 4: like <see cref="ProbeAny"/> but returns the full header, including the WALK KEY
+    /// it was written under — used by the headless per-tab pipeline to tell "no store at all"
+    /// apart from "a store exists, but its walk key has moved" (a reorder opportunity, Phase 3c)
+    /// without needing to know the current walk key up front.
+    /// </summary>
+    public static (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted) ProbeExisting(
+        string repoPath, bool includeRemoteBranches, WalkEngine engine)
+    {
+        try
+        {
+            var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
+            if (!File.Exists(hdrPath))
+                return (false, 0, 0, 0, 0, false);
+            var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
+            if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
+                || (WalkEngine)hdr.WalkEngine != engine)
+                return (false, 0, 0, 0, 0, false);
+            return (true, hdr.Fingerprint, hdr.RowCount, hdr.RecordCount, hdr.OrderVersion, hdr.Exhausted);
+        }
+        catch
+        {
+            return (false, 0, 0, 0, 0, false);
+        }
+    }
+
     /// <summary>Deletes every <c>graph-*.meta.*</c> file. Returns the count removed.</summary>
     public static int Wipe()
     {

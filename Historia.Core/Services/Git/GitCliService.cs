@@ -115,6 +115,14 @@ public sealed class GitCliService : IGitCliService
             return new GitCliResult(-1, string.Empty, ex.Message, GitErrorKind.Unknown, stopwatch.Elapsed);
         }
 
+        if (request.LowerPriority)
+        {
+            // Best-effort: the process may already have exited (or the platform may refuse the
+            // change) by the time this runs — never let a priority tweak fail the invocation.
+            try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
+            catch { }
+        }
+
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 

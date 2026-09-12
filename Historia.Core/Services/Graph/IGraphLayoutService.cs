@@ -64,4 +64,27 @@ public interface IGraphLayoutService
     /// The next graph open re-walks from scratch. Returns the number of files removed.
     /// </summary>
     int ClearPersistentCache();
+
+    /// <summary>
+    /// v10 graph memory footprint plan, Phase 4: headlessly brings ONE inactive tab's on-disk
+    /// graph cache up to date — no live layout, no lasting entry in this service's own cache
+    /// table, holding at most one walk batch resident at a time. A no-op if disk-backed metadata
+    /// is off, this query shape isn't supported by it, or the store already matches the repo's
+    /// current walk key and is exhausted. Also writes/refreshes the commit-graph when the repo's
+    /// size already qualifies. Driven by <c>GraphBackgroundWriter</c>'s inactive-tab queue —
+    /// never called for the focused tab. <paramref name="ct"/> is checked at batch boundaries: a
+    /// cancellation (the tab was focused mid-job) leaves whatever was already durably written in
+    /// place and discards only the in-flight batch.
+    /// </summary>
+    Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct);
+
+    /// <summary>
+    /// Phase 4: queues <paramref name="context"/> for the headless pipeline
+    /// (<see cref="RunHeadlessCacheAsync"/>) on this service's own background-job queue, so it
+    /// runs one at a time with — and serialized against — every other inactive tab and the active
+    /// tab's own commit-graph write. A no-op if this service has no background writer configured
+    /// (a test-only ctor). The caller is expected to call this only for tabs that are NOT
+    /// currently focused.
+    /// </summary>
+    void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query);
 }
