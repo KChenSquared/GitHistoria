@@ -23,7 +23,11 @@ internal sealed class GraphWalkCache
     // engine must never be treated as resumable by the other, since their row orders can differ
     // for the same ref set. A v2 file predates the marker and is rejected outright, forcing a
     // one-time re-walk per repo.
-    private const int Version = 3;
+    // Phase 0.5 (v10 graph memory footprint plan): bumped 3 -> 4. The CLI prime's resume skip
+    // fix and the canonical (sorted) tip order both change a repo's walk output for an unchanged
+    // fingerprint — a v3 file could silently disagree with what a fresh walk now produces, so it
+    // is rejected outright and every repo re-walks once.
+    private const int Version = 4;
     private const int MaxFiles = 40;
 
     private static readonly JsonSerializerOptions Json = new() { IncludeFields = false };

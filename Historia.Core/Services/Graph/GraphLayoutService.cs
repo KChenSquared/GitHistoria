@@ -855,7 +855,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
             var need = prep.WantCount - prep.Have;
             var delta = new List<RawCommit>(Math.Min(need, 8192));
-            var exhausted = PumpCommits(stream, delta, skip: 0, want: need, cache, ct);
+            // Phase 0.5: prep.Have rows may already be resident from a partial on-disk cache
+            // (GraphWalkCache.TryLoad seeded cache.Commits from a non-exhausted .gz). StartWalk's
+            // libgit2 path already re-skips those with `skip: have`; this fresh CLI prime must do
+            // the same or the walk's rows [0, need) land duplicated after the cached ones.
+            var exhausted = PumpCommits(stream, delta, skip: prep.Have, want: need, cache, ct);
 
             if (delta.Count == 0 && !exhausted && stream.Failed)
             {
@@ -982,12 +986,26 @@ public sealed class GraphLayoutService : IGraphLayoutService
         public void Dispose() => inner.Dispose();
     }
 
+    /// <summary>Phase 0.5 sort key for a raw walk tip (a <see cref="Reference"/> or a stash
+    /// <see cref="Commit"/>) — its resolved target sha, falling back to the ref's own name for
+    /// something that can't be resolved. Ordinal, so it does not depend on ref enumeration order
+    /// or a per-process string hash.</summary>
+    private static string TipSortKey(object tip) => tip switch
+    {
+        Commit c => c.Sha,
+        Reference r => r.ResolveToDirectReference()?.TargetIdentifier ?? r.CanonicalName,
+        _ => tip.ToString() ?? "",
+    };
+
     /// <summary>Resolves the same tip set <see cref="StartWalk"/> would (local / remote / tag,
     /// filtered by <see cref="GraphQuery.RefScope"/> and <see cref="Resolvable"/>), peeled to
     /// commit SHAs for <c>git log --stdin</c>. A ref whose target doesn't peel to a commit (a
     /// lightweight or annotated tag pointing at a tree/blob, e.g. linux's <c>v2.6.11-tree</c>) is
     /// silently skipped, matching how <see cref="StartWalk"/>'s libgit2 walk treats it. Caller
-    /// holds the repo gate.</summary>
+    /// holds the repo gate. Phase 0.5: the returned array is sorted ordinally — git's topological
+    /// sort depends on the order tips are fed to it (measured), and the fingerprint already
+    /// ignores ref enumeration order, so an unsorted list would let `git gc`/`pack-refs` silently
+    /// reorder the walk under an unchanged fingerprint.</summary>
     private static string[] ResolveTipShas(Repository repo, GraphQuery query, List<Reference> allRefs)
     {
         static bool Resolvable(Reference? r) => r?.ResolveToDirectReference() is not null;
@@ -1032,6 +1050,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 break;
         }
 
+        shas.Sort(StringComparer.Ordinal);
         return [.. shas];
     }
 
@@ -1133,6 +1152,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
             foreach (var stash in repo.Stashes)
                 if (stash.WorkTree is not null)
                     tipList.Add(stash.WorkTree);
+
+        // Phase 0.5 (v10 graph memory footprint plan): git's topological sort depends on the
+        // order tips are fed to it (measured), so an unsorted, enumeration-order tip list makes
+        // the walk's row order drift under a `git gc`/`pack-refs` that only reorders how refs
+        // enumerate — same ref set, same fingerprint (which already sorts by name), different
+        // row order. Sort by each tip's target sha so both engines see one canonical order.
+        tipList = [.. tipList.OrderBy(TipSortKey, StringComparer.Ordinal)];
 
         object[] tips = [.. tipList];
         Diagnostics.PerfLog.Mark($"Walk tips resolved: {tips.Length}, decosFresh={decosFresh}");

@@ -46,7 +46,11 @@ internal sealed class GraphMetaStore
     // libgit2 revwalk can order the same ref set's history differently, so a store the background
     // spill keeps appending to must never mix rows from both. A mismatch (or a pre-marker v2 file)
     // is rejected outright, forcing a one-time full re-spill per repo.
-    internal const int Version = 3;
+    // Phase 0.5 (v10 graph memory footprint plan): bumped 3 -> 4, in lockstep with
+    // GraphWalkCache.Version — the CLI prime resume-skip fix and the canonical sorted tip order
+    // both change a repo's walk output for an unchanged fingerprint, so a v3 store is rejected
+    // outright and re-spills once.
+    internal const int Version = 4;
     internal const string HdrExt = ".meta.hdr";
     internal const string DatExt = ".meta.dat";
     internal const string IdxExt = ".meta.idx";
