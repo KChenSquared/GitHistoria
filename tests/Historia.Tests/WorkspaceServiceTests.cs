@@ -454,5 +454,121 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
+    // ── finding #10: gate the tab-switch compacting GC on actual heap growth ──
+
+    [Theory]
+    [InlineData(0L, 0L, false)]
+    [InlineData(1024L * 1024 * 1024, 0L, true)] // heap at the 1 GiB threshold
+    [InlineData(1024L * 1024 * 1024 - 1, 0L, false)] // just under the heap threshold, LOH empty
+    [InlineData(0L, 256L * 1024 * 1024, true)] // LOH at the 256 MiB threshold
+    [InlineData(0L, 256L * 1024 * 1024 - 1, false)] // just under the LOH threshold, heap empty
+    [InlineData(2L * 1024 * 1024 * 1024, 1024L, true)] // either threshold alone is sufficient
+    public void ShouldCompactAfterHibernate_uses_named_heap_and_LOH_thresholds(long heapBytes, long lohBytes, bool expected)
+    {
+        Assert.Equal(expected, WorkspaceService.ShouldCompactAfterHibernate(heapBytes, lohBytes));
+    }
+
+    // ── finding #12: a focus switch mid-git-config-write must not cancel the write ──
+
+    /// <summary>A minimal <see cref="IProfileService"/> whose <see cref="ApplyProfileToGitConfigAsync"/>
+    /// blocks until released and records the token it was actually invoked with, so the test can
+    /// interrupt the caller's attempt token while the "write" is in flight and check that the
+    /// write itself never observed the cancellation.</summary>
+    private sealed class ConfigWriteProfileService(GitProfile profile) : IProfileService
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public CancellationToken ReceivedToken { get; private set; }
+        public bool WriteCompleted { get; private set; }
+
+        public IReadOnlyList<GitProfile> GetAllProfiles() => [profile];
+        public GitProfile? GetProfileById(Guid id) => profile.Id == id ? profile : null;
+        public ProfileUsageState? GetUsage(Guid id) => null;
+        public Task<GitProfile> CreateProfileAsync(GitProfileCreateRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<GitProfile> UpdateProfileAsync(Guid id, GitProfileUpdateRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ProfileDeleteResult> DeleteProfileAsync(Guid id, CancellationToken ct = default) => throw new NotSupportedException();
+        public GitProfile GetGlobalProfile() => profile;
+        public Task SyncGlobalIdentityAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public GitProfile? GetDefaultProfile() => profile;
+        public Task SetDefaultProfileAsync(Guid? profileId, CancellationToken ct = default) => Task.CompletedTask;
+        public GitProfile? GetProfileForRepository(RepoIdentityKey repoKey) => null;
+        public bool IsLocalConfigSelected(RepoIdentityKey repoKey) => false;
+        public Task BindProfileToRepositoryAsync(RepoIdentityKey repoKey, string displayPath, Guid profileId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task SetLocalConfigForRepositoryAsync(RepoIdentityKey repoKey, string displayPath, CancellationToken ct = default) => Task.CompletedTask;
+        public Task UnbindRepositoryAsync(RepoIdentityKey repoKey, CancellationToken ct = default) => Task.CompletedTask;
+        public IReadOnlyDictionary<RepoIdentityKey, RepoProfileBinding> GetAllRepoBindings() => new Dictionary<RepoIdentityKey, RepoProfileBinding>();
+        public IReadOnlyList<RepoProfileBinding> GetStaleBindings() => [];
+        public Task<int> CleanStaleBindingsAsync(CancellationToken ct = default) => Task.FromResult(0);
+        public GitProfile? ResolveActiveProfile(RepoIdentityKey? repoKey = null) => profile;
+
+        public async Task ApplyProfileToGitConfigAsync(GitProfile p, string repoPath, GitConfigScope scope, CancellationToken ct = default)
+        {
+            ReceivedToken = ct;
+            Started.TrySetResult();
+            await Release.Task.ConfigureAwait(false);
+            WriteCompleted = true;
+        }
+
+        public Task TouchProfileAsync(Guid profileId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<string?> GetTokenAsync(Guid profileId, RemoteHost host, CancellationToken ct = default) => Task.FromResult<string?>(null);
+        public Task ExportProfilesAsync(string exportFilePath, bool includeTokens, string? password, CancellationToken ct = default) => Task.CompletedTask;
+        public Task ImportProfilesAsync(string importFilePath, string? password, CancellationToken ct = default) => Task.CompletedTask;
+        public event EventHandler? ProfilesChanged;
+        public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged;
+    }
+
+    private static TestRepositoryBuilder RepoWithoutLocalIdentity()
+    {
+        var b = Repo("f.txt");
+        // §9.6's write path only triggers when the repo has neither user.name nor user.email set
+        // locally — TestRepositoryBuilder.Create() sets both so Commit() works, so clear them here.
+        b.Git("config", "--local", "--unset", "user.name");
+        b.Git("config", "--local", "--unset", "user.email");
+        return b;
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task Focus_switch_during_git_config_write_does_not_cancel_the_write()
+    {
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var recents = _recents = new RecentRepositoryService(_host.Settings);
+        var profile = new GitProfile
+        {
+            Id = Guid.NewGuid(),
+            DisplayName = "Test Profile",
+            GitUserName = "Profile Name",
+            GitUserEmail = "profile@example.com",
+            CreatedAt = DateTimeOffset.Now,
+        };
+        var profiles = new ConfigWriteProfileService(profile);
+        var identity = new RepoIdentityService(cli);
+        var ws = new WorkspaceService(_host.Provider, cli, recents, profiles, identity);
+
+        using var r1 = RepoWithoutLocalIdentity();
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone(); // skip the first-paint ceiling wait — no graph control here
+
+        // The config write is now in flight (blocked on Release) inside ctx1's InitializeContextAsync.
+        await profiles.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await ws.OpenAsync(r2.Path); // focus switch: interrupts ctx1's attempt token
+        await Task.Delay(200); // give FocusInternal's Cancel() a moment to run
+
+        Assert.False(profiles.ReceivedToken.IsCancellationRequested,
+            "finding #12: the git-config write's own token must never be cancelled by a focus-loss interrupt");
+        Assert.False(profiles.WriteCompleted, "the write should still be blocked on Release at this point");
+
+        profiles.Release.TrySetResult();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!profiles.WriteCompleted && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        Assert.True(profiles.WriteCompleted, "the write must run to completion even though the attempt was interrupted");
+
+        await ws.DisposeAsync();
+    }
+
     public async ValueTask DisposeAsync() => await _host.DisposeAsync();
 }

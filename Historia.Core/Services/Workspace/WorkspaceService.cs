@@ -272,7 +272,16 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                 {
                     var (name, email) = await context.Gateway.GetConfiguredIdentityAsync(ct).ConfigureAwait(false);
                     if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(email))
-                        await _profiles.ApplyProfileToGitConfigAsync(profile, context.RepositoryPath, GitConfigScope.Local, ct).ConfigureAwait(false);
+                    {
+                        // Finding #12: check the attempt token before starting the git-config
+                        // write, then run the write itself with CancellationToken.None. A focus
+                        // switch mid-write used to cancel GitCliService.RunAsync, which kills the
+                        // git process (GitCliService.cs) and can leave .git/config.lock behind.
+                        // The write keeps its own 15 s per-call timeout (ProfileService.SetConfigAsync),
+                        // so an uncancellable write still can't hang forever.
+                        ct.ThrowIfCancellationRequested();
+                        await _profiles.ApplyProfileToGitConfigAsync(profile, context.RepositoryPath, GitConfigScope.Local, CancellationToken.None).ConfigureAwait(false);
+                    }
                 }
             }
         }
@@ -649,8 +658,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             // the tab the user is now looking at doesn't queue behind it. A tab whose FirstFullLoad
             // already completed has nothing to interrupt. The interrupted attempt is requeued at
             // the front of the background pump (ahead of never-started tabs) to resume once
-            // priority frees up — identity resolution and RefreshAllAsync are read-only, so simply
-            // re-running them from scratch is fine.
+            // priority frees up — RefreshAllAsync is read-only, and identity resolution's only
+            // write (seeding git config from the active profile, §9.6) checks the attempt token
+            // before starting and then runs uncancelled (finding #12), so re-running from scratch
+            // is fine: either the write never started, or it already completed.
             if (old is not null && !old.FirstFullLoad.IsCompleted && _attemptCts.TryGetValue(old, out var oldCts))
             {
                 toCancel = oldCts;
@@ -700,13 +711,28 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             _ = HibernateAndReclaimAsync(old, context);
     }
 
+    // Finding #10: an aggressive, blocking, compacting GC.Collect after every tab switch pays a
+    // full-heap pause and (LargeObjectHeapCompactionMode.CompactOnce) a LOH compaction even when
+    // the outgoing tab held only a few MB, and Aggressive also decommits, so the next tab pays to
+    // re-commit. Only worth it once the heap has actually grown enough to matter.
+    private const long CompactHeapThresholdBytes = 1L * 1024 * 1024 * 1024; // 1 GiB
+    private const long CompactLohThresholdBytes = 256L * 1024 * 1024; // 256 MiB
+
+    /// <summary>Finding #10: whether the managed heap (or the large-object heap alone) is big
+    /// enough to justify the blocking, compacting GC in <see cref="HibernateAndReclaimAsync"/>.
+    /// A small heap gains nothing from the pause and just pays the decommit-then-recommit cost on
+    /// the next tab switch.</summary>
+    internal static bool ShouldCompactAfterHibernate(long heapBytes, long lohBytes) =>
+        heapBytes >= CompactHeapThresholdBytes || lohBytes >= CompactLohThresholdBytes;
+
     /// <summary>Phase 1b: releases everything the outgoing tab's graph held in memory (cancels its
     /// background spill, disposes its live walk, drops its resident commit list). Phase 1c: once
     /// the newly focused tab's background-write gate opens (so the pause never lands inside its
     /// own first paint) and focus has been stable for 2s (so a burst of switches triggers one
     /// collection, not several), runs a compacting GC to actually shrink the working set — below
     /// ~90% memory load the GC prefers background collections that free live objects without
-    /// returning the heap size to the OS.</summary>
+    /// returning the heap size to the OS. Finding #10: skipped when neither the managed heap nor
+    /// the LOH has grown past its threshold — see <see cref="ShouldCompactAfterHibernate"/>.</summary>
     private async Task HibernateAndReclaimAsync(RepositoryContext old, RepositoryContext newContext)
     {
         if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
@@ -731,13 +757,31 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                 return; // focus moved again right at the debounce boundary
         }
 
-        Historia.Diagnostics.PerfLog.Memory("before tab-switch GC compaction");
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
-        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-        sw.Stop();
-        Historia.Diagnostics.PerfLog.Memory("after tab-switch GC compaction");
-        Historia.Diagnostics.PerfLog.Mark($"tab-switch GC compaction: {sw.Elapsed.TotalMilliseconds:F1}ms");
+        // Finding #10: gate the blocking, compacting collection on actual heap growth. verified
+        // against this repo's own PerfLog.Memory (Historia.Core/Diagnostics/PerfLog.cs): .NET's
+        // GCMemoryInfo.GenerationInfo is a GCGenerationInfo[] indexed by generation, where index 3
+        // is the large object heap (index 4 is the pinned object heap; absent on runtimes too old
+        // to report it, hence the length check) and HeapSizeBytes is the managed heap's total size
+        // as of the end of the last GC.
+        var info = GC.GetGCMemoryInfo();
+        var gen = info.GenerationInfo;
+        var lohBytes = gen.Length > 3 ? gen[3].SizeAfterBytes : 0L;
+        if (!ShouldCompactAfterHibernate(info.HeapSizeBytes, lohBytes))
+        {
+            static long Mb(long bytes) => bytes / (1024 * 1024);
+            Historia.Diagnostics.PerfLog.Mark(
+                $"tab-switch GC compaction skipped (heap={Mb(info.HeapSizeBytes)}MB, loh={Mb(lohBytes)}MB)");
+        }
+        else
+        {
+            Historia.Diagnostics.PerfLog.Memory("before tab-switch GC compaction");
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            sw.Stop();
+            Historia.Diagnostics.PerfLog.Memory("after tab-switch GC compaction");
+            Historia.Diagnostics.PerfLog.Mark($"tab-switch GC compaction: {sw.Elapsed.TotalMilliseconds:F1}ms");
+        }
 
         // v10 graph memory footprint plan, Phase 4: once the active tab is settled (gate open,
         // focus stable, its own reclaim done), queue every OTHER open tab for the headless

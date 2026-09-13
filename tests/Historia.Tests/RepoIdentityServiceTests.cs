@@ -74,4 +74,38 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
         Assert.Equal(expected, cliKey);
         Assert.Equal(expected, fallbackKey);
     }
+
+    // ── finding #24: the CLI path must ignore `git replace` grafts, same as the libgit2 fallback ──
+
+    [Fact(Timeout = 20000)]
+    public async Task CLI_path_ignores_git_replace_grafts_same_as_the_libgit2_fallback()
+    {
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        Assert.True(cli.IsGitAvailable, "test requires git.exe to be discoverable");
+
+        // Mask the ordinal-smallest root behind a `git replace` graft that gives it a parent —
+        // verified manually against a real git.exe before writing this: without
+        // GIT_NO_REPLACE_OBJECTS=1, `git rev-list --max-parents=0` transparently substitutes the
+        // graft's content for the real root, so the root no longer looks parentless and drops out
+        // of the walk's root-candidate set, changing the reported "smallest root" to the other
+        // one. The libgit2 fallback never resolves replace refs at all, so it always sees the real
+        // (still parentless) root — the exact mismatch finding #24 describes.
+        var smallest = ExpectedSmallestRoot();
+        var other = smallest == _rootA ? _rootB : _rootA;
+        var smallTree = _repo.Git("rev-parse", $"{smallest}^{{tree}}").Trim();
+        var decoyWithParent = _repo.Git("commit-tree", smallTree, "-p", other, "-m", "decoy with a parent").Trim();
+        _repo.Git("replace", smallest, decoyWithParent);
+
+        var cliSvc = new RepoIdentityService(cli);
+        await using var ctxCli = _host.Open(_repo.Path);
+        var cliKey = await cliSvc.ResolveAsync(ctxCli);
+
+        var fallbackSvc = new RepoIdentityService(new NoGitCli());
+        await using var ctxFallback = _host.Open(_repo.Path);
+        var fallbackKey = await fallbackSvc.ResolveAsync(ctxFallback);
+
+        var expected = RepoIdentityKey.FromRootCommit(smallest);
+        Assert.Equal(expected, cliKey);
+        Assert.Equal(expected, fallbackKey);
+    }
 }
