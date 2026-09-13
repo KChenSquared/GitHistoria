@@ -34,14 +34,23 @@ public sealed class GraphMetaReorderTests : IDisposable
 
     // ── GraphMetaReorder.Build (pure, no I/O) ──
 
+    /// <summary>Finding #5: <see cref="GraphMetaReorder.Build"/> now keys existing records on
+    /// <see cref="CompactShaIndex"/> (an 8-byte id prefix, verified against the full id) instead
+    /// of a 40-char hex string — this builds one from the same (id, record) pairs the old
+    /// <c>Dictionary&lt;string,int&gt;</c> literals in these tests used to express.</summary>
+    private static CompactShaIndex Existing(params (int Id, int Record)[] pairs)
+    {
+        var index = new CompactShaIndex();
+        foreach (var (id, record) in pairs)
+            index.Add(Oid(id), record);
+        return index;
+    }
+
     [Fact]
     public void Build_keeps_existing_records_and_appends_only_genuinely_new_commits()
     {
         // Old order (identity, 5 rows): 0,1,2,3,4 — records 0..4.
-        var existing = new Dictionary<string, int>
-        {
-            [Oid(0).Sha] = 0, [Oid(1).Sha] = 1, [Oid(2).Sha] = 2, [Oid(3).Sha] = 3, [Oid(4).Sha] = 4,
-        };
+        var existing = Existing((0, 0), (1, 1), (2, 2), (3, 3), (4, 4));
 
         // New walk: two brand-new commits land on top of the old trunk (a fetch advancing HEAD).
         var newWalk = new List<RawCommit> { Commit(5, 4), Commit(6, 5), Commit(4), Commit(3, 4), Commit(2, 3), Commit(1, 2), Commit(0, 1) };
@@ -59,7 +68,7 @@ public sealed class GraphMetaReorderTests : IDisposable
     [Fact]
     public void Build_is_a_no_op_reuse_when_the_new_walk_is_identical_to_the_old_one()
     {
-        var existing = new Dictionary<string, int> { [Oid(0).Sha] = 0, [Oid(1).Sha] = 1, [Oid(2).Sha] = 2 };
+        var existing = Existing((0, 0), (1, 1), (2, 2));
         var sameWalk = new List<RawCommit> { Commit(2, 1), Commit(1, 0), Commit(0) };
 
         var plan = GraphMetaReorder.Build(existing, existingRecordCount: 3, sameWalk);
@@ -74,7 +83,7 @@ public sealed class GraphMetaReorderTests : IDisposable
         // Old history had a branch (commits 10, 11) that's gone from the new walk (deleted / not
         // reachable any more) — Build only ever emits rows for what's IN newWalkCommits; the
         // caller decides row count, this just never references dead records.
-        var existing = new Dictionary<string, int> { [Oid(0).Sha] = 0, [Oid(10).Sha] = 1, [Oid(11).Sha] = 2 };
+        var existing = Existing((0, 0), (10, 1), (11, 2));
         var newWalk = new List<RawCommit> { Commit(0) };
 
         var plan = GraphMetaReorder.Build(existing, existingRecordCount: 3, newWalk);
@@ -88,7 +97,7 @@ public sealed class GraphMetaReorderTests : IDisposable
     public void Build_never_appends_a_duplicate_record_for_a_sha_seen_twice_in_one_walk()
     {
         // Defensive: a real walk never revisits a commit, but Build must not misbehave if it did.
-        var existing = new Dictionary<string, int>();
+        var existing = new CompactShaIndex();
         var newWalk = new List<RawCommit> { Commit(0), Commit(0) };
 
         var plan = GraphMetaReorder.Build(existing, existingRecordCount: 0, newWalk);

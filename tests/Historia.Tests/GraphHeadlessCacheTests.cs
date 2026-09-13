@@ -120,6 +120,118 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
         Assert.True(grew > 0 && grew < (beforeLength / 2), $"expected a small append (~2 new records), grew by {grew} bytes from {beforeLength}");
     }
 
+    // ── M3.1, finding #5: the reorder streams in batches, never holding the whole new walk resident ──
+
+    [Fact]
+    public async Task A_headless_reorder_never_holds_more_than_one_batch_of_the_new_walk_resident()
+    {
+        var svc = await DiskBackedServiceAsync();
+        await using (var ctx = _host.Open(_repo.Path))
+            await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None);
+
+        // Enough new commits that, without streaming, the whole new walk would land in one shot.
+        _repo.Checkout("feature", create: true);
+        for (var i = 0; i < 12; i++)
+            _repo.WriteFile("f.txt", $"feature {i}\n").Stage().Commit($"feature commit {i:D2}");
+
+        GraphLayoutService.TestSpillBatchRowsOverride = 5;
+        var maxBatchSeen = 0;
+        var batchesSeen = 0;
+        GraphLayoutService.TestReorderBatchObserved = size =>
+        {
+            batchesSeen++;
+            maxBatchSeen = Math.Max(maxBatchSeen, size);
+        };
+        try
+        {
+            await using var ctx2 = _host.Open(_repo.Path);
+            await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None);
+        }
+        finally
+        {
+            GraphLayoutService.TestSpillBatchRowsOverride = 0;
+            GraphLayoutService.TestReorderBatchObserved = null;
+        }
+
+        Assert.True(batchesSeen >= 2, $"expected multiple batches with a 5-row override over 12 new commits, saw {batchesSeen}");
+        Assert.True(maxBatchSeen > 0 && maxBatchSeen <= 5, $"expected every batch <= 5 rows, saw a max of {maxBatchSeen}");
+
+        var hdrPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.HdrExt);
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(hdrPath));
+        Assert.Equal(CommitCount + 12, doc.RootElement.GetProperty("RowCount").GetInt32());
+    }
+
+    // ── M3.1, finding #6: order-file cleanup and dead-record compaction ──
+
+    [Fact]
+    public async Task A_second_reorder_deletes_the_first_reorders_order_file()
+    {
+        var svc = await DiskBackedServiceAsync();
+        await using (var ctx = _host.Open(_repo.Path))
+            await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None); // identity order (v0)
+
+        _repo.Checkout("feature1", create: true);
+        _repo.WriteFile("f.txt", "feature1\n").Stage().Commit("feature1 commit");
+        await using (var ctx2 = _host.Open(_repo.Path))
+            await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None); // reorder -> order.1
+
+        var order1Path = GraphCachePaths.File(_repo.Path, ".meta.order.1");
+        Assert.True(File.Exists(order1Path), "expected the first reorder to have written order.1");
+
+        _repo.Checkout("main");
+        _repo.Checkout("feature2", create: true);
+        _repo.WriteFile("f.txt", "feature2\n").Stage().Commit("feature2 commit");
+        await using (var ctx3 = _host.Open(_repo.Path))
+            await svc.RunHeadlessCacheAsync(ctx3, Q, CancellationToken.None); // reorder -> order.2
+
+        var order2Path = GraphCachePaths.File(_repo.Path, ".meta.order.2");
+        Assert.True(File.Exists(order2Path), "expected the second reorder to have written order.2");
+        Assert.False(File.Exists(order1Path), "the superseded order.1 file should be deleted once order.2 is live");
+    }
+
+    [Fact]
+    public async Task A_store_past_25_percent_dead_records_is_compacted_by_a_full_respill_not_another_reorder()
+    {
+        var svc = await DiskBackedServiceAsync();
+        await using (var ctx = _host.Open(_repo.Path))
+            await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None); // identity order, 20/20
+
+        // Force the header into a "past 25% dead" state directly — RecordCount far above
+        // RowCount, as if several reorders had each left old records behind uncompacted. The
+        // walk key is untouched, so from RunHeadlessCacheAsync's point of view this looks exactly
+        // like a real repo whose store has drifted this way over time.
+        var hdrPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.HdrExt);
+        var probeBefore = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+        Assert.True(probeBefore.Ok);
+        var hdrJson = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(File.ReadAllBytes(hdrPath))!;
+        var inflated = new
+        {
+            Version = hdrJson["Version"].GetInt32(),
+            Fingerprint = hdrJson["Fingerprint"].GetInt64(),
+            IncludeRemoteBranches = hdrJson["IncludeRemoteBranches"].GetBoolean(),
+            RowCount = hdrJson["RowCount"].GetInt32(),
+            Exhausted = hdrJson["Exhausted"].GetBoolean(),
+            WalkEngine = hdrJson["WalkEngine"].GetInt32(),
+            RecordCount = probeBefore.RowCount * 3, // 3x the row count — well past the 25% threshold
+            OrderVersion = 0,
+        };
+        File.WriteAllBytes(hdrPath, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(inflated));
+
+        // Advance the tip so this is genuinely the "an exhausted store exists at a different key"
+        // shape the reorder path would otherwise take — the dead-ratio check must override that.
+        _repo.WriteFile("f.txt", "one more\n").Stage().Commit("one more commit");
+
+        await using var ctx2 = _host.Open(_repo.Path);
+        await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None);
+
+        var probeAfter = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+        Assert.True(probeAfter.Ok);
+        Assert.Equal(CommitCount + 1, probeAfter.RowCount);
+        Assert.Equal(probeAfter.RowCount, probeAfter.RecordCount); // compacted: identity order, no dead records
+        Assert.Equal(0, probeAfter.OrderVersion); // a full re-spill resets to identity, not another reorder
+        Assert.False(File.Exists(GraphCachePaths.File(_repo.Path, ".meta.order.1")), "no order file should survive a full re-spill compaction");
+    }
+
     [Fact]
     public async Task Rows_after_a_headless_reorder_read_back_in_the_new_walks_order()
     {

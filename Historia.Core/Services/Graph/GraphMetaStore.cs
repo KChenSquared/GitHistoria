@@ -247,6 +247,31 @@ internal sealed class GraphMetaStore
         catch { }
         return n;
     }
+
+    /// <summary>Finding #6: deletes every <c>.meta.order.&lt;n&gt;</c> file for this repo strictly
+    /// older than <paramref name="currentVersion"/> — call right after a successful
+    /// <see cref="GraphMetaWriter.TryCommitReorder"/>. A reader loads the whole order file once,
+    /// at <see cref="DiskCommitStore.Open"/>, and never re-reads it later, so once the header has
+    /// switched to <paramref name="currentVersion"/> no live reader can still be holding a
+    /// reference to an older one.</summary>
+    public static void DeleteSupersededOrderFiles(string repoPath, int currentVersion)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(AppPaths.CacheDirectory);
+            if (!dir.Exists)
+                return;
+            var stem = GraphCachePaths.Stem(repoPath);
+            var prefix = $"{stem}.meta.order.";
+            foreach (var f in dir.GetFiles($"{prefix}*"))
+            {
+                var suffix = f.Name[prefix.Length..];
+                if (int.TryParse(suffix, out var version) && version < currentVersion)
+                    try { f.Delete(); } catch { /* skip locked */ }
+            }
+        }
+        catch { }
+    }
 }
 
 /// <summary>
@@ -493,18 +518,42 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         }
     }
 
-    /// <summary>Finding #1: the reorder's atomic switch-over, under this repo's
+    /// <summary>Finding #5 (streaming reorder): appends one batch of brand-new records a reorder
+    /// discovered mid-walk, under this repo's <see cref="GraphCacheLocks"/> lock, re-checking that
+    /// the on-disk header's walk key is still <paramref name="expectedWalkKey"/> — the key the
+    /// reorder is building on top of. These records are not yet referenced by any RowCount/
+    /// OrderVersion (only <see cref="TryCommitReorder"/>'s final header write makes them count),
+    /// so if the reorder is later abandoned they simply become harmless dead records for the next
+    /// compaction pass to clean up. Returns false (and appends nothing) if the header moved —
+    /// the caller must abandon the whole reorder.</summary>
+    public bool AppendReorderBatch(IReadOnlyList<RawCommit> newRecords, long expectedWalkKey)
+    {
+        if (newRecords.Count == 0)
+            return true;
+        lock (GraphCacheLocks.For(repoPath))
+        {
+            var existing = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches, engine);
+            if (!existing.Ok || existing.WalkKey != expectedWalkKey)
+                return false;
+            Append(newRecords, 0, newRecords.Count);
+            return true;
+        }
+    }
+
+    /// <summary>Finding #1 + #5: the reorder's atomic switch-over, under this repo's
     /// <see cref="GraphCacheLocks"/> lock. Re-reads the header and requires it to still match
     /// exactly what the reorder started from (<paramref name="expectedOldWalkKey"/>, <paramref
     /// name="expectedOldExhausted"/>, <paramref name="expectedOldOrderVersion"/>, <paramref
-    /// name="expectedOldRecordCount"/>) — the walk that built <paramref name="order"/> /
-    /// <paramref name="newRecords"/> read the old store well before this call, off the lock, so
-    /// another writer (a live foreground open of this same repo, or a second headless job) could
-    /// have moved it in the meantime. Any mismatch abandons the whole attempt; the old order stays
-    /// authoritative. Returns whether the commit actually happened.</summary>
+    /// name="expectedOldRecordCount"/>) — every new record <paramref name="newRecordCount"/>
+    /// counts was already durably appended by <see cref="AppendReorderBatch"/> batch by batch, off
+    /// this lock, so another writer (a live foreground open of this same repo, or a second
+    /// headless job) could have moved the header in the meantime. Any mismatch abandons the whole
+    /// attempt; the old order stays authoritative and the already-appended records become dead
+    /// (harmless — the next compaction pass reclaims them). Returns whether the commit actually
+    /// happened.</summary>
     public bool TryCommitReorder(
         long expectedOldWalkKey, bool expectedOldExhausted, int expectedOldOrderVersion, int expectedOldRecordCount,
-        int[] order, IReadOnlyList<RawCommit> newRecords, IReadOnlyList<ObjectId> sortedTips)
+        int newRecordCount, int[] order, IReadOnlyList<ObjectId> sortedTips)
     {
         lock (GraphCacheLocks.For(repoPath))
         {
@@ -513,14 +562,13 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 || probe.OrderVersion != expectedOldOrderVersion || probe.RecordCount != expectedOldRecordCount)
                 return false;
 
-            Append(newRecords, 0, newRecords.Count);
             var newOrderVersion = expectedOldOrderVersion + 1;
             if (!WriteOrder(newOrderVersion, order))
                 return false;
             WriteTips(sortedTips);
             CommitReorder(
                 rowCount: order.Length,
-                recordCount: expectedOldRecordCount + newRecords.Count,
+                recordCount: expectedOldRecordCount + newRecordCount,
                 orderVersion: newOrderVersion,
                 exhausted: true);
             return true;
@@ -679,23 +727,30 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     /// durable record, so it only appends genuinely new ones. One small read per record; this is
     /// a background, gated, lowest-priority job (never on the render thread), so it trades read
     /// count for simplicity rather than batching — the plan's own repo-scale numbers (measured on
-    /// linux/vscode) are for the reorder as a whole, not this specific pass.</summary>
-    public Dictionary<string, int> BuildShaIndex()
+    /// linux/vscode) are for the reorder as a whole, not this specific pass.
+    /// <para>
+    /// Finding #5: keyed by <see cref="CompactShaIndex"/> (an 8-byte prefix per entry, verified
+    /// against the full id on any hit) instead of the 40-char hex string this used to key by — at
+    /// 1.5M records on linux the old table held ~150-180 MB of hex strings; this holds meaningfully
+    /// less while staying exactly as correct (every lookup still verifies the full id).
+    /// </para>
+    /// </summary>
+    public CompactShaIndex BuildShaIndex()
     {
-        var map = new Dictionary<string, int>(RecordCount, StringComparer.Ordinal);
+        var index = new CompactShaIndex(RecordCount);
         lock (_sync)
         {
             if (_closed)
-                return map;
+                return index;
             Span<byte> shaBuf = stackalloc byte[20];
             for (var rec = 0; rec < _offsets.Length; rec++)
             {
                 if (RandomAccess.Read(_dat, shaBuf, _offsets[rec]) != 20)
                     continue;
-                map[Convert.ToHexStringLower(shaBuf)] = rec;
+                index.Add(new ObjectId(shaBuf.ToArray()), rec);
             }
         }
-        return map;
+        return index;
     }
 
     public CommitMetadata this[int index]
@@ -1091,39 +1146,131 @@ internal static class GraphMetaReorder
     public readonly record struct Plan(int[] Order, IReadOnlyList<RawCommit> NewRecords);
 
     /// <summary>
-    /// <paramref name="existingRecords"/>: every commit sha already durable in the store, mapped
-    /// to its record index (<see cref="DiskCommitStore.RecordCount"/> is the count BEFORE this
-    /// call — new records are numbered starting there). <paramref name="newWalkCommits"/>: the
-    /// new history, in the new walk's real row order. Returns the row -&gt; record order to write
-    /// and the commits (in walk order) that need a brand-new record appended — a commit whose sha
-    /// already has a record, whether from <paramref name="existingRecords"/> or from earlier in
-    /// this very walk (a defensive case; the walk itself should never revisit a sha), is never
-    /// duplicated.
+    /// One-shot convenience for callers (and tests) that already have the whole new walk
+    /// resident — equivalent to a single <see cref="GraphMetaReorderBuilder.MapBatch"/> call.
+    /// <see cref="GraphLayoutService.RunHeadlessReorderAsync"/> uses the streaming builder
+    /// directly instead (finding #5), so it never has to materialize the whole new history at
+    /// once. <paramref name="existingRecords"/>: every commit sha already durable in the store,
+    /// mapped to its record index (<see cref="DiskCommitStore.RecordCount"/> is the count BEFORE
+    /// this call — new records are numbered starting there). <paramref name="newWalkCommits"/>:
+    /// the new history, in the new walk's real row order. Returns the row -&gt; record order to
+    /// write and the commits (in walk order) that need a brand-new record appended — a commit
+    /// whose sha already has a record, whether from <paramref name="existingRecords"/> or from
+    /// earlier in this very walk (a defensive case; the walk itself should never revisit a sha),
+    /// is never duplicated.
     /// </summary>
     public static Plan Build(
-        IReadOnlyDictionary<string, int> existingRecords, int existingRecordCount,
-        IReadOnlyList<RawCommit> newWalkCommits)
+        CompactShaIndex existingRecords, int existingRecordCount, IReadOnlyList<RawCommit> newWalkCommits)
     {
-        var order = new int[newWalkCommits.Count];
-        var newRecords = new List<RawCommit>();
-        var assignedThisWalk = new Dictionary<string, int>(StringComparer.Ordinal);
-        var nextRecord = existingRecordCount;
+        var builder = new GraphMetaReorderBuilder(existingRecords, existingRecordCount);
+        var newRecords = builder.MapBatch(newWalkCommits);
+        return new Plan(builder.Order, newRecords);
+    }
+}
 
-        for (var row = 0; row < newWalkCommits.Count; row++)
+/// <summary>
+/// Finding #5: a SHA -&gt; record-index table keyed on the first 8 bytes of the commit id (a
+/// <c>long</c>) rather than its 40-char hex string — at scale the hex-string table was the actual
+/// memory cost the review flagged (~150-180 MB at 1.5M records on linux), not the record indices
+/// themselves. Every lookup still verifies the full id, so a prefix collision (two different
+/// commits sharing the same first 8 bytes — astronomically unlikely for real SHA-1s, but not
+/// provably impossible) is always resolved correctly via a small side list rather than silently
+/// returning the wrong record.
+/// </summary>
+internal sealed class CompactShaIndex(int capacity = 0)
+{
+    private readonly Dictionary<long, (ObjectId Id, int Record)> _byPrefix = new(capacity);
+    private List<(ObjectId Id, int Record)>? _collisions;
+
+    public int Count { get; private set; }
+
+    private static long Prefix(ObjectId id) => BitConverter.ToInt64(id.RawId, 0);
+
+    public void Add(ObjectId id, int record)
+    {
+        Count++;
+        var prefix = Prefix(id);
+        if (_byPrefix.TryAdd(prefix, (id, record)))
+            return;
+        (_collisions ??= []).Add((id, record));
+    }
+
+    public bool TryGetValue(ObjectId id, out int record)
+    {
+        var prefix = Prefix(id);
+        if (_byPrefix.TryGetValue(prefix, out var primary) && primary.Id.Equals(id))
         {
-            var commit = newWalkCommits[row];
-            var sha = commit.Id.Sha;
-            if (existingRecords.TryGetValue(sha, out var rec) || assignedThisWalk.TryGetValue(sha, out rec))
+            record = primary.Record;
+            return true;
+        }
+        if (_collisions is not null)
+        {
+            foreach (var (cid, crecord) in _collisions)
             {
-                order[row] = rec;
+                if (cid.Equals(id))
+                {
+                    record = crecord;
+                    return true;
+                }
+            }
+        }
+        record = 0;
+        return false;
+    }
+}
+
+/// <summary>
+/// Finding #5: the streaming half of "reorder instead of re-spill" — maps successive BATCHES of a
+/// freshly walked history to records, so a caller never has to hold the whole new walk resident
+/// (the old, non-streaming shape held ~490 MB of <see cref="RawCommit"/>s on linux plus the SHA
+/// table finding #5 also fixes). Deliberately has no file or git access, like the one-shot
+/// <see cref="GraphMetaReorder.Build"/> it generalizes — the caller
+/// (<see cref="GraphLayoutService.RunHeadlessReorderAsync"/>) is responsible for calling
+/// <see cref="MapBatch"/> once per walked batch, durably appending each batch's returned new
+/// records (<see cref="GraphMetaWriter.AppendReorderBatch"/>) before asking for the next batch,
+/// and finally writing <see cref="Order"/> once the walk is exhausted.
+/// </summary>
+internal sealed class GraphMetaReorderBuilder
+{
+    private readonly CompactShaIndex _existingRecords;
+    private readonly CompactShaIndex _assignedThisWalk = new();
+    private readonly List<int> _order = [];
+    private int _nextRecord;
+
+    public GraphMetaReorderBuilder(CompactShaIndex existingRecords, int existingRecordCount)
+    {
+        _existingRecords = existingRecords;
+        _nextRecord = existingRecordCount;
+    }
+
+    /// <summary>Total new records assigned across every <see cref="MapBatch"/> call so far.</summary>
+    public int NewRecordCount { get; private set; }
+
+    /// <summary>The row -&gt; record order accumulated across every <see cref="MapBatch"/> call so
+    /// far, in walk order. Only meaningful once the whole walk is exhausted.</summary>
+    public int[] Order => [.. _order];
+
+    /// <summary>Maps one batch of freshly walked commits (in walk order) to records — reusing an
+    /// existing record by id where possible (from <paramref name="batch"/>'s own earlier commits
+    /// in this same walk, or from the store this reorder started from), otherwise assigning a new
+    /// one — and returns just the commits in THIS batch that need a brand-new record (the caller
+    /// appends those; an already-known commit needs nothing written).</summary>
+    public List<RawCommit> MapBatch(IReadOnlyList<RawCommit> batch)
+    {
+        var newRecords = new List<RawCommit>();
+        foreach (var commit in batch)
+        {
+            if (_existingRecords.TryGetValue(commit.Id, out var rec) || _assignedThisWalk.TryGetValue(commit.Id, out rec))
+            {
+                _order.Add(rec);
                 continue;
             }
-            order[row] = nextRecord;
-            assignedThisWalk[sha] = nextRecord;
+            rec = _nextRecord++;
+            _assignedThisWalk.Add(commit.Id, rec);
+            _order.Add(rec);
             newRecords.Add(commit);
-            nextRecord++;
         }
-
-        return new Plan(order, newRecords);
+        NewRecordCount += newRecords.Count;
+        return newRecords;
     }
 }

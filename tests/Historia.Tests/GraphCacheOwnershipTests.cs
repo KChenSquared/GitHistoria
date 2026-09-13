@@ -157,11 +157,14 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
         var reorderWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true, Engine);
         var order = new[] { 0, 1, 2, 3, 4, 5 }; // rows 0..4 reuse old records, row 5 is new
         var newRecords = RawRange(5, 1);
+        // Finding #5: the new record is appended (streaming) BEFORE the commit, exactly as
+        // GraphLayoutService.RunHeadlessReorderAsync does per batch.
+        Assert.True(reorderWriter.AppendReorderBatch(newRecords, expectedWalkKey: before.Fingerprint));
 
         var ok = reorderWriter.TryCommitReorder(
             expectedOldWalkKey: before.Fingerprint, expectedOldExhausted: before.Exhausted,
             expectedOldOrderVersion: before.OrderVersion, expectedOldRecordCount: before.RecordCount,
-            order, newRecords, sortedTips: [Oid(5)]);
+            newRecordCount: newRecords.Count, order, sortedTips: [Oid(5)]);
 
         Assert.True(ok);
         var after = ReadHeader();
@@ -179,24 +182,51 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
         original.AppendSpillBatch(RawRange(0, 5), from: 0, to: 5, exhausted: true);
         var before = ReadHeader(); // what the reorder "saw" when it started
 
-        // Another writer changes the store while the reorder's walk/plan-build was in flight
-        // (off any lock) — the header no longer has the RecordCount the reorder started from.
+        var reorderWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true, Engine);
+        var newRecords = RawRange(5, 1);
+        Assert.True(reorderWriter.AppendReorderBatch(newRecords, expectedWalkKey: before.Fingerprint));
+
+        // Another writer changes the store while the reorder's walk was still streaming in (off
+        // any lock) — the header no longer has the RecordCount the reorder started from.
         original.AppendSpillBatch(RawRange(5, 2), from: 5, to: 7, exhausted: true);
         var mutated = ReadHeader();
 
-        var reorderWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true, Engine);
         var ok = reorderWriter.TryCommitReorder(
             expectedOldWalkKey: before.Fingerprint, expectedOldExhausted: before.Exhausted,
             expectedOldOrderVersion: before.OrderVersion, expectedOldRecordCount: before.RecordCount,
-            order: [0, 1, 2, 3, 4, 5], newRecords: RawRange(5, 1), sortedTips: [Oid(5)]);
+            newRecordCount: newRecords.Count, order: [0, 1, 2, 3, 4, 5], sortedTips: [Oid(5)]);
 
         Assert.False(ok);
-        // The old order stays authoritative — untouched by the abandoned attempt.
+        // The old order stays authoritative — untouched by the abandoned attempt. The record
+        // AppendReorderBatch already wrote above is now a harmless dead record (finding #6
+        // compacts these away later); it doesn't corrupt anything since nothing references it.
         var after = ReadHeader();
         Assert.Equal(mutated.Fingerprint, after.Fingerprint);
         Assert.Equal(mutated.RowCount, after.RowCount);
         Assert.Equal(mutated.RecordCount, after.RecordCount);
         Assert.Equal(mutated.OrderVersion, after.OrderVersion);
+    }
+
+    [Fact]
+    public void AppendReorderBatch_refuses_to_write_once_the_walk_key_has_moved()
+    {
+        var original = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        original.AppendSpillBatch(RawRange(0, 5), from: 0, to: 5, exhausted: true);
+        var before = ReadHeader();
+
+        // A different writer resets the store to a brand-new key entirely before this reorder's
+        // batch gets a chance to append.
+        var otherWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true, Engine);
+        otherWriter.AppendSpillBatch(RawRange(0, 3), from: 0, to: 3, exhausted: false);
+        var datLengthAfterOtherWrite = new FileInfo(GraphCachePaths.File(Repo, GraphMetaStore.DatExt)).Length;
+
+        var reorderWriter = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var ok = reorderWriter.AppendReorderBatch(RawRange(5, 1), expectedWalkKey: before.Fingerprint);
+
+        Assert.False(ok);
+        // Nothing appended on top of otherWriter's own write.
+        Assert.Equal(datLengthAfterOtherWrite, new FileInfo(GraphCachePaths.File(Repo, GraphMetaStore.DatExt)).Length);
+        Assert.Equal(WalkKeyB, ReadHeader().Fingerprint);
     }
 
     // ── cancel-on-focus ──

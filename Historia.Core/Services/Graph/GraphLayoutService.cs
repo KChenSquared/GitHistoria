@@ -29,6 +29,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// that sets it must reset it to 0 when done, since it's process-wide state.</summary>
     internal static int TestSpillBatchRowsOverride;
 
+    /// <summary>Finding #5 test seam: invoked once per streamed batch during
+    /// <see cref="RunHeadlessReorderAsync"/> with that batch's own row count (never a running
+    /// total) — lets a test assert resident memory during a reorder never exceeds one batch. No-op
+    /// (left null) outside tests.</summary>
+    internal static Action<int>? TestReorderBatchObserved;
+
     /// <summary>Minimum row-count growth between debounced <see cref="GraphWalkCache.Save"/>
     /// calls for the same cache (see <see cref="RepoCache.WalkCacheSavedRows"/>).</summary>
     private const int WalkCacheSaveStride = 5_000;
@@ -802,12 +808,20 @@ public sealed class GraphLayoutService : IGraphLayoutService
         if (probe.Existing is { Ok: true, RowCount: var knownRows } && knownRows >= GraphBackgroundWriter.MinCommitsToWrite)
             _backgroundWriter?.MaybeSchedule(context, knownRows);
 
-        // Step 3 — headless spool (store missing, or partial at the CURRENT key) or reorder
-        // (Phase 3c: an exhausted store exists, but under a DIFFERENT key — a fetch, a new
-        // branch). Reordering needs no concurrent foreground reader to protect, which is exactly
-        // why this headless pipeline — not the active tab's gate/spill loop — is where Phase 3c's
-        // live trigger lands.
-        if (!probe.Current.Ok && probe.Existing is { Ok: true, Exhausted: true })
+        // Finding #6: a store whose dead records (superseded by earlier reorders, never
+        // referenced by the current order) have grown past 25% of its live row count is
+        // compacted by a from-row-0 re-spill instead of yet another reorder — RunHeadlessSpoolAsync
+        // resets the store to identity order (RecordCount == RowCount) under the new key, which
+        // RunHeadlessReorderAsync's incremental append-only shape can never do on its own.
+        var deadRecordsTooHigh = probe.Existing is { Ok: true } existing
+            && (long)existing.RecordCount * 3 > (long)existing.RowCount * 4;
+
+        // Step 3 — headless spool (store missing, partial at the CURRENT key, or over the dead-
+        // record threshold above) or reorder (Phase 3c: an exhausted store exists at a DIFFERENT
+        // key — a fetch, a new branch — and isn't due for compaction). Reordering needs no
+        // concurrent foreground reader to protect, which is exactly why this headless pipeline —
+        // not the active tab's gate/spill loop — is where Phase 3c's live trigger lands.
+        if (!probe.Current.Ok && probe.Existing is { Ok: true, Exhausted: true } && !deadRecordsTooHigh)
             await RunHeadlessReorderAsync(context, query, repoPath, probe.Tips, probe.WalkKey, ct).ConfigureAwait(false);
         else
             await RunHeadlessSpoolAsync(context, query, ct).ConfigureAwait(false);
@@ -874,68 +888,95 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
     }
 
-    /// <summary>Phase 3c's live trigger: walks the ENTIRE new history first (a reorder's row →
-    /// record order isn't knowable until the walk is exhausted — a partial reorder has no valid
-    /// order to write), then reuses whatever of the old store's records match by SHA and appends
-    /// only genuinely new ones. Never touches <c>.meta.dat</c>/<c>.meta.idx</c>/<c>.meta.search</c>
-    /// destructively — only <see cref="GraphMetaWriter.Append"/> (pure append) and a new versioned
-    /// order file. Cancelling <paramref name="ct"/> at any point before the final
-    /// <see cref="GraphMetaWriter.CommitReorder"/> discards the whole attempt; the old order stays
-    /// authoritative until that one atomic header write.</summary>
+    /// <summary>Phase 3c's live trigger: streams the new history in batches (finding #5 — never
+    /// materializes the whole new walk resident at once, unlike the old one-shot shape this
+    /// replaced), mapping each batch to a record — reusing the old store's by SHA where possible,
+    /// appending only genuinely new ones — as it goes, and trims the walked batch out of
+    /// <c>cache.Commits</c> immediately after mapping it. The row → record order isn't knowable
+    /// until the walk is exhausted (a partial reorder has no valid order to write), so only the
+    /// FINAL atomic <see cref="GraphMetaWriter.TryCommitReorder"/> switches the header over; every
+    /// batch's new records were already durably appended via <see cref="GraphMetaWriter.AppendReorderBatch"/>,
+    /// off that lock, so a mismatch there just means this whole attempt is abandoned — those
+    /// records stay on disk, unreferenced, as harmless dead records for finding #6's compaction to
+    /// reclaim later. Cancelling <paramref name="ct"/> at any point before that final commit
+    /// discards the whole attempt; the old order stays authoritative until it.</summary>
     private async Task RunHeadlessReorderAsync(
         RepositoryContext context, GraphQuery query, string repoPath, string[] sortedTips, long newWalkKey,
         CancellationToken ct)
     {
+        var engine = ExpectedEngine(query);
+
+        // Finding #5: open the old store and build its SHA index up front — everything the walk
+        // below needs to map each batch as it streams in, rather than only after the whole new
+        // history has been walked and copied resident (previously ~490 MB of RawCommits on linux
+        // plus a ~150-180 MB hex-string SHA table).
+        var oldProbe = GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches, engine);
+        if (!oldProbe.Ok || !oldProbe.Exhausted || oldProbe.WalkKey == newWalkKey)
+            return; // stale, gone, or someone else already brought it up to date
+
+        Diagnostics.PerfLog.Memory($"reorder start ({repoPath})");
+
+        GraphMetaReorderBuilder builder;
+        using (var oldStore = DiskCommitStore.Open(repoPath, oldProbe.RowCount, oldProbe.RecordCount, oldProbe.OrderVersion))
+            builder = new GraphMetaReorderBuilder(oldStore.BuildShaIndex(), oldStore.RecordCount);
+
+        var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches, engine);
         var cache = new RepoCache { Scope = query.RefScope, IncludeRemotes = query.IncludeRemoteBranches };
         try
         {
+            var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
             while (!cache.Exhausted && !ct.IsCancellationRequested)
             {
                 await WaitForGateAsync(ct).ConfigureAwait(false);
                 if (ct.IsCancellationRequested)
                     return;
-                int target;
-                lock (cache) target = cache.Commits.Count + 25_000;
-                await EnsureWalkedAsync(context, query, cache, target, ct, background: true, lowestPriority: true)
+                // cache.Commits is cleared to empty at the end of every iteration below, so
+                // TotalWalked(cache) (== cache.Commits.Count here — this cache never spills) is
+                // always 0 at this point: EnsureWalkedAsync's own "have" bookkeeping treats
+                // batchRows as "batchRows MORE from wherever the live walk enumerator currently
+                // is" (tracked separately, by RepoCache.LiveWalkPos), not an absolute total.
+                await EnsureWalkedAsync(context, query, cache, batchRows, ct, background: true, lowestPriority: true)
                     .ConfigureAwait(false);
+
+                List<RawCommit> batch;
+                lock (cache)
+                {
+                    batch = [.. cache.Commits];
+                    cache.Commits.Clear(); // finding #5: never accumulate past one batch
+                }
+                TestReorderBatchObserved?.Invoke(batch.Count);
+
+                if (batch.Count > 0)
+                {
+                    var newRecords = builder.MapBatch(batch);
+                    if (newRecords.Count > 0 && !writer.AppendReorderBatch(newRecords, oldProbe.WalkKey))
+                        return; // the old store moved under this reorder — abandon (finding #1)
+                }
+
                 if (!cache.Exhausted)
                     await Task.Delay(150, ct).ConfigureAwait(false);
             }
             if (ct.IsCancellationRequested || !cache.Exhausted)
-                return; // cancelled mid-walk — nothing durable was ever touched, the old order stands
+                return; // cancelled mid-walk — nothing durable is referenced by any order file yet
 
-            List<RawCommit> newWalkCommits;
-            lock (cache) newWalkCommits = [.. cache.Commits];
-
-            // Cheap pre-check (unlocked): the old store must still look like what step 1 saw
-            // before paying for BuildShaIndex/GraphMetaReorder.Build against it at all. The real
-            // guard is TryCommitReorder's own re-check under the writer lock, immediately before
-            // it actually commits — this only avoids doing the work when it's obviously stale.
-            var oldProbe = GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches, cache.Engine);
-            if (!oldProbe.Ok || !oldProbe.Exhausted || oldProbe.WalkKey == newWalkKey)
-                return; // stale, gone, or someone else already brought it up to date
-
-            using var oldStore = DiskCommitStore.Open(repoPath, oldProbe.RowCount, oldProbe.RecordCount, oldProbe.OrderVersion);
-            var existingRecords = oldStore.BuildShaIndex();
-            var plan = GraphMetaReorder.Build(existingRecords, oldStore.RecordCount, newWalkCommits);
-
-            if (ct.IsCancellationRequested)
-                return;
-
-            // Finding #1: the actual switch-over is atomic under this repo's cache-wide writer
-            // lock — TryCommitReorder re-reads the header there and requires it to still match
-            // exactly (walk key, Exhausted, OrderVersion, RecordCount) what oldProbe saw above,
-            // since another writer (a live foreground open of this same repo) could have moved it
-            // during BuildShaIndex/Build, which both run off any lock.
-            var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches, cache.Engine);
+            // Finding #1 + #5: the atomic switch-over, re-checking under the writer lock that the
+            // old store is still exactly what this reorder started from — another writer (a live
+            // foreground open of this same repo) could have moved it during any of the streamed
+            // batches above, all of which ran off this lock.
             if (!writer.TryCommitReorder(
                     oldProbe.WalkKey, oldProbe.Exhausted, oldProbe.OrderVersion, oldProbe.RecordCount,
-                    plan.Order, plan.NewRecords, [.. sortedTips.Select(sha => new ObjectId(sha))]))
+                    builder.NewRecordCount, builder.Order, [.. sortedTips.Select(sha => new ObjectId(sha))]))
                 return; // best-effort — the old order stays authoritative on any mismatch or write failure
 
+            Diagnostics.PerfLog.Memory($"reorder committed ({repoPath})");
             Diagnostics.PerfLog.Mark(
-                $"graph cache write: reorder {plan.NewRecords.Count} new records, {plan.Order.Length} rows ({repoPath})");
-            _backgroundWriter?.MaybeSchedule(context, plan.Order.Length);
+                $"graph cache write: reorder {builder.NewRecordCount} new records, {builder.Order.Length} rows ({repoPath})");
+            _backgroundWriter?.MaybeSchedule(context, builder.Order.Length);
+
+            // Finding #6: the just-superseded order version's file (and anything older still
+            // lingering) is no longer reachable — a reader loads the whole order file once, at
+            // Open, so nothing can be holding a reference to it now that the header has switched.
+            GraphMetaStore.DeleteSupersededOrderFiles(repoPath, currentVersion: oldProbe.OrderVersion + 1);
         }
         finally
         {
