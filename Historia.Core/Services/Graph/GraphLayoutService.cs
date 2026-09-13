@@ -209,31 +209,29 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // Phase 3a: cache.Commits no longer holds the whole walked history once rows are
         // confirmed spilled (see TrimConfirmedSpilled) — ReadWindow stitches the on-disk store
         // and the resident pending buffer back into one absolute-row-indexed list.
-        var input = ReadWindow(cache, 0, maxRows + WalkOverscan);
+        // §10.1.3 finding #7: a short disk read (a store disposed mid-read, an IOException, a
+        // concurrent from-row-0 re-spill) must never feed a misaligned window into the engine —
+        // reset the cache (force: true) and re-walk once; if the retry is itself short (a fresh
+        // cache has no disk store yet to fail, so this should not recur), proceed with whatever
+        // came back rather than loop.
+        var read = ReadWindow(cache, 0, maxRows + WalkOverscan);
+        if (!read.Complete)
+        {
+            cache = GetOrResetCache(context, query, force: true);
+            await EnsureWalkedAsync(context, query, cache, maxRows + WalkOverscan, ct).ConfigureAwait(false);
+            read = ReadWindow(cache, 0, maxRows + WalkOverscan);
+        }
+        var input = read.Rows;
 
-        // §V10.1: the trunk pre-pass needs a full-history ancestry oracle for the checked-out
-        // branch. Keep one repo handle open across the (synchronous, few-ms) engine run and
-        // answer straight from LibGit2 — at most one call per candidate tip, memoised.
+        // §10.1.3 finding #15 (decision C): the trunk pre-pass's ancestry check no longer needs a
+        // repo handle at all — DagLayoutEngine.SeedTipPriority answers it with an exact in-window
+        // walk over the already-fetched commit prefix (isAncestor: null below) instead of the
+        // retired libgit2 CalculateHistoryDivergence oracle, which cost up to ~22s per call on a
+        // large repo (measured on linux) and ran INSIDE the foreground repo gate. Compute now runs
+        // fully off the gate.
         GraphLayoutResult result;
         using (Diagnostics.PerfLog.Scope("engine.Compute"))
-            result = await context.WithRepositoryAsync(repo =>
-            {
-                var memo = new Dictionary<(ObjectId, ObjectId), bool>();
-                bool IsAncestor(ObjectId a, ObjectId b)
-                {
-                    if (a.Equals(b)) return true;
-                    var key = (a, b);
-                    if (memo.TryGetValue(key, out var hit)) return hit;
-                    var ca = repo.Lookup<Commit>(a);
-                    var cb = repo.Lookup<Commit>(b);
-                    var r = ca is not null && cb is not null
-                        && repo.ObjectDatabase.CalculateHistoryDivergence(ca, cb).AheadBy is 0;
-                    memo[key] = r;
-                    return r;
-                }
-                return _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct,
-                    retainCommits: !spill, isAncestor: IsAncestor);
-            }, ct).ConfigureAwait(false);
+            result = _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct, retainCommits: !spill);
 
         result = result with { Fingerprint = cache.Fingerprint };
 
@@ -316,23 +314,37 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         // Extend mutates existing.State in place; run it to completion (a handful of ms for
         // <=5k rows) rather than risk a cancellation leaving that shared state half-updated.
-        // Read the consumed-row count and cut the slice under the SAME lock the extend runs
-        // under: a concurrent ExtendLayoutAsync on this layout (e.g. the initial compute's
-        // phase-2 extend racing a reveal-driven one) may have advanced State.Rows since the
-        // snapshot above, and feeding _engine.Extend an overlapping slice re-places commits it
-        // already consumed — duplicate rows and a corrupted RowByCommitId.
+        // §10.1.3 finding #8: read the consumed-row count under lock(existing.State), then
+        // RELEASE it before the (potentially disk-IO-bound) ReadWindow call — holding the lock
+        // across disk IO blocks the render thread's own lock(existing.State) in DeriveWindow for
+        // the duration of a full disk read. Re-take the lock afterwards and proceed only if
+        // State.Rows.Count is STILL `consumed`: a concurrent ExtendLayoutAsync on this layout
+        // (e.g. the initial compute's phase-2 extend racing a reveal-driven one) may have advanced
+        // it while ReadWindow ran off-lock, and feeding _engine.Extend a slice read against a
+        // stale `consumed` would re-place commits it already consumed — duplicate rows and a
+        // corrupted RowByCommitId. The per-context extend pump is the only extender, so a mismatch
+        // here means exactly that race, and returning `existing` unchanged lets the pump retry.
+        int consumed;
+        lock (existing.State)
+            consumed = existing.State.Rows.Count;
+
+        if (TotalWalked(cache) <= consumed)
+            return existing;
+
+        // Only what this extend consumes (+ overscan) — the background spill can have walked
+        // (and spilled) far past this, and reading all of it here would be pointless.
+        // Phase 3a: ReadWindow reads confirmed-spilled rows from disk and the rest from the
+        // resident pending buffer, since cache.Commits no longer holds the whole history.
+        var read = ReadWindow(cache, consumed, additionalRows + WalkOverscan);
+        if (!read.Complete)
+            return existing; // §10.1.3 finding #7: a short disk read — never splice; the pump retries
+
         GraphLayoutResult result;
         lock (existing.State)
         {
-            var consumed = existing.State.Rows.Count;
-            if (TotalWalked(cache) <= consumed)
-                return existing;
-            // Only what this extend consumes (+ overscan) — the background spill can have walked
-            // (and spilled) far past this, and reading all of it here would be pointless.
-            // Phase 3a: ReadWindow reads confirmed-spilled rows from disk and the rest from the
-            // resident pending buffer, since cache.Commits no longer holds the whole history.
-            var next = ReadWindow(cache, consumed, additionalRows + WalkOverscan);
-            result = _engine.Extend(existing, next, cache.Decorations, additionalRows, CancellationToken.None);
+            if (existing.State.Rows.Count != consumed)
+                return existing; // §10.1.3 finding #8: someone else extended this layout meanwhile
+            result = _engine.Extend(existing, read.Rows, cache.Decorations, additionalRows, CancellationToken.None);
         }
 
         var extQuery = new GraphQuery { RefScope = cache.Scope, IncludeRemoteBranches = cache.IncludeRemotes };
@@ -401,11 +413,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // confirmed on disk plus the resident pending buffer (Phase 3a: cache.Commits alone is no
         // longer a valid absolute-row-indexed view once earlier rows have been trimmed).
         // (If the disk rows were id/parents-only, a Recompute re-walks and re-spills.)
-        var rows = ReadWindow(cache, 0, rowCount);
-        var arr = new CommitMetadata[rows.Count];
-        for (var i = 0; i < arr.Length; i++)
-            arr[i] = rows[i].Metadata;
-        result.Layout.Commits = new ArrayCommitStore(arr);
+        // §10.1.3 finding #7: only build the array from a COMPLETE read — a short disk read here
+        // would misalign every row after it, which is strictly worse than leaving the layout's
+        // existing Commits store (already Empty when spill is on) in place for this one frame.
+        var read = ReadWindow(cache, 0, rowCount);
+        if (read.Complete)
+        {
+            var arr = new CommitMetadata[read.Rows.Count];
+            for (var i = 0; i < arr.Length; i++)
+                arr[i] = read.Rows[i].Metadata;
+            result.Layout.Commits = new ArrayCommitStore(arr);
+        }
         return result;
     }
 
@@ -502,33 +520,49 @@ public sealed class GraphLayoutService : IGraphLayoutService
             return cache.SpilledRows + cache.Commits.Count;
     }
 
+    /// <summary>Result of <see cref="ReadWindow"/>: <see cref="Complete"/> is false only when the
+    /// on-disk store returned fewer rows than the disk portion of the request promised — never
+    /// when the window simply ran off the end of everything walked so far (that is a normal,
+    /// expected shortfall, not a fault). §10.1.3 finding #7.</summary>
+    private readonly record struct WindowRead(List<RawCommit> Rows, bool Complete);
+
     /// <summary>Phase 3a: reads absolute rows [<paramref name="start"/>, <paramref name="start"/>
     /// + <paramref name="count"/>) by splitting between the on-disk store (rows below
     /// <c>cache.SpilledRows</c>, confirmed durable — see <see cref="TrimConfirmedSpilled"/>) and
     /// the resident pending buffer (<c>cache.Commits</c>, which holds only rows
     /// <c>[cache.SpilledRows, TotalWalked)</c>). Replaces every old "GetRange straight off
-    /// cache.Commits by absolute row" read now that spilled rows no longer stay resident.</summary>
-    private static List<RawCommit> ReadWindow(RepoCache cache, int start, int count)
+    /// cache.Commits by absolute row" read now that spilled rows no longer stay resident.
+    /// <para>§10.1.3 finding #7: <see cref="DiskCommitStore.ReadRawRange"/> can return fewer rows
+    /// than asked — a store disposed by <see cref="Forget"/>/<see cref="Hibernate"/> while an
+    /// extend is in flight, an <see cref="IOException"/> mid-decode, or a concurrent from-row-0
+    /// re-spill all return short. Appending the resident buffer straight after a short disk read
+    /// would serve row <c>start+k</c> the commit that belongs at <c>cache.SpilledRows+k</c> — so
+    /// this stops and reports <see cref="WindowRead.Complete"/> = false instead of splicing.</para>
+    /// </summary>
+    private static WindowRead ReadWindow(RepoCache cache, int start, int count)
     {
         lock (cache)
         {
             var spilledRows = cache.SpilledRows;
             var totalWalked = spilledRows + cache.Commits.Count;
-            count = Math.Min(count, totalWalked - start);
-            if (count <= 0)
-                return [];
+            var want = Math.Min(count, Math.Max(0, totalWalked - start));
+            if (want <= 0)
+                return new WindowRead([], Complete: true);
 
-            var result = new List<RawCommit>(count);
+            var result = new List<RawCommit>(want);
             if (start < spilledRows && cache.MetaStore is { } store)
             {
-                var diskCount = Math.Min(count, spilledRows - start);
-                result.AddRange(store.ReadRawRange(start, diskCount));
+                var diskCount = Math.Min(want, spilledRows - start);
+                var diskRows = store.ReadRawRange(start, diskCount);
+                result.AddRange(diskRows);
+                if (diskRows.Count < diskCount)
+                    return new WindowRead(result, Complete: false);
             }
             var residentStart = Math.Max(0, start - spilledRows);
-            var residentTakeCount = (start + count) - Math.Max(start, spilledRows);
+            var residentTakeCount = (start + want) - Math.Max(start, spilledRows);
             if (residentTakeCount > 0)
                 result.AddRange(cache.Commits.GetRange(residentStart, residentTakeCount));
-            return result;
+            return new WindowRead(result, Complete: true);
         }
     }
 
@@ -1428,19 +1462,41 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
     /// <summary>Resolves the same tip set <see cref="StartWalk"/> would (local / remote / tag,
     /// filtered by <see cref="GraphQuery.RefScope"/> and <see cref="Resolvable"/>), peeled to
-    /// commit SHAs for <c>git log --stdin</c>. A ref whose target doesn't peel to a commit (a
-    /// lightweight or annotated tag pointing at a tree/blob, e.g. linux's <c>v2.6.11-tree</c>) is
-    /// silently skipped, matching how <see cref="StartWalk"/>'s libgit2 walk treats it. Caller
-    /// holds the repo gate. Phase 0.5: the returned array is sorted ordinally — git's topological
-    /// sort depends on the order tips are fed to it (measured), and the fingerprint already
-    /// ignores ref enumeration order, so an unsorted list would let `git gc`/`pack-refs` silently
-    /// reorder the walk under an unchanged fingerprint.</summary>
+    /// commit SHAs for <c>git log --stdin</c>.
+    /// <para>§10.1.3 finding #18: an ANNOTATED tag's ref target is the tag object, not a commit —
+    /// <c>repo.Lookup&lt;Commit&gt;(target)</c> returns null for it, so before this fix the tip was
+    /// silently dropped and history reachable only from that tag (typically a release tagged on a
+    /// branch later deleted) never entered the CLI walk. libgit2's own <c>StartWalk</c> fallback
+    /// doesn't have this gap: it feeds <see cref="Reference"/> objects straight to
+    /// <c>CommitFilter.IncludeReachableFrom</c>, which peels them internally. Fixed here by
+    /// falling back to <c>repo.Lookup(target)?.Peel&lt;Commit&gt;()</c> when the direct commit
+    /// lookup misses.</para>
+    /// <para>Verified against LibGit2Sharp 0.31.0 (see the commit body): <c>GitObject.Peel&lt;T&gt;()</c>
+    /// is generic and takes no argument (confirmed by reflection over the installed package), and
+    /// peeling a target that cannot reach a commit — e.g. a lightweight tag pointing straight at a
+    /// tree, such as linux's <c>v2.6.11-tree</c> — throws <see cref="InvalidSpecificationException"/>
+    /// rather than returning null (confirmed against a scratch repo built with the same package).
+    /// That case is caught and skipped, matching how <see cref="StartWalk"/>'s libgit2 walk treats
+    /// an unpeelable tip.</para>
+    /// Caller holds the repo gate. Phase 0.5: the returned array is sorted ordinally — git's
+    /// topological sort depends on the order tips are fed to it (measured), and the fingerprint
+    /// already ignores ref enumeration order, so an unsorted list would let `git gc`/`pack-refs`
+    /// silently reorder the walk under an unchanged fingerprint.</summary>
     private static string[] ResolveTipShas(Repository repo, GraphQuery query, List<Reference> allRefs)
     {
         static bool Resolvable(Reference? r) => r?.ResolveToDirectReference() is not null;
         static Commit? SafeLookupCommit(Repository repo, string targetIdentifier)
         {
-            try { return repo.Lookup<Commit>(targetIdentifier); }
+            try
+            {
+                if (repo.Lookup<Commit>(targetIdentifier) is { } direct)
+                    return direct;
+                // Not a commit itself (an annotated tag's target is the tag object; a lightweight
+                // tag can point at any object type) — try to peel it down to one. Throws
+                // InvalidSpecificationException when the target can't reach a commit at all (a
+                // tree/blob tag) — that tip is dropped, same as StartWalk's libgit2 path.
+                return repo.Lookup(targetIdentifier)?.Peel<Commit>();
+            }
             catch { return null; }
         }
 

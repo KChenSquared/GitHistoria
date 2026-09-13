@@ -132,4 +132,43 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
         Assert.Equal(seen.Count, seen.Distinct().Count());  // no dupes across the resumed pulls
         Assert.Equal(fullIds, new HashSet<ObjectId>(seen)); // same set as one big walk
     }
+
+    /// <summary>§10.1.3 finding #18: an annotated tag's ref target is the TAG OBJECT, not the
+    /// commit it points at. Before the fix, <c>GraphLayoutService.ResolveTipShas</c> called
+    /// <c>repo.Lookup&lt;Commit&gt;(target)</c> straight on that target and silently dropped the
+    /// tip when it returned null — exactly this fixture's shape (a release tagged on a branch that
+    /// is then deleted, so the annotated tag is the ONLY remaining path to that history).
+    /// libgit2's own <see cref="StartWalk"/> fallback never had this gap: it feeds
+    /// <see cref="Reference"/> objects straight to <c>CommitFilter.IncludeReachableFrom</c>, which
+    /// peels annotated tags internally — so before the fix the two engines walked different
+    /// histories for this repo.</summary>
+    [Fact]
+    public async Task Cli_and_libgit2_walks_agree_when_a_commit_is_reachable_only_via_an_annotated_tag_on_a_deleted_branch()
+    {
+        var locator = _host.Provider.GetRequiredService<IGitExecutableLocator>();
+        if (!locator.Current.Found)
+            return; // git.exe not discoverable — nothing to compare (see class doc)
+
+        _repo.Git("checkout", "-b", "doomed");
+        var doomedSha = _repo.WriteFile("doomed.txt", "x\n").Stage().Commit("doomed work");
+        _repo.Git("tag", "-a", "release-1.0", "-m", "release 1.0");
+        _repo.Git("checkout", "main");
+        _repo.Git("branch", "-D", "doomed");
+
+        await using var ctxCli = _host.Open(_repo.Path);
+        ctxCli.MarkFirstGraphPaintDone(); ctxCli.MarkFirstFullLoadDone();
+        var cliResult = await new GraphLayoutService(_host.Settings, locator).ComputeLayoutAsync(ctxCli, Q, maxRows: 1000);
+
+        await using var ctxLibgit2 = _host.Open(_repo.Path);
+        ctxLibgit2.MarkFirstGraphPaintDone(); ctxLibgit2.MarkFirstFullLoadDone();
+        var libgit2Result = await new GraphLayoutService(_host.Settings).ComputeLayoutAsync(ctxLibgit2, Q, maxRows: 1000);
+
+        var cliIds = new HashSet<ObjectId>(RowIds(cliResult));
+        var libIds = new HashSet<ObjectId>(RowIds(libgit2Result));
+
+        Assert.Equal(libIds, cliIds);
+        // The doomed-branch commit must actually be present — the annotated tag is its only
+        // remaining path now that the branch itself is deleted.
+        Assert.Contains(new ObjectId(doomedSha), cliIds);
+    }
 }

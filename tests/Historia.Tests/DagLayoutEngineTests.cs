@@ -428,12 +428,19 @@ public class DagLayoutEngineTests
             [Sha(30)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
         };
 
-        var r = Compute(commits, deco: deco, isAncestor: AncestryOf(commits));
+        // §10.1.3 finding #15 (decision C): the whole graph sits well inside the 200-row scan
+        // window, so the exact in-window check (isAncestor: null, every real caller's shape since
+        // the libgit2 CalculateHistoryDivergence oracle was retired) must reach the same
+        // conclusion as the brute-force oracle tests used to inject.
+        foreach (var anc in new[] { AncestryOf(commits), null })
+        {
+            var r = Compute(commits, deco: deco, isAncestor: anc);
 
-        // main is an ancestor of the newest tip (60) → newest-first order stands.
-        Assert.Equal(0, r.Layout.Rows[0].LaneIndex);                                     // feat-b tip on the trunk
-        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(30)]].LaneIndex);       // main stays collinear on the trunk
-        Assert.NotEqual(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(50)]].LaneIndex);    // feat-a branches off
+            // main is an ancestor of the newest tip (60) → newest-first order stands.
+            Assert.Equal(0, r.Layout.Rows[0].LaneIndex);                                     // feat-b tip on the trunk
+            Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(30)]].LaneIndex);       // main stays collinear on the trunk
+            Assert.NotEqual(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(50)]].LaneIndex);    // feat-a branches off
+        }
     }
 
     [Fact]
@@ -449,14 +456,17 @@ public class DagLayoutEngineTests
             [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
         };
 
-        var r = Compute(commits, deco: deco, isAncestor: AncestryOf(commits));
+        foreach (var anc in new[] { AncestryOf(commits), null })
+        {
+            var r = Compute(commits, deco: deco, isAncestor: anc);
 
-        // main is an ancestor of feat-a (40) but not of the newest tip feat-c (80): feat-a takes
-        // the trunk, feat-c shifts one lane right. main was feat-a's first-parent base, so it
-        // rides feat-a's trunk lane.
-        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex); // feat-a → trunk
-        Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-c (row 0) → lane 1
-        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex);  // main rides the trunk under feat-a
+            // main is an ancestor of feat-a (40) but not of the newest tip feat-c (80): feat-a
+            // takes the trunk, feat-c shifts one lane right. main was feat-a's first-parent base,
+            // so it rides feat-a's trunk lane.
+            Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex); // feat-a → trunk
+            Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-c (row 0) → lane 1
+            Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex);  // main rides the trunk under feat-a
+        }
     }
 
     [Fact]
@@ -472,18 +482,24 @@ public class DagLayoutEngineTests
             [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
         };
 
-        var r = Compute(commits, deco: deco, isAncestor: AncestryOf(commits));
+        foreach (var anc in new[] { AncestryOf(commits), null })
+        {
+            var r = Compute(commits, deco: deco, isAncestor: anc);
 
-        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex); // main → trunk
-        Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-y (row 0) → lane 1
-        Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex);  // feat-x → lane 2
+            Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex); // main → trunk
+            Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-y (row 0) → lane 1
+            Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex);  // feat-x → lane 2
+        }
     }
 
     [Fact]
-    public void Without_an_ancestry_oracle_the_checked_out_branch_exception_is_skipped()
+    public void Without_an_explicit_oracle_the_in_window_check_still_applies_the_exception()
     {
-        // Same graph as the "ancestor of no newer tip" case, but no oracle: the stale first
-        // paint keeps the plain newest-first order until the verified recompute.
+        // §10.1.3 finding #15 (decision C): the old behavior — isAncestor: null skipped the
+        // checked-out-branch exception entirely, deferring to the verified recompute — is gone.
+        // Every real caller now passes null and gets the exact in-window check for free; with no
+        // oracle argument at all, this graph (identical to the "ancestor of no newer tip" case
+        // above) must reach the SAME conclusion, not the old "skip" behavior.
         var commits = new[] { C(60, 50), C(50, 1), C(40, 30), C(30, 1), C(20, 10), C(10, 1), C(1) };
         var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
         {
@@ -492,10 +508,72 @@ public class DagLayoutEngineTests
             [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
         };
 
-        var r = Compute(commits, deco: deco); // no isAncestor
+        var r = Compute(commits, deco: deco); // no isAncestor argument at all
 
-        Assert.Equal(0, r.Layout.Rows[0].LaneIndex);                                // feat-y (newest) → trunk
-        Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex);  // main stays last
+        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex); // main → trunk
+        Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-y (row 0) → lane 1
+        Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex);  // feat-x → lane 2
+    }
+
+    /// <summary>§10.1.3 finding #15's acceptance test: DagLayoutEngine's private
+    /// <c>IsAncestorInWindow</c> helper (invoked here by reflection — it's an internal algorithm
+    /// detail, not part of the engine's public surface) must agree EXACTLY with a brute-force
+    /// parent-link reachability oracle, for every (H, T) pair, across many randomized topo-ordered
+    /// DAGs. This is the property the exact in-window check's correctness argument rests on: every
+    /// commit on a path T → H is a descendant of H and so precedes it in the topo order, so the
+    /// whole path lies inside [row(T), row(H)] — no repo access needed.</summary>
+    [Fact]
+    public void In_window_ancestry_check_matches_brute_force_reachability_on_random_DAGs()
+    {
+        var method = typeof(DagLayoutEngine).GetMethod(
+            "IsAncestorInWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var rng = new Random(20260912);
+
+        for (var trial = 0; trial < 30; trial++)
+        {
+            var commits = RandomTopoDag(rng, count: 20 + rng.Next(60));
+            var rowById = new Dictionary<ObjectId, int>();
+            for (var i = 0; i < commits.Count; i++)
+                rowById[commits[i].Id] = i;
+            var brute = AncestryOf(commits);
+
+            for (var hi = 0; hi < commits.Count; hi++)
+            {
+                var h = commits[hi].Id;
+                for (var ti = 0; ti < commits.Count; ti++)
+                {
+                    var t = commits[ti].Id;
+                    var expected = brute(h, t);
+                    var actual = (bool)method.Invoke(null, [commits, rowById, h, t])!;
+                    Assert.True(expected == actual,
+                        $"trial {trial}: isAncestor(h=row{hi}, t=row{ti}) expected {expected}, got {actual}");
+                }
+            }
+        }
+    }
+
+    /// <summary>Builds a random topologically ordered (children-before-parents) DAG of
+    /// <paramref name="count"/> commits: row 0 is the sole newest leaf, and each commit at row i
+    /// may point at 0-2 parents chosen from later rows only — the same convention <see cref="C"/>
+    /// uses, just randomized instead of hand-written.</summary>
+    private static List<RawCommit> RandomTopoDag(Random rng, int count)
+    {
+        var commits = new RawCommit[count];
+        for (var i = count - 1; i >= 0; i--)
+        {
+            var laterRows = count - 1 - i;
+            var maxParents = Math.Min(2, laterRows);
+            var parentCount = maxParents == 0 ? 0 : rng.Next(maxParents + 1);
+            var parents = new List<int>();
+            while (parents.Count < parentCount)
+            {
+                var p = i + 1 + rng.Next(laterRows);
+                if (!parents.Contains(p))
+                    parents.Add(p);
+            }
+            commits[i] = new RawCommit(Sha(i), parents.Select(Sha).ToList(), Meta(i, parents.Count));
+        }
+        return [.. commits];
     }
 
     [Fact]

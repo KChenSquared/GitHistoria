@@ -621,8 +621,22 @@ public sealed class DagLayoutEngine
                 break;
             }
 
-        if (isAncestor is not null && head is { } h && !tips[0].Id.Equals(h.Id))
+        if (head is { } h && !tips[0].Id.Equals(h.Id))
         {
+            // §10.1.3 finding #15 (decision C): the libgit2 CalculateHistoryDivergence oracle is
+            // retired everywhere — every real caller now passes isAncestor: null and gets the
+            // exact in-window check below for free (no repo access, no gate). The parameter stays
+            // only so tests can inject a stand-in oracle against a synthetic DAG.
+            Dictionary<ObjectId, int>? rowById = null;
+            if (isAncestor is null)
+            {
+                rowById = new Dictionary<ObjectId, int>(limit);
+                for (var i = 0; i < limit; i++)
+                    rowById[commits[i].Id] = i;
+            }
+            bool Ancestor(ObjectId a, ObjectId b) =>
+                isAncestor is not null ? isAncestor(a, b) : IsAncestorInWindow(commits, rowById!, a, b);
+
             // The tips strictly newer than HEAD are the front run of the sorted list.
             var newerCount = 0;
             while (newerCount < tips.Count && ByNewest(tips[newerCount], h) < 0)
@@ -631,7 +645,7 @@ public sealed class DagLayoutEngine
             // Newest-first, the first newer tip HEAD is an ancestor of.
             var promote = -1;
             for (var i = 0; i < newerCount; i++)
-                if (!tips[i].Id.Equals(h.Id) && isAncestor(h.Id, tips[i].Id))
+                if (!tips[i].Id.Equals(h.Id) && Ancestor(h.Id, tips[i].Id))
                 {
                     promote = i;
                     break;
@@ -678,6 +692,43 @@ public sealed class DagLayoutEngine
         }
         s.NextCompactedLane = Math.Max(s.NextCompactedLane, lane);
         s.LaneCeiling = Math.Max(s.LaneCeiling, lane);
+    }
+
+    /// <summary>
+    /// §10.1.3 finding #15: exact in-window ancestry check that answers the same question the
+    /// retired libgit2 oracle did — <c>isAncestor(a, b)</c> is true when commit <paramref
+    /// name="h"/> is an ancestor of (or equal to) <paramref name="t"/> — using ONLY the already
+    /// scanned topo-ordered prefix (<paramref name="commits"/>[0, <see cref="TipPriorityScanHorizon"/>)),
+    /// with no repo access.
+    /// <para>Exact because every commit on a path from <paramref name="t"/> to <paramref name="h"/>
+    /// is itself a descendant of <paramref name="h"/> and so precedes it in the topological
+    /// (children-before-parents) walk order — the whole path lies inside <c>[row(t), row(h)]</c>.
+    /// Mark <paramref name="t"/>, then walk rows <c>row(t)..row(h)</c> forward, marking the
+    /// parents of every already-marked row; <paramref name="h"/> is an ancestor of <paramref
+    /// name="t"/> iff it ends up marked.</para>
+    /// <para>Returns false — a safe negative, never a crash — when either commit falls outside the
+    /// scanned window, or when <c>row(t) &gt; row(h)</c> (impossible for a true ancestor: a parent
+    /// always sits at a later row than its child in this sort). Caveat inherited from the analysis:
+    /// a path-filtered / single-branch graph can omit commits, so here a false negative is
+    /// possible — the only effect is which branch holds the trunk lane.</para>
+    /// </summary>
+    private static bool IsAncestorInWindow(
+        IReadOnlyList<RawCommit> commits, IReadOnlyDictionary<ObjectId, int> rowById, ObjectId h, ObjectId t)
+    {
+        if (h.Equals(t))
+            return true;
+        if (!rowById.TryGetValue(t, out var rowT) || !rowById.TryGetValue(h, out var rowH) || rowT > rowH)
+            return false;
+
+        var marked = new HashSet<ObjectId> { t };
+        for (var i = rowT; i <= rowH; i++)
+        {
+            if (!marked.Contains(commits[i].Id))
+                continue;
+            foreach (var p in commits[i].ParentIds)
+                marked.Add(p);
+        }
+        return marked.Contains(h);
     }
 
     private static int AllocLane(GraphLayoutState s)
