@@ -769,6 +769,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
         _backgroundWriter?.CancelInactiveTabAsync(context) ?? Task.CompletedTask;
 
     /// <inheritdoc/>
+    public void RefreshCommitGraphAfterFetch(RepositoryContext context) =>
+        _backgroundWriter?.RefreshAfterFetch(context);
+
+    /// <inheritdoc/>
     public async Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct)
     {
         if (!SpillEnabled(query))

@@ -417,6 +417,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         public Task Hibernate(RepositoryContext context) => Task.CompletedTask;
         public int ClearPersistentCache() => 0;
         public Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct) => Task.CompletedTask;
+        public void RefreshCommitGraphAfterFetch(RepositoryContext context) { }
     }
 
     [Fact(Timeout = 20000)]

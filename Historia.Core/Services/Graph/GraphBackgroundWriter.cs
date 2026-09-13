@@ -304,6 +304,91 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
         }
     }
 
+    /// <summary>
+    /// Phase 4 (2026-09-12 memoryshrink review, finding #17): fire-and-forget refresh of
+    /// <paramref name="context"/>'s commit-graph after a successful auto-fetch. Unlike
+    /// <see cref="MaybeSchedule"/>'s own-write tracking (<see cref="ShouldRefresh"/>), this
+    /// refreshes ANY existing commit-graph regardless of who wrote it — git documents
+    /// <c>commit-graph write --split</c> as a safe, idempotent no-op when nothing new needs to be
+    /// added, so refreshing a graph this process never wrote (git's own maintenance, another tab,
+    /// a previous session) is safe here specifically because the write is always incremental
+    /// (<c>--split</c>) and time-bounded (<c>--expire-time</c>), never a from-scratch rewrite. A
+    /// repo with no commit-graph yet only gets a first (non-split) write when a <c>.meta</c> header
+    /// already knows it has at least <see cref="MinCommitsToWrite"/> commits — cheap, no repo walk.
+    /// Same gate / <see cref="_serial"/> / below-normal-priority / never-killed discipline as every
+    /// other write (see the class doc comment and finding #2).
+    /// </summary>
+    public void RefreshAfterFetch(RepositoryContext context)
+    {
+        if (!settings.Current.WriteCommitGraphForLargeRepos || !cli.IsGitAvailable)
+            return;
+
+        _ = Task.Run(() => RefreshAfterFetchCoreAsync(context));
+    }
+
+    private async Task RefreshAfterFetchCoreAsync(RepositoryContext context)
+    {
+        try
+        {
+            var gitDir = context.GitDirectory;
+            var has = HasCommitGraph(gitDir, out _);
+            if (!has && !RepoKnownLarge(context.RepositoryPath))
+                return;
+
+            if (gate is not null)
+                await gate.WaitUntilOpenAsync(context.Lifetime).ConfigureAwait(false);
+
+            await _serial.WaitAsync(context.Lifetime).ConfigureAwait(false);
+            try
+            {
+                // Re-check under the lock: another writer may have created the graph while this
+                // call waited for the gate/semaphore.
+                has = HasCommitGraph(gitDir, out _);
+                var args = has
+                    ? new[] { "commit-graph", "write", "--reachable", "--split", $"--expire-time={DateTimeOffset.UtcNow.AddHours(-1):O}" }
+                    : ["commit-graph", "write", "--reachable"];
+
+                using var scope = Diagnostics.PerfLog.Scope($"GraphBackgroundWriter.refreshAfterFetch({context.DisplayName})");
+                await cli.RunAsync(new GitCliRequest
+                {
+                    Arguments = args,
+                    WorkingDirectory = context.RepositoryPath,
+                    Timeout = Timeout.InfiniteTimeSpan,
+                    LowerPriority = true,
+                }, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                _serial.Release();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Tab closed while waiting for the gate/_serial — the write never started.
+        }
+        catch
+        {
+            // Commit-graph maintenance is an optimisation, never a correctness dependency.
+        }
+    }
+
+    /// <summary>Cheap, header-only check: does the on-disk graph-cache header for
+    /// <paramref name="repoPath"/> (there is only ever one physical <c>.meta.hdr</c> per repo,
+    /// whichever walk engine / remote-branch flag last wrote it) know it already has at least
+    /// <see cref="MinCommitsToWrite"/> commits? Tries every engine/remote-branch combination since
+    /// none is known up front here — at most one can ever match the single on-disk header.</summary>
+    private static bool RepoKnownLarge(string repoPath)
+    {
+        foreach (var engine in new[] { WalkEngine.Cli, WalkEngine.LibGit2 })
+            foreach (var includeRemoteBranches in new[] { true, false })
+            {
+                var probe = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches, engine);
+                if (probe.Ok)
+                    return probe.RowCount >= MinCommitsToWrite;
+            }
+        return false;
+    }
+
     /// <summary>A commit-graph this process never wrote (or one whose mtime moved since we last
     /// wrote it — someone else, e.g. `git gc`, keeps it fresh on their own) is left alone. One we
     /// did write is refreshed once at least <see cref="StaleAbsolute"/> commits, or

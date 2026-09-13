@@ -187,6 +187,44 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         Assert.Equal(1, delay.CountOf(AutoFetchService.InitialIdle)); // still the same cycle
     }
 
+    // ── Phase 4 (finding #17): commit-graph refresh after a successful fetch ──
+
+    [Fact(Timeout = 60000)]
+    public async Task A_successful_fetch_triggers_exactly_one_commit_graph_refresh_for_that_repo()
+    {
+        var ws = NewWorkspace();
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+
+        var host = new FakeHost();
+        var graph = new RecordingGraphLayoutService();
+        var delay = new ManualDelayer();
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, graph);
+        _svc.Start();
+
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
+        await WaitUntil(() => graph.Snapshot().Count == 1, "commit-graph refresh after the fetch");
+        Assert.Same(r1, graph.Snapshot()[0]);
+
+        await Task.Delay(200); // give a wrongly-duplicated refresh a chance to also fire
+        Assert.Single(graph.Snapshot());
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task A_failed_fetch_triggers_no_commit_graph_refresh()
+    {
+        var ws = NewWorkspace();
+        await ws.OpenAsync(Repo("a.txt").Path);
+
+        var host = new FakeHost { Fail = true };
+        var graph = new RecordingGraphLayoutService();
+        var delay = new ManualDelayer();
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, graph);
+        _svc.Start();
+
+        await delay.WaitForPending("loop idle after the failed initial fetch");
+        Assert.Empty(graph.Snapshot());
+    }
+
     // ── gating ──
 
     [Fact(Timeout = 60000)]
@@ -352,12 +390,18 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
 
         public TaskCompletionSource? LoadGate { get; init; }
 
+        /// <summary>Phase 4: when set, every <see cref="FetchAsync"/> call throws instead of
+        /// succeeding — used to prove a failed fetch triggers no commit-graph refresh.</summary>
+        public bool Fail { get; set; }
+
         public Task WhenFullyLoadedAsync(RepositoryContext context, CancellationToken ct)
             => LoadGate is null ? Task.CompletedTask : LoadGate.Task.WaitAsync(ct);
 
         public Task FetchAsync(RepositoryContext context, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
+            if (Fail)
+                throw new InvalidOperationException("simulated fetch failure");
             lock (_g)
                 _fetched.Add(context);
             return Task.CompletedTask;
@@ -368,6 +412,41 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
             lock (_g)
                 return [.. _fetched];
         }
+    }
+
+    /// <summary>Phase 4 (finding #17): records every context <see cref="RefreshCommitGraphAfterFetch"/>
+    /// was called with — the rest of <see cref="IGraphLayoutService"/> is unused by
+    /// <see cref="AutoFetchService"/> and throws if ever called.</summary>
+    private sealed class RecordingGraphLayoutService : IGraphLayoutService
+    {
+        private readonly object _g = new();
+        private readonly List<RepositoryContext> _refreshed = [];
+
+        public void RefreshCommitGraphAfterFetch(RepositoryContext context)
+        {
+            lock (_g)
+                _refreshed.Add(context);
+        }
+
+        public List<RepositoryContext> Snapshot()
+        {
+            lock (_g)
+                return [.. _refreshed];
+        }
+
+        public Task<GraphLayoutResult> ComputeLayoutAsync(RepositoryContext context, GraphQuery query, int maxRows = 10000, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public GraphLayoutResult? TryOptimisticSnapshot(RepositoryContext context, GraphQuery query, int maxRows) => throw new NotImplementedException();
+        public Task<GraphLayoutResult> ExtendLayoutAsync(RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default, bool background = false)
+            => throw new NotImplementedException();
+        public Task<GraphLayoutResult> RecomputeAsync(RepositoryContext context, GraphQuery query, GraphLayoutResult previous, InvalidationReason reason, int maxRows = 10000, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public void Forget(RepositoryContext context) => throw new NotImplementedException();
+        public Task Hibernate(RepositoryContext context) => throw new NotImplementedException();
+        public int ClearPersistentCache() => throw new NotImplementedException();
+        public Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct) => throw new NotImplementedException();
+        public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query) => throw new NotImplementedException();
+        public Task CancelInactiveTabCachingAsync(RepositoryContext context) => throw new NotImplementedException();
     }
 
     /// <summary>A hand-pumped stand-in for the production <c>Task.Delay</c> seam: records every

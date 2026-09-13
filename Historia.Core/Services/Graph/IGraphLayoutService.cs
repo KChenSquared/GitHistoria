@@ -97,4 +97,13 @@ public interface IGraphLayoutService
     /// or this service has no background writer configured (a test-only ctor).
     /// </summary>
     Task CancelInactiveTabCachingAsync(RepositoryContext context);
+
+    /// <summary>
+    /// Phase 4 (2026-09-12 memoryshrink review, finding #17): fire-and-forget refresh of
+    /// <paramref name="context"/>'s commit-graph after a successful auto-fetch, through
+    /// <c>GraphBackgroundWriter</c>'s serial/gated/below-normal-priority/never-killed write path.
+    /// A no-op if this service has no background writer configured (a test-only ctor) or the
+    /// "Write a commit-graph file for large repositories" setting is off.
+    /// </summary>
+    void RefreshCommitGraphAfterFetch(RepositoryContext context);
 }

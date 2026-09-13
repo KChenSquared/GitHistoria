@@ -295,6 +295,99 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
         Assert.Single(cli.Requests);
     }
 
+    // ── Phase 4 (finding #17): RefreshAfterFetch ──
+
+    [Fact]
+    public async Task RefreshAfterFetch_with_an_existing_graph_writes_split_with_an_expire_time()
+    {
+        var gitDir = Path.Combine(_repo.Path, ".git");
+        Directory.CreateDirectory(Path.Combine(gitDir, "objects", "info"));
+        File.WriteAllText(Path.Combine(gitDir, "objects", "info", "commit-graph"), "stub");
+
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
+        await using var ctx = _host.Open(_repo.Path);
+
+        writer.RefreshAfterFetch(ctx);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (cli.Requests.Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+
+        var req = Assert.Single(cli.Requests);
+        Assert.Equal("commit-graph", req.Arguments[0]);
+        Assert.Equal("write", req.Arguments[1]);
+        Assert.Contains("--split", req.Arguments);
+        Assert.Contains(req.Arguments, a => a.StartsWith("--expire-time="));
+        Assert.True(req.LowerPriority);
+    }
+
+    [Fact]
+    public async Task RefreshAfterFetch_with_no_graph_but_a_known_large_meta_header_writes_plain_reachable()
+    {
+        // A `.meta.hdr` left by an earlier headless/foreground walk is the ONLY way this repo's
+        // size is known without a fresh commit-graph write — write one directly rather than
+        // spilling 30,000 real RawCommit rows through GraphMetaWriter.
+        var hdr = new GraphMetaStore.Header
+        {
+            Version = GraphMetaStore.Version,
+            Fingerprint = 0x1234,
+            IncludeRemoteBranches = true,
+            RowCount = GraphBackgroundWriter.MinCommitsToWrite,
+            RecordCount = GraphBackgroundWriter.MinCommitsToWrite,
+            Exhausted = true,
+            WalkEngine = (int)WalkEngine.LibGit2,
+        };
+        var hdrPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.HdrExt);
+        Directory.CreateDirectory(Path.GetDirectoryName(hdrPath)!);
+        File.WriteAllBytes(hdrPath, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(hdr, GraphMetaStore.Json));
+
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
+        await using var ctx = _host.Open(_repo.Path);
+
+        writer.RefreshAfterFetch(ctx);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (cli.Requests.Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+
+        var req = Assert.Single(cli.Requests);
+        Assert.Equal(["commit-graph", "write", "--reachable"], req.Arguments);
+    }
+
+    [Fact]
+    public async Task RefreshAfterFetch_with_no_graph_and_an_unknown_size_never_writes()
+    {
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
+        await using var ctx = _host.Open(_repo.Path);
+
+        writer.RefreshAfterFetch(ctx);
+        await Task.Delay(200); // give a wrongly-triggered write a chance to show up
+
+        Assert.Empty(cli.Requests);
+    }
+
+    [Fact]
+    public async Task RefreshAfterFetch_off_by_setting_never_writes()
+    {
+        var gitDir = Path.Combine(_repo.Path, ".git");
+        Directory.CreateDirectory(Path.Combine(gitDir, "objects", "info"));
+        File.WriteAllText(Path.Combine(gitDir, "objects", "info", "commit-graph"), "stub");
+
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = false });
+        await using var ctx = _host.Open(_repo.Path);
+
+        writer.RefreshAfterFetch(ctx);
+        await Task.Delay(200);
+
+        Assert.Empty(cli.Requests);
+    }
+
     /// <summary>Local fake — not <see cref="RecordingGitCliService"/> in <c>Fakes.cs</c> — because
     /// this milestone doesn't own that shared file: it also records the <see cref="CancellationToken"/>
     /// each call receives, and can optionally block mid-call to simulate a long-running write.</summary>

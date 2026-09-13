@@ -14,6 +14,7 @@ public sealed class AutoFetchService : IAutoFetchService
     private readonly IAutoFetchHost _host;
     private readonly ISettingsService _settings;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly IGraphLayoutService? _graphLayoutService;
 
     private readonly object _sync = new();
     private CancellationTokenSource? _runCts;
@@ -34,12 +35,14 @@ public sealed class AutoFetchService : IAutoFetchService
         IWorkspaceService workspace,
         IAutoFetchHost host,
         ISettingsService settings,
-        Func<TimeSpan, CancellationToken, Task>? delay = null)
+        Func<TimeSpan, CancellationToken, Task>? delay = null,
+        IGraphLayoutService? graphLayoutService = null)
     {
         _workspace = workspace;
         _host = host;
         _settings = settings;
         _delay = delay ?? ((span, ct) => Task.Delay(span, ct));
+        _graphLayoutService = graphLayoutService;
 
         _settings.Changed += OnSettingsChanged;
         _workspace.OpenRepositoriesChanged += OnOpenRepositoriesChanged;
@@ -263,6 +266,13 @@ public sealed class AutoFetchService : IAutoFetchService
         try
         {
             await _host.FetchAsync(context, ct).ConfigureAwait(false);
+
+            // Finding #17: refresh this repo's commit-graph after every successful fetch (the
+            // [InitialFetch] callers above and the [AutoFetch] loop both go through here). Itself
+            // fire-and-forget and best-effort — never allowed to fail this fetch or the loop.
+            try { _graphLayoutService?.RefreshCommitGraphAfterFetch(context); }
+            catch { /* §12.1: commit-graph maintenance must never take the loop down */ }
+
             return true;
         }
         catch (OperationCanceledException)

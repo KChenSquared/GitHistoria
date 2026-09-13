@@ -307,7 +307,7 @@ public sealed class SettingsView : UserControl, IDisposable
 
         advBody.Children.Add(WithHint(Check("Write a commit-graph file for large repositories", c.WriteCommitGraphForLargeRepos,
             v => _ = _cfg.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = v })),
-            "Once a large repository's full history has loaded, writes a commit-graph file if it doesn't already have one. Lets Git's own history walk skip straight to recent commits on the next open instead of scanning the whole history."));
+            "The commit-graph file is written once a repository is known to have 30,000+ commits, and refreshed after each automatic fetch. Lets Git's own history walk skip straight to recent commits instead of scanning the whole history."));
 
         var silentCrawlCap = new NumericUpDown
         {
