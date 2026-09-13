@@ -248,7 +248,13 @@ public sealed class ArrayCommitStore(CommitMetadata[] items) : ICommitStore
 /// </summary>
 public sealed class GraphLayout : IDisposable
 {
-    public required GraphRow[] Rows { get; init; }
+    /// <summary>Finding #9: a <see cref="RowCount"/>-bounded VIEW over <see cref="SourceState"/>'s
+    /// own chunked row accumulator — never a fresh array copy. Computed from <see
+    /// cref="SourceState"/>/<see cref="RowCount"/> (both set before this is ever read), so it
+    /// needs no initializer of its own. Indexer, <c>Count</c> and <c>Length</c> (source
+    /// compatibility with the plain array this replaced) are all safe to call at any time; see
+    /// <see cref="GraphRowsView"/>'s own doc comment for the concurrency contract.</summary>
+    public GraphRowsView Rows => new(SourceState, RowCount);
 
     /// <summary>Phase 2: the shared, append-only accumulator that <see cref="DagLayoutEngine"/>
     /// derives lines from on demand. Null only for a layout with no engine behind it (<see
@@ -278,7 +284,39 @@ public sealed class GraphLayout : IDisposable
     /// has built the layout — <c>required</c> is dropped only because an internal setter and a
     /// public required member cannot coexist; <see cref="DagLayoutEngine"/> always sets it.</summary>
     public ICommitStore Commits { get; internal set; } = ArrayCommitStore.Empty;
-    public required GraphEdge[] Edges { get; init; }
+
+    /// <summary>Finding #9: materialized lazily on first access, from <see cref="SourceState"/>'s
+    /// real-edge accumulator (capped at <see cref="RealEdgeCap"/>, for the same snapshot-isolation
+    /// reason <see cref="Rows"/> is capped at <see cref="RowCount"/>) plus this snapshot's own
+    /// <see cref="OffWindowEdges"/>. Nothing in App or Core code actually reads this — only tests
+    /// do — so <c>DagLayoutEngine.Build</c> no longer pays to build it on every single Build/Extend
+    /// call; <see cref="EdgeCount"/> is a plain field computed without ever materializing it.</summary>
+    public GraphEdge[] Edges
+    {
+        get
+        {
+            if (_edges is { } cached)
+                return cached;
+            if (SourceState is not { } state)
+                return _edges = OffWindowEdges;
+
+            GraphEdge[] real;
+            lock (state)
+            {
+                var n = Math.Min(RealEdgeCap, state.RealEdges.Count);
+                real = new GraphEdge[n];
+                for (var i = 0; i < n; i++)
+                    real[i] = state.RealEdges[i];
+            }
+            var combined = new GraphEdge[real.Length + OffWindowEdges.Length];
+            real.CopyTo(combined, 0);
+            OffWindowEdges.CopyTo(combined, real.Length);
+            return _edges = combined;
+        }
+    }
+
+    private GraphEdge[]? _edges;
+
     public required GraphDecoration[] Decorations { get; init; }
 
     public required int RowCount { get; init; }
@@ -418,9 +456,7 @@ public sealed class GraphLayout : IDisposable
 
     public static GraphLayout Empty { get; } = new()
     {
-        Rows = [],
         Commits = ArrayCommitStore.Empty,
-        Edges = [],
         Decorations = [],
         RowCount = 0,
         EdgeCount = 0,
@@ -433,6 +469,51 @@ public sealed class GraphLayout : IDisposable
     /// cref="SourceState"/> is owned by the layout service, not this snapshot, so it is never
     /// disposed here.</summary>
     public void Dispose() { _window = null; }
+}
+
+/// <summary>
+/// Finding #9: a <see cref="GraphLayout.RowCount"/>-bounded, read-only view over a
+/// <see cref="GraphLayoutState"/>'s own chunked row accumulator — what
+/// <see cref="GraphLayout.Rows"/> hands back instead of a fresh <c>GraphRow[]</c> copy on every
+/// Build/Extend call. Deliberately a plain class with no custom <c>Equals</c>/<c>GetHashCode</c>
+/// override (and NOT a record type, which would compare its private fields — including the
+/// shared, mutable <c>SourceState</c> reference — rather than the rows themselves): callers that
+/// compare two layouts' rows for value equality (xUnit's <c>Assert.Equal</c> included) fall
+/// through to a sequence comparison via <see cref="IEnumerable{T}"/>, exactly as they did when
+/// this property was a plain array — verified against xUnit's <c>AssertEqualityComparer</c>, which
+/// only tries <c>IEquatable&lt;T&gt;</c>/<c>IStructuralEquatable</c> before falling back to an
+/// element-wise <c>IEnumerable</c> comparison. <c>Length</c> is kept alongside <c>Count</c> for
+/// source compatibility with the array this replaced.
+/// <para>
+/// Every member here is safe to call from any thread at any time with no lock — see
+/// <see cref="ChunkedAppendList{T}"/>'s own concurrency contract, which this is a thin,
+/// <see cref="GraphLayout.RowCount"/>-bounded wrapper around.
+/// </para>
+/// </summary>
+public sealed class GraphRowsView(GraphLayoutState? source, int count) : IReadOnlyList<GraphRow>
+{
+    public int Count => count;
+
+    /// <summary>Source compatibility with the plain <c>GraphRow[]</c> this view replaced.</summary>
+    public int Length => count;
+
+    public GraphRow this[int index]
+    {
+        get
+        {
+            if ((uint)index >= (uint)count)
+                throw new ArgumentOutOfRangeException(nameof(index));
+            return source!.Rows[index];
+        }
+    }
+
+    public IEnumerator<GraphRow> GetEnumerator()
+    {
+        for (var i = 0; i < count; i++)
+            yield return this[i];
+    }
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 public enum GraphRefScope { AllRefs, CurrentBranch, Selected }

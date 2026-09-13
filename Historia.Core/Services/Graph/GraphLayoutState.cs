@@ -62,7 +62,10 @@ public sealed class GraphLayoutState
     internal readonly Dictionary<int, string> LaneKey = [];
 
     // Accumulators — real edges only append; OffWindow edges are regenerated each build.
-    internal readonly List<GraphRow> Rows = [];
+    // Finding #9: Rows is chunked (ChunkedAppendList), not a plain List<T> — see its own doc
+    // comment. This is what lets GraphLayout.Rows become a RowCount-bounded VIEW over this same
+    // instance instead of a fresh array copy on every Build/Extend.
+    internal readonly ChunkedAppendList<GraphRow> Rows = new();
     internal readonly List<CommitMetadata> Commits = [];
     internal readonly List<GraphEdge> RealEdges = [];
     internal readonly List<GraphDecoration> Decorations = [];

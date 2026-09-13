@@ -229,27 +229,26 @@ public sealed class DagLayoutEngine
     {
         var offWindowList = RegenerateOffWindow(s);
         var offWindow = offWindowList.ToArray();
-        var edges = new GraphEdge[s.RealEdges.Count + offWindow.Length];
-        s.RealEdges.CopyTo(edges, 0);
-        offWindow.CopyTo(edges, s.RealEdges.Count);
 
+        // Finding #9: neither Rows nor Edges is materialized here any more — GraphLayout.Rows is
+        // a RowCount-bounded VIEW straight over s.Rows (now a ChunkedAppendList, never copied),
+        // and GraphLayout.Edges is computed lazily on first access (nothing in App or Core code
+        // actually reads it). EdgeCount is just the sum of what those two arrays' lengths would
+        // have been.
+        //
         // §Phase 2: Rows no longer carry Segment/Elbow slice indices — GraphLayout derives lines
         // for a row window on demand from the shared crossing index (DeriveWindow), instead of
         // DeriveVisuals materialising flat Segments/Elbows arrays sized to every resident row on
         // every Build/Extend call.
-        var finalizedRows = s.Rows.ToArray();
-
         var layout = new GraphLayout
         {
-            Rows = finalizedRows,
             SourceState = s,
             RealEdgeCap = s.RealEdges.Count,
             OffWindowEdges = offWindow,
             Commits = new ArrayCommitStore(s.Commits.ToArray()),
-            Edges = edges,
             Decorations = s.Decorations.ToArray(),
             RowCount = s.Rows.Count,
-            EdgeCount = edges.Length,
+            EdgeCount = s.RealEdges.Count + offWindow.Length,
             TotalLaneCount = s.NextCompactedLane,
             IsComplete = complete && s.Reservations.Count == 0,
             // §Phase 2 / S4: share the accumulator's dictionary instead of copying it wholesale

@@ -1017,4 +1017,52 @@ public class DagLayoutEngineTests
         for (var i = 0; i < a.Layout.RowCount; i++)
             Assert.Equal(a.Layout.Rows[i].LaneIndex, b.Layout.Rows[i].LaneIndex);
     }
+
+    // ── finding #9: Build/Extend must not copy the whole accumulator every time ──
+
+    private static List<RawCommit> LinearChain(int count) =>
+        Enumerable.Range(0, count).Select(i => i + 1 < count ? C(i, i + 1) : C(i)).ToList();
+
+    /// <summary>Extends a synthetic 200k-row linear history in 5k-row steps and asserts the LAST
+    /// extend allocates roughly the same as the FIRST — before this fix, <c>Build</c> copied
+    /// <c>s.Rows</c> (a <c>GraphRow[]</c>) and <c>s.RealEdges</c>/<c>OffWindowEdges</c> (a
+    /// <c>GraphEdge[]</c>) wholesale on every single call, so allocation per extend grew linearly
+    /// with the TOTAL rows accumulated so far — quadratic overall. <c>retainCommits: false</c>
+    /// isolates this to the rows/edges allocation this fix targets: <c>Layout.Commits</c>'s own
+    /// per-extend copy (<c>s.Commits.ToArray()</c>) is a separate, disk-spill-mode-only concern
+    /// finding #9 didn't cover (disk mode never retains commits at all).</summary>
+    [Fact]
+    public void Extending_a_large_history_does_not_allocate_more_per_extend_as_it_grows()
+    {
+        const int totalRows = 200_000;
+        const int step = 5_000;
+        var commits = LinearChain(totalRows);
+
+        var result = _engine.Compute(commits.GetRange(0, step), null, step, retainCommits: false);
+        var consumed = step;
+
+        GC.Collect();
+        var before1 = GC.GetAllocatedBytesForCurrentThread();
+        result = _engine.Extend(result, commits.GetRange(consumed, step), null, step);
+        var firstExtendBytes = GC.GetAllocatedBytesForCurrentThread() - before1;
+        consumed += step;
+
+        while (consumed < totalRows - step)
+        {
+            result = _engine.Extend(result, commits.GetRange(consumed, step), null, step);
+            consumed += step;
+        }
+
+        GC.Collect();
+        var before2 = GC.GetAllocatedBytesForCurrentThread();
+        result = _engine.Extend(result, commits.GetRange(consumed, step), null, step);
+        var lastExtendBytes = GC.GetAllocatedBytesForCurrentThread() - before2;
+        consumed += step;
+
+        Assert.Equal(totalRows, consumed);
+        Assert.Equal(totalRows, result.Layout.RowCount);
+        Assert.True(lastExtendBytes <= firstExtendBytes * 2.5,
+            $"expected the last extend (~{totalRows} total rows) to allocate roughly the same as " +
+            $"the first (~{step} total rows) — first={firstExtendBytes} bytes, last={lastExtendBytes} bytes");
+    }
 }
