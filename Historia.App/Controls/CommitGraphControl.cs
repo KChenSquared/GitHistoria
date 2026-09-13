@@ -122,6 +122,12 @@ public sealed partial class CommitGraphControl : Control
     private Channel<ExtendRequest>? _extendChannel;
     private int _cappedNotified;
 
+    // ── First-paint timing diagnostics ──
+    private long _firstPaintStartTimestamp;
+    private string? _firstPaintKind;
+    private bool _firstPaintQueued;
+    private bool _firstPaintRenderLogged;
+
     private double _rowHeight = 26;
     private double _scrollOffset;
     private double _hScrollOffset;
@@ -487,6 +493,11 @@ public sealed partial class CommitGraphControl : Control
             return;
         Historia.Diagnostics.PerfLog.Mark($"graph Bind -> {(context?.RepositoryPath ?? "<none>")}");
 
+        _firstPaintStartTimestamp = context is not null ? Stopwatch.GetTimestamp() : 0;
+        _firstPaintKind = null;
+        _firstPaintQueued = false;
+        _firstPaintRenderLogged = false;
+
         if (_state is not null)
         {
             _state.RefsChanged -= OnRefsChanged;
@@ -541,6 +552,11 @@ public sealed partial class CommitGraphControl : Control
 
     private void Detach()
     {
+        _firstPaintStartTimestamp = 0;
+        _firstPaintKind = null;
+        _firstPaintQueued = false;
+        _firstPaintRenderLogged = false;
+
         if (_state is not null)
         {
             _state.RefsChanged -= OnRefsChanged;
@@ -798,6 +814,15 @@ public sealed partial class CommitGraphControl : Control
         var ct = _layoutCts.Token;
         InitializeExtendPump(context, ct);
 
+        if (_firstPaintStartTimestamp == 0)
+        {
+            _firstPaintStartTimestamp = Stopwatch.GetTimestamp();
+            _firstPaintKind = null;
+            _firstPaintQueued = false;
+            _firstPaintRenderLogged = false;
+        }
+        var startTimestamp = _firstPaintStartTimestamp;
+
         try
         {
             var query = _query;
@@ -819,7 +844,18 @@ public sealed partial class CommitGraphControl : Control
                 if (optimistic is not null && !ct.IsCancellationRequested)
                 {
                     ApplyLayout(optimistic);
-                    Historia.Diagnostics.PerfLog.Mark($"graph optimistic paint ({optimistic.Layout.RowCount} rows)");
+                    if (!_firstPaintQueued)
+                    {
+                        _firstPaintQueued = true;
+                        _firstPaintKind = "optimistic";
+                        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                        Historia.Diagnostics.PerfLog.Mark(
+                            $"graph first paint queued: optimistic ({optimistic.Layout.RowCount} rows, {elapsedMs:F1}ms total)");
+                    }
+                    else
+                    {
+                        Historia.Diagnostics.PerfLog.Mark($"graph optimistic paint ({optimistic.Layout.RowCount} rows)");
+                    }
                 }
             }
 
@@ -831,14 +867,25 @@ public sealed partial class CommitGraphControl : Control
                 if (ct.IsCancellationRequested)
                     return;
                 ApplyLayout(fast);
-                Historia.Diagnostics.PerfLog.Mark($"graph quick paint ({fast.Layout.RowCount} rows)");
+                if (!_firstPaintQueued)
+                {
+                    _firstPaintQueued = true;
+                    _firstPaintKind = "quick";
+                    var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                    Historia.Diagnostics.PerfLog.Mark(
+                        $"graph first paint queued: quick ({fast.Layout.RowCount} rows, {elapsedMs:F1}ms total)");
+                }
+                else
+                {
+                    Historia.Diagnostics.PerfLog.Mark($"graph quick paint ({fast.Layout.RowCount} rows)");
+                }
 
                 var rest = await Task.Run(
                     () => _layoutService.ExtendLayoutAsync(context, fast, full - fast.Layout.RowCount, ct), ct).ConfigureAwait(true);
                 if (ct.IsCancellationRequested)
                     return;
                 ApplyLayout(rest);
-                Historia.Diagnostics.PerfLog.Mark($"graph first paint queued ({rest.Layout.RowCount} rows)");
+                Historia.Diagnostics.PerfLog.Mark($"graph initial batch extend queued ({rest.Layout.RowCount} rows)");
                 _ = StartBackgroundSilentLoadAsync(context, ct);
                 return;
             }
@@ -848,7 +895,18 @@ public sealed partial class CommitGraphControl : Control
             if (ct.IsCancellationRequested)
                 return;
             ApplyLayout(result);
-            Historia.Diagnostics.PerfLog.Mark($"graph first paint queued ({result.Layout.RowCount} rows)");
+            if (!_firstPaintQueued)
+            {
+                _firstPaintQueued = true;
+                _firstPaintKind = "full";
+                var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                Historia.Diagnostics.PerfLog.Mark(
+                    $"graph first paint queued: full ({result.Layout.RowCount} rows, {elapsedMs:F1}ms total)");
+            }
+            else
+            {
+                Historia.Diagnostics.PerfLog.Mark($"graph first paint queued ({result.Layout.RowCount} rows)");
+            }
             _ = StartBackgroundSilentLoadAsync(context, ct);
         }
         catch (OperationCanceledException) { }
@@ -2386,6 +2444,16 @@ public sealed partial class CommitGraphControl : Control
         {
             RenderRows(dc, size, result);
             _renderFailStreak = 0;
+
+            if (!_firstPaintRenderLogged && _firstPaintStartTimestamp != 0)
+            {
+                _firstPaintRenderLogged = true;
+                var elapsedMs = Stopwatch.GetElapsedTime(_firstPaintStartTimestamp).TotalMilliseconds;
+                var kind = _firstPaintKind ?? "layout";
+                Historia.Diagnostics.PerfLog.Mark(
+                    $"graph first paint rendered: {kind} ({result.Layout.RowCount} rows, {elapsedMs:F1}ms total)");
+                _firstPaintStartTimestamp = 0;
+            }
         }
         catch (Exception ex) when (ex is ObjectDisposedException or IOException or InvalidDataException
                                    or ArgumentOutOfRangeException or IndexOutOfRangeException)
