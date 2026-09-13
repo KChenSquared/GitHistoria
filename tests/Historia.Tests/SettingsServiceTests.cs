@@ -15,6 +15,7 @@ public class SettingsServiceTests : IDisposable
         Assert.True(svc.Current.PersistRepoCache);
         Assert.True(svc.Current.GraphMetadataFromDisk); // default on
         Assert.True(svc.Current.AutoFetchEnabled); // §12.1 default on
+        Assert.False(svc.Current.EnableGraphSplice); // Phase 5 (M5.1), finding #16: default off
     }
 
     // ── §12.1: v15 → v16 (auto-fetch toggle) ──

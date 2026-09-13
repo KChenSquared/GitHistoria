@@ -289,4 +289,118 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
 
         Assert.False(File.Exists(GraphCachePaths.File(_repo.Path, GraphMetaStore.HdrExt)));
     }
+
+    // ── Phase 5 (M5.1, finding #16): guard-4 baseline + tips on spool exhaustion ──
+
+    [Fact]
+    public async Task A_spool_reaching_exhaustion_writes_meta_tips_even_when_never_reordered()
+    {
+        var svc = await DiskBackedServiceAsync();
+        await using var ctx = _host.Open(_repo.Path);
+
+        await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None);
+
+        var tips = GraphMetaStore.ReadTips(_repo.Path);
+        Assert.NotNull(tips);
+        Assert.NotEmpty(tips);
+    }
+
+    [Fact]
+    public async Task A_spool_reaching_exhaustion_records_a_nonzero_full_walk_time()
+    {
+        var svc = await DiskBackedServiceAsync();
+        await using var ctx = _host.Open(_repo.Path);
+
+        await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None);
+
+        var hdrPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.HdrExt);
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(hdrPath));
+        Assert.True(doc.RootElement.GetProperty("LastFullWalkMs").GetInt64() > 0);
+    }
+
+    // ── Phase 5 (M5.1): the guarded splice's live trigger ──
+
+    [Fact]
+    public async Task Splice_setting_off_still_takes_the_ordinary_reorder_path()
+    {
+        var spliceCalls = 0;
+        GraphLayoutService.TestSpliceCommitted = (_, _) => spliceCalls++;
+        try
+        {
+            var svc = await DiskBackedServiceAsync();
+            await using (var ctx = _host.Open(_repo.Path))
+                await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None);
+
+            _repo.Checkout("feature", create: true);
+            _repo.WriteFile("f.txt", "feature 1\n").Stage().Commit("feature commit 1");
+
+            await using (var ctx2 = _host.Open(_repo.Path))
+                await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None);
+
+            Assert.Equal(0, spliceCalls);
+            var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+            Assert.True(probe.OrderVersion > 0, "expected the ordinary reorder to have run");
+        }
+        finally
+        {
+            GraphLayoutService.TestSpliceCommitted = null;
+        }
+    }
+
+    [Fact]
+    public async Task Splice_setting_on_with_lowered_thresholds_takes_the_splice_path_and_matches_a_fresh_walk()
+    {
+        // The real CLI engine (a live git.exe) is required — GraphMetaSplice's live trigger runs
+        // GitLogStream (added commits) and `git rev-list --stdin` (removed commits) for real.
+        var locator = _host.Provider.GetRequiredService<IGitExecutableLocator>();
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var svc = new GraphLayoutService(_host.Settings, locator, cli);
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true, EnableGraphSplice = true });
+
+        GraphLayoutService.TestSpliceMinRowsOverride = CommitCount;
+        GraphLayoutService.TestSpliceFullWalkElapsedOverride = TimeSpan.FromMinutes(1);
+        var spliceCalls = new List<(int Added, int Removed)>();
+        GraphLayoutService.TestSpliceCommitted = (added, removed) => spliceCalls.Add((added, removed));
+        try
+        {
+            await using (var ctx = _host.Open(_repo.Path))
+                await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None);
+
+            _repo.Checkout("feature", create: true);
+            _repo.WriteFile("f.txt", "feature 1\n").Stage().Commit("feature commit 1");
+            _repo.WriteFile("f.txt", "feature 2\n").Stage().Commit("feature commit 2");
+
+            await using (var ctx2 = _host.Open(_repo.Path))
+                await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None);
+
+            var single = Assert.Single(spliceCalls);
+            Assert.Equal(2, single.Added);
+            Assert.Equal(0, single.Removed);
+
+            // Ground truth: a plain in-memory compute of the SAME (now-checked-out) history,
+            // through a separate disk-off service/context — same pattern as the reorder test
+            // above, so the splice's own foreground compute never touches the store being asserted.
+            await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
+            var memSvc = new GraphLayoutService(_host.Settings, locator);
+            await using var memCtx = _host.Open(_repo.Path);
+            var expected = await memSvc.ComputeLayoutAsync(memCtx, Q);
+            Assert.Equal(CommitCount + 2, expected.Layout.RowCount);
+
+            var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
+            Assert.True(probe.Ok);
+            Assert.True(probe.OrderVersion > 0, "expected the splice's order file to be in effect");
+            Assert.Equal(CommitCount + 2, probe.RowCount);
+
+            using var store = DiskCommitStore.Open(_repo.Path, probe.RowCount, probe.RecordCount, probe.OrderVersion);
+            Assert.Equal(CommitCount + 2, store.Count);
+            for (var i = 0; i < store.Count; i++)
+                Assert.Equal(expected.Layout.Commits[i].Id, store.ReadRaw(i).Id);
+        }
+        finally
+        {
+            GraphLayoutService.TestSpliceMinRowsOverride = null;
+            GraphLayoutService.TestSpliceFullWalkElapsedOverride = null;
+            GraphLayoutService.TestSpliceCommitted = null;
+        }
+    }
 }

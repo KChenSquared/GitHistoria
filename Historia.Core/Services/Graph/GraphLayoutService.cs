@@ -35,6 +35,29 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// (left null) outside tests.</summary>
     internal static Action<int>? TestReorderBatchObserved;
 
+    /// <summary>Phase 5 (M5.1) test seams: override <see cref="GraphMetaSplice.MinRowsToConsider"/>
+    /// / <see cref="GraphMetaSplice.MaxOldParentRow"/> for <see cref="TryHeadlessSpliceAsync"/> —
+    /// a real 200,000-row history isn't practical to build in a fixture test, so a test lowers
+    /// these to drive the live splice trigger at small scale. <c>null</c> (production default)
+    /// outside tests; a test that sets either must reset it to <c>null</c> when done, since both
+    /// are process-wide state.</summary>
+    internal static int? TestSpliceMinRowsOverride;
+    internal static int? TestSpliceMaxOldParentRowOverride;
+
+    /// <summary>Phase 5 (M5.1) test seam: substitutes for the header's real <c>LastFullWalkMs</c>
+    /// (guard 4's baseline) in <see cref="TryHeadlessSpliceAsync"/>. A tiny fixture repo's own
+    /// walk-from-row-0 time is itself only milliseconds, so the 25%-of-it budget guard 4 computes
+    /// from it is too tight to reliably clear real process-spawn variance on a test machine — this
+    /// lets a wiring test supply a realistic (large) baseline instead. <c>null</c> outside tests.</summary>
+    internal static TimeSpan? TestSpliceFullWalkElapsedOverride;
+
+    /// <summary>Phase 5 (M5.1) test seam: invoked with <c>(addedRecords, removedRecords)</c> right
+    /// after a splice actually commits — since a spliced header looks identical to a reorder's
+    /// (both produce <c>OrderVersion &gt; 0</c> with the right row/record counts), a test needs
+    /// this to tell "the splice path ran" apart from "it fell back to the ordinary reorder". Null
+    /// outside tests.</summary>
+    internal static Action<int, int>? TestSpliceCommitted;
+
     /// <summary>Minimum row-count growth between debounced <see cref="GraphWalkCache.Save"/>
     /// calls for the same cache (see <see cref="RepoCache.WalkCacheSavedRows"/>).</summary>
     private const int WalkCacheSaveStride = 5_000;
@@ -42,6 +65,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private readonly ISettingsService? _settings;
     private readonly IGitExecutableLocator? _locator;
     private readonly GraphBackgroundWriter? _backgroundWriter;
+
+    /// <summary>Phase 5 (M5.1): stored (not just forwarded to <see cref="GraphBackgroundWriter"/>)
+    /// so <see cref="TryHeadlessSpliceAsync"/> can run its own <c>git rev-list --stdin</c> delta
+    /// query directly. Null in every ctor except the two DI ones that receive one.</summary>
+    private readonly IGitCliService? _cli;
 
     /// <summary>v10 graph memory footprint plan, Phase 1: null in every ctor except the 4-arg DI
     /// one below — tests that don't pass a gate keep today's un-gated behaviour (an "always open"
@@ -82,6 +110,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     public GraphLayoutService(ISettingsService settings, IGitExecutableLocator locator, IGitCliService cli)
         : this(settings, locator)
     {
+        _cli = cli;
         _backgroundWriter = new GraphBackgroundWriter(cli, settings);
     }
 
@@ -91,6 +120,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     public GraphLayoutService(ISettingsService settings, IGitExecutableLocator locator, IGitCliService cli, IBackgroundWorkGate gate)
         : this(settings, locator)
     {
+        _cli = cli;
         _gate = gate;
         _backgroundWriter = new GraphBackgroundWriter(cli, settings, gate);
     }
@@ -468,7 +498,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// </para>
     /// </summary>
     private static SpillOutcome SpillRange(
-        RepoCache cache, string repoPath, bool includeRemotes, int from, int to, bool exhausted)
+        RepoCache cache, string repoPath, bool includeRemotes, int from, int to, bool exhausted,
+        TimeSpan? fullWalkElapsed = null, IReadOnlyList<ObjectId>? sortedTips = null)
     {
         if (to <= from)
             return SpillOutcome.Appended;
@@ -482,7 +513,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
         cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, includeRemotes, cache.Engine);
 
-        var (outcome, rowCount) = cache.MetaWriter.AppendSpillBatch(snap, from, to, exhausted);
+        var (outcome, rowCount) = cache.MetaWriter.AppendSpillBatch(snap, from, to, exhausted, fullWalkElapsed, sortedTips);
         switch (outcome)
         {
             case SpillOutcome.Conflict:
@@ -826,9 +857,159 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // concurrent foreground reader to protect, which is exactly why this headless pipeline —
         // not the active tab's gate/spill loop — is where Phase 3c's live trigger lands.
         if (!probe.Current.Ok && probe.Existing is { Ok: true, Exhausted: true } && !deadRecordsTooHigh)
+        {
+            // Phase 5 (M5.1, finding #16): try the guarded splice first when the setting is on —
+            // it falls back to false on ANY guard rejection or query/write failure, in which case
+            // the ordinary reorder below is always correct, just potentially slower.
+            if (_settings?.Current.EnableGraphSplice == true)
+            {
+                var splicedRows = await TryHeadlessSpliceAsync(
+                    context, query, repoPath, probe.Tips, probe.WalkKey, probe.Existing, ct).ConfigureAwait(false);
+                if (splicedRows >= 0)
+                {
+                    _backgroundWriter?.MaybeSchedule(context, splicedRows);
+                    return;
+                }
+            }
             await RunHeadlessReorderAsync(context, query, repoPath, probe.Tips, probe.WalkKey, ct).ConfigureAwait(false);
+        }
         else
-            await RunHeadlessSpoolAsync(context, query, ct).ConfigureAwait(false);
+            await RunHeadlessSpoolAsync(context, query, probe.Tips, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Phase 5 (M5.1, finding #16): the live trigger for <see cref="GraphMetaSplice"/> — brings an
+    /// exhausted store whose walk key has moved (a fetch, a new branch) up to date by splicing in
+    /// just the added/removed commits instead of a full re-walk, when every guard passes. Returns
+    /// the new row count on success, or <c>-1</c> on any guard rejection, missing git/CLI
+    /// availability, or query/write failure — the caller falls back to
+    /// <see cref="RunHeadlessReorderAsync"/> in every <c>-1</c> case, so a failure here is never a
+    /// correctness problem, only a missed optimization.
+    /// </summary>
+    private async Task<int> TryHeadlessSpliceAsync(
+        RepositoryContext context, GraphQuery query, string repoPath, string[] newSortedTips, long newWalkKey,
+        (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) oldProbe,
+        CancellationToken ct)
+    {
+        if (_locator is null || _cli is null || !_cli.IsGitAvailable)
+            return -1;
+        // Guard 3's threshold, checked up front — no point running two git processes on a history
+        // too small for splicing to ever pay off.
+        var minRowsToConsider = TestSpliceMinRowsOverride ?? GraphMetaSplice.MinRowsToConsider;
+        if (oldProbe.RowCount < minRowsToConsider)
+            return -1;
+
+        // Guard 1: a store with no `.meta.tips` (never reordered/spooled-to-exhaustion since Phase
+        // 5 started recording them) has nothing reliable to splice from.
+        var oldTips = GraphMetaStore.ReadTips(repoPath);
+        if (oldTips is not { Count: > 0 })
+            return -1;
+        var oldTipShas = oldTips.Select(t => t.Sha).ToArray();
+
+        // Guard 2 (simplified, same scope cut as GraphMetaSplice's own doc comment): only the
+        // CURRENT shallow state is checked, not "unchanged since the old order was built".
+        var repoIsShallow = File.Exists(Path.Combine(context.GitDirectory, "shallow"));
+
+        try
+        {
+            // "Added": GitLogStream fed the new tips plus the old tips as exclusions (`^sha`) —
+            // git's own stdin revision syntax for `git log --stdin`, same as an argv `^rev`.
+            var addedArgs = newSortedTips.Concat(oldTipShas.Select(sha => "^" + sha)).ToArray();
+            var addedCommits = new List<RawCommit>();
+            var addedSw = Stopwatch.StartNew();
+            using (var stream = GitLogStream.TryStart(_locator, repoPath, addedArgs, context.ActiveProfile))
+            {
+                if (stream is null)
+                    return -1;
+                while (stream.MoveNext())
+                {
+                    ct.ThrowIfCancellationRequested();
+                    addedCommits.Add(stream.Current);
+                }
+                if (stream.Failed)
+                    return -1;
+            }
+            addedSw.Stop();
+
+            // "Removed": plain `git rev-list --stdin` fed the old tips plus the new tips as
+            // exclusions — commits reachable from the old tips but not the new ones.
+            var removedStdin = string.Join('\n', oldTipShas.Concat(newSortedTips.Select(sha => "^" + sha))) + "\n";
+            var removedSw = Stopwatch.StartNew();
+            var removedResult = await _cli.RunAsync(new GitCliRequest
+            {
+                Arguments = ["rev-list", "--stdin"],
+                WorkingDirectory = repoPath,
+                StandardInput = removedStdin,
+                Timeout = TimeSpan.FromSeconds(30),
+            }, ct).ConfigureAwait(false);
+            removedSw.Stop();
+            if (!removedResult.IsSuccess)
+                return -1;
+            var removedShas = removedResult.StandardOutput.Split(
+                '\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            using var oldStore = DiskCommitStore.Open(repoPath, oldProbe.RowCount, oldProbe.RecordCount, oldProbe.OrderVersion);
+            var shaIndex = oldStore.BuildShaIndex();
+
+            var removedRecords = new HashSet<int>();
+            foreach (var sha in removedShas)
+                if (shaIndex.TryGetValue(new ObjectId(sha), out var rec))
+                    removedRecords.Add(rec);
+
+            // Guard 5 only ever cares about an added commit's OLD parent sitting within the top
+            // MaxOldParentRow rows — no need to index the whole (possibly multi-million-row) store.
+            var maxOldParentRow = TestSpliceMaxOldParentRowOverride ?? GraphMetaSplice.MaxOldParentRow;
+            var capRows = Math.Min(oldProbe.RowCount, maxOldParentRow);
+            var existingRecordRow = new Dictionary<string, int>(capRows);
+            for (var row = 0; row < capRows; row++)
+                existingRecordRow[oldStore[row].Id.Sha] = row;
+
+            var guard = GraphMetaSplice.Evaluate(
+                storeExhausted: oldProbe.Exhausted,
+                oldTipsMatch: true,
+                repoIsShallow: repoIsShallow,
+                oldRowCount: oldProbe.RowCount,
+                addedQueryElapsed: addedSw.Elapsed,
+                removedQueryElapsed: removedSw.Elapsed,
+                lastFullWalkElapsed: TestSpliceFullWalkElapsedOverride ?? TimeSpan.FromMilliseconds(oldProbe.LastFullWalkMs),
+                addedCommits: addedCommits,
+                existingRecordRow: existingRecordRow,
+                minRowsToConsider: TestSpliceMinRowsOverride,
+                maxOldParentRow: TestSpliceMaxOldParentRowOverride);
+
+            if (!guard.Allowed)
+            {
+                Diagnostics.PerfLog.Mark($"graph splice rejected: {guard.Reason} ({repoPath})");
+                return -1;
+            }
+
+            var plan = GraphMetaSplice.Build(oldStore.ToOrderArray(), removedRecords, addedCommits, oldProbe.RecordCount);
+
+            var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches, ExpectedEngine(query));
+            if (plan.NewRecords.Count > 0 && !writer.AppendReorderBatch(plan.NewRecords, oldProbe.WalkKey))
+                return -1;
+
+            if (!writer.TryCommitReorder(
+                    oldProbe.WalkKey, oldProbe.Exhausted, oldProbe.OrderVersion, oldProbe.RecordCount,
+                    plan.NewRecords.Count, plan.Order, [.. newSortedTips.Select(sha => new ObjectId(sha))]))
+                return -1;
+
+            Diagnostics.PerfLog.Mark(
+                $"graph splice committed: +{plan.NewRecords.Count} new, -{removedRecords.Count}, {plan.Order.Length} rows ({repoPath})");
+            GraphMetaStore.DeleteSupersededOrderFiles(repoPath, currentVersion: oldProbe.OrderVersion + 1);
+            TestSpliceCommitted?.Invoke(plan.NewRecords.Count, removedRecords.Count);
+            return plan.Order.Length;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // A splice is an optimization over the ordinary reorder, never a correctness
+            // dependency — any unexpected failure just falls back.
+            return -1;
+        }
     }
 
     /// <summary>Phase 4: streams a walk into the on-disk store for an inactive tab, one batch at
@@ -837,10 +1018,20 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// no <see cref="RepoCache"/> ever added to <see cref="_caches"/> and no layout produced.
     /// Cancelling <paramref name="ct"/> stops at the next batch boundary; whatever was already
     /// spilled stays on disk.</summary>
-    private async Task RunHeadlessSpoolAsync(RepositoryContext context, GraphQuery query, CancellationToken ct)
+    private async Task RunHeadlessSpoolAsync(
+        RepositoryContext context, GraphQuery query, string[] sortedTips, CancellationToken ct)
     {
         var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
         var cache = new RepoCache { Scope = query.RefScope, IncludeRemotes = query.IncludeRemoteBranches };
+        // Phase 5 (M5.1): times this spool from the moment it starts pulling rows so a walk that
+        // reaches exhaustion having started at row 0 (a genuine full walk, not a resumed partial
+        // one — the ONLY case that stamp is meaningful for) can record GraphMetaSplice's guard-4
+        // baseline. Only the headless spool times itself this way (not the active tab's own
+        // foreground background spill or the extend-spill fallback) — a deliberate scope narrowing
+        // for M5.1: the splice trigger itself only ever runs from this headless pipeline (step 5),
+        // so only this path's timing is ever read back.
+        var walkStopwatch = Stopwatch.StartNew();
+        bool? fullWalkFromZero = null;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -866,8 +1057,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 lock (cache.SpillSync)
                 {
                     lock (cache) { from = cache.SpilledRows; to = cache.SpilledRows + cache.Commits.Count; }
+                    fullWalkFromZero ??= from == 0;
+                    var fullWalkElapsed = walkDone && fullWalkFromZero == true ? walkStopwatch.Elapsed : (TimeSpan?)null;
+                    var tipsForCommit = walkDone ? sortedTips.Select(sha => new ObjectId(sha)).ToArray() : null;
                     if (to > from
-                        && SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to, exhausted: walkDone)
+                        && SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to, exhausted: walkDone, fullWalkElapsed, tipsForCommit)
                             == SpillOutcome.Conflict)
                         conflicted = true;
                 }

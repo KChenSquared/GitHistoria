@@ -118,6 +118,15 @@ internal sealed class GraphMetaStore
         /// <summary>Phase 3c: which <c>.meta.order.&lt;n&gt;</c> file maps rows to records.
         /// <c>0</c> means identity — row <c>i</c> is record <c>i</c>, no order file exists.</summary>
         public int OrderVersion { get; set; }
+
+        /// <summary>Phase 5 (M5.1, finding #16): how long the most recent walk-from-row-0 to
+        /// exhaustion took, in milliseconds — <see cref="GraphMetaSplice.Evaluate"/>'s guard 4
+        /// budget. <c>0</c> (the default for every store written before this field existed, or one
+        /// whose disk cache was wiped) means "unknown", which guard 4 FAILS CLOSED on rather than
+        /// skipping the check — see that method's doc comment. Additive field: an older reader
+        /// ignores it (unknown JSON members are ignored by <c>System.Text.Json</c> by default), so
+        /// no <see cref="Version"/> bump.</summary>
+        public long LastFullWalkMs { get; set; }
     }
 
     /// <summary>
@@ -210,23 +219,49 @@ internal sealed class GraphMetaStore
     /// apart from "a store exists, but its walk key has moved" (a reorder opportunity, Phase 3c)
     /// without needing to know the current walk key up front.
     /// </summary>
-    public static (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted) ProbeExisting(
+    public static (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) ProbeExisting(
         string repoPath, bool includeRemoteBranches, WalkEngine engine)
     {
         try
         {
             var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
             if (!File.Exists(hdrPath))
-                return (false, 0, 0, 0, 0, false);
+                return (false, 0, 0, 0, 0, false, 0);
             var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
                 || (WalkEngine)hdr.WalkEngine != engine)
-                return (false, 0, 0, 0, 0, false);
-            return (true, hdr.Fingerprint, hdr.RowCount, hdr.RecordCount, hdr.OrderVersion, hdr.Exhausted);
+                return (false, 0, 0, 0, 0, false, 0);
+            return (true, hdr.Fingerprint, hdr.RowCount, hdr.RecordCount, hdr.OrderVersion, hdr.Exhausted, hdr.LastFullWalkMs);
         }
         catch
         {
-            return (false, 0, 0, 0, 0, false);
+            return (false, 0, 0, 0, 0, false, 0);
+        }
+    }
+
+    /// <summary>Phase 5 (M5.1): reads the sorted tip SHAs the CURRENT order was built from —
+    /// <c>.meta.tips</c>, written by <see cref="GraphMetaWriter.WriteTips"/>. Returns null if the
+    /// file is missing (a store that has never had its order committed with a known tip set — a
+    /// never-reordered store, or one from before Phase 3c) or unreadable; <see
+    /// cref="GraphMetaSplice.Evaluate"/>'s guard 1 treats that as "tips don't match" (reject).</summary>
+    public static IReadOnlyList<ObjectId>? ReadTips(string repoPath)
+    {
+        try
+        {
+            var path = GraphCachePaths.File(repoPath, TipsExt);
+            if (!File.Exists(path))
+                return null;
+            var bytes = File.ReadAllBytes(path);
+            if (bytes.Length % 20 != 0)
+                return null;
+            var tips = new ObjectId[bytes.Length / 20];
+            for (var i = 0; i < tips.Length; i++)
+                tips[i] = new ObjectId(bytes.AsSpan(i * 20, 20).ToArray());
+            return tips;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -382,9 +417,13 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
 
     /// <summary>Rewrites the header for the IDENTITY order — row <c>i</c> is record <c>i</c>,
     /// <c>RecordCount == rowCount</c>, no order file. Call after the matching
-    /// <see cref="Append"/>(s). This is every writer before Phase 3c's reorder ever runs.</summary>
-    public void Commit(int rowCount, bool exhausted) =>
-        WriteHeader(rowCount, recordCount: rowCount, orderVersion: 0, exhausted);
+    /// <see cref="Append"/>(s). This is every writer before Phase 3c's reorder ever runs.
+    /// <paramref name="fullWalkElapsed"/> (Phase 5, M5.1): pass the wall time of a walk that
+    /// started at row 0 and just reached <paramref name="exhausted"/> — recorded as the header's
+    /// <c>LastFullWalkMs</c>. <c>null</c> (every other call — a mid-walk batch, or a resumed
+    /// partial walk) leaves whatever value is already on disk untouched.</summary>
+    public void Commit(int rowCount, bool exhausted, TimeSpan? fullWalkElapsed = null) =>
+        WriteHeader(rowCount, recordCount: rowCount, orderVersion: 0, exhausted, fullWalkElapsed);
 
     /// <summary>Phase 3c: rewrites the header to point at a new order version, after
     /// <see cref="WriteOrder"/> has written it and any genuinely-new commits have already been
@@ -394,13 +433,20 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// <see cref="WriteOrder"/> and <see cref="WriteTips"/> — this is the atomic switch-over: a
     /// reader that opened the store under the old header keeps reading the old order until it
     /// reopens.</summary>
+    /// <summary>Phase 5 (M5.1): never re-times a reorder's own re-walk here — carries whatever
+    /// <c>LastFullWalkMs</c> the OLD header already had forward unchanged (via
+    /// <see cref="WriteHeader"/>'s <c>fullWalkElapsed: null</c>), so a store's guard-4 baseline
+    /// survives every reorder until a fresh from-row-0 spool times a real one.</summary>
     public void CommitReorder(int rowCount, int recordCount, int orderVersion, bool exhausted) =>
-        WriteHeader(rowCount, recordCount, orderVersion, exhausted);
+        WriteHeader(rowCount, recordCount, orderVersion, exhausted, fullWalkElapsed: null);
 
-    private void WriteHeader(int rowCount, int recordCount, int orderVersion, bool exhausted)
+    private void WriteHeader(int rowCount, int recordCount, int orderVersion, bool exhausted, TimeSpan? fullWalkElapsed)
     {
         try
         {
+            var lastFullWalkMs = fullWalkElapsed is { } elapsed && elapsed > TimeSpan.Zero
+                ? (long)elapsed.TotalMilliseconds
+                : ReadCurrentLastFullWalkMs();
             var hdr = new GraphMetaStore.Header
             {
                 Version = GraphMetaStore.Version,
@@ -411,12 +457,34 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 OrderVersion = orderVersion,
                 Exhausted = exhausted,
                 WalkEngine = (int)engine,
+                LastFullWalkMs = lastFullWalkMs,
             };
             var tmp = $"{_hdr}.{Guid.NewGuid():N}.tmp";
             File.WriteAllBytes(tmp, JsonSerializer.SerializeToUtf8Bytes(hdr, GraphMetaStore.Json));
             File.Move(tmp, _hdr, overwrite: true);
         }
         catch { }
+    }
+
+    /// <summary>Reads <c>LastFullWalkMs</c> off whatever header is currently on disk for THIS
+    /// writer's own fingerprint — 0 if absent, unreadable, or written under a different walk key
+    /// (a fresh walk key has no baseline of its own yet). Called under
+    /// <see cref="GraphCacheLocks"/> by every <see cref="WriteHeader"/> call that isn't itself
+    /// recording a fresh timing, so the field survives every ordinary header rewrite (a mid-walk
+    /// spill batch, a reorder) instead of silently resetting to 0.</summary>
+    private long ReadCurrentLastFullWalkMs()
+    {
+        try
+        {
+            if (!File.Exists(_hdr))
+                return 0;
+            var existing = JsonSerializer.Deserialize<GraphMetaStore.Header>(File.ReadAllBytes(_hdr), GraphMetaStore.Json);
+            return existing is not null && existing.Fingerprint == fingerprint ? existing.LastFullWalkMs : 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     /// <summary>Phase 3c: writes a new, versioned row -&gt; record order file. Doesn't touch the
@@ -490,7 +558,9 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// and <paramref name="to"/>: a gap — <see cref="SpillOutcome.Conflict"/>.</item>
     /// </list>
     /// </summary>
-    public (SpillOutcome Outcome, int RowCount) AppendSpillBatch(IReadOnlyList<RawCommit> rows, int from, int to, bool exhausted)
+    public (SpillOutcome Outcome, int RowCount) AppendSpillBatch(
+        IReadOnlyList<RawCommit> rows, int from, int to, bool exhausted,
+        TimeSpan? fullWalkElapsed = null, IReadOnlyList<ObjectId>? sortedTips = null)
     {
         lock (GraphCacheLocks.For(repoPath))
         {
@@ -513,7 +583,14 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             }
 
             Append(rows, 0, to - from);
-            Commit(to, exhausted);
+            Commit(to, exhausted, fullWalkElapsed);
+            // Phase 5 (M5.1, finding #16): without this, a store's tips are only ever written by
+            // a REORDER (TryCommitReorder) — a never-reordered store (the common case for a repo
+            // opened once and never re-walked since) would have no `.meta.tips` at all, so guard 1
+            // could never pass for it. Writing tips here too, the first time a plain spill reaches
+            // exhaustion, gives every exhausted store a valid tip set to splice from later.
+            if (exhausted && sortedTips is { Count: > 0 })
+                WriteTips(sortedTips);
             return (SpillOutcome.Appended, to);
         }
     }
@@ -720,6 +797,13 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     /// <summary>Row <paramref name="row"/>'s record index — identity unless an order file is
     /// loaded.</summary>
     private int RecordOf(int row) => _order is null ? row : _order[row];
+
+    /// <summary>Phase 5 (M5.1): the full row -&gt; record order this store was opened with, as a
+    /// fresh array (safe for a caller to hand to <see cref="GraphMetaSplice.Build"/>, which never
+    /// mutates <see cref="_order"/> in place — see that field's own doc comment on why a reorder
+    /// always opens a freshly-loaded store instead). Identity (<c>row == record</c>) when this
+    /// store has no order file (<c>OrderVersion</c> 0).</summary>
+    public int[] ToOrderArray() => _order is not null ? [.. _order] : [.. Enumerable.Range(0, _count)];
 
     /// <summary>Phase 3c: builds a SHA -&gt; record-index table by reading just the leading
     /// 20-byte SHA of every existing record (skips message/author/parent bytes entirely) — used

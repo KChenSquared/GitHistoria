@@ -55,12 +55,21 @@ internal static class GraphMetaSplice
     /// <param name="addedQueryElapsed">Wall time of the "added" delta query.</param>
     /// <param name="removedQueryElapsed">Wall time of the "removed" delta query.</param>
     /// <param name="lastFullWalkElapsed">Guard 4: how long a full walk of this repo last took —
-    /// supplied by the caller (not persisted in the header; a scope cut from the plan's exact
-    /// recipe, which stores it there).</param>
+    /// supplied by the caller (Phase 5 (M5.1): read from the header's <c>LastFullWalkMs</c>,
+    /// recorded whenever a walk from row 0 reaches exhaustion). <c>&lt;= TimeSpan.Zero</c> (never
+    /// recorded, e.g. a store from before this field existed, or a repo whose disk cache was
+    /// wiped) FAILS CLOSED — finding #16 flagged the opposite (skipping the check entirely) as a
+    /// bug: an unknown baseline must never be treated as "no budget", since that would let an
+    /// arbitrarily slow delta query through unchecked.</param>
     /// <param name="addedCommits">The new commits, in the new walk's topo order (nearest tips
     /// first).</param>
     /// <param name="existingRecordRow">SHA → the OLD order's row for every commit already
     /// recorded (the inverse of the old order, restricted to SHAs actually referenced by it).</param>
+    /// <param name="minRowsToConsider">Guard 3's threshold — defaults to <see cref="MinRowsToConsider"/>.
+    /// Overridable (Phase 5 (M5.1) step 6) so an automated fixture test can drive the wiring at a
+    /// small scale a real 200,000-row history would make impractical to build in a test.</param>
+    /// <param name="maxOldParentRow">Guard 5's threshold — defaults to <see cref="MaxOldParentRow"/>,
+    /// overridable for the same reason.</param>
     internal static GuardResult Evaluate(
         bool storeExhausted,
         bool oldTipsMatch,
@@ -70,7 +79,9 @@ internal static class GraphMetaSplice
         TimeSpan removedQueryElapsed,
         TimeSpan lastFullWalkElapsed,
         IReadOnlyList<RawCommit> addedCommits,
-        IReadOnlyDictionary<string, int> existingRecordRow)
+        IReadOnlyDictionary<string, int> existingRecordRow,
+        int? minRowsToConsider = null,
+        int? maxOldParentRow = null)
     {
         if (!storeExhausted)
             return GuardResult.Reject("store not exhausted");
@@ -78,20 +89,20 @@ internal static class GraphMetaSplice
             return GuardResult.Reject(".meta.tips does not match the old order's tip set");
         if (repoIsShallow)
             return GuardResult.Reject("repo is shallow");
-        if (oldRowCount < MinRowsToConsider)
-            return GuardResult.Reject($"history too small ({oldRowCount} < {MinRowsToConsider})");
+        if (oldRowCount < (minRowsToConsider ?? MinRowsToConsider))
+            return GuardResult.Reject($"history too small ({oldRowCount} < {minRowsToConsider ?? MinRowsToConsider})");
 
-        if (lastFullWalkElapsed > TimeSpan.Zero)
-        {
-            var budget = lastFullWalkElapsed * MaxDeltaFractionOfFullWalk;
-            if (addedQueryElapsed > budget || removedQueryElapsed > budget)
-                return GuardResult.Reject("delta query exceeded the time budget");
-        }
+        if (lastFullWalkElapsed <= TimeSpan.Zero)
+            return GuardResult.Reject("last full-walk time is unknown");
+        var budget = lastFullWalkElapsed * MaxDeltaFractionOfFullWalk;
+        if (addedQueryElapsed > budget || removedQueryElapsed > budget)
+            return GuardResult.Reject("delta query exceeded the time budget");
 
+        var oldParentLimit = maxOldParentRow ?? MaxOldParentRow;
         foreach (var commit in addedCommits)
             foreach (var parent in commit.ParentIds)
-                if (existingRecordRow.TryGetValue(parent.Sha, out var oldRow) && oldRow >= MaxOldParentRow)
-                    return GuardResult.Reject($"an added commit's old parent sits at row {oldRow} >= {MaxOldParentRow}");
+                if (existingRecordRow.TryGetValue(parent.Sha, out var oldRow) && oldRow >= oldParentLimit)
+                    return GuardResult.Reject($"an added commit's old parent sits at row {oldRow} >= {oldParentLimit}");
 
         return GuardResult.Ok();
     }

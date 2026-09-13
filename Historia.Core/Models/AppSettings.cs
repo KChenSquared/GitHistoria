@@ -138,6 +138,17 @@ public sealed record AppSettings
     public bool WriteCommitGraphForLargeRepos { get; init; } = true;
 
     /// <summary>
+    /// 2026-09-12 memoryshrink review, finding #16: when on, a large (200,000+ row), exhausted
+    /// on-disk graph store whose walk key has moved (a fetch, a new branch) is brought up to date
+    /// by splicing in just the added/removed commits (<see cref="Historia.Services.Graph.GraphMetaSplice"/>)
+    /// instead of a full re-walk, when every guard passes — falling back to the ordinary reorder
+    /// otherwise. Off by default: experimental, and only pays off on histories large enough that a
+    /// full re-walk is itself expensive. Read once at startup — a change takes effect on the next
+    /// launch of Historia.
+    /// </summary>
+    public bool EnableGraphSplice { get; init; }
+
+    /// <summary>
     /// v10.1.3: how many rows the graph's silent background crawler (§V10.1.2) pre-loads into
     /// the resident layout before stopping, so scrolling stays responsive without loading the
     /// full history's worth of rows up front. Deeper history still loads on scroll and reaches

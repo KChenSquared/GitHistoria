@@ -103,12 +103,22 @@ public sealed class GraphMetaSpliceTests
     }
 
     [Fact]
-    public void Guard4_is_skipped_when_no_full_walk_time_is_known()
+    public void Guard4_fails_closed_when_no_full_walk_time_is_known()
     {
-        // A caller with no recorded baseline (e.g. first session) can't apply a fraction of
-        // nothing — the guard should not reject on that basis alone.
-        var result = EvaluateDefaults(addedElapsed: TimeSpan.FromMinutes(5), fullWalkElapsed: TimeSpan.Zero);
-        Assert.True(result.Allowed);
+        // 2026-09-12 memoryshrink review, finding #16: an unknown baseline (no recorded
+        // LastFullWalkMs — a store from before this field existed, or a wiped disk cache) used to
+        // let a delta query of ANY length through unchecked ("skip the check, allow the splice").
+        // Fixed to reject instead — even a fast delta query must not pass without a real budget to
+        // compare against.
+        var result = EvaluateDefaults(addedElapsed: TimeSpan.FromMilliseconds(1), fullWalkElapsed: TimeSpan.Zero);
+        Assert.False(result.Allowed);
+    }
+
+    [Fact]
+    public void Guard4_also_fails_closed_on_a_negative_full_walk_time()
+    {
+        var result = EvaluateDefaults(fullWalkElapsed: TimeSpan.FromMilliseconds(-1));
+        Assert.False(result.Allowed);
     }
 
     [Fact]
@@ -141,6 +151,31 @@ public sealed class GraphMetaSpliceTests
         var added = new List<RawCommit> { Commit(101, 100), Commit(100) };
         var result = EvaluateDefaults(addedCommits: added, existingRecordRow: new Dictionary<string, int>());
         Assert.True(result.Allowed);
+    }
+
+    [Fact]
+    public void Guard3_threshold_is_overridable_for_small_scale_fixture_tests()
+    {
+        // Phase 5 (M5.1) step 6: a real 200,000-row history isn't practical to build in a test —
+        // Evaluate's threshold parameters let a fixture drive the wiring at a small scale instead.
+        var result = GraphMetaSplice.Evaluate(
+            storeExhausted: true, oldTipsMatch: true, repoIsShallow: false, oldRowCount: 20,
+            FastQuery, FastQuery, FullWalkTime, [], new Dictionary<string, int>(),
+            minRowsToConsider: 20);
+        Assert.True(result.Allowed);
+    }
+
+    [Fact]
+    public void Guard5_threshold_is_overridable_for_small_scale_fixture_tests()
+    {
+        var added = new List<RawCommit> { Commit(100, 5) };
+        var existingRow = new Dictionary<string, int> { [Oid(5).Sha] = 3 };
+
+        var result = GraphMetaSplice.Evaluate(
+            storeExhausted: true, oldTipsMatch: true, repoIsShallow: false, oldRowCount: 300_000,
+            FastQuery, FastQuery, FullWalkTime, added, existingRow,
+            maxOldParentRow: 2);
+        Assert.False(result.Allowed);
     }
 
     // ── Build: the splice construction itself ──
