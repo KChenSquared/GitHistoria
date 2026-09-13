@@ -2076,8 +2076,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
             {
                 if (DirectTargetId(r) is not { } immediate)
                     continue;
-                var id = repo.Lookup<Commit>(immediate)?.Id ?? immediate;
-                Get(id, Family.Tag, name["refs/tags/".Length..]);
+                var id = repo.Lookup<Commit>(immediate)?.Id;
+                if (id is null)
+                {
+                    try { id = repo.Lookup(immediate)?.Peel<Commit>()?.Id; }
+                    catch { id = null; }
+                }
+                if (id is not null)
+                    Get(id, Family.Tag, name["refs/tags/".Length..]);
             }
         }
 
