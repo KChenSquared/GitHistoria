@@ -184,11 +184,11 @@ public sealed class ProfilesView : UserControl, IDisposable
     /// <c>~/.gitconfig</c>, so it is gated by a warning before the editor even opens.</summary>
     private async Task BeginEditAsync(GitProfile p)
     {
-        if (p.IsGlobal && !await _dialogs.ConfirmAsync(
+        if (p.IsGlobal && !await _dialogs.ConfirmDestructiveAsync(
             "Edit the global Git identity?",
             "Editing the global profile changes your machine-wide Git identity in ~/.gitconfig. "
             + "This affects every Git tool on this machine, not just Historia.",
-            destructive: true, "Continue", defaultToCancel: true, icon: DialogIcon.Warning))
+            "Continue"))
             return;
         _editing = p.Id;
         Rebuild();
@@ -200,10 +200,10 @@ public sealed class ProfilesView : UserControl, IDisposable
         {
             if (existing is { IsGlobal: true })
             {
-                if (!await _dialogs.ConfirmAsync(
+                if (!await _dialogs.ConfirmDestructiveAsync(
                     "Write to ~/.gitconfig?",
                     $"Write {user.Trim()} <{email.Trim()}> to ~/.gitconfig now? This affects all Git tools.",
-                    destructive: true, "Write", defaultToCancel: true, icon: DialogIcon.Warning))
+                    "Write"))
                     return;
 
                 var cli = _sp.GetRequiredService<Historia.Services.Git.IGitCliService>();
@@ -258,9 +258,9 @@ public sealed class ProfilesView : UserControl, IDisposable
     private async Task GenerateKeyAsync(GitProfile? existing, string email, Action refresh)
     {
         if (existing is null) return;
-        if (!await _dialogs.ConfirmAsync("Generate SSH key",
-                "Generate a new ed25519 key for this profile? Any existing Historia-managed key for it is replaced. The key has no passphrase.",
-                destructive: false, "Generate"))
+        if (!await _dialogs.ConfirmDestructiveAsync("Generate SSH key",
+                "Generate a new ed25519 key for this profile? Any existing Historia-managed key for it is replaced and cannot be recovered. The key has no passphrase.",
+                "Generate"))
             return;
         try
         {
@@ -367,8 +367,8 @@ public sealed class ProfilesView : UserControl, IDisposable
 
     private async Task DeleteProfileAsync(GitProfile p)
     {
-        if (!await _dialogs.ConfirmAsync("Delete profile",
-            $"Delete '{p.DisplayName}'? Its stored tokens and repository selections are removed.", destructive: true, "Delete"))
+        if (!await _dialogs.ConfirmDestructiveAsync("Delete profile",
+            $"Delete '{p.DisplayName}'? Its stored tokens and repository selections are removed.", "Delete"))
             return;
         var result = await _profiles.DeleteProfileAsync(p.Id);
         _notifications.Publish(NotificationSeverity.Info, result switch

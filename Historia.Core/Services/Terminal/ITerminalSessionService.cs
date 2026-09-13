@@ -35,8 +35,10 @@ public interface ITerminalSessionService
     Task CloseAsync(Guid sessionId);
 
     /// <summary>Called by <c>WorkspaceService</c> when a repository tab closes (V5 §3.3), so a
-    /// closed repo does not leave an orphaned shell holding a directory handle open.</summary>
-    Task CloseForRepositoryAsync(RepoIdentityKey key);
+    /// closed tab does not leave an orphaned shell holding a directory handle open.
+    /// <paramref name="tabId"/> is the closing <c>RepositoryContext.Id</c>; only that tab's
+    /// session is killed — a second tab open on the same repository keeps its shell.</summary>
+    Task CloseForTabAsync(string tabId);
 
     event EventHandler? SessionsChanged;
     event EventHandler? FocusedSessionChanged;

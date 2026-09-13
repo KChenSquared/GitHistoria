@@ -567,7 +567,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private async Task DiscardAsync(FileStatusEntry f)
     {
-        if (!await _dialogs.ConfirmAsync("Discard changes", $"Discard all changes to '{f.Path}'?", destructive: true, "Discard"))
+        if (!await _dialogs.ConfirmDestructiveAsync("Discard changes", $"Discard all changes to '{f.Path}'? This cannot be undone.", "Discard"))
             return;
         _checkedChanges.Remove(f.Path);
         _checkedStaged.Remove(f.Path);
@@ -588,11 +588,10 @@ public sealed class StagingPanelView : UserControl, IDisposable
     {
         var paths = _status.Unstaged.Concat(_status.Untracked).Select(f => f.Path).ToList();
         if (paths.Count == 0) return;
-        if (!await _dialogs.ConfirmAsync(
+        if (!await _dialogs.ConfirmDestructiveAsync(
             "Discard all changes",
             "Discard all unstaged changes? Untracked files are moved to the recycle bin; "
             + "changes to tracked files cannot be undone.",
-            destructive: true,
             "Discard all"))
             return;
         _checkedChanges.Clear();
@@ -648,6 +647,23 @@ public sealed class StagingPanelView : UserControl, IDisposable
             _notifications.Publish(NotificationSeverity.Warning, "Stage changes and enter a message before committing.");
             return;
         }
+        // #22 (Rule 00): amending a commit that's already on its upstream (as of the last
+        // fetch) rewrites published history — pushing it afterwards needs a force push. An
+        // unpushed commit's amend doesn't touch anything else and needs no prompt.
+        if (_amend.IsChecked == true)
+        {
+            var upstream = _ctx.State.CurrentBranch?.UpstreamName;
+            if (upstream is not null && _status.AheadBy == 0)
+            {
+                var headSha = _ctx.State.CurrentBranch?.TipCommitId?.Sha;
+                var shortSha = headSha is { Length: >= 7 } ? headSha[..7] : headSha ?? "HEAD";
+                if (!await _dialogs.ConfirmDestructiveAsync("Amend a pushed commit",
+                        $"Amend {shortSha}, which is already on {upstream}? This rewrites " +
+                        "published history; pushing it afterwards needs a force push.", "Amend"))
+                    return;
+            }
+        }
+
         _committing = true;
         try
         {

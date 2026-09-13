@@ -106,6 +106,27 @@ public class GraphColumnLayoutTests
     }
 
     [Fact]
+    public void Pinned_Graph_width_is_clamped_to_the_lanes_in_use()
+    {
+        // §V3.1: a width pinned while a busy repo was open must not show as empty space after a
+        // refs change shrinks the layout. lanes 8 × lane 22 → natural max (8 + 1) × 22 = 198.
+        var cols = Defaults();
+        cols[1] = cols[1] with { Width = 900 };
+        var r = Resolve(cols, viewport: 2000, pinned: true, lanes: 8, lane: 22);
+        Assert.Equal(198, W(r, GraphColumnKind.Graph), 1);
+    }
+
+    [Fact]
+    public void Pinned_Graph_width_is_left_alone_before_the_first_layout_lands()
+    {
+        // totalLaneCount == 0: the pinned width is kept (floored only), not crushed while loading.
+        var cols = Defaults();
+        cols[1] = cols[1] with { Width = 900 };
+        var r = Resolve(cols, viewport: 2000, pinned: true, lanes: 0, lane: 22);
+        Assert.Equal(900, W(r, GraphColumnKind.Graph), 1);
+    }
+
+    [Fact]
     public void Custom_Graph_width_opts_out_of_the_sequence()
     {
         // §V6-G5: a pinned Graph width means the pre-v6 equal-rate co-grow runs instead — Graph

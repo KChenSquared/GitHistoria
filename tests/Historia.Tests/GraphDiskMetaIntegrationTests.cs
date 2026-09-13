@@ -54,6 +54,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
     {
         var svc = await DiskBackedServiceAsync();
         await using var ctx = _host.Open(_repo.Path);
+        ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone(); // no graph control / workspace here — stand in for the load signals
 
         // Small visible window — the rest must reach disk on its own.
         await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs }, maxRows: 5);
@@ -62,7 +63,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
         (bool Ok, int RowCount, bool Exhausted) probe = default;
         while (DateTime.UtcNow < deadline)
         {
-            probe = GraphMetaStore.Probe(_repo.Path, FingerprintOf(svc, ctx), includeRemoteBranches: true);
+            probe = GraphMetaStore.Probe(_repo.Path, FingerprintOf(svc, ctx), includeRemoteBranches: true, WalkEngine.LibGit2);
             if (probe is { Ok: true, Exhausted: true })
                 break;
             await Task.Delay(100);
@@ -97,6 +98,69 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
         var sha = store[3].Id.Sha;
         Assert.Equal(new[] { 3 }, store.Search(sha));
         Assert.Equal(new[] { 3 }, store.Search(sha[..10]));
+    }
+
+    [Fact]
+    public async Task TryOptimisticSnapshot_paints_from_the_meta_store_on_a_fresh_session()
+    {
+        var svc = await DiskBackedServiceAsync();
+        await using var ctx = _host.Open(_repo.Path);
+        ctx.MarkFirstGraphPaintDone();
+        ctx.MarkFirstFullLoadDone();
+
+        var full = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
+        Assert.Equal(CommitCount, full.Layout.RowCount);
+
+        // A fresh GraphLayoutService instance has no in-memory RepoCache for ctx at all — same
+        // shape as a new launch reopening the same path. The optimistic path must seed itself
+        // from the .meta store the compute above just spilled, not require a live walk.
+        var cold = new GraphLayoutService(_host.Settings);
+        var snapshot = cold.TryOptimisticSnapshot(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs }, maxRows: 5);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(5, snapshot!.Layout.RowCount);
+        Assert.Equal($"commit {CommitCount - 1:D2}", snapshot.Layout.Commits[0].MessageShort);
+    }
+
+    /// <summary>§Phase 3 (3b): the disk cache is keyed on the sorted tip SET, not on every ref +
+    /// HEAD. Checking out between two branches that both already existed (and so were both
+    /// already part of the walk's tip set) moves HEAD but changes neither the ref list nor the
+    /// walk key — the on-disk `.meta.*` files must not be rewritten.</summary>
+    [Fact]
+    public async Task Checkout_between_existing_branches_does_not_rewrite_the_disk_cache()
+    {
+        _repo.Checkout("feature", create: true);
+        _repo.WriteFile("f.txt", "feature work\n").Stage();
+        _repo.Commit("feature commit");
+        _repo.Checkout("main");
+
+        var svc = await DiskBackedServiceAsync();
+        await using var ctx = _host.Open(_repo.Path);
+        ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone();
+
+        await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
+
+        var datPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.DatExt);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline && !File.Exists(datPath))
+            await Task.Delay(50);
+        Assert.True(File.Exists(datPath));
+
+        // Let the background spill settle (its own header write) before taking the baseline.
+        await Task.Delay(500);
+        var before = File.GetLastWriteTimeUtc(datPath);
+        var beforeBytes = await File.ReadAllBytesAsync(datPath);
+
+        svc.Forget(ctx);
+        await using var ctx2 = _host.Open(_repo.Path);
+        _repo.Checkout("feature");
+        await svc.ComputeLayoutAsync(ctx2, new GraphQuery { RefScope = GraphRefScope.AllRefs });
+        await Task.Delay(500);
+
+        var after = File.GetLastWriteTimeUtc(datPath);
+        var afterBytes = await File.ReadAllBytesAsync(datPath);
+        Assert.Equal(before, after);
+        Assert.Equal(beforeBytes, afterBytes);
     }
 
     [Fact]

@@ -12,13 +12,79 @@ deliberately, say so in the PR and say why.
 
 ---
 
+## Rule 00 — Nothing destructive happens without the user saying yes
+
+> **Every action that destroys the user's work or irreversibly rewrites their history must be
+> gated behind an explicit confirmation the user actively accepts — a modal alert with a red
+> `triangle-alert`, naming the exact effect. No exceptions, no "just this once", no silent
+> path.**
+
+This is the number-one rule and it outranks every other rule in this document, **including Rule
+0**. If offline-first, performance, progressive disclosure, or a smoother workflow ever appears
+to need a confirmation skipped, they lose. Losing the user's uncommitted work or their commits
+is the one failure this app must never cause by its own hand.
+
+**00.1 — What counts as destructive.** Anything Git cannot cleanly undo, or that throws away
+uncommitted work:
+- discard / checkout-over working-tree changes, delete untracked files, `git clean`
+- hard reset, any reset that drops commits, branch or tag deletion (including `-D`
+  force-delete)
+- history rewrites: an interactive rebase that rewrites anything (drops, squashes, rewords,
+  reorders — the pick-only, unchanged-order fast path is the one exception), an amend that
+  rewrites a commit already on its upstream, `push --force*`
+- stash drop / clear, worktree removal, submodule deinit (deinitialises it, removes it from the
+  index and deletes its own `.git/modules/<name>` repository)
+- deleting a profile, a theme, a saved session; wiping Historia's local data
+- overwriting a shared external resource such as `~/.gitconfig`
+
+When it is arguable whether an action belongs here, it does. *(§I-6.9.1, §I-6.13, §I-6.15.1)*
+
+**00.2 — The confirmation is a modal alert, not a toast and not a one-click inline control.**
+It routes through `IDialogService.ConfirmDestructiveAsync` (or `ChooseAsync` with
+`DialogIcon.Warning`, when there are several remedies) — never the plain `ConfirmAsync`
+overload hand-rolled to look the same. The one entry point hard-wires:
+- the large red `triangle-alert` glyph;
+- naming the exact effect (the files, the branch, the commit count), never a bare "Are you
+  sure?";
+- **Cancel** as the primary (blue / accent) button *and* the keyboard default, so a reflexive
+  Enter or click lands on the safe choice;
+- **Cancel** as the **rightmost** button — Windows `[Action] [Cancel]` order. Primary styling
+  changes Cancel's colour, never its position;
+- the confirming button labelled with its verb ("Delete", "Discard", "Force push"), styled plain
+  or `danger` — never primary.
+
+**Exemption.** A `ChooseAsync` chooser may keep its ordinary (non-destructive) default and icon
+when its destructive option itself opens `ConfirmDestructiveAsync` before acting — the red
+treatment then lands on the dialog that actually performs the destructive step, not on the
+chooser that merely offers it. The push-rejection chooser (force-push vs. pull vs. cancel) is
+the current example.
+
+**00.3 — "Don't ask again this session" is the only permitted suppression.** It is
+per-session and per-operation-class, it is never the default, and it never persists to disk.
+There is no global "turn off confirmations" setting.
+
+**00.4 — Guard it with a test.** `DestructiveConfirmationTests` runs two checks: that no call
+site hand-rolls the destructive treatment on the plain `ConfirmAsync` overload (`destructive:
+true`, `defaultToCancel:`, `DialogIcon.Warning` outside the one entry point's own
+implementation), and a call-site guard scanning every listed destructive service call (submodule
+`RemoveAsync`, rebase `StartAsync`, `DiscardAsync`, `DeleteBranchAsync`, `DeleteTagAsync`, stash
+`DropAsync`/`ClearAsync`, worktree `RemoveAsync`, hard `ResetAsync`, force `PushAsync`) so it must
+sit in a method that also calls `ConfirmDestructiveAsync`, or be on an explicit, commented
+allowlist. `HistoriaApp.Tests.DestructiveConfirmDialogTests` guards the dialog builder itself —
+that Cancel gets the primary class while staying rightmost. A destructive call site with no
+confirm at all, or one that regresses to a bare confirm, fails the build. *(Rule 36.)*
+Implementation and the current call-site inventory:
+[`versionPlans/v10-destructive-action-confirmation-plan.md`](../Historia-DevDocs/versionPlans/v10-destructive-action-confirmation-plan.md).
+
+---
+
 ## Rule 0 — Offline first, always
 
 > **Historia must start and render completely, every time, on a machine with no network — from
 > what ships in the package, plus what the Windows platform itself already provides.**
 
-This is the primary rule because it is the one that fails silently: nothing crashes, the app
-just quietly reaches out. Everything below is subordinate to it.
+This is the first rule after Rule 00 because it is the one that fails silently: nothing
+crashes, the app just quietly reaches out. Everything below it is subordinate to it.
 
 **0.1 — No external assets.** No CDN fonts, icon fonts, stylesheets, scripts, or images. Every
    `url()`, `src`, and `href` in the UI resolves to a file in the package. *(§V2-10)*
@@ -87,7 +153,10 @@ just quietly reaches out. Everything below is subordinate to it.
     lease alone is trivially satisfiable after a background fetch. *(§I-6.13)*
 13. **Never auto-accept an unknown SSH host key.** *(§I-6.13)*
 14. **Destructive actions confirm, naming the exact files.** Discard, delete-untracked, hard
-    reset. The data is unrecoverable through Git. *(§I-6.9.1)*
+    reset. The data is unrecoverable through Git. This is the Git-specific instance of **Rule
+    00** — the general requirement and the dialog contract (red `triangle-alert`, Cancel
+    primary and rightmost, "Don't ask again this session" the only suppression) live there.
+    *(§I-6.9.1)*
 15. **Route commits through the CLI when hooks or signing are present.** LibGit2Sharp runs
     neither, and that discrepancy silently breaks `husky` and `pre-commit`. *(§I-6.9.2)*
 16. **Paths are repo-relative with forward slashes.** Convert only at the filesystem

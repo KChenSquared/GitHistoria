@@ -66,10 +66,6 @@ public readonly record struct GraphRow
     public required int ColorIndex { get; init; }
     public required int ParentCount { get; init; }
     public required RowFlags Flags { get; init; }
-    public int SegmentStart { get; init; }
-    public int SegmentCount { get; init; }
-    public int ElbowStart { get; init; }
-    public int ElbowCount { get; init; }
 }
 
 [Flags]
@@ -252,9 +248,35 @@ public sealed class ArrayCommitStore(CommitMetadata[] items) : ICommitStore
 /// </summary>
 public sealed class GraphLayout : IDisposable
 {
-    public required GraphRow[] Rows { get; init; }
-    public required RowLaneSegment[] Segments { get; init; }
-    public required RowElbow[] Elbows { get; init; }
+    /// <summary>Finding #9: a <see cref="RowCount"/>-bounded VIEW over <see cref="SourceState"/>'s
+    /// own chunked row accumulator — never a fresh array copy. Computed from <see
+    /// cref="SourceState"/>/<see cref="RowCount"/> (both set before this is ever read), so it
+    /// needs no initializer of its own. Indexer, <c>Count</c> and <c>Length</c> (source
+    /// compatibility with the plain array this replaced) are all safe to call at any time; see
+    /// <see cref="GraphRowsView"/>'s own doc comment for the concurrency contract.</summary>
+    public GraphRowsView Rows => new(SourceState, RowCount);
+
+    /// <summary>Phase 2: the shared, append-only accumulator that <see cref="DagLayoutEngine"/>
+    /// derives lines from on demand. Null only for a layout with no engine behind it (<see
+    /// cref="Empty"/>) — there are no rows to derive lines for either way.</summary>
+    internal GraphLayoutState? SourceState { get; init; }
+
+    /// <summary>How many of <see cref="SourceState"/>'s real edges existed when this snapshot
+    /// was built. Later <c>Extend</c> calls on the same state only append — capping reads here
+    /// gives an older snapshot the same lines forever, even while the shared accumulator keeps
+    /// growing underneath it (snapshot isolation, §Phase 2).</summary>
+    internal int RealEdgeCap { get; init; }
+
+    /// <summary>This snapshot's own off-window stub edges, regenerated fresh at build time from
+    /// whichever reservations were still open then — never shared with another snapshot.</summary>
+    internal GraphEdge[] OffWindowEdges { get; init; } = [];
+
+    /// <summary>Rows pulled either side of a requested row into one cached derivation, so
+    /// scrolling a screenful at a time rarely re-derives (§Phase 2).</summary>
+    private const int WindowOverscan = 1_000;
+
+    private (int A, int B, RowLaneSegment[] Segs, int[] SegStart, int[] SegCount,
+        RowElbow[] Elbs, int[] ElbStart, int[] ElbCount)? _window;
 
     /// <summary>Per-row commit metadata. Usually an <see cref="ArrayCommitStore"/>; a
     /// disk-backed store when the graph-from-disk setting is on (§7.6). Settable within Core
@@ -262,7 +284,39 @@ public sealed class GraphLayout : IDisposable
     /// has built the layout — <c>required</c> is dropped only because an internal setter and a
     /// public required member cannot coexist; <see cref="DagLayoutEngine"/> always sets it.</summary>
     public ICommitStore Commits { get; internal set; } = ArrayCommitStore.Empty;
-    public required GraphEdge[] Edges { get; init; }
+
+    /// <summary>Finding #9: materialized lazily on first access, from <see cref="SourceState"/>'s
+    /// real-edge accumulator (capped at <see cref="RealEdgeCap"/>, for the same snapshot-isolation
+    /// reason <see cref="Rows"/> is capped at <see cref="RowCount"/>) plus this snapshot's own
+    /// <see cref="OffWindowEdges"/>. Nothing in App or Core code actually reads this — only tests
+    /// do — so <c>DagLayoutEngine.Build</c> no longer pays to build it on every single Build/Extend
+    /// call; <see cref="EdgeCount"/> is a plain field computed without ever materializing it.</summary>
+    public GraphEdge[] Edges
+    {
+        get
+        {
+            if (_edges is { } cached)
+                return cached;
+            if (SourceState is not { } state)
+                return _edges = OffWindowEdges;
+
+            GraphEdge[] real;
+            lock (state)
+            {
+                var n = Math.Min(RealEdgeCap, state.RealEdges.Count);
+                real = new GraphEdge[n];
+                for (var i = 0; i < n; i++)
+                    real[i] = state.RealEdges[i];
+            }
+            var combined = new GraphEdge[real.Length + OffWindowEdges.Length];
+            real.CopyTo(combined, 0);
+            OffWindowEdges.CopyTo(combined, real.Length);
+            return _edges = combined;
+        }
+    }
+
+    private GraphEdge[]? _edges;
+
     public required GraphDecoration[] Decorations { get; init; }
 
     public required int RowCount { get; init; }
@@ -270,26 +324,139 @@ public sealed class GraphLayout : IDisposable
     public required int TotalLaneCount { get; init; }
     public required bool IsComplete { get; init; }
 
-    /// <summary>Maps <see cref="ObjectId"/> → row index. Built once; used for selection sync only.</summary>
-    public required IReadOnlyDictionary<ObjectId, int> RowByCommitId { get; init; }
+    /// <summary>
+    /// Maps <see cref="ObjectId"/> → row index. Built once; used for selection sync only.
+    /// <see cref="DagLayoutEngine.Build"/> hands this the accumulator's own, still-growing
+    /// dictionary rather than a per-snapshot copy (see its comment) — safe for this snapshot's
+    /// own <see cref="Consume"/> writer, but not for an unsynchronized reader while a background
+    /// <c>ExtendLayoutAsync</c> is inserting into the very same instance under
+    /// <c>lock (existing.State)</c> (#3, 2026-09-12 memory review: <c>CommitGraphControl
+    /// .ResolveRow</c> / <c>FindSubject</c> read it from the render thread with no lock at all —
+    /// an unsynchronized <see cref="Dictionary{TKey,TValue}"/> read concurrent with an insert
+    /// that resizes it can return a wrong row or throw). The value stored here is wrapped so
+    /// every lookup — through this property's own <c>TryGetValue</c>/indexer, or through <see
+    /// cref="TryGetRow"/> (the preferred call for new code) — takes <c>lock (SourceState)</c>
+    /// when this snapshot still has one, and ignores any row at or past this snapshot's own
+    /// <see cref="RowCount"/> (an older snapshot must not resolve a row a later extend appended).
+    /// Existing callers become safe without themselves changing.
+    /// </summary>
+    public required IReadOnlyDictionary<ObjectId, int> RowByCommitId
+    {
+        get => _rowByCommitIdView;
+        init { _rawRowByCommitId = value; _rowByCommitIdView = new RowByCommitIdView(this); }
+    }
 
-    public ReadOnlySpan<RowLaneSegment> GetRowSegments(int row) =>
-        (uint)row < (uint)RowCount && Rows[row].SegmentCount > 0
-            ? Segments.AsSpan(Rows[row].SegmentStart, Rows[row].SegmentCount)
-            : [];
+    private IReadOnlyDictionary<ObjectId, int> _rawRowByCommitId = EmptyRowMap;
+    private IReadOnlyDictionary<ObjectId, int> _rowByCommitIdView = EmptyRowMap;
+    private static readonly IReadOnlyDictionary<ObjectId, int> EmptyRowMap = new Dictionary<ObjectId, int>();
 
-    public ReadOnlySpan<RowElbow> GetRowElbows(int row) =>
-        (uint)row < (uint)RowCount && Rows[row].ElbowCount > 0
-            ? Elbows.AsSpan(Rows[row].ElbowStart, Rows[row].ElbowCount)
-            : [];
+    /// <summary>Locked, bounds-checked row lookup (#3, #13 — 2026-09-12 memory review). Takes
+    /// <c>lock (SourceState)</c> when this snapshot has one (every layout except <see
+    /// cref="Empty"/>), so it never races the accumulator's writer; ignores any row at or past
+    /// this snapshot's own <see cref="RowCount"/>. Preferred over <see cref="RowByCommitId"/>'s
+    /// <c>TryGetValue</c> for new code — that property routes through this same method.</summary>
+    public bool TryGetRow(ObjectId id, out int row)
+    {
+        bool found;
+        int value;
+        if (SourceState is { } state)
+        {
+            lock (state)
+                found = _rawRowByCommitId.TryGetValue(id, out value);
+        }
+        else
+        {
+            found = _rawRowByCommitId.TryGetValue(id, out value);
+        }
+
+        if (found && value < RowCount)
+        {
+            row = value;
+            return true;
+        }
+
+        row = -1;
+        return false;
+    }
+
+    /// <summary>Thin <see cref="IReadOnlyDictionary{TKey,TValue}"/> facade over <see
+    /// cref="RowByCommitId"/> that routes every lookup through <see cref="TryGetRow"/> (see that
+    /// property's doc comment). Only <see cref="TryGetValue"/> and the indexer sit on any real
+    /// call path; <see cref="Count"/>/<see cref="Keys"/>/<see cref="Values"/>/enumeration exist
+    /// for interface completeness (exercised by tests, not by App code) and take the same lock
+    /// for a single consistent snapshot.</summary>
+    private sealed class RowByCommitIdView(GraphLayout owner) : IReadOnlyDictionary<ObjectId, int>
+    {
+        public int this[ObjectId key] =>
+            owner.TryGetRow(key, out var row) ? row : throw new KeyNotFoundException();
+
+        public bool ContainsKey(ObjectId key) => owner.TryGetRow(key, out _);
+        public bool TryGetValue(ObjectId key, out int value) => owner.TryGetRow(key, out value);
+
+        public IEnumerable<ObjectId> Keys => Snapshot().Select(kv => kv.Key);
+        public IEnumerable<int> Values => Snapshot().Select(kv => kv.Value);
+        public int Count => Snapshot().Count;
+
+        public IEnumerator<KeyValuePair<ObjectId, int>> GetEnumerator() => Snapshot().GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        private List<KeyValuePair<ObjectId, int>> Snapshot()
+        {
+            if (owner.SourceState is { } state)
+                lock (state)
+                    return Filter();
+            return Filter();
+        }
+
+        private List<KeyValuePair<ObjectId, int>> Filter()
+        {
+            var rowCount = owner.RowCount;
+            var list = new List<KeyValuePair<ObjectId, int>>();
+            foreach (var kv in owner._rawRowByCommitId)
+                if (kv.Value < rowCount)
+                    list.Add(kv);
+            return list;
+        }
+    }
+
+    public ReadOnlySpan<RowLaneSegment> GetRowSegments(int row)
+    {
+        if ((uint)row >= (uint)RowCount) return [];
+        EnsureWindow(row);
+        var w = _window!.Value;
+        var i = row - w.A;
+        return w.SegCount[i] > 0 ? w.Segs.AsSpan(w.SegStart[i], w.SegCount[i]) : [];
+    }
+
+    public ReadOnlySpan<RowElbow> GetRowElbows(int row)
+    {
+        if ((uint)row >= (uint)RowCount) return [];
+        EnsureWindow(row);
+        var w = _window!.Value;
+        var i = row - w.A;
+        return w.ElbCount[i] > 0 ? w.Elbs.AsSpan(w.ElbStart[i], w.ElbCount[i]) : [];
+    }
+
+    private void EnsureWindow(int row)
+    {
+        if (_window is { } cur && row >= cur.A && row <= cur.B) return;
+
+        if (SourceState is null || RowCount == 0)
+        {
+            _window = (row, row, [], [0], [0], [], [0], [0]);
+            return;
+        }
+
+        var a = Math.Max(0, row - WindowOverscan);
+        var b = Math.Min(RowCount - 1, row + WindowOverscan);
+        var (segs, segStart, segCount, elbs, elbStart, elbCount) =
+            DagLayoutEngine.DeriveWindow(SourceState, RealEdgeCap, OffWindowEdges, RowCount, a, b);
+        _window = (a, b, segs, segStart, segCount, elbs, elbStart, elbCount);
+    }
 
     public static GraphLayout Empty { get; } = new()
     {
-        Rows = [],
-        Segments = [],
-        Elbows = [],
         Commits = ArrayCommitStore.Empty,
-        Edges = [],
         Decorations = [],
         RowCount = 0,
         EdgeCount = 0,
@@ -298,7 +465,55 @@ public sealed class GraphLayout : IDisposable
         RowByCommitId = new Dictionary<ObjectId, int>(),
     };
 
-    public void Dispose() { /* Phase 2 renderer pools arrays; nothing to free yet. */ }
+    /// <summary>Drops this snapshot's cached derivation window. The shared <see
+    /// cref="SourceState"/> is owned by the layout service, not this snapshot, so it is never
+    /// disposed here.</summary>
+    public void Dispose() { _window = null; }
+}
+
+/// <summary>
+/// Finding #9: a <see cref="GraphLayout.RowCount"/>-bounded, read-only view over a
+/// <see cref="GraphLayoutState"/>'s own chunked row accumulator — what
+/// <see cref="GraphLayout.Rows"/> hands back instead of a fresh <c>GraphRow[]</c> copy on every
+/// Build/Extend call. Deliberately a plain class with no custom <c>Equals</c>/<c>GetHashCode</c>
+/// override (and NOT a record type, which would compare its private fields — including the
+/// shared, mutable <c>SourceState</c> reference — rather than the rows themselves): callers that
+/// compare two layouts' rows for value equality (xUnit's <c>Assert.Equal</c> included) fall
+/// through to a sequence comparison via <see cref="IEnumerable{T}"/>, exactly as they did when
+/// this property was a plain array — verified against xUnit's <c>AssertEqualityComparer</c>, which
+/// only tries <c>IEquatable&lt;T&gt;</c>/<c>IStructuralEquatable</c> before falling back to an
+/// element-wise <c>IEnumerable</c> comparison. <c>Length</c> is kept alongside <c>Count</c> for
+/// source compatibility with the array this replaced.
+/// <para>
+/// Every member here is safe to call from any thread at any time with no lock — see
+/// <see cref="ChunkedAppendList{T}"/>'s own concurrency contract, which this is a thin,
+/// <see cref="GraphLayout.RowCount"/>-bounded wrapper around.
+/// </para>
+/// </summary>
+public sealed class GraphRowsView(GraphLayoutState? source, int count) : IReadOnlyList<GraphRow>
+{
+    public int Count => count;
+
+    /// <summary>Source compatibility with the plain <c>GraphRow[]</c> this view replaced.</summary>
+    public int Length => count;
+
+    public GraphRow this[int index]
+    {
+        get
+        {
+            if ((uint)index >= (uint)count)
+                throw new ArgumentOutOfRangeException(nameof(index));
+            return source!.Rows[index];
+        }
+    }
+
+    public IEnumerator<GraphRow> GetEnumerator()
+    {
+        for (var i = 0; i < count; i++)
+            yield return this[i];
+    }
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 public enum GraphRefScope { AllRefs, CurrentBranch, Selected }
@@ -313,5 +528,9 @@ public sealed record GraphQuery
     public bool IncludeStashes { get; init; }
     public bool IncludeRemoteBranches { get; init; } = true;
     public string? PathFilter { get; init; }
-    public int MaxLanes { get; init; } = 48;
+    /// <summary>§V3.1: lanes are uncapped — every lineage gets its own track. The former
+    /// 48-lane cap collapsed anything beyond lane 47 onto a single dashed overflow lane; on a
+    /// busy history that obscured genuine topology. Far lanes are reached by the in-graph pan or
+    /// by stretching the Graph column, not by a cap.</summary>
+    public int MaxLanes { get; init; } = int.MaxValue;
 }

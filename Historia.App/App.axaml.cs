@@ -214,6 +214,7 @@ public sealed class App : Application
         services.AddSingleton<IGitExecutableLocator, GitExecutableLocator>();
         services.AddSingleton<IGitCliService, GitCliService>();
         services.AddSingleton<LibGit2Service>();
+        services.AddSingleton<IBackgroundWorkGate, BackgroundWorkGate>();
         services.AddSingleton<Historia.Services.Graph.IGraphLayoutService, Historia.Services.Graph.GraphLayoutService>();
         services.AddSingleton<IRepoStateCache, RepoStateCache>();
         services.AddSingleton<Historia.Services.PowerTools.IConflictService, Historia.Services.PowerTools.ConflictService>();

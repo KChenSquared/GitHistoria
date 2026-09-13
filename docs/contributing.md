@@ -8,6 +8,14 @@ Thank you for your interest in contributing to **Historia**! We are building a b
 
 When contributing to Historia, keep these core tenets in mind:
 
+0. **Confirm Before Destroying Anything (highest priority):** No code path may discard the
+   user's uncommitted work or irreversibly rewrite their history without an explicit
+   confirmation the user actively accepts. The confirmation is a modal alert
+   (`IDialogService.ConfirmAsync` / `ChooseAsync`) with the red `triangle-alert`
+   (`DialogIcon.Warning`), it names the exact effect, and **Cancel** is the primary (blue)
+   button and the keyboard default (`defaultToCancel: true`) while remaining the rightmost
+   button. See constitution **Rule 00**. This outranks every other principle below, including
+   performance.
 1. **Performance First:** Historia is built to match the speed of native clients like Git-Fork. Avoid unnecessary allocations in hot paths (commit log parsing, DAG calculation, diff rendering). Always profile and benchmark performance-critical code.
 2. **Never Block the UI Thread:** All Git operations, I/O, and heavy computations must execute on background threads and communicate via non-blocking asynchronous patterns.
 3. **Simplicity & Polish:** Strive for clean, intuitive UI interactions. Complex Git concepts should be rendered clearly and visually.

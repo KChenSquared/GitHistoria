@@ -5,12 +5,12 @@ public class WorkspaceServiceTests : IAsyncDisposable
     private readonly MiniHost _host = new();
     private RecentRepositoryService? _recents;
 
-    private WorkspaceService NewWorkspace()
+    private WorkspaceService NewWorkspace(IRepoIdentityService? identity = null)
     {
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
         var recents = _recents = new RecentRepositoryService(_host.Settings);
         var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
-        var identity = new RepoIdentityService(cli);
+        identity ??= new RepoIdentityService(cli);
         return new WorkspaceService(_host.Provider, cli, recents, profiles, identity);
     }
 
@@ -254,6 +254,356 @@ public class WorkspaceServiceTests : IAsyncDisposable
         Assert.Equal(2, node["schemaVersion"]!.GetValue<int>());
         Assert.Equal(Norm(r1.Path), Norm(node["focusedPath"]!.GetValue<string>()));
         Assert.Single(node["paths"]!.AsArray());
+    }
+
+    // ── v10.1.3: focus-priority interrupt-and-promote ──
+
+    [Fact(Timeout = 20000)]
+    public async Task Focusing_away_mid_init_leaves_FirstFullLoad_incomplete_until_retried()
+    {
+        var identity = new SlowIdentityService();
+        var ws = NewWorkspace(identity);
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone(); // skip the first-paint ceiling wait — no graph control here
+        var ctx2 = await ws.OpenAsync(r2.Path); // focus switch: interrupts ctx1's in-flight identity resolution
+        ctx2.MarkFirstGraphPaintDone();
+        identity.Release(r2.Path); // ctx2 resolves quickly and finishes on its own
+
+        Assert.False(ctx1.FirstFullLoad.IsCompleted, "an interrupted attempt must not be marked done");
+
+        identity.Release(r1.Path); // let the pump's retry of ctx1 proceed
+        await ctx1.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(ctx1.FirstFullLoad.IsCompleted);
+
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task Focusing_a_previously_interrupted_tab_is_promoted_ahead_of_the_tab_that_displaced_it()
+    {
+        var identity = new SlowIdentityService();
+        var ws = NewWorkspace(identity);
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone();
+        var ctx2 = await ws.OpenAsync(r2.Path); // interrupts ctx1, ctx2 becomes foreground
+        ctx2.MarkFirstGraphPaintDone();
+
+        ws.Focus(ctx1); // interrupts ctx2 in turn, promotes ctx1 back to foreground immediately
+
+        Assert.False(ctx2.FirstFullLoad.IsCompleted);
+
+        identity.Release(r1.Path); // only ctx1's gate — ctx2's stays blocked the whole test
+        await ctx1.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(ctx1.FirstFullLoad.IsCompleted, "promoted tab must not wait behind the tab it displaced");
+        Assert.False(ctx2.FirstFullLoad.IsCompleted, "the displaced tab was never released and must still be pending");
+
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task Rapid_focus_toggling_between_two_loading_tabs_does_not_hang_and_both_eventually_finish()
+    {
+        var identity = new SlowIdentityService();
+        var ws = NewWorkspace(identity);
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone();
+        var ctx2 = await ws.OpenAsync(r2.Path);
+        ctx2.MarkFirstGraphPaintDone();
+
+        for (var i = 0; i < 5; i++)
+        {
+            ws.Focus(ctx1);
+            ws.Focus(ctx2);
+        }
+
+        identity.Release(r1.Path);
+        identity.Release(r2.Path);
+
+        await ctx1.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(15));
+        await ctx2.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.True(ctx1.FirstFullLoad.IsCompleted);
+        Assert.True(ctx2.FirstFullLoad.IsCompleted);
+
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task Closing_a_tab_while_its_interrupted_attempt_is_queued_does_not_resurrect_it()
+    {
+        var identity = new SlowIdentityService();
+        var ws = NewWorkspace(identity);
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone();
+        var ctx2 = await ws.OpenAsync(r2.Path); // interrupts + requeues ctx1
+        ctx2.MarkFirstGraphPaintDone();
+        identity.Release(r2.Path);
+
+        await ws.CloseAsync(ctx1); // closed while its interrupted attempt sits in _bgInitQueue
+
+        identity.Release(r1.Path);
+        await Task.Delay(500); // give the pump a chance to (wrongly) resurrect it, if it were going to
+        Assert.DoesNotContain(ctx1, ws.OpenRepositories);
+
+        await ws.DisposeAsync();
+    }
+
+    // ── v10.1.3: identity resolution runs concurrently with the first refs/status refresh ──
+
+    [Fact(Timeout = 20000)]
+    public async Task RefreshAllAsync_runs_concurrently_with_identity_resolution_not_after_it()
+    {
+        var identity = new SlowIdentityService(); // blocks every context until released
+        var ws = NewWorkspace(identity);
+        using var r1 = Repo("a.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone();
+
+        var statusRaised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx1.State.StatusChanged += (_, _) => statusRaised.TrySetResult();
+
+        // Identity resolution is still blocked (never released) — if RefreshAllAsync waited for it
+        // to finish first (the old sequential behavior), this would time out.
+        await statusRaised.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(ctx1.FirstFullLoad.IsCompleted, "identity is still blocked, so the attempt as a whole isn't done");
+        identity.Release(r1.Path);
+        await ctx1.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await ws.DisposeAsync();
+    }
+
+    // ── v10 graph memory footprint plan, Phase 4: headless caching for inactive tabs ──
+
+    /// <summary>Overrides one service type while delegating everything else to a real provider —
+    /// so <see cref="WorkspaceService"/>'s <c>IGraphLayoutService</c> can be swapped for a
+    /// recording fake without standing up a whole second DI container.</summary>
+    private sealed class OverrideServiceProvider(IServiceProvider inner, Type overriddenType, object overriddenInstance)
+        : IServiceProvider
+    {
+        public object? GetService(Type serviceType) =>
+            serviceType == overriddenType ? overriddenInstance : inner.GetService(serviceType);
+    }
+
+    private sealed class RecordingGraphLayoutService : IGraphLayoutService
+    {
+        public List<RepositoryContext> Enqueued { get; } = [];
+
+        public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query) => Enqueued.Add(context);
+        public Task CancelInactiveTabCachingAsync(RepositoryContext context) { Cancelled.Add(context); return Task.CompletedTask; }
+        public List<RepositoryContext> Cancelled { get; } = [];
+
+        public Task<GraphLayoutResult> ComputeLayoutAsync(RepositoryContext context, GraphQuery query, int maxRows = 10000, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public GraphLayoutResult? TryOptimisticSnapshot(RepositoryContext context, GraphQuery query, int maxRows) => null;
+        public Task<GraphLayoutResult> ExtendLayoutAsync(RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default, bool background = false)
+            => throw new NotImplementedException();
+        public Task<GraphLayoutResult> RecomputeAsync(RepositoryContext context, GraphQuery query, GraphLayoutResult previous, InvalidationReason reason, int maxRows = 10000, CancellationToken ct = default)
+            => throw new NotImplementedException();
+        public void Forget(RepositoryContext context) { }
+        public Task Hibernate(RepositoryContext context) => Task.CompletedTask;
+        public int ClearPersistentCache() => 0;
+        public Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct) => Task.CompletedTask;
+        public void RefreshCommitGraphAfterFetch(RepositoryContext context) { }
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task Focusing_a_tab_queues_every_other_open_tab_for_headless_caching_but_not_itself()
+    {
+        var fakeGraph = new RecordingGraphLayoutService();
+        var provider = new OverrideServiceProvider(_host.Provider, typeof(IGraphLayoutService), fakeGraph);
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var recents = _recents = new RecentRepositoryService(_host.Settings);
+        var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
+        var identity = new RepoIdentityService(cli);
+        var ws = new WorkspaceService(provider, cli, recents, profiles, identity);
+
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+        using var r3 = Repo("c.txt");
+
+        // Force each tab's FirstFullLoad done immediately after it opens, before opening the
+        // next one: FocusInternal only requeues an outgoing tab onto WorkspaceService's OWN
+        // background-init pump when it's STILL loading, and that pump's own timing is unrelated
+        // to what this test cares about (the headless-caching pipeline).
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstFullLoadDone();
+        var ctx2 = await ws.OpenAsync(r2.Path);
+        ctx2.MarkFirstFullLoadDone();
+        var ctx3 = await ws.OpenAsync(r3.Path); // focus now r3 — this is what triggers the pipeline
+        ctx3.MarkFirstGraphPaintDone();
+        ctx3.MarkFirstFullLoadDone();
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (fakeGraph.Enqueued.Count < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+
+        Assert.Equal(2, fakeGraph.Enqueued.Count);
+        Assert.DoesNotContain(fakeGraph.Enqueued, c => Norm(c.RepositoryPath) == Norm(r3.Path));
+
+        await ws.DisposeAsync();
+    }
+
+    // ── finding #1: focus cancels the newly focused context's own inactive-tab headless job ──
+
+    [Fact(Timeout = 20000)]
+    public async Task Focus_cancels_the_newly_focused_contexts_inactive_tab_job()
+    {
+        var fakeGraph = new RecordingGraphLayoutService();
+        var provider = new OverrideServiceProvider(_host.Provider, typeof(IGraphLayoutService), fakeGraph);
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var recents = _recents = new RecentRepositoryService(_host.Settings);
+        var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
+        var identity = new RepoIdentityService(cli);
+        var ws = new WorkspaceService(provider, cli, recents, profiles, identity);
+
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path); // focus lands on ctx1
+        ctx1.MarkFirstFullLoadDone();
+        var ctx2 = await ws.OpenAsync(r2.Path); // focus moves to ctx2
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (fakeGraph.Cancelled.Count < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        // Both contexts were, at some point, the newly focused one — each focus change must
+        // cancel that tab's own inactive-tab job before its foreground graph work can start, even
+        // though in this test neither ever actually had one queued.
+        Assert.Contains(ctx1, fakeGraph.Cancelled);
+        Assert.Contains(ctx2, fakeGraph.Cancelled);
+
+        await ws.DisposeAsync();
+    }
+
+    // ── finding #10: gate the tab-switch compacting GC on actual heap growth ──
+
+    [Theory]
+    [InlineData(0L, 0L, false)]
+    [InlineData(1024L * 1024 * 1024, 0L, true)] // heap at the 1 GiB threshold
+    [InlineData(1024L * 1024 * 1024 - 1, 0L, false)] // just under the heap threshold, LOH empty
+    [InlineData(0L, 256L * 1024 * 1024, true)] // LOH at the 256 MiB threshold
+    [InlineData(0L, 256L * 1024 * 1024 - 1, false)] // just under the LOH threshold, heap empty
+    [InlineData(2L * 1024 * 1024 * 1024, 1024L, true)] // either threshold alone is sufficient
+    public void ShouldCompactAfterHibernate_uses_named_heap_and_LOH_thresholds(long heapBytes, long lohBytes, bool expected)
+    {
+        Assert.Equal(expected, WorkspaceService.ShouldCompactAfterHibernate(heapBytes, lohBytes));
+    }
+
+    // ── finding #12: a focus switch mid-git-config-write must not cancel the write ──
+
+    /// <summary>A minimal <see cref="IProfileService"/> whose <see cref="ApplyProfileToGitConfigAsync"/>
+    /// blocks until released and records the token it was actually invoked with, so the test can
+    /// interrupt the caller's attempt token while the "write" is in flight and check that the
+    /// write itself never observed the cancellation.</summary>
+    private sealed class ConfigWriteProfileService(GitProfile profile) : IProfileService
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public CancellationToken ReceivedToken { get; private set; }
+        public bool WriteCompleted { get; private set; }
+
+        public IReadOnlyList<GitProfile> GetAllProfiles() => [profile];
+        public GitProfile? GetProfileById(Guid id) => profile.Id == id ? profile : null;
+        public ProfileUsageState? GetUsage(Guid id) => null;
+        public Task<GitProfile> CreateProfileAsync(GitProfileCreateRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<GitProfile> UpdateProfileAsync(Guid id, GitProfileUpdateRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ProfileDeleteResult> DeleteProfileAsync(Guid id, CancellationToken ct = default) => throw new NotSupportedException();
+        public GitProfile GetGlobalProfile() => profile;
+        public Task SyncGlobalIdentityAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public GitProfile? GetDefaultProfile() => profile;
+        public Task SetDefaultProfileAsync(Guid? profileId, CancellationToken ct = default) => Task.CompletedTask;
+        public GitProfile? GetProfileForRepository(RepoIdentityKey repoKey) => null;
+        public bool IsLocalConfigSelected(RepoIdentityKey repoKey) => false;
+        public Task BindProfileToRepositoryAsync(RepoIdentityKey repoKey, string displayPath, Guid profileId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task SetLocalConfigForRepositoryAsync(RepoIdentityKey repoKey, string displayPath, CancellationToken ct = default) => Task.CompletedTask;
+        public Task UnbindRepositoryAsync(RepoIdentityKey repoKey, CancellationToken ct = default) => Task.CompletedTask;
+        public IReadOnlyDictionary<RepoIdentityKey, RepoProfileBinding> GetAllRepoBindings() => new Dictionary<RepoIdentityKey, RepoProfileBinding>();
+        public IReadOnlyList<RepoProfileBinding> GetStaleBindings() => [];
+        public Task<int> CleanStaleBindingsAsync(CancellationToken ct = default) => Task.FromResult(0);
+        public GitProfile? ResolveActiveProfile(RepoIdentityKey? repoKey = null) => profile;
+
+        public async Task ApplyProfileToGitConfigAsync(GitProfile p, string repoPath, GitConfigScope scope, CancellationToken ct = default)
+        {
+            ReceivedToken = ct;
+            Started.TrySetResult();
+            await Release.Task.ConfigureAwait(false);
+            WriteCompleted = true;
+        }
+
+        public Task TouchProfileAsync(Guid profileId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<string?> GetTokenAsync(Guid profileId, RemoteHost host, CancellationToken ct = default) => Task.FromResult<string?>(null);
+        public Task ExportProfilesAsync(string exportFilePath, bool includeTokens, string? password, CancellationToken ct = default) => Task.CompletedTask;
+        public Task ImportProfilesAsync(string importFilePath, string? password, CancellationToken ct = default) => Task.CompletedTask;
+        public event EventHandler? ProfilesChanged;
+        public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged;
+    }
+
+    private static TestRepositoryBuilder RepoWithoutLocalIdentity()
+    {
+        var b = Repo("f.txt");
+        // §9.6's write path only triggers when the repo has neither user.name nor user.email set
+        // locally — TestRepositoryBuilder.Create() sets both so Commit() works, so clear them here.
+        b.Git("config", "--local", "--unset", "user.name");
+        b.Git("config", "--local", "--unset", "user.email");
+        return b;
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task Focus_switch_during_git_config_write_does_not_cancel_the_write()
+    {
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var recents = _recents = new RecentRepositoryService(_host.Settings);
+        var profile = new GitProfile
+        {
+            Id = Guid.NewGuid(),
+            DisplayName = "Test Profile",
+            GitUserName = "Profile Name",
+            GitUserEmail = "profile@example.com",
+            CreatedAt = DateTimeOffset.Now,
+        };
+        var profiles = new ConfigWriteProfileService(profile);
+        var identity = new RepoIdentityService(cli);
+        var ws = new WorkspaceService(_host.Provider, cli, recents, profiles, identity);
+
+        using var r1 = RepoWithoutLocalIdentity();
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path);
+        ctx1.MarkFirstGraphPaintDone(); // skip the first-paint ceiling wait — no graph control here
+
+        // The config write is now in flight (blocked on Release) inside ctx1's InitializeContextAsync.
+        await profiles.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await ws.OpenAsync(r2.Path); // focus switch: interrupts ctx1's attempt token
+        await Task.Delay(200); // give FocusInternal's Cancel() a moment to run
+
+        Assert.False(profiles.ReceivedToken.IsCancellationRequested,
+            "finding #12: the git-config write's own token must never be cancelled by a focus-loss interrupt");
+        Assert.False(profiles.WriteCompleted, "the write should still be blocked on Release at this point");
+
+        profiles.Release.TrySetResult();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!profiles.WriteCompleted && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        Assert.True(profiles.WriteCompleted, "the write must run to completion even though the attempt was interrupted");
+
+        await ws.DisposeAsync();
     }
 
     public async ValueTask DisposeAsync() => await _host.DisposeAsync();

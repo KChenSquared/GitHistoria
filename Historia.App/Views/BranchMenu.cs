@@ -131,7 +131,7 @@ internal static class BranchMenu
     /// destructive confirm) instead of just dumping the exception.</summary>
     public static async Task DeleteAsync(RepositoryContext ctx, IDialogService dialogs, INotificationService notify, string name)
     {
-        if (!await dialogs.ConfirmAsync("Delete branch", $"Delete '{name}'?", destructive: true, "Delete"))
+        if (!await dialogs.ConfirmDestructiveAsync("Delete branch", $"Delete '{name}'?", "Delete"))
             return;
         try
         {
@@ -147,9 +147,9 @@ internal static class BranchMenu
             [
                 new NotificationAction("Force delete", async () =>
                 {
-                    if (!await dialogs.ConfirmAsync("Force delete branch",
+                    if (!await dialogs.ConfirmDestructiveAsync("Force delete branch",
                             $"'{name}' has commits that aren't merged anywhere else. Force-deleting can make them unreachable. Continue?",
-                            destructive: true, "Force delete"))
+                            "Force delete"))
                         return;
                     try { await ctx.Gateway.DeleteBranchAsync(name, force: true, ctx.Lifetime); }
                     finally { await ctx.State.RefreshAllAsync(ctx.Lifetime); }

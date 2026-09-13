@@ -266,11 +266,23 @@ public sealed class TerminalSession : IDisposable
     private void ApplyReportedTitle(string? raw)
     {
         var clean = SanitiseTitle(raw);
+        if (clean is not null && LooksLikeExecutablePath(clean))
+            clean = null;
         if (clean == ReportedTitle)
             return;
         ReportedTitle = clean;
         RaiseOnDispatcher(TitleChanged);
     }
+
+    /// <summary>A Windows console reports the launching executable's full path as its initial
+    /// OSC 0 title — e.g. <c>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</c>. On a
+    /// pty resize (which every tab switch triggers) conhost re-emits it, so the tab caption
+    /// flips from the origin name to that path. It is noise, not a caption: reject a rooted
+    /// path that ends in <c>.exe</c> and keep falling back to <see cref="TerminalOrigin.Title"/>.</summary>
+    internal static bool LooksLikeExecutablePath(string title)
+        => title.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+           && (title.StartsWith('/') || title.StartsWith('\\')
+               || (title.Length > 2 && char.IsAsciiLetter(title[0]) && title[1] == ':'));
 
     internal static string? SanitiseTitle(string? raw)
     {

@@ -104,11 +104,21 @@ public static class GraphColumnLayout
                     // auto-size does not apply.
                     w = graphFloor;
                 }
+                else if (graphWidthPinned)
+                {
+                    // §V3.1: a pinned Graph width is never wider than the lanes actually in use,
+                    // so a width pinned while a busy repo was open does not show as empty space
+                    // after a refs change shrinks the layout. Before the first layout lands
+                    // (totalLaneCount == 0) leave the pinned width alone so it isn't crushed to
+                    // the floor while loading.
+                    var naturalMax = Math.Max(graphFloor, (totalLaneCount + 1) * laneWidth);
+                    w = totalLaneCount > 0
+                        ? Math.Clamp(col.Width, graphFloor, naturalMax)
+                        : Math.Max(col.Width, graphFloor);
+                }
                 else
                 {
-                    w = graphWidthPinned
-                        ? Math.Max(col.Width, graphFloor)
-                        : Math.Clamp((totalLaneCount + 1) * laneWidth, graphFloor, GraphAutoMax);
+                    w = Math.Clamp((totalLaneCount + 1) * laneWidth, graphFloor, GraphAutoMax);
                 }
             }
             else if (i == msgIdx)

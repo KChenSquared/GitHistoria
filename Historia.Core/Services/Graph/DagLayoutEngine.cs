@@ -13,16 +13,22 @@ public sealed class DagLayoutEngine
     /// accumulated in the layout state — the caller is spilling it to a disk-backed store and
     /// will swap that in (§7.6). The built <see cref="GraphLayout.Commits"/> is then an empty
     /// <see cref="ArrayCommitStore"/> until the swap.</param>
+    /// <param name="isAncestor">§V10.1 checked-out-branch exception: a full-history ancestry
+    /// oracle — <c>isAncestor(a, b)</c> is true when commit <paramref name="a"/> is an ancestor of
+    /// (or equal to) commit <c>b</c>. Supplied by <see cref="GraphLayoutService"/> from the live
+    /// repo; null on the optimistic stale first paint, where the exception is skipped and the
+    /// plain newest-tip-wins order stands until the verified recompute.</param>
     public GraphLayoutResult Compute(
         IReadOnlyList<RawCommit> commits,
         IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
         int maxRows,
-        int maxLanes = 48,
+        int maxLanes = int.MaxValue,
         CancellationToken ct = default,
-        bool retainCommits = true)
+        bool retainCommits = true,
+        Func<ObjectId, ObjectId, bool>? isAncestor = null)
     {
         var state = new GraphLayoutState { MaxLanes = Math.Max(2, maxLanes), RetainCommits = retainCommits };
-        SeedTipPriority(state, commits, decorations);
+        SeedTipPriority(state, commits, decorations, isAncestor);
         Consume(state, commits, decorations, maxRows, ct);
         return Build(state, complete: commits.Count <= maxRows);
     }
@@ -123,7 +129,7 @@ public sealed class DagLayoutEngine
                     // MergeIn edge is drawn in the SOURCE (merged-in) branch's colour — this
                     // commit's own lane colour — not the destination (merge commit's) lane.
                     var fromColor = s.LaneColor.GetValueOrDefault(fromLane, color);
-                    s.RealEdges.Add(new GraphEdge
+                    var newEdge = new GraphEdge
                     {
                         FromRow = res.ChildRow,
                         FromLane = fromLane,
@@ -137,7 +143,9 @@ public sealed class DagLayoutEngine
                         // (the first-parent edge continues straight through the same lane).
                         // Only the elbow at ToRow switches to the merged-in branch's colour.
                         LeadColorIndex = fromColor,
-                    });
+                    };
+                    s.RealEdges.Add(newEdge);
+                    IndexNewRealEdge(s, s.RealEdges.Count - 1, newEdge);
                 }
             }
 
@@ -163,7 +171,10 @@ public sealed class DagLayoutEngine
             });
             if (s.RetainCommits)
                 s.Commits.Add(commit.Metadata);
-            s.RowByCommitId[commit.Id] = row;
+            // Phase 5(a): reuse whatever instance a child's reservation already interned for this
+            // SHA (the common case — a parent's reservation exists before the parent's own row
+            // does, in a topo walk) instead of keeping commit.Id's own freshly-parsed copy too.
+            s.RowByCommitId[Intern(s, commit.Id)] = row;
 
             if (deco is not null)
                 foreach (var x in deco)
@@ -216,29 +227,247 @@ public sealed class DagLayoutEngine
 
     private static GraphLayoutResult Build(GraphLayoutState s, bool complete)
     {
-        var offWindow = RegenerateOffWindow(s);
-        var edges = new GraphEdge[s.RealEdges.Count + offWindow.Count];
-        s.RealEdges.CopyTo(edges, 0);
-        offWindow.CopyTo(edges, s.RealEdges.Count);
+        var offWindowList = RegenerateOffWindow(s);
+        var offWindow = offWindowList.ToArray();
 
-        var (finalizedRows, segments, elbows) = DeriveVisuals(s.Rows, edges);
-
+        // Finding #9: neither Rows nor Edges is materialized here any more — GraphLayout.Rows is
+        // a RowCount-bounded VIEW straight over s.Rows (now a ChunkedAppendList, never copied),
+        // and GraphLayout.Edges is computed lazily on first access (nothing in App or Core code
+        // actually reads it). EdgeCount is just the sum of what those two arrays' lengths would
+        // have been.
+        //
+        // §Phase 2: Rows no longer carry Segment/Elbow slice indices — GraphLayout derives lines
+        // for a row window on demand from the shared crossing index (DeriveWindow), instead of
+        // DeriveVisuals materialising flat Segments/Elbows arrays sized to every resident row on
+        // every Build/Extend call.
         var layout = new GraphLayout
         {
-            Rows = finalizedRows,
-            Segments = segments,
-            Elbows = elbows,
+            SourceState = s,
+            RealEdgeCap = s.RealEdges.Count,
+            OffWindowEdges = offWindow,
             Commits = new ArrayCommitStore(s.Commits.ToArray()),
-            Edges = edges,
             Decorations = s.Decorations.ToArray(),
             RowCount = s.Rows.Count,
-            EdgeCount = edges.Length,
+            EdgeCount = s.RealEdges.Count + offWindow.Length,
             TotalLaneCount = s.NextCompactedLane,
             IsComplete = complete && s.Reservations.Count == 0,
-            RowByCommitId = new Dictionary<ObjectId, int>(s.RowByCommitId),
+            // §Phase 2 / S4: share the accumulator's dictionary instead of copying it wholesale
+            // on every Build — it only ever grows, and a lookup against an older snapshot is
+            // bounds-checked by the caller against that snapshot's own RowCount.
+            RowByCommitId = s.RowByCommitId,
         };
 
         return new GraphLayoutResult(layout, s);
+    }
+
+    /// <summary>§Phase 2: indexes a newly created real edge into the crossing checkpoints it
+    /// will span and the from-row block it starts in, so a later window derivation can find it
+    /// without scanning every edge ever created.</summary>
+    private static void IndexNewRealEdge(GraphLayoutState s, int index, GraphEdge edge)
+    {
+        const int stride = GraphLayoutState.CheckpointStride;
+
+        var block = edge.FromRow / stride;
+        if (!s.EdgesByFromBlock.TryGetValue(block, out var blockList))
+            s.EdgesByFromBlock[block] = blockList = [];
+        blockList.Add(index);
+
+        var firstCheckpoint = edge.FromRow / stride + 1; // first boundary strictly after FromRow
+        var lastCheckpoint = edge.ToRow / stride;         // last boundary at or before ToRow
+        for (var cp = firstCheckpoint; cp <= lastCheckpoint; cp++)
+        {
+            if (!s.CheckpointCrossing.TryGetValue(cp, out var list))
+                s.CheckpointCrossing[cp] = list = [];
+            list.Add(index);
+        }
+    }
+
+    /// <summary>
+    /// §Phase 2: derives <see cref="RowLaneSegment"/>/<see cref="RowElbow"/> data for rows
+    /// <paramref name="a"/>..<paramref name="b"/> only, using <paramref name="state"/>'s crossing
+    /// index to gather just the edges that can touch that range instead of every edge ever laid
+    /// out. Produces byte-identical per-row content to a full <see cref="DeriveVisuals"/> over
+    /// the same rows, because edges outside the gathered set cannot contribute to any row in
+    /// [a, b] (a real edge spans a contiguous row range; an edge not selected either never
+    /// touches [a, b] or was excluded from a checkpoint it doesn't actually cross), and the
+    /// gathered edges are processed in the same relative order (ascending <c>RealEdges</c> index,
+    /// then off-window edges) as the full derivation would visit them.
+    /// </summary>
+    internal static (RowLaneSegment[] Segments, int[] SegStart, int[] SegCount,
+        RowElbow[] Elbows, int[] ElbStart, int[] ElbCount) DeriveWindow(
+        GraphLayoutState state, int realEdgeCap, GraphEdge[] offWindowEdges, int rowCount, int a, int b)
+    {
+        a = Math.Max(0, a);
+        b = Math.Min(rowCount - 1, b);
+        if (b < a)
+            return ([], [], [], [], [], []);
+
+        const int stride = GraphLayoutState.CheckpointStride;
+        var checkpoint = a / stride;
+
+        // §Bugfix: GraphLayoutService.ExtendLayoutAsync mutates this same state object (appending
+        // to CheckpointCrossing/EdgesByFromBlock/RealEdges via IndexNewRealEdge) under
+        // `lock (existing.State)` while a background walk streams in more commits. This method
+        // runs on the render thread against that same live state, so it must take the same lock
+        // or a scroll-triggered extend can mutate a List<int> mid-enumeration here
+        // (InvalidOperationException: "Collection was modified").
+        lock (state)
+        {
+            var candidates = new SortedSet<int>();
+            if (state.CheckpointCrossing.TryGetValue(checkpoint, out var crossing))
+                foreach (var i in crossing)
+                    if (i < realEdgeCap)
+                        candidates.Add(i);
+
+            var startBlock = checkpoint;
+            var endBlock = b / stride;
+            for (var blk = startBlock; blk <= endBlock; blk++)
+            {
+                if (!state.EdgesByFromBlock.TryGetValue(blk, out var blockList))
+                    continue;
+                foreach (var i in blockList)
+                {
+                    if (i >= realEdgeCap)
+                        continue;
+                    if (state.RealEdges[i].FromRow <= b)
+                        candidates.Add(i);
+                }
+            }
+
+            var edges = new List<GraphEdge>(candidates.Count + offWindowEdges.Length);
+            foreach (var i in candidates)
+                edges.Add(state.RealEdges[i]);
+            edges.AddRange(offWindowEdges);
+
+            return ComputeWindowVisuals(edges, rowCount, a, b);
+        }
+    }
+
+    /// <summary>Same per-edge rules as <see cref="DeriveVisuals"/>, restricted to emitting rows
+    /// in [<paramref name="a"/>, <paramref name="b"/>] — <paramref name="rowCount"/> is the
+    /// layout's true total row count, used (as in <see cref="DeriveVisuals"/>) to decide whether
+    /// an edge's endpoint is a real row at all, which is independent of the render window.</summary>
+    private static (RowLaneSegment[] Segments, int[] SegStart, int[] SegCount,
+        RowElbow[] Elbows, int[] ElbStart, int[] ElbCount) ComputeWindowVisuals(
+        List<GraphEdge> edges, int rowCount, int a, int b)
+    {
+        var winLen = b - a + 1;
+        var segCounts = new int[winLen];
+        var elbCounts = new int[winLen];
+
+        bool InWin(int r) => r >= a && r <= b;
+
+        foreach (var edge in edges)
+        {
+            var fromIsRealRow = edge.FromRow >= 0 && edge.FromRow < rowCount;
+            var mergeTurn = edge.Type == EdgeType.MergeIn && edge.FromLane != edge.ToLane && fromIsRealRow;
+
+            if (fromIsRealRow && InWin(edge.FromRow))
+            {
+                if (mergeTurn) elbCounts[edge.FromRow - a]++;
+                else segCounts[edge.FromRow - a]++;
+            }
+
+            var passEnd = Math.Min(edge.ToRow, rowCount);
+            var passFrom = Math.Max(edge.FromRow + 1, a);
+            var passTo = Math.Min(passEnd - 1, b);
+            for (var r = passFrom; r <= passTo; r++)
+                segCounts[r - a]++;
+
+            if (edge.ToRow >= 0 && edge.ToRow < rowCount && edge.Type != EdgeType.OffWindow && InWin(edge.ToRow))
+            {
+                if (edge.FromLane == edge.ToLane || mergeTurn) segCounts[edge.ToRow - a]++;
+                else elbCounts[edge.ToRow - a]++;
+            }
+        }
+
+        var totalSegs = 0;
+        var totalElbs = 0;
+        var segStarts = new int[winLen];
+        var elbStarts = new int[winLen];
+        for (var r = 0; r < winLen; r++)
+        {
+            segStarts[r] = totalSegs;
+            totalSegs += segCounts[r];
+            elbStarts[r] = totalElbs;
+            totalElbs += elbCounts[r];
+        }
+
+        var allSegments = new RowLaneSegment[totalSegs];
+        var allElbows = new RowElbow[totalElbs];
+        var segHeads = (int[])segStarts.Clone();
+        var elbHeads = (int[])elbStarts.Clone();
+
+        foreach (var edge in edges)
+        {
+            var leadColor = edge.LeadColorIndex;
+            var color = edge.ColorIndex;
+            var fromIsRealRow = edge.FromRow >= 0 && edge.FromRow < rowCount;
+            var mergeTurn = edge.Type == EdgeType.MergeIn && edge.FromLane != edge.ToLane && fromIsRealRow;
+            var passLane = mergeTurn ? edge.ToLane : edge.FromLane;
+            var passColor = mergeTurn ? color : leadColor;
+
+            if (fromIsRealRow && InWin(edge.FromRow))
+            {
+                if (mergeTurn)
+                {
+                    allElbows[elbHeads[edge.FromRow - a]++] = new RowElbow
+                    {
+                        FromLane = edge.FromLane,
+                        ToLane = edge.ToLane,
+                        ColorIndex = color,
+                        Kind = ElbowKind.LeaveBottom,
+                    };
+                }
+                else
+                {
+                    allSegments[segHeads[edge.FromRow - a]++] = new RowLaneSegment
+                    {
+                        Lane = edge.FromLane,
+                        ColorIndex = leadColor,
+                        Type = LaneSegmentType.NodeToBottom
+                    };
+                }
+            }
+
+            var passEnd = Math.Min(edge.ToRow, rowCount);
+            var passFrom = Math.Max(edge.FromRow + 1, a);
+            var passTo = Math.Min(passEnd - 1, b);
+            for (var r = passFrom; r <= passTo; r++)
+            {
+                allSegments[segHeads[r - a]++] = new RowLaneSegment
+                {
+                    Lane = passLane,
+                    ColorIndex = passColor,
+                    Type = LaneSegmentType.Full
+                };
+            }
+
+            if (edge.ToRow >= 0 && edge.ToRow < rowCount && edge.Type != EdgeType.OffWindow && InWin(edge.ToRow))
+            {
+                if (edge.FromLane == edge.ToLane || mergeTurn)
+                {
+                    allSegments[segHeads[edge.ToRow - a]++] = new RowLaneSegment
+                    {
+                        Lane = edge.ToLane,
+                        ColorIndex = color,
+                        Type = LaneSegmentType.TopToNode
+                    };
+                }
+                else
+                {
+                    allElbows[elbHeads[edge.ToRow - a]++] = new RowElbow
+                    {
+                        FromLane = edge.FromLane,
+                        ToLane = edge.ToLane,
+                        ColorIndex = color,
+                        Kind = ElbowKind.EnterTop,
+                    };
+                }
+            }
+        }
+
+        return (allSegments, segStarts, segCounts, allElbows, elbStarts, elbCounts);
     }
 
     private static List<GraphEdge> RegenerateOffWindow(GraphLayoutState s)
@@ -272,183 +501,76 @@ public sealed class DagLayoutEngine
         return offWindow;
     }
 
-    private static (GraphRow[] Rows, RowLaneSegment[] Segments, RowElbow[] Elbows) DeriveVisuals(
+    /// <summary>
+    /// Test oracle only (§Phase 2 acceptance: "derived lines are identical to the legacy
+    /// DeriveVisuals for every row"). Delegates to the same <see cref="ComputeWindowVisuals"/>
+    /// used by the real, windowed path (<see cref="DeriveWindow"/>), just called for the whole
+    /// row range at once, so there is exactly one implementation of the per-edge line rules to
+    /// keep correct.
+    /// </summary>
+    internal static (GraphRow[] Rows, RowLaneSegment[] Segments, RowElbow[] Elbows) DeriveVisuals(
         List<GraphRow> rawRows, GraphEdge[] edges)
     {
         var rowCount = rawRows.Count;
         if (rowCount == 0)
             return ([], [], []);
 
-        var segCounts = new int[rowCount];
-        var elbCounts = new int[rowCount];
-
-        foreach (var edge in edges)
-        {
-            var fromInWindow = edge.FromRow >= 0 && edge.FromRow < rowCount;
-
-            // §V3-3.2: a merge edge turns out of the merge commit's OWN lane at the merge row and
-            // then runs straight down the merged-in branch's lane to the far parent — it does not
-            // trail the merge lane all the way down and jog sideways only at the parent (that
-            // reads as every merge line "sagging down and to the right"). So the elbow lands on
-            // FromRow, and both the pass-through and the terminal segment sit in ToLane.
-            var mergeTurn = edge.Type == EdgeType.MergeIn && edge.FromLane != edge.ToLane && fromInWindow;
-
-            if (fromInWindow)
-            {
-                if (mergeTurn)
-                    elbCounts[edge.FromRow]++;
-                else
-                    segCounts[edge.FromRow]++;
-            }
-
-            var passEnd = Math.Min(edge.ToRow, rowCount);
-            for (var r = edge.FromRow + 1; r < passEnd; r++)
-                segCounts[r]++;
-
-            if (edge.ToRow >= 0 && edge.ToRow < rowCount && edge.Type != EdgeType.OffWindow)
-            {
-                if (edge.FromLane == edge.ToLane || mergeTurn)
-                    segCounts[edge.ToRow]++;
-                else
-                    elbCounts[edge.ToRow]++;
-            }
-        }
-
-        var totalSegs = 0;
-        var totalElbs = 0;
-        var segStarts = new int[rowCount];
-        var elbStarts = new int[rowCount];
-        for (var r = 0; r < rowCount; r++)
-        {
-            segStarts[r] = totalSegs;
-            totalSegs += segCounts[r];
-            elbStarts[r] = totalElbs;
-            totalElbs += elbCounts[r];
-        }
-
-        var allSegments = new RowLaneSegment[totalSegs];
-        var allElbows = new RowElbow[totalElbs];
-
-        var segHeads = (int[])segStarts.Clone();
-        var elbHeads = (int[])elbStarts.Clone();
-
-        foreach (var edge in edges)
-        {
-            // §V6-G7 fix: the lead-in (NodeToBottom/Full, before the edge reaches its parent)
-            // is coloured with LeadColorIndex — whatever already occupies edge.FromLane — since a
-            // MergeIn edge's lead-in runs through the merge commit's OWN lane, still carrying that
-            // lane's own line for the same row span. Only the terminal segment/elbow at ToRow
-            // switches to ColorIndex (the merged-in branch's own colour for a MergeIn edge).
-            var leadColor = edge.LeadColorIndex;
-            var color = edge.ColorIndex;
-            var fromInWindow = edge.FromRow >= 0 && edge.FromRow < rowCount;
-
-            // See the matching note in the counting pass: a merge edge bends at FromRow and runs
-            // down ToLane. Its whole visible run is then the merged-in branch's own lane, so it is
-            // drawn end to end in that branch's colour (ColorIndex) — LeadColorIndex only mattered
-            // while the lead-in shared the merge commit's lane, which it no longer does.
-            var mergeTurn = edge.Type == EdgeType.MergeIn && edge.FromLane != edge.ToLane && fromInWindow;
-            var passLane = mergeTurn ? edge.ToLane : edge.FromLane;
-            var passColor = mergeTurn ? color : leadColor;
-
-            if (fromInWindow)
-            {
-                if (mergeTurn)
-                {
-                    allElbows[elbHeads[edge.FromRow]++] = new RowElbow
-                    {
-                        FromLane = edge.FromLane,
-                        ToLane = edge.ToLane,
-                        ColorIndex = color,
-                        Kind = ElbowKind.LeaveBottom,
-                    };
-                }
-                else
-                {
-                    allSegments[segHeads[edge.FromRow]++] = new RowLaneSegment
-                    {
-                        Lane = edge.FromLane,
-                        ColorIndex = leadColor,
-                        Type = LaneSegmentType.NodeToBottom
-                    };
-                }
-            }
-
-            var passEnd = Math.Min(edge.ToRow, rowCount);
-            for (var r = edge.FromRow + 1; r < passEnd; r++)
-            {
-                allSegments[segHeads[r]++] = new RowLaneSegment
-                {
-                    Lane = passLane,
-                    ColorIndex = passColor,
-                    Type = LaneSegmentType.Full
-                };
-            }
-
-            if (edge.ToRow >= 0 && edge.ToRow < rowCount && edge.Type != EdgeType.OffWindow)
-            {
-                if (edge.FromLane == edge.ToLane || mergeTurn)
-                {
-                    allSegments[segHeads[edge.ToRow]++] = new RowLaneSegment
-                    {
-                        Lane = edge.ToLane,
-                        ColorIndex = color,
-                        Type = LaneSegmentType.TopToNode
-                    };
-                }
-                else
-                {
-                    allElbows[elbHeads[edge.ToRow]++] = new RowElbow
-                    {
-                        FromLane = edge.FromLane,
-                        ToLane = edge.ToLane,
-                        ColorIndex = color,
-                        Kind = ElbowKind.EnterTop,
-                    };
-                }
-            }
-        }
-
-        var finalizedRows = new GraphRow[rowCount];
-        for (var r = 0; r < rowCount; r++)
-        {
-            var raw = rawRows[r];
-            finalizedRows[r] = raw with
-            {
-                SegmentStart = segStarts[r],
-                SegmentCount = segCounts[r],
-                ElbowStart = elbStarts[r],
-                ElbowCount = elbCounts[r],
-            };
-        }
-
-        return (finalizedRows, allSegments, allElbows);
+        var (segments, _, _, elbows, _, _) = ComputeWindowVisuals([.. edges], rowCount, 0, rowCount - 1);
+        return ([.. rawRows], segments, elbows);
     }
 
     // ── Lane allocation ──
 
     /// <summary>
-    /// §V9-G "older tip wins the trunk". When the walk window holds two or more branch tips
-    /// that are leaves (nothing in the window builds on them), rank them by tip-commit age — oldest
-    /// first — and pin each to a raw lane in that order. The oldest branch then stays collinear
-    /// with the shared mainline below the fork and newer divergent work is what visibly branches
-    /// off, instead of whichever tip the time-ordered walk happened to place on row 0 claiming
-    /// lane 0. Row order is untouched: the newest commit is still row 0, it just sits on a
-    /// higher lane.
+    /// §V10.1 "newest tip wins the trunk, with a checked-out-branch exception". When the walk
+    /// window holds two or more branch tips that are leaves (nothing in the window builds on
+    /// them), rank them and pin each to a raw lane in that order; lane 0 is the trunk. Row order
+    /// is untouched — the newest commit is still row 0, a tip just moves to a higher lane.
+    ///
+    /// Base order: <b>newest tip first</b>, by committer date (SHA breaks an exact-timestamp tie
+    /// so the order is stable per run).
+    ///
+    /// Exception: the currently checked-out local branch stays on the trunk when its work has
+    /// been built on. Let <c>H</c> be that branch's tip among the candidates. If <c>H</c> is not
+    /// already newest, scan the tips newer than <c>H</c> newest-first for the first one <c>H</c>
+    /// is an ancestor of:
+    /// <list type="bullet">
+    ///   <item>ancestor of the newest tip → order is unchanged.</item>
+    ///   <item>ancestor of a later (non-newest) tip <c>T</c> → <c>T</c> takes the trunk and every
+    ///     tip ahead of it shifts one lane right.</item>
+    ///   <item>ancestor of none of the newer tips → <c>H</c> takes the trunk and every other tip
+    ///     shifts one lane right.</item>
+    /// </list>
+    /// The exception is skipped when no ancestry oracle is supplied (the optimistic stale first
+    /// paint); the verified recompute that follows applies it.
     ///
     /// It ranks only tips within the first <see cref="TipPriorityScanHorizon"/> commits of the
-    /// list the engine is handed, and is a pure function of that prefix — never of <c>maxRows</c>.
-    /// So a partial <see cref="Compute"/> + <see cref="Extend"/> seeds the same pins as a full
-    /// compute over the same list and criterion 4 (§7.9.2) still holds; and the horizon is small
-    /// enough (and the app paints a larger first batch) that a pinned tip is always drawn, never
-    /// left holding an empty near-HEAD column while its commits are still below the window.
+    /// list the engine is handed, and is a pure function of that prefix (plus the oracle) — never
+    /// of <c>maxRows</c>. So a partial <see cref="Compute"/> + <see cref="Extend"/> seeds the same
+    /// pins as a full compute over the same list and criterion 4 (§7.9.2) still holds. A
+    /// checked-out branch whose tip is beyond the horizon is not a candidate, so the exception
+    /// does not fire for it.
+    ///
+    /// Only the trunk tip and tips whose commit sits in the first <see cref="PinLaneHorizon"/>
+    /// rows are actually <b>pinned</b> to a reserved lane. A tip hundreds of rows down does not
+    /// need an empty column held for it from row 0 — it gets its lane from the normal allocator
+    /// when the walk reaches it. This keeps the near-HEAD region only as wide as the branches
+    /// that truly live there (a repo with dozens of branch tips otherwise renders that many empty
+    /// lanes across the top, pushing every early merge-in far to the right).
     /// </summary>
     private const int TipPriorityScanHorizon = 200;
+
+    /// <summary>A ranked tip gets a reserved lane only when its commit sits in the first this-many
+    /// rows (see <see cref="SeedTipPriority"/>); the trunk tip is pinned regardless of row. Tips
+    /// deeper than this take a lane from the normal allocator when the walk reaches them —
+    /// still deterministic (the walk is time-ordered), just not a column held empty from row 0.</summary>
+    private const int PinLaneHorizon = 16;
 
     private static void SeedTipPriority(
         GraphLayoutState s,
         IReadOnlyList<RawCommit> commits,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations)
+        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
+        Func<ObjectId, ObjectId, bool>? isAncestor)
     {
         if (decorations is null || decorations.Count == 0 || commits.Count < 2)
             return;
@@ -461,6 +583,7 @@ public sealed class DagLayoutEngine
                 hasChild.Add(p);
 
         var tips = new List<RawCommit>();
+        var tipRow = new Dictionary<ObjectId, int>();
         for (var i = 0; i < limit; i++)
         {
             var c = commits[i];
@@ -468,30 +591,143 @@ public sealed class DagLayoutEngine
                 continue; // a ref pointing mid-history — it gets its lane by reservation, not here
             if (decorations.TryGetValue(c.Id, out var d)
                 && d.Any(x => x.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch))
+            {
                 tips.Add(c);
+                tipRow[c.Id] = i;
+            }
         }
         if (tips.Count < 2)
             return;
 
-        // Oldest tip first, by committer date to match the walk's own Time ordering; the SHA
-        // breaks an exact timestamp tie so the order is stable per run.
-        tips.Sort((a, b) =>
+        // §V10.1: newest tip first, by committer date; the SHA breaks an exact timestamp tie so
+        // the order is stable per run.
+        static int ByNewest(RawCommit a, RawCommit b)
         {
-            var t = a.Metadata.CommitWhen.CompareTo(b.Metadata.CommitWhen);
+            var t = b.Metadata.CommitWhen.CompareTo(a.Metadata.CommitWhen);
             return t != 0 ? t : string.CompareOrdinal(a.Id.Sha, b.Id.Sha);
-        });
-
-        // Pin the first (MaxLanes-1) tips to lanes 0..n-1; any beyond that fall back to the
-        // normal allocator. Pre-seed the compaction map in the same order so the oldest tip
-        // renders in the leftmost column even though the walk places a newer tip on row 0 first.
-        var n = Math.Min(tips.Count, Math.Max(0, s.MaxLanes - 1));
-        for (var rank = 0; rank < n; rank++)
-        {
-            s.TipTargetLane[tips[rank].Id] = rank;
-            s.CompactionMap[rank] = rank;
         }
-        s.NextCompactedLane = Math.Max(s.NextCompactedLane, n);
-        s.LaneCeiling = Math.Max(s.LaneCeiling, n);
+        tips.Sort(ByNewest);
+
+        // §V10.1 checked-out-branch exception. Locate the checked-out local branch's tip anywhere
+        // in the scan window — it need NOT be a leaf: the whole point is that newer work has been
+        // built on it. A detached HEAD carries no such badge, so nothing fires.
+        RawCommit? head = null;
+        for (var i = 0; i < limit; i++)
+            if (decorations.TryGetValue(commits[i].Id, out var hd)
+                && hd.Any(x => x.IsHead && x.Type == DecorationType.LocalBranch))
+            {
+                head = commits[i];
+                break;
+            }
+
+        if (head is { } h && !tips[0].Id.Equals(h.Id))
+        {
+            // §10.1.3 finding #15 (decision C): the libgit2 CalculateHistoryDivergence oracle is
+            // retired everywhere — every real caller now passes isAncestor: null and gets the
+            // exact in-window check below for free (no repo access, no gate). The parameter stays
+            // only so tests can inject a stand-in oracle against a synthetic DAG.
+            Dictionary<ObjectId, int>? rowById = null;
+            if (isAncestor is null)
+            {
+                rowById = new Dictionary<ObjectId, int>(limit);
+                for (var i = 0; i < limit; i++)
+                    rowById[commits[i].Id] = i;
+            }
+            bool Ancestor(ObjectId a, ObjectId b) =>
+                isAncestor is not null ? isAncestor(a, b) : IsAncestorInWindow(commits, rowById!, a, b);
+
+            // The tips strictly newer than HEAD are the front run of the sorted list.
+            var newerCount = 0;
+            while (newerCount < tips.Count && ByNewest(tips[newerCount], h) < 0)
+                newerCount++;
+
+            // Newest-first, the first newer tip HEAD is an ancestor of.
+            var promote = -1;
+            for (var i = 0; i < newerCount; i++)
+                if (!tips[i].Id.Equals(h.Id) && Ancestor(h.Id, tips[i].Id))
+                {
+                    promote = i;
+                    break;
+                }
+
+            if (promote > 0)
+            {
+                // That tip takes the trunk; the tips ahead of it shift one lane right.
+                var t = tips[promote];
+                tips.RemoveAt(promote);
+                tips.Insert(0, t);
+            }
+            else if (promote < 0)
+            {
+                // HEAD is an ancestor of no newer tip → HEAD itself takes the trunk. Only a leaf
+                // HEAD reaches here (a non-leaf HEAD always has a newer descendant tip it is an
+                // ancestor of), so it is already one of the candidates — just move it to front.
+                var hi = tips.FindIndex(x => x.Id.Equals(h.Id));
+                if (hi > 0)
+                {
+                    var t = tips[hi];
+                    tips.RemoveAt(hi);
+                    tips.Insert(0, t);
+                }
+            }
+            // promote == 0 → HEAD is an ancestor of the current newest tip: order is unchanged.
+        }
+
+        // Pin the trunk tip (rank 0) to lane 0 always; pin the other ranked tips only when their
+        // commit is near HEAD (row < PinLaneHorizon). Far-down tips fall back to the normal
+        // allocator when the walk reaches them, so the near-HEAD region stays only as wide as the
+        // branches truly live there. Compacted lanes are handed out by a running counter so the
+        // pinned set stays contiguous 0..lane-1; the compaction map is pre-seeded to match so the
+        // trunk renders in the leftmost column even when the walk emits a different tip on row 0.
+        var cap = Math.Max(0, s.MaxLanes - 1);
+        var lane = 0;
+        for (var rank = 0; rank < tips.Count && lane < cap; rank++)
+        {
+            if (rank != 0 && tipRow.GetValueOrDefault(tips[rank].Id, int.MaxValue) >= PinLaneHorizon)
+                continue;
+            s.TipTargetLane[tips[rank].Id] = lane;
+            s.CompactionMap[lane] = lane;
+            lane++;
+        }
+        s.NextCompactedLane = Math.Max(s.NextCompactedLane, lane);
+        s.LaneCeiling = Math.Max(s.LaneCeiling, lane);
+    }
+
+    /// <summary>
+    /// §10.1.3 finding #15: exact in-window ancestry check that answers the same question the
+    /// retired libgit2 oracle did — <c>isAncestor(a, b)</c> is true when commit <paramref
+    /// name="h"/> is an ancestor of (or equal to) <paramref name="t"/> — using ONLY the already
+    /// scanned topo-ordered prefix (<paramref name="commits"/>[0, <see cref="TipPriorityScanHorizon"/>)),
+    /// with no repo access.
+    /// <para>Exact because every commit on a path from <paramref name="t"/> to <paramref name="h"/>
+    /// is itself a descendant of <paramref name="h"/> and so precedes it in the topological
+    /// (children-before-parents) walk order — the whole path lies inside <c>[row(t), row(h)]</c>.
+    /// Mark <paramref name="t"/>, then walk rows <c>row(t)..row(h)</c> forward, marking the
+    /// parents of every already-marked row; <paramref name="h"/> is an ancestor of <paramref
+    /// name="t"/> iff it ends up marked.</para>
+    /// <para>Returns false — a safe negative, never a crash — when either commit falls outside the
+    /// scanned window, or when <c>row(t) &gt; row(h)</c> (impossible for a true ancestor: a parent
+    /// always sits at a later row than its child in this sort). Caveat inherited from the analysis:
+    /// a path-filtered / single-branch graph can omit commits, so here a false negative is
+    /// possible — the only effect is which branch holds the trunk lane.</para>
+    /// </summary>
+    private static bool IsAncestorInWindow(
+        IReadOnlyList<RawCommit> commits, IReadOnlyDictionary<ObjectId, int> rowById, ObjectId h, ObjectId t)
+    {
+        if (h.Equals(t))
+            return true;
+        if (!rowById.TryGetValue(t, out var rowT) || !rowById.TryGetValue(h, out var rowH) || rowT > rowH)
+            return false;
+
+        var marked = new HashSet<ObjectId> { t };
+        for (var i = rowT; i <= rowH; i++)
+        {
+            if (!marked.Contains(commits[i].Id))
+                continue;
+            foreach (var p in commits[i].ParentIds)
+                marked.Add(p);
+        }
+        return marked.Contains(h);
     }
 
     private static int AllocLane(GraphLayoutState s)
@@ -506,7 +742,9 @@ public sealed class DagLayoutEngine
         if (s.LaneCeiling < s.MaxLanes - 1)
             return s.LaneCeiling++;
 
-        return s.MaxLanes - 1; // overflow lane (rendered with a distinct dashed style)
+        // §V3.1: with MaxLanes == int.MaxValue this branch is unreachable — kept only as an
+        // overflow-safe guard. It no longer describes a rendered lane; nothing collapses here.
+        return s.MaxLanes - 1;
     }
 
     private static void ReleaseLane(GraphLayoutState s, int rawLane)
@@ -533,11 +771,24 @@ public sealed class DagLayoutEngine
 
     private static void AddReservation(GraphLayoutState s, ObjectId parent, Res res)
     {
+        parent = Intern(s, parent);
         if (!s.Reservations.TryGetValue(parent, out var list))
             s.Reservations[parent] = list = [];
         list.Add(res);
         if (res.RawLane >= 0)
             s.ReservedLaneCount[res.RawLane] = s.ReservedLaneCount.GetValueOrDefault(res.RawLane) + 1;
+    }
+
+    /// <summary>Phase 5(a): returns the one canonical <see cref="ObjectId"/> instance for this
+    /// SHA — the first instance ever seen for it, whether that was as a reservation key or a row.
+    /// Every later reference to the same commit reuses it instead of holding its own separately
+    /// parsed copy.</summary>
+    private static ObjectId Intern(GraphLayoutState s, ObjectId id)
+    {
+        if (s.InternedIds.TryGetValue(id, out var canonical))
+            return canonical;
+        s.InternedIds[id] = id;
+        return id;
     }
 
     private static void RemoveReservationsFor(GraphLayoutState s, ObjectId id, List<Res> removed)
@@ -579,12 +830,15 @@ public sealed class DagLayoutEngine
 
         var seed = (int)(StableHash.Fnv1a(laneKey) % LanePalette.Size);
 
-        // 2. Deterministic ±2 de-collision: step +1 (mod palette) past the colours of nearby
+        // 2. Deterministic ±4 de-collision: step +1 (mod palette) past the colours of nearby
         // lanes already coloured. Lane birth order is a pure function of the (stable) walk, and
         // a lane born later that lands on the same colour steps when it is itself coloured — so
         // the outcome does not depend on which side of a pair is processed first.
+        // §V3.1: with up to hundreds of lanes and 9 palette colours the old ±2 window let
+        // identical colours sit only 3 lanes apart everywhere. ±4 is the widest window that
+        // still guarantees a free colour exists — its 8 neighbours can hold at most 8 of the 9.
         var taken = new HashSet<int>();
-        for (var l = compactedLane - 2; l <= compactedLane + 2; l++)
+        for (var l = compactedLane - 4; l <= compactedLane + 4; l++)
             if (l != compactedLane && s.LaneColor.TryGetValue(l, out var nearColor))
                 taken.Add(nearColor);
 

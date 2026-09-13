@@ -55,6 +55,12 @@ public interface IGitGateway
     /// <summary>Moves the current branch to <paramref name="target"/> (CLI-routed). <c>Hard</c> is destructive.</summary>
     Task ResetAsync(string target, GitResetMode mode, CancellationToken ct = default);
 
+    /// <summary>Commits reachable from <paramref name="target"/>..HEAD — i.e. how many commits
+    /// would leave the branch if it were reset to <paramref name="target"/> — via
+    /// <c>git rev-list --count</c> (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c>,
+    /// which finding #15 measured at ~22 s on far-apart commits).</summary>
+    Task<int> CountCommitsLeavingAsync(string target, CancellationToken ct = default);
+
     // ── Ref mutations ──
     Task CheckoutAsync(string refName, GitCheckoutOptions options, CancellationToken ct = default);
     Task<BranchInfo> CreateBranchAsync(string name, string startPoint, bool checkout, CancellationToken ct = default);

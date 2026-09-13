@@ -1,14 +1,33 @@
 ﻿namespace Historia.Services.Graph;
 
+/// <summary>Which engine produced a persisted walk / metadata store: the CLI streaming
+/// <c>git log --topo-order</c> walk (primary, v10.1.3+) or the libgit2 revwalk (fallback). The two
+/// engines can disagree on row order for the same ref set, so a cache written by one must never be
+/// resumed (<c>skip: have</c>) by the other — see <see cref="GraphWalkCache"/> and
+/// <see cref="GraphMetaStore"/>.</summary>
+internal enum WalkEngine
+{
+    LibGit2 = 0,
+    Cli = 1,
+}
+
 /// <summary>
 /// On-disk persistence of the raw graph walk (commits + decorations) keyed by a fingerprint of
-/// the repo's refs. A hit skips the whole libgit2 revwalk on the next launch — only
+/// the repo's refs. A hit skips the whole revwalk on the next launch — only
 /// <see cref="DagLayoutEngine.Compute"/> (~tens of ms) still runs. Cached only for the plain
 /// all-refs, no-path-filter, no-stashes query; anything else re-walks.
 /// </summary>
 internal sealed class GraphWalkCache
 {
-    private const int Version = 2;
+    // v10.1.3: bumped 2 -> 3 to add WalkEngine (see that enum) — a file written by one walk
+    // engine must never be treated as resumable by the other, since their row orders can differ
+    // for the same ref set. A v2 file predates the marker and is rejected outright, forcing a
+    // one-time re-walk per repo.
+    // Phase 0.5 (v10 graph memory footprint plan): bumped 3 -> 4. The CLI prime's resume skip
+    // fix and the canonical (sorted) tip order both change a repo's walk output for an unchanged
+    // fingerprint — a v3 file could silently disagree with what a fresh walk now produces, so it
+    // is rejected outright and every repo re-walks once.
+    private const int Version = 4;
     private const int MaxFiles = 40;
 
     private static readonly JsonSerializerOptions Json = new() { IncludeFields = false };
@@ -51,7 +70,10 @@ internal sealed class GraphWalkCache
     /// <param name="metadataOnDisk">§7.6: when true the per-commit strings are served from the
     /// paged <c>DiskCommitStore</c>, so a warm load only needs id + parent count here — skip
     /// materialising the message/author/email text for a whole huge history.</param>
-    public Loaded? TryLoad(string repoPath, GraphQuery query, int wantCount, long fingerprint, bool metadataOnDisk = false)
+    /// <param name="engine">The walk engine that WOULD run a fresh prime right now. A saved file
+    /// from the other engine is rejected outright when it is not exhausted — resuming it with
+    /// <c>skip: have</c> would assume a row order only the file's own engine actually produced.</param>
+    public Loaded? TryLoad(string repoPath, GraphQuery query, int wantCount, long fingerprint, WalkEngine engine, bool metadataOnDisk = false)
     {
         if (!Supports(query))
             return null;
@@ -60,14 +82,34 @@ internal sealed class GraphWalkCache
         using (Historia.Diagnostics.PerfLog.Scope("TryLoad ReadFile"))
             entry = GetCachedRead(repoPath);
         var dto = entry?.Dto;
-        if (dto is null
-            || dto.Fingerprint != fingerprint
-            || dto.IncludeRemoteBranches != query.IncludeRemoteBranches)
+        if (dto is null)
+        {
+            Historia.Diagnostics.PerfLog.Mark("walk cache MISS: no file / unreadable / wrong version");
             return null;
+        }
+        if (dto.Fingerprint != fingerprint)
+        {
+            Historia.Diagnostics.PerfLog.Mark("walk cache MISS: fingerprint changed (refs moved since save)");
+            return null;
+        }
+        if (dto.IncludeRemoteBranches != query.IncludeRemoteBranches)
+        {
+            Historia.Diagnostics.PerfLog.Mark("walk cache MISS: IncludeRemoteBranches mismatch");
+            return null;
+        }
+        if (!dto.Exhausted && (WalkEngine)dto.WalkEngine != engine)
+        {
+            Historia.Diagnostics.PerfLog.Mark(
+                $"walk cache MISS: engine mismatch (file={(WalkEngine)dto.WalkEngine}, current={engine}) on a non-exhausted save");
+            return null;
+        }
 
         // Enough rows? Either the whole history is here, or it already holds what we need.
         if (!dto.Exhausted && dto.Commits.Count < wantCount)
+        {
+            Historia.Diagnostics.PerfLog.Mark($"walk cache MISS: only {dto.Commits.Count} rows saved, need {wantCount}");
             return null;
+        }
 
         using (Historia.Diagnostics.PerfLog.Scope("TryLoad ToLoaded"))
             return GetOrConvert(entry!, metadataOnDisk);
@@ -89,10 +131,34 @@ internal sealed class GraphWalkCache
 
         var entry = GetCachedRead(repoPath);
         var dto = entry?.Dto;
-        if (dto is null || dto.IncludeRemoteBranches != query.IncludeRemoteBranches || dto.Commits.Count == 0)
+        if (dto is null)
+        {
+            Historia.Diagnostics.PerfLog.Mark("optimistic snapshot MISS: no file / unreadable / wrong version");
             return null;
+        }
+        if (dto.IncludeRemoteBranches != query.IncludeRemoteBranches)
+        {
+            Historia.Diagnostics.PerfLog.Mark("optimistic snapshot MISS: IncludeRemoteBranches mismatch");
+            return null;
+        }
+        if (dto.Commits.Count == 0)
+        {
+            Historia.Diagnostics.PerfLog.Mark("optimistic snapshot MISS: saved file is empty");
+            return null;
+        }
 
         return GetOrConvert(entry!, metadataOnDisk);
+    }
+
+    /// <summary>v10 graph memory footprint plan, Phase 1 (R4): drops this repo's cached read
+    /// entry (the raw DTO plus up to two converted <see cref="Loaded"/> commit lists) — called on
+    /// <see cref="GraphLayoutService.Hibernate"/> so a warm-loaded repo's walk cache doesn't stay
+    /// resident for the rest of the session after the tab is switched away from. A miss on the
+    /// next read is no different from one past <see cref="ReadCacheTtl"/> — just a re-read.</summary>
+    public void Evict(string repoPath)
+    {
+        lock (_readCacheSync)
+            _readCache.Remove(repoPath);
     }
 
     private CachedRead? GetCachedRead(string repoPath)
@@ -131,20 +197,34 @@ internal sealed class GraphWalkCache
 
     private static CacheFile? ReadFileFromDisk(string repoPath)
     {
+        var path = FileFor(repoPath);
         try
         {
-            var path = FileFor(repoPath);
             if (!File.Exists(path))
-                return null;
+                return null; // routine — nothing saved yet, not a fault
 
             using var fs = File.OpenRead(path);
             using var gz = new GZipStream(fs, CompressionMode.Decompress);
             var dto = JsonSerializer.Deserialize<CacheFile>(gz, Json);
-            return dto?.Version == Version ? dto : null;
+            if (dto is null)
+            {
+                Historia.Diagnostics.PerfLog.Mark($"walk cache file unreadable: null DTO ({Path.GetFileName(path)})");
+                return null;
+            }
+            if (dto.Version != Version)
+            {
+                Historia.Diagnostics.PerfLog.Mark(
+                    $"walk cache file schema mismatch: file v{dto.Version}, code v{Version} ({Path.GetFileName(path)})");
+                return null;
+            }
+            return dto;
         }
-        catch
+        catch (Exception ex)
         {
-            return null; // any corruption → treat as a miss
+            // A file that exists but fails to decompress/deserialize is a real fault (e.g. an
+            // interrupted write from an earlier build) — worth a loud mark, unlike "no file yet".
+            Historia.Diagnostics.PerfLog.Mark($"walk cache file CORRUPT: {ex.GetType().Name}: {ex.Message} ({Path.GetFileName(path)})");
+            return null;
         }
     }
 
@@ -158,11 +238,14 @@ internal sealed class GraphWalkCache
                 parents[i] = new ObjectId(c.Parents[i]);
             var id = new ObjectId(c.Id);
             commits.Add(new RawCommit(id, parents, metadataOnDisk
+                // §V10.1: keep the timestamps even in the id/parents-only load — DagLayoutEngine's
+                // tip-priority pre-pass sorts by CommitWhen, and the paged store is only consulted
+                // for the heavy strings. Zeroing the dates here pinned the trunk to SHA order.
                 ? new CommitMetadata
                 {
                     Id = id,
                     MessageShort = "", AuthorName = "", AuthorEmail = "",
-                    AuthorWhen = default, CommitWhen = default,
+                    AuthorWhen = c.AuthorWhen, CommitWhen = c.CommitWhen,
                     ParentCount = c.ParentCount,
                 }
                 : new CommitMetadata
@@ -209,7 +292,8 @@ internal sealed class GraphWalkCache
     public void Save(
         string repoPath, GraphQuery query, long fingerprint, bool exhausted,
         IReadOnlyList<RawCommit> commits,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations)
+        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations,
+        WalkEngine engine)
     {
         if (!Supports(query))
             return;
@@ -224,6 +308,7 @@ internal sealed class GraphWalkCache
                 Fingerprint = fingerprint,
                 IncludeRemoteBranches = query.IncludeRemoteBranches,
                 Exhausted = exhausted,
+                WalkEngine = (int)engine,
                 Commits = commits.Select(c => new CommitDto
                 {
                     Id = c.Id.Sha,
@@ -305,6 +390,7 @@ internal sealed class GraphWalkCache
         public long Fingerprint { get; set; }
         public bool IncludeRemoteBranches { get; set; }
         public bool Exhausted { get; set; }
+        public int WalkEngine { get; set; }
         public List<CommitDto> Commits { get; set; } = [];
         public Dictionary<string, List<DecoDto>> Decorations { get; set; } = [];
     }

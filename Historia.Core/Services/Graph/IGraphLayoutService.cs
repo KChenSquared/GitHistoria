@@ -29,10 +29,12 @@ public interface IGraphLayoutService
     /// <summary>
     /// Continues the walk from where <paramref name="existing"/> left off, appending up to
     /// <paramref name="additionalRows"/> rows. Lane indices already assigned are never
-    /// renumbered.
+    /// renumbered. <paramref name="background"/> routes the walk through the low-priority repo
+    /// gate (the silent pre-load crawler); scroll-driven extends leave it false.
     /// </summary>
     Task<GraphLayoutResult> ExtendLayoutAsync(
-        RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default);
+        RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default,
+        bool background = false);
 
     /// <summary>
     /// Recomputes the layout after a history change (§7.3 invalidation table). Appended commits
@@ -47,8 +49,61 @@ public interface IGraphLayoutService
     void Forget(RepositoryContext context);
 
     /// <summary>
+    /// v10 graph memory footprint plan, Phase 1: releases everything a tab's graph holds in
+    /// memory when the user switches away from it — cancels its background disk-cache spill,
+    /// disposes its live walk (killing the CLI engine's <c>git.exe</c> if one is running), drops
+    /// its resident commit list and decorations, and evicts its <c>.gz</c> read-cache entry.
+    /// Unlike <see cref="Forget"/> this is NOT a full teardown: a partial on-disk cache is left in
+    /// place for the next focus to resume from, and returning to the tab is a normal
+    /// <see cref="ComputeLayoutAsync"/>. Safe to call for a context with no cache (no-op).
+    /// </summary>
+    Task Hibernate(RepositoryContext context);
+
+    /// <summary>
     /// Deletes the on-disk persisted graph walk and drops the in-memory decoration caches.
     /// The next graph open re-walks from scratch. Returns the number of files removed.
     /// </summary>
     int ClearPersistentCache();
+
+    /// <summary>
+    /// v10 graph memory footprint plan, Phase 4: headlessly brings ONE inactive tab's on-disk
+    /// graph cache up to date — no live layout, no lasting entry in this service's own cache
+    /// table, holding at most one walk batch resident at a time. A no-op if disk-backed metadata
+    /// is off, this query shape isn't supported by it, or the store already matches the repo's
+    /// current walk key and is exhausted. Also writes/refreshes the commit-graph when the repo's
+    /// size already qualifies. Driven by <c>GraphBackgroundWriter</c>'s inactive-tab queue —
+    /// never called for the focused tab. <paramref name="ct"/> is checked at batch boundaries: a
+    /// cancellation (the tab was focused mid-job) leaves whatever was already durably written in
+    /// place and discards only the in-flight batch.
+    /// </summary>
+    Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct);
+
+    /// <summary>
+    /// Phase 4: queues <paramref name="context"/> for the headless pipeline
+    /// (<see cref="RunHeadlessCacheAsync"/>) on this service's own background-job queue, so it
+    /// runs one at a time with — and serialized against — every other inactive tab and the active
+    /// tab's own commit-graph write. A no-op if this service has no background writer configured
+    /// (a test-only ctor). The caller is expected to call this only for tabs that are NOT
+    /// currently focused.
+    /// </summary>
+    void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query);
+
+    /// <summary>
+    /// 2026-09-12 memoryshrink review, finding #1: cancels <paramref name="context"/>'s
+    /// inactive-tab headless job — queued or already running — and returns a task that completes
+    /// once it has actually exited. Called when a tab gains focus, before its own foreground
+    /// spill can start writing, so the headless pipeline and the newly focused tab's spill never
+    /// both append to the same on-disk store. A no-op (a completed task) if there is no such job,
+    /// or this service has no background writer configured (a test-only ctor).
+    /// </summary>
+    Task CancelInactiveTabCachingAsync(RepositoryContext context);
+
+    /// <summary>
+    /// Phase 4 (2026-09-12 memoryshrink review, finding #17): fire-and-forget refresh of
+    /// <paramref name="context"/>'s commit-graph after a successful auto-fetch, through
+    /// <c>GraphBackgroundWriter</c>'s serial/gated/below-normal-priority/never-killed write path.
+    /// A no-op if this service has no background writer configured (a test-only ctor) or the
+    /// "Write a commit-graph file for large repositories" setting is off.
+    /// </summary>
+    void RefreshCommitGraphAfterFetch(RepositoryContext context);
 }

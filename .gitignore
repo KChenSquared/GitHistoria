@@ -12,6 +12,9 @@
 # --------------------------------------------------------------------
 [Bb]in/
 [Oo]bj/
+# Scratch build outputs used to compile-check while the app holds a lock on bin/
+*-verify/
+*-verify-int/
 [Aa]rtifacts/
 .artifacts/
 [Oo]ut/
@@ -149,3 +152,12 @@ node_modules/
 # Sibling clones used only as reference material for v8 M4 (not part of the app)
 /GitComet/
 /desktop/
+
+vscode-git-graph
+
+# --------------------------------------------------------------------
+# Dev Tooling Reports
+# --------------------------------------------------------------------
+/dev/loc-report.md
+
+

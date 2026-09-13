@@ -121,6 +121,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
 
     public async Task RefreshStatusAsync(CancellationToken ct = default)
     {
+        using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshStatusAsync({_context.DisplayName})");
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _context.Lifetime);
         var status = await _context.Gateway.GetStatusAsync(linked.Token).ConfigureAwait(false);
         var info = await _context.Gateway.GetRepositoryInfoAsync(linked.Token).ConfigureAwait(false);
@@ -185,6 +186,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
 
     public async Task RefreshRefsAsync(CancellationToken ct = default)
     {
+        using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshRefsAsync({_context.DisplayName})");
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _context.Lifetime);
         var branches = await _context.Gateway.GetBranchesAsync(linked.Token).ConfigureAwait(false);
         var tags = await _context.Gateway.GetTagsAsync(linked.Token).ConfigureAwait(false);

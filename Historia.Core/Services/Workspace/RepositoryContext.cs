@@ -13,6 +13,21 @@ public sealed class RepositoryContext : IAsyncDisposable
     private readonly CancellationTokenSource _lifetimeCts = new();
     private int _selfOperationDepth;
 
+    // Count of callers currently blocked in (or about to enter) the foreground gate queue.
+    // WithRepositoryBackgroundAsync stands aside while this is non-zero so a user-driven walk,
+    // status refresh, or diff never queues behind the §7.6 background history spill.
+    private int _foregroundGateWaiters;
+
+    // Count of callers currently blocked in (or about to enter) WithRepositoryBackgroundAsync.
+    // WithRepositorySpillAsync stands aside while this is non-zero, in addition to standing
+    // aside for genuine foreground work — see its doc comment for why a third tier exists.
+    private int _backgroundGateWaiters;
+
+    /// <summary>Longest a <see cref="WithRepositoryBackgroundAsync{T}"/> caller will keep yielding
+    /// to foreground work before it forces its own turn — bounds background-spill starvation when
+    /// the user is continuously interacting with the tab.</summary>
+    private static readonly TimeSpan BackgroundGateMaxYield = TimeSpan.FromSeconds(3);
+
     // Signaled once the graph control's first paint for this context lands (success, failure,
     // or cancellation -- whichever comes first). WorkspaceService's InitializeContextAsync waits
     // on this (bounded by its own timeout) before it starts touching the repo itself, so the
@@ -132,10 +147,18 @@ public sealed class RepositoryContext : IAsyncDisposable
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
         var waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        await _repoGate.WaitAsync(linked.Token).ConfigureAwait(false);
+        Interlocked.Increment(ref _foregroundGateWaiters);
+        try
+        {
+            await _repoGate.WaitAsync(linked.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _foregroundGateWaiters);
+        }
         var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds;
         if (waitMs > 5)
-            Historia.Diagnostics.PerfLog.Mark($"repo gate wait {waitMs:F1}ms ({System.IO.Path.GetFileName(RepositoryPath)})");
+            Historia.Diagnostics.PerfLog.Mark($"repo gate wait {waitMs:F1}ms ({DisplayName})");
         try
         {
             return await Task.Run(() => work(_repository), linked.Token).ConfigureAwait(false);
@@ -148,6 +171,102 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     public Task WithRepositoryAsync(Action<Repository> work, CancellationToken ct = default)
         => WithRepositoryAsync(repo => { work(repo); return true; }, ct);
+
+    /// <summary>
+    /// Like <see cref="WithRepositoryAsync{T}"/> but low priority: yields the gate to any
+    /// foreground caller that is waiting (or arrives while this one is waiting), up to
+    /// <see cref="BackgroundGateMaxYield"/>, before taking its own turn. Used by the §7.6
+    /// background history spill so it never makes the user wait for a tab switch, scroll,
+    /// status refresh, or diff on the same repo. Callers should still slice their work so one
+    /// acquisition is short — this only reorders the queue, it cannot preempt a turn in flight.
+    /// </summary>
+    public async Task<T> WithRepositoryBackgroundAsync<T>(Func<Repository, T> work, CancellationToken ct = default)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
+        var yieldStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        Interlocked.Increment(ref _backgroundGateWaiters);
+        try
+        {
+            while (true)
+            {
+                while (Volatile.Read(ref _foregroundGateWaiters) > 0
+                       && System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart) < BackgroundGateMaxYield)
+                    await Task.Delay(20, linked.Token).ConfigureAwait(false);
+
+                await _repoGate.WaitAsync(linked.Token).ConfigureAwait(false);
+
+                // A foreground caller queued between the check above and the acquire — hand it the
+                // turn, unless we have already yielded for as long as we are willing to.
+                if (Volatile.Read(ref _foregroundGateWaiters) > 0
+                    && System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart) < BackgroundGateMaxYield)
+                {
+                    _repoGate.Release();
+                    await Task.Delay(20, linked.Token).ConfigureAwait(false);
+                    continue;
+                }
+                break;
+            }
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _backgroundGateWaiters);
+        }
+        try
+        {
+            return await Task.Run(() => work(_repository), linked.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            _repoGate.Release();
+        }
+    }
+
+    public Task WithRepositoryBackgroundAsync(Action<Repository> work, CancellationToken ct = default)
+        => WithRepositoryBackgroundAsync(repo => { work(repo); return true; }, ct);
+
+    /// <summary>
+    /// Like <see cref="WithRepositoryBackgroundAsync{T}"/> but lower priority still: yields to a
+    /// foreground caller AND to a <see cref="WithRepositoryBackgroundAsync{T}"/> caller, up to
+    /// <see cref="BackgroundGateMaxYield"/>, before taking its own turn. Used by the §7.6
+    /// full-history disk spill, which otherwise sits at the same tier as (and can starve) the
+    /// commit-graph's own silent crawl (also a <see cref="WithRepositoryBackgroundAsync{T}"/>
+    /// caller) — both count as "background" to a genuine foreground request, but the spill has no
+    /// user-visible urgency of its own and the crawl does (it is what grows the scrollbar while
+    /// the graph loads in the background), so the spill is the one that must stand aside here.
+    /// </summary>
+    public async Task<T> WithRepositorySpillAsync<T>(Func<Repository, T> work, CancellationToken ct = default)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
+        var yieldStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        while (true)
+        {
+            while ((Volatile.Read(ref _foregroundGateWaiters) > 0 || Volatile.Read(ref _backgroundGateWaiters) > 0)
+                   && System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart) < BackgroundGateMaxYield)
+                await Task.Delay(20, linked.Token).ConfigureAwait(false);
+
+            await _repoGate.WaitAsync(linked.Token).ConfigureAwait(false);
+
+            if ((Volatile.Read(ref _foregroundGateWaiters) > 0 || Volatile.Read(ref _backgroundGateWaiters) > 0)
+                && System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart) < BackgroundGateMaxYield)
+            {
+                _repoGate.Release();
+                await Task.Delay(20, linked.Token).ConfigureAwait(false);
+                continue;
+            }
+            break;
+        }
+        try
+        {
+            return await Task.Run(() => work(_repository), linked.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            _repoGate.Release();
+        }
+    }
+
+    public Task WithRepositorySpillAsync(Action<Repository> work, CancellationToken ct = default)
+        => WithRepositorySpillAsync(repo => { work(repo); return true; }, ct);
 
     /// <summary>
     /// Marks a scope as one of Historia's own Git operations so the watcher suppresses the
@@ -200,7 +319,7 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        using var perfScope = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.DisposeAsync({System.IO.Path.GetFileName(RepositoryPath)})");
+        using var perfScope = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.DisposeAsync({DisplayName})");
         AppLog.Write(AppLogLevel.Info, "repo", $"Close({DisplayName})");
         try { _lifetimeCts.Cancel(); } catch { /* ignore */ }
 
@@ -219,7 +338,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         var gateWaitStart = System.Diagnostics.Stopwatch.GetTimestamp();
         var gotGate = await _repoGate.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         Historia.Diagnostics.PerfLog.Mark(
-            $"DisposeAsync repo gate {(gotGate ? "acquired" : "TIMED OUT")} after {System.Diagnostics.Stopwatch.GetElapsedTime(gateWaitStart).TotalMilliseconds:F1}ms ({System.IO.Path.GetFileName(RepositoryPath)})");
+            $"DisposeAsync repo gate {(gotGate ? "acquired" : "TIMED OUT")} after {System.Diagnostics.Stopwatch.GetElapsedTime(gateWaitStart).TotalMilliseconds:F1}ms ({DisplayName})");
         if (gotGate)
         {
             try

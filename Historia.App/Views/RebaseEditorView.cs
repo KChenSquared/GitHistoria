@@ -11,6 +11,7 @@ public sealed class RebaseEditorView : UserControl
     private readonly INotificationService _notifications;
     private readonly INavigationBus _nav;
     private readonly IWorkspaceService _workspace;
+    private readonly IDialogService _dialogs;
     private readonly string _onto;
 
     private readonly StackPanel _root = new() { Spacing = 8, Margin = new Thickness(24), MaxWidth = 760 };
@@ -26,6 +27,7 @@ public sealed class RebaseEditorView : UserControl
         _notifications = sp.GetRequiredService<INotificationService>();
         _nav = sp.GetRequiredService<INavigationBus>();
         _workspace = sp.GetRequiredService<IWorkspaceService>();
+        _dialogs = sp.GetRequiredService<IDialogService>();
 
         Content = new ScrollViewer { Content = _root };
         this.Dyn(BackgroundProperty, "ColorChrome");
@@ -117,6 +119,16 @@ public sealed class RebaseEditorView : UserControl
         return cb;
     }
 
+    /// <summary>#20: the only rebase that doesn't rewrite anything is every entry left as Pick,
+    /// in the exact order the session was built in — <see cref="RebaseService.StartAsync"/>'s
+    /// non-interactive fast path. A reorder of pick-only entries still gets new commit SHAs even
+    /// though the fast path's own check (all-Pick) would take it, so this checks order too.</summary>
+    private bool IsPickOnlyUnchangedOrder(RebaseSession session)
+        => _session is not null
+           && session.Entries.Count == _session.Entries.Count
+           && session.Entries.Select((e, i) => e.Action == RebaseAction.Pick && e.CommitId == _session.Entries[i].CommitId)
+               .All(same => same);
+
     private async Task StartAsync()
     {
         if (_session is null) return;
@@ -129,6 +141,31 @@ public sealed class RebaseEditorView : UserControl
         {
             _notifications.Publish(NotificationSeverity.Error, string.Join("\n", issues.Select(i => i.Message)));
             return;
+        }
+
+        // #20 (Rule 00): the pick-only, unchanged-order fast path doesn't rewrite anything;
+        // everything else (a reorder, a reword/edit, a squash/fixup, a drop) gives commits new
+        // SHAs and needs the Rule 00 dialog, naming what changes.
+        if (!IsPickOnlyUnchangedOrder(session))
+        {
+            var rewritten = _entries.Count(e => e.Action is RebaseAction.Reword or RebaseAction.Edit);
+            var dropped = _entries.Count(e => e.Action == RebaseAction.Drop);
+            var squashed = _entries.Count(e => e.Action is RebaseAction.Squash or RebaseAction.Fixup);
+
+            var parts = new List<string>();
+            if (rewritten > 0) parts.Add($"{rewritten} rewritten");
+            if (dropped > 0) parts.Add($"{dropped} dropped");
+            if (squashed > 0) parts.Add($"{squashed} squashed");
+            var summary = parts.Count > 0
+                ? $"{string.Join(", ", parts)} commit(s)."
+                : "Reordering commits still gives them new SHAs.";
+
+            var effect = $"Rebase {session.SourceBranchName} onto {session.OntoRefName}? This rewrites history: {summary}";
+            if (issues.Count > 0)
+                effect += "\n\n" + string.Join("\n", issues.Select(i => i.Message));
+
+            if (!await _dialogs.ConfirmDestructiveAsync("Rewrite history", effect, "Start rebase"))
+                return;
         }
 
         try

@@ -252,12 +252,15 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
         return Task.CompletedTask;
     }
 
-    public Task CloseForRepositoryAsync(RepoIdentityKey key)
+    public Task CloseForTabAsync(string tabId)
     {
+        if (string.IsNullOrEmpty(tabId))
+            return Task.CompletedTask;
+
         List<TerminalSession> matches;
         lock (_sync)
         {
-            matches = _sessions.Where(s => s.Origin.RepoKey == key).ToList();
+            matches = _sessions.Where(s => s.Origin.TabId == tabId).ToList();
         }
 
         foreach (var s in matches)

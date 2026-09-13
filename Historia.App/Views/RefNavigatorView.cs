@@ -275,7 +275,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 var mf = new MenuFlyout();
                 AddMi(mf, "Init & update", () => _ = PowerOp(r => _submodules.InitAndUpdateAsync(r, sm.Path, recursive: true, r.Lifetime)));
                 AddMi(mf, "Sync URL", () => _ = PowerOp(r => _submodules.SyncAsync(r, sm.Path, r.Lifetime)));
-                AddMi(mf, "Remove", () => _ = PowerOp(r => _submodules.RemoveAsync(r, sm, r.Lifetime)));
+                AddMi(mf, "Remove", () => _ = SubmoduleRemoveAsync(sm));
                 menuBtn.Flyout = mf;
                 subBody.Children.Add(Leaf($"{m.Name}  ({m.Status})", 0, "ColorText", null, menuBtn));
             }
@@ -510,7 +510,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private async Task DeleteTagAsync(TagInfo tag)
     {
         if (_repo is null) return;
-        if (!await _dialogs.ConfirmAsync("Delete tag", $"Delete local tag '{tag.Name}'?", destructive: true, "Delete"))
+        if (!await _dialogs.ConfirmDestructiveAsync("Delete tag", $"Delete local tag '{tag.Name}'? This cannot be undone.", "Delete"))
             return;
         try
         {
@@ -553,8 +553,22 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private async Task WorktreeRemoveAsync(WorktreeInfo wt)
     {
         if (_repo is null) return;
-        if (!await _dialogs.ConfirmAsync("Remove worktree", $"Remove the worktree at '{wt.Path}'?", destructive: true, "Remove")) return;
+        if (!await _dialogs.ConfirmDestructiveAsync("Remove worktree", $"Remove the worktree at '{wt.Path}'?", "Remove")) return;
         await PowerOp(r => _worktrees.RemoveAsync(r, wt.Path, force: false, r.Lifetime));
+    }
+
+    /// <summary>#19 (Rule 00): removing a submodule deinitialises it, removes it from the index
+    /// and deletes .git/modules/&lt;name&gt; — the submodule's own repository — so its
+    /// uncommitted changes and unpushed commits are gone for good.</summary>
+    private async Task SubmoduleRemoveAsync(SubmoduleInfo sm)
+    {
+        if (_repo is null) return;
+        if (!await _dialogs.ConfirmDestructiveAsync("Remove submodule",
+                $"Remove submodule '{sm.Path}'? This deinitialises it, removes it from the " +
+                $"index and deletes .git/modules/{sm.Name} — uncommitted changes and unpushed " +
+                "commits inside the submodule are lost.", "Remove"))
+            return;
+        await PowerOp(r => _submodules.RemoveAsync(r, sm, r.Lifetime));
     }
 
     private async Task StashOp(Func<Task> op)
@@ -582,7 +596,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private async Task StashDropAsync(StashEntry entry)
     {
         if (_repo is null) return;
-        if (!await _dialogs.ConfirmAsync("Drop stash", $"Drop '{entry.Message}'?", destructive: true, "Drop")) return;
+        if (!await _dialogs.ConfirmDestructiveAsync("Drop stash", $"Drop '{entry.Message}'? This cannot be undone.", "Drop")) return;
         await StashOp(() => _stashes.DropAsync(_repo!, entry.CommitId, _repo!.Lifetime));
     }
 

@@ -97,7 +97,8 @@ public sealed class SettingsView : UserControl, IDisposable
         if (c.EnableMultiLineTabs)
         {
             var maxRows = new NumericUpDown { Minimum = 2, Maximum = 5, Value = c.MaxTabRows, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-            maxRows.ValueChanged += (_, e) => _ = _cfg.UpdateAsync(s => s with { MaxTabRows = (int)Math.Clamp(e.NewValue ?? 3, 2, 5) });
+            WireNumericCommit(maxRows, c.MaxTabRows, v => Math.Clamp(v, 2, 5),
+                next => _ = _cfg.UpdateAsync(s => s with { MaxTabRows = next }));
             _root.Children.Add(LabeledRow("Max tab rows", maxRows));
         }
         _root.Children.Add(Check("Fixed-width repository tabs", c.TabWidthMode == TabWidthMode.Fixed,
@@ -114,10 +115,8 @@ public sealed class SettingsView : UserControl, IDisposable
                 Width = 120,
                 HorizontalAlignment = HorizontalAlignment.Left,
             };
-            tabLen.ValueChanged += (_, e) => _ = _cfg.UpdateAsync(s => s with
-            {
-                FixedTabWidth = AppSettings.ClampFixedTabWidth((int)(e.NewValue ?? AppSettings.DefaultFixedTabWidth)),
-            });
+            WireNumericCommit(tabLen, c.FixedTabWidth, AppSettings.ClampFixedTabWidth,
+                next => _ = _cfg.UpdateAsync(s => s with { FixedTabWidth = next }));
             _root.Children.Add(LabeledRow("Tab width (px)", tabLen));
         }
         else
@@ -176,15 +175,18 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         _root.Children.Add(LabeledRow("Default diff view", diffView));
         var ctxLines = new NumericUpDown { Minimum = 0, Maximum = 20, Value = c.DiffContextLines, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        ctxLines.ValueChanged += (_, e) => _ = _cfg.UpdateAsync(s => s with { DiffContextLines = (int)(e.NewValue ?? 3) });
+        WireNumericCommit(ctxLines, c.DiffContextLines, v => v,
+            next => _ = _cfg.UpdateAsync(s => s with { DiffContextLines = next }));
         _root.Children.Add(LabeledRow("Context lines", ctxLines));
         var tabW = new NumericUpDown { Minimum = 1, Maximum = 8, Value = c.TabWidth, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        tabW.ValueChanged += (_, e) => _ = _cfg.UpdateAsync(s => s with { TabWidth = (int)(e.NewValue ?? 4) });
+        WireNumericCommit(tabW, c.TabWidth, v => v,
+            next => _ = _cfg.UpdateAsync(s => s with { TabWidth = next }));
         _root.Children.Add(LabeledRow("Tab width", tabW));
         _root.Children.Add(Check("Word-wrap diff lines", c.DiffWordWrap,
             v => _ = _cfg.UpdateAsync(s => s with { DiffWordWrap = v })));
         var commitFont = new NumericUpDown { Minimum = 10, Maximum = 24, Value = c.CommitDetailFontSize, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        commitFont.ValueChanged += (_, e) => _ = _cfg.UpdateAsync(s => s with { CommitDetailFontSize = (int)(e.NewValue ?? 14) });
+        WireNumericCommit(commitFont, c.CommitDetailFontSize, v => v,
+            next => _ = _cfg.UpdateAsync(s => s with { CommitDetailFontSize = next }));
         _root.Children.Add(LabeledRow("Commit-detail font size", commitFont));
 
         // ── Issue autolinks ──
@@ -246,7 +248,8 @@ public sealed class SettingsView : UserControl, IDisposable
         termBody.Children.Add(LabeledRow("Font family", fontFamily));
 
         var fontSize = new NumericUpDown { Minimum = 8, Maximum = 32, Value = c.TerminalFontSize, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        fontSize.ValueChanged += (_, _) => _ = _cfg.UpdateAsync(s => s with { TerminalFontSize = (int)(fontSize.Value ?? 13) });
+        WireNumericCommit(fontSize, c.TerminalFontSize, v => v,
+            next => _ = _cfg.UpdateAsync(s => s with { TerminalFontSize = next }));
         termBody.Children.Add(LabeledRow("Font size", fontSize));
 
         var scrollback = new NumericUpDown
@@ -259,10 +262,8 @@ public sealed class SettingsView : UserControl, IDisposable
             Width = 140,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        scrollback.ValueChanged += (_, _) => _ = _cfg.UpdateAsync(s => s with
-        {
-            TerminalScrollbackLines = AppSettings.ClampTerminalScrollback((int)(scrollback.Value ?? 5000)),
-        });
+        WireNumericCommit(scrollback, c.TerminalScrollbackLines, AppSettings.ClampTerminalScrollback,
+            next => _ = _cfg.UpdateAsync(s => s with { TerminalScrollbackLines = next }));
         termBody.Children.Add(WithHint(LabeledRow("Scrollback lines", scrollback),
             "Memory ≈ lines × columns × ~8 bytes, per session — a 5,000-line buffer on a 120-column grid is ~5 MB, and this multiplies by the number of open terminal sessions."));
 
@@ -303,6 +304,100 @@ public sealed class SettingsView : UserControl, IDisposable
         advBody.Children.Add(WithHint(Check("Read graph metadata from disk instead of memory", c.GraphMetadataFromDisk,
             v => _ = _cfg.UpdateAsync(s => s with { GraphMetadataFromDisk = v })),
             "Pages commit metadata (messages, author, dates) from the local cache folder to minimize memory usage on large repositories. Applies after restart of Historia."));
+
+        advBody.Children.Add(WithHint(Check("Write a commit-graph file for large repositories", c.WriteCommitGraphForLargeRepos,
+            v => _ = _cfg.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = v })),
+            "The commit-graph file is written once a repository is known to have 30,000+ commits, and refreshed after each automatic fetch. Lets Git's own history walk skip straight to recent commits instead of scanning the whole history."));
+
+        advBody.Children.Add(WithHint(Check("Splice new commits into the graph cache instead of re-walking (large repositories, experimental)", c.EnableGraphSplice,
+            v => _ = _cfg.UpdateAsync(s => s with { EnableGraphSplice = v })),
+            "Applies after restart of Historia."));
+
+        var silentCrawlCap = new NumericUpDown
+        {
+            Minimum = AppSettings.MinSilentCrawlRowCap,
+            Maximum = AppSettings.MaxSilentCrawlRowCap,
+            Increment = 10_000,
+            Value = c.SilentCrawlRowCap,
+            FormatString = "0",
+            Width = 140,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        WireNumericCommit(silentCrawlCap, c.SilentCrawlRowCap, AppSettings.ClampSilentCrawlRowCap,
+            next => _ = _cfg.UpdateAsync(s => s with { SilentCrawlRowCap = next }));
+        advBody.Children.Add(WithHint(LabeledRow("Background auto-load row cap", silentCrawlCap),
+            "How many rows the graph silently pre-loads in the background after first paint, before requiring you to scroll for more. 0 means uncapped. Applies after restart of Historia."));
+
+        var residentRowCap = new NumericUpDown
+        {
+            Minimum = AppSettings.MinResidentRowCap,
+            Maximum = AppSettings.MaxResidentRowCap,
+            Increment = 100_000,
+            Value = c.ResidentRowCap,
+            FormatString = "0",
+            Width = 140,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        var residentRowCapPrev = c.ResidentRowCap;
+        var residentRowCapDialogOpen = false;
+        async void CommitResidentRowCap()
+        {
+            // Re-entrancy guard: reverting the value on Cancel below can itself provoke a
+            // second LostFocus/Enter while the first dialog is still closing — ignore it.
+            if (residentRowCapDialogOpen)
+                return;
+
+            var next = AppSettings.ClampResidentRowCap((int)(residentRowCap.Value ?? residentRowCapPrev));
+            if (next == residentRowCapPrev)
+                return;
+
+            residentRowCapDialogOpen = true;
+            try
+            {
+                // A click on the spin-button arrows moves focus in/out of the control's internal
+                // TextBox, which fires this same LostFocus — while its RepeatButton's own pointer
+                // capture is still active. Opening a modal dialog right away can strand that
+                // capture (the button reads as permanently pressed, repeating forever) because the
+                // dialog's nested loop takes over before the pending PointerReleased is processed.
+                // Flushing the Input-priority queue first lets that release land normally.
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, Avalonia.Threading.DispatcherPriority.Input);
+
+                next = AppSettings.ClampResidentRowCap((int)(residentRowCap.Value ?? residentRowCapPrev));
+                if (next == residentRowCapPrev)
+                    return;
+
+                // #4: raising the cap is not destructive — a plain confirm, and only when the
+                // committed value is higher than the saved one. Lowering saves silently.
+                if (next > residentRowCapPrev)
+                {
+                    var proceed = await _dialogs.ConfirmAsync(
+                        "Change the resident row cap?",
+                        "Raising this value lets a very large repository keep more rows in memory. Applies after restart of Historia.",
+                        confirmLabel: "Continue");
+
+                    if (!proceed)
+                    {
+                        residentRowCap.Value = residentRowCapPrev;
+                        return;
+                    }
+                }
+
+                residentRowCapPrev = next;
+                await _cfg.UpdateAsync(s => s with { ResidentRowCap = next });
+            }
+            finally
+            {
+                residentRowCapDialogOpen = false;
+            }
+        }
+        residentRowCap.LostFocus += (_, _) => CommitResidentRowCap();
+        residentRowCap.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+                CommitResidentRowCap();
+        }, handledEventsToo: true);
+        advBody.Children.Add(WithHint(LabeledRow("Resident row cap", residentRowCap),
+            "The absolute ceiling on how many rows the graph will keep resident for one repository, regardless of scrolling. Applies after restart of Historia."));
         advBody.Margin = new Thickness(0, 10, 0, 0);
 
         AddCollapsibleSection("Advanced settings", advBody, () => _advExpanded, v => _advExpanded = v);
@@ -347,6 +442,38 @@ public sealed class SettingsView : UserControl, IDisposable
 
         _root.Children.Add(header);
         _root.Children.Add(body);
+    }
+
+    /// <summary>
+    /// Commits a <see cref="NumericUpDown"/>'s value through <paramref name="clamp"/> to
+    /// <paramref name="commit"/> on <c>LostFocus</c> and on Enter, only when the clamped value
+    /// changed. Enter is caught with <c>AddHandler(KeyDownEvent, …, handledEventsToo: true)</c> so
+    /// an inner <c>TextBox</c> can't swallow it first (#14).
+    ///
+    /// Verified against Avalonia 11.3.20's <c>NumericUpDown.OnKeyDown</c> source: its own
+    /// <c>Key.Enter</c> case calls <c>CommitInput()</c> → <c>SyncTextAndValueProperties</c>, which
+    /// parses the typed text into <c>Value</c> synchronously before returning. That runs as
+    /// <c>NumericUpDown</c>'s own KeyDown handling on the same routed event, ahead of any instance
+    /// handler added here on the same control, so by the time this fires <c>nud.Value</c> already
+    /// reflects what's on screen — no extra text-to-value step is needed.
+    /// </summary>
+    private static void WireNumericCommit(NumericUpDown nud, int initial, Func<int, int> clamp, Action<int> commit)
+    {
+        var prev = initial;
+        void TryCommit()
+        {
+            var next = clamp((int)(nud.Value ?? prev));
+            if (next == prev)
+                return;
+            prev = next;
+            commit(next);
+        }
+        nud.LostFocus += (_, _) => TryCommit();
+        nud.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+                TryCommit();
+        }, handledEventsToo: true);
     }
 
     private static Control Section(string title) => Text(title, "ColorTextMuted", 13, FontWeight.SemiBold);
@@ -417,27 +544,24 @@ public sealed class RepoSettingsView : UserControl, IDisposable
     {
         _root.Children.Clear();
         var ctx = _workspace.Focused;
-        if (ctx is null)
-        {
-            _root.Children.Add(Text("Repository settings", "ColorText", 22, FontWeight.SemiBold));
-            _root.Children.Add(Text("Open a repository to configure it.", "ColorTextMuted", 13));
-            return;
-        }
 
-        _root.Children.Add(Text(ctx.DisplayName, "ColorText", 22, FontWeight.SemiBold));
-        _root.Children.Add(Text(ctx.RepositoryPath, "ColorTextMuted", 12));
+        _root.Children.Add(Text(ctx?.DisplayName ?? "Repository settings", "ColorText", 22, FontWeight.SemiBold));
+        if (ctx is not null)
+            _root.Children.Add(Text(ctx.RepositoryPath, "ColorTextMuted", 12));
+
         _root.Children.Add(Text("Graph columns", "ColorTextMuted", 13, FontWeight.SemiBold));
-        var hint = Text("Drag the ☰ handle to reorder, and use the checkboxes to show or hide columns. Column widths are set by dragging the column headers in the graph and reset on every launch.", "ColorTextMuted", 11);
+        var hint = Text("Order and visibility apply to every repository. Widths are per repository — drag the column headers — and reset on every launch.", "ColorTextMuted", 11);
         hint.TextWrapping = TextWrapping.Wrap;
         _root.Children.Add(hint);
 
-        var layout = _repoLayout.Get(ctx.RepositoryPath);
-        var path = ctx.RepositoryPath;
+        // §V3.1: the editor works on the application-wide column set and shows even with no repo.
+        var columns = _repoLayout.GlobalColumns;
+        var path = ctx?.RepositoryPath ?? "";
         _dragRepoPath = path;
         _columnRows.Clear();
         _columnsBaseIndex = _root.Children.Count;
 
-        foreach (var column in layout.Columns)
+        foreach (var column in columns)
         {
             var col = column;
             var kind = col.Kind;
@@ -461,10 +585,10 @@ public sealed class RepoSettingsView : UserControl, IDisposable
             cb.IsCheckedChanged += (_, _) =>
             {
                 var vis = cb.IsChecked == true;
-                var next = _repoLayout.Get(path).Columns.Select(c => c.Kind == kind ? c with { Visible = vis } : c).ToList();
+                var next = _repoLayout.GlobalColumns.Select(c => c.Kind == kind ? c with { Visible = vis } : c).ToList();
                 if (next.Count(c => c.Visible) == 0 || next.Count(c => c.Visible && c.IsFlex) != 1)
                     return; // never zero visible / non-unique flex
-                _ = _repoLayout.UpdateAsync(path, l => l with { Columns = GraphColumnDefaults.Normalize(next) });
+                _ = _repoLayout.UpdateGlobalAsync(_ => GraphColumnDefaults.Normalize(next));
             };
             Grid.SetColumn(cb, 1);
             rowGrid.Children.Add(cb);
@@ -472,9 +596,16 @@ public sealed class RepoSettingsView : UserControl, IDisposable
             _root.Children.Add(rowBorder);
         }
 
-        _root.Children.Add(TextButton("Reset to defaults", () => _ = _repoLayout.UpdateAsync(path,
-            l => l with { Columns = GraphColumnDefaults.All, GraphWidthPinned = false })));
-
+        _root.Children.Add(TextButton("Reset to defaults", () =>
+        {
+            _ = _repoLayout.UpdateGlobalAsync(_ => GraphColumnDefaults.All);
+            if (path.Length > 0)
+                _ = _repoLayout.UpdateAsync(path, l => l with
+                {
+                    Columns = GraphColumnDefaults.All,
+                    GraphWidthPinned = false,
+                });
+        }));
     }
 
     // ── column-row drag reorder ─────────────────────────────────────────────────────────
@@ -526,9 +657,9 @@ public sealed class RepoSettingsView : UserControl, IDisposable
         e.Handled = true;
 
         var order = _columnRows.Select(r => (GraphColumnKind)r.Tag!).ToList();
-        var byKind = _repoLayout.Get(_dragRepoPath).Columns.ToDictionary(c => c.Kind);
+        var byKind = _repoLayout.GlobalColumns.ToDictionary(c => c.Kind);
         var reordered = order.Where(byKind.ContainsKey).Select(k => byKind[k]).ToList();
-        _ = _repoLayout.UpdateAsync(_dragRepoPath, l => l with { Columns = GraphColumnDefaults.Normalize(reordered) });
+        _ = _repoLayout.UpdateGlobalAsync(_ => GraphColumnDefaults.Normalize(reordered));
     }
 
     private void OnRowsCaptureLost(object? sender, PointerCaptureLostEventArgs e)

@@ -22,8 +22,45 @@ public class DagLayoutEngineTests
         new(Sha(id), parents.Select(Sha).ToList(), Meta(id, parents.Length));
 
     private GraphLayoutResult Compute(IReadOnlyList<RawCommit> commits, int maxRows = 1000,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? deco = null)
-        => _engine.Compute(commits, deco, maxRows);
+        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? deco = null,
+        Func<ObjectId, ObjectId, bool>? isAncestor = null)
+        => _engine.Compute(commits, deco, maxRows, isAncestor: isAncestor);
+
+    /// <summary>§Phase 2: Segments/Elbows are no longer flat arrays on <see cref="GraphLayout"/>
+    /// — they're derived per row window on demand. Asserts the two layouts produce byte-identical
+    /// segments and elbows for every row, the same equality the old whole-array comparison gave.</summary>
+    private static void AssertSameLines(GraphLayout expected, GraphLayout actual)
+    {
+        Assert.Equal(expected.RowCount, actual.RowCount);
+        for (var row = 0; row < expected.RowCount; row++)
+        {
+            Assert.Equal(expected.GetRowSegments(row).ToArray(), actual.GetRowSegments(row).ToArray());
+            Assert.Equal(expected.GetRowElbows(row).ToArray(), actual.GetRowElbows(row).ToArray());
+        }
+    }
+
+    /// <summary>An ancestry oracle over a synthetic commit list — <c>f(a, b)</c> is true when
+    /// <c>a</c> is an ancestor of (or equal to) <c>b</c>, walking parent links.</summary>
+    private static Func<ObjectId, ObjectId, bool> AncestryOf(IReadOnlyList<RawCommit> commits)
+    {
+        var byId = commits.ToDictionary(c => c.Id);
+        return (a, b) =>
+        {
+            var seen = new HashSet<ObjectId>();
+            var stack = new Stack<ObjectId>();
+            stack.Push(b);
+            while (stack.Count > 0)
+            {
+                var cur = stack.Pop();
+                if (cur.Equals(a)) return true;
+                if (!seen.Add(cur)) continue;
+                if (byId.TryGetValue(cur, out var rc))
+                    foreach (var p in rc.ParentIds)
+                        stack.Push(p);
+            }
+            return false;
+        };
+    }
 
     // ── Criterion 13: degenerate inputs render without throwing ──
 
@@ -343,14 +380,14 @@ public class DagLayoutEngineTests
         AssertEndpointInvariant(extended);
     }
 
-    // ── §V9-G: "older tip wins the trunk" ──
+    // ── §V10.1: "newest tip wins the trunk, with a checked-out-branch exception" ──
 
     [Fact]
-    public void Older_branch_tip_holds_the_trunk_lane_and_newer_divergent_work_branches_off()
+    public void Newest_branch_tip_holds_the_trunk_lane_when_no_head_is_marked()
     {
-        // Two branches diverge from a shared ancestor (id 10). v9.1-relogo's tip (id 12) is
-        // OLDER than v9.2-fixes2's tip (id 21). Row order is still newest-first, but the older
-        // branch must stay collinear with the shared mainline on lane 0.
+        // Two branches diverge from a shared ancestor (id 10). v9.2-fixes2's tip (id 21) is the
+        // NEWEST, so it — not the older branch — stays collinear with the shared mainline on
+        // lane 0. No HEAD badge and no oracle: the plain base rule applies.
         var commits = new[] { C(21, 20), C(20, 10), C(12, 10), C(10, 1), C(1) };
         var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
         {
@@ -364,20 +401,199 @@ public class DagLayoutEngineTests
         Assert.Equal(0, r.Layout.RowByCommitId[Sha(21)]);
         Assert.Equal(2, r.Layout.RowByCommitId[Sha(12)]);
 
-        // Older tip + the shared history below the fork sit on the trunk (lane 0)…
-        Assert.Equal(0, r.Layout.Rows[2].LaneIndex); // v9.1-relogo tip
+        // Newest tip + the shared history below the fork sit on the trunk (lane 0)…
+        Assert.Equal(0, r.Layout.Rows[0].LaneIndex); // v9.2-fixes2 tip
+        Assert.Equal(0, r.Layout.Rows[1].LaneIndex);
         Assert.Equal(0, r.Layout.Rows[3].LaneIndex); // shared ancestor
         Assert.Equal(0, r.Layout.Rows[4].LaneIndex); // shared root
-        // …and the newer branch is the one that branches off.
-        Assert.Equal(1, r.Layout.Rows[0].LaneIndex); // v9.2-fixes2 tip
-        Assert.Equal(1, r.Layout.Rows[1].LaneIndex);
+        // …and the older branch is the one that branches off.
+        Assert.Equal(1, r.Layout.Rows[2].LaneIndex); // v9.1-relogo tip
 
-        // The trunk lane is born from the older branch (row 2), so its colour is seeded there and
-        // is stable across runs and distinct from the branched-off lane.
+        // Deterministic across runs; the trunk lane is born from the newest branch (row 0).
         var r2 = Compute(commits, deco: deco);
         Assert.Equal(r.Layout.Rows.Select(x => x.ColorIndex), r2.Layout.Rows.Select(x => x.ColorIndex));
-        Assert.NotEqual(r.Layout.Rows[0].ColorIndex, r.Layout.Rows[2].ColorIndex);
-        Assert.Equal("v9.1-relogo", r.State.LaneKey[r.Layout.Rows[2].LaneIndex]);
+        Assert.Equal("v9.2-fixes2", r.State.LaneKey[r.Layout.Rows[0].LaneIndex]);
+    }
+
+    [Fact]
+    public void Checked_out_branch_that_is_ancestor_of_the_newest_tip_leaves_the_order_unchanged()
+    {
+        // main (tip 30, checked out) is the base both feature branches were built on:
+        //   feat-b: 30 → 60   (newest)      feat-a: 30 → 50
+        var commits = new[] { C(60, 30), C(50, 40), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(60)] = [new(DecorationType.LocalBranch, "feat-b")],
+            [Sha(50)] = [new(DecorationType.LocalBranch, "feat-a")],
+            [Sha(30)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
+        };
+
+        // §10.1.3 finding #15 (decision C): the whole graph sits well inside the 200-row scan
+        // window, so the exact in-window check (isAncestor: null, every real caller's shape since
+        // the libgit2 CalculateHistoryDivergence oracle was retired) must reach the same
+        // conclusion as the brute-force oracle tests used to inject.
+        foreach (var anc in new[] { AncestryOf(commits), null })
+        {
+            var r = Compute(commits, deco: deco, isAncestor: anc);
+
+            // main is an ancestor of the newest tip (60) → newest-first order stands.
+            Assert.Equal(0, r.Layout.Rows[0].LaneIndex);                                     // feat-b tip on the trunk
+            Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(30)]].LaneIndex);       // main stays collinear on the trunk
+            Assert.NotEqual(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(50)]].LaneIndex);    // feat-a branches off
+        }
+    }
+
+    [Fact]
+    public void Checked_out_branch_that_is_ancestor_of_a_non_newest_tip_promotes_that_tip()
+    {
+        // main (tip 20, checked out) is the base of feat-a (20 → 30 → 40) only. feat-c (1 → 70 →
+        // 80) is newer and shares nothing with main past the root.
+        var commits = new[] { C(80, 70), C(70, 1), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(80)] = [new(DecorationType.LocalBranch, "feat-c")],
+            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-a")],
+            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
+        };
+
+        foreach (var anc in new[] { AncestryOf(commits), null })
+        {
+            var r = Compute(commits, deco: deco, isAncestor: anc);
+
+            // main is an ancestor of feat-a (40) but not of the newest tip feat-c (80): feat-a
+            // takes the trunk, feat-c shifts one lane right. main was feat-a's first-parent base,
+            // so it rides feat-a's trunk lane.
+            Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex); // feat-a → trunk
+            Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-c (row 0) → lane 1
+            Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex);  // main rides the trunk under feat-a
+        }
+    }
+
+    [Fact]
+    public void Checked_out_branch_that_is_ancestor_of_no_newer_tip_takes_the_trunk()
+    {
+        // Three branches off the shared root, sharing nothing else. main (tip 20) is checked out
+        // and is an ancestor of neither newer tip.
+        var commits = new[] { C(60, 50), C(50, 1), C(40, 30), C(30, 1), C(20, 10), C(10, 1), C(1) };
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(60)] = [new(DecorationType.LocalBranch, "feat-y")],
+            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-x")],
+            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
+        };
+
+        foreach (var anc in new[] { AncestryOf(commits), null })
+        {
+            var r = Compute(commits, deco: deco, isAncestor: anc);
+
+            Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex); // main → trunk
+            Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-y (row 0) → lane 1
+            Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex);  // feat-x → lane 2
+        }
+    }
+
+    [Fact]
+    public void Without_an_explicit_oracle_the_in_window_check_still_applies_the_exception()
+    {
+        // §10.1.3 finding #15 (decision C): the old behavior — isAncestor: null skipped the
+        // checked-out-branch exception entirely, deferring to the verified recompute — is gone.
+        // Every real caller now passes null and gets the exact in-window check for free; with no
+        // oracle argument at all, this graph (identical to the "ancestor of no newer tip" case
+        // above) must reach the SAME conclusion, not the old "skip" behavior.
+        var commits = new[] { C(60, 50), C(50, 1), C(40, 30), C(30, 1), C(20, 10), C(10, 1), C(1) };
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(60)] = [new(DecorationType.LocalBranch, "feat-y")],
+            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-x")],
+            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
+        };
+
+        var r = Compute(commits, deco: deco); // no isAncestor argument at all
+
+        Assert.Equal(0, r.Layout.Rows[r.Layout.RowByCommitId[Sha(20)]].LaneIndex); // main → trunk
+        Assert.Equal(1, r.Layout.Rows[0].LaneIndex);                                // feat-y (row 0) → lane 1
+        Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex);  // feat-x → lane 2
+    }
+
+    /// <summary>§10.1.3 finding #15's acceptance test: DagLayoutEngine's private
+    /// <c>IsAncestorInWindow</c> helper (invoked here by reflection — it's an internal algorithm
+    /// detail, not part of the engine's public surface) must agree EXACTLY with a brute-force
+    /// parent-link reachability oracle, for every (H, T) pair, across many randomized topo-ordered
+    /// DAGs. This is the property the exact in-window check's correctness argument rests on: every
+    /// commit on a path T → H is a descendant of H and so precedes it in the topo order, so the
+    /// whole path lies inside [row(T), row(H)] — no repo access needed.</summary>
+    [Fact]
+    public void In_window_ancestry_check_matches_brute_force_reachability_on_random_DAGs()
+    {
+        var method = typeof(DagLayoutEngine).GetMethod(
+            "IsAncestorInWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var rng = new Random(20260912);
+
+        for (var trial = 0; trial < 30; trial++)
+        {
+            var commits = RandomTopoDag(rng, count: 20 + rng.Next(60));
+            var rowById = new Dictionary<ObjectId, int>();
+            for (var i = 0; i < commits.Count; i++)
+                rowById[commits[i].Id] = i;
+            var brute = AncestryOf(commits);
+
+            for (var hi = 0; hi < commits.Count; hi++)
+            {
+                var h = commits[hi].Id;
+                for (var ti = 0; ti < commits.Count; ti++)
+                {
+                    var t = commits[ti].Id;
+                    var expected = brute(h, t);
+                    var actual = (bool)method.Invoke(null, [commits, rowById, h, t])!;
+                    Assert.True(expected == actual,
+                        $"trial {trial}: isAncestor(h=row{hi}, t=row{ti}) expected {expected}, got {actual}");
+                }
+            }
+        }
+    }
+
+    /// <summary>Builds a random topologically ordered (children-before-parents) DAG of
+    /// <paramref name="count"/> commits: row 0 is the sole newest leaf, and each commit at row i
+    /// may point at 0-2 parents chosen from later rows only — the same convention <see cref="C"/>
+    /// uses, just randomized instead of hand-written.</summary>
+    private static List<RawCommit> RandomTopoDag(Random rng, int count)
+    {
+        var commits = new RawCommit[count];
+        for (var i = count - 1; i >= 0; i--)
+        {
+            var laterRows = count - 1 - i;
+            var maxParents = Math.Min(2, laterRows);
+            var parentCount = maxParents == 0 ? 0 : rng.Next(maxParents + 1);
+            var parents = new List<int>();
+            while (parents.Count < parentCount)
+            {
+                var p = i + 1 + rng.Next(laterRows);
+                if (!parents.Contains(p))
+                    parents.Add(p);
+            }
+            commits[i] = new RawCommit(Sha(i), parents.Select(Sha).ToList(), Meta(i, parents.Count));
+        }
+        return [.. commits];
+    }
+
+    [Fact]
+    public void Checked_out_branch_exception_keeps_extension_identical_to_a_full_recomputation()
+    {
+        var commits = new[] { C(80, 70), C(70, 1), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(80)] = [new(DecorationType.LocalBranch, "feat-c")],
+            [Sha(40)] = [new(DecorationType.LocalBranch, "feat-a")],
+            [Sha(20)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
+        };
+        var anc = AncestryOf(commits);
+
+        var full = _engine.Compute(commits, deco, maxRows: 7, isAncestor: anc);
+        var partial = _engine.Compute(commits, deco, maxRows: 2, isAncestor: anc);
+        var extended = _engine.Extend(partial, commits.Skip(2).ToList(), deco, additionalRows: 5);
+
+        Assert.Equal(full.Layout.Rows, extended.Layout.Rows);
+        Assert.Equal(full.Layout.Edges, extended.Layout.Edges);
     }
 
     [Fact]
@@ -393,6 +609,50 @@ public class DagLayoutEngineTests
 
         Assert.All(r.Layout.Rows, row => Assert.Equal(0, row.LaneIndex));
         Assert.Equal(1, r.Layout.TotalLaneCount);
+    }
+
+    [Fact]
+    public void Only_near_head_tips_are_pinned_a_reserved_lane()
+    {
+        // A 40-row main line; two 1-commit branches fork near HEAD, three fork far below row 16.
+        var list = new List<RawCommit>();
+        for (var id = 100; id >= 60; id--)
+            list.Add(C(id, id - 1));                 // main line, rows 0..40 (id 100-row)
+        list.Insert(3, C(50, 95));                   // near-a  → row 3
+        list.Insert(6, C(49, 90));                   // near-b  → row 6
+        list.Insert(20, C(48, 75));                  // far-1   → row 20
+        list.Insert(22, C(47, 74));                  // far-2   → row 22
+        list.Insert(25, C(46, 73));                  // far-3   → row 25
+        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(100)] = [new(DecorationType.LocalBranch, "main")],
+            [Sha(50)] = [new(DecorationType.LocalBranch, "near-a")],
+            [Sha(49)] = [new(DecorationType.LocalBranch, "near-b")],
+            [Sha(48)] = [new(DecorationType.LocalBranch, "far-1")],
+            [Sha(47)] = [new(DecorationType.LocalBranch, "far-2")],
+            [Sha(46)] = [new(DecorationType.LocalBranch, "far-3")],
+        };
+
+        var r = Compute(list, deco: deco);
+
+        // Only the trunk + the two near-HEAD tips reserve a lane; the three far tips do not.
+        Assert.Equal(
+            new[] { Sha(49), Sha(50), Sha(100) }.OrderBy(x => x.Sha),
+            r.State.TipTargetLane.Keys.OrderBy(x => x.Sha));
+
+        // The far tips pack into the lanes freed by the near branches merging back — far-1/2/3 on
+        // lanes 1/2/3 (3 genuinely-concurrent branches), total 4 lanes. Before the fix all six
+        // tips were pinned, so far-1/2/3 sat at their pin ranks 3/4/5 and the window was 6 wide.
+        Assert.Equal(1, r.Layout.Rows[r.Layout.RowByCommitId[Sha(48)]].LaneIndex); // far-1
+        Assert.Equal(3, r.Layout.Rows[r.Layout.RowByCommitId[Sha(46)]].LaneIndex); // far-3
+        Assert.Equal(4, r.Layout.TotalLaneCount);
+
+        // The horizon is still a pure function of the fixed prefix — Extend matches a full compute.
+        var full = _engine.Compute(list, deco, maxRows: 60);
+        var partial = _engine.Compute(list, deco, maxRows: 8);
+        var extended = _engine.Extend(partial, list.Skip(8).ToList(), deco, additionalRows: 60);
+        Assert.Equal(full.Layout.Rows, extended.Layout.Rows);
+        Assert.Equal(full.Layout.Edges, extended.Layout.Edges);
     }
 
     [Fact]
@@ -483,7 +743,7 @@ public class DagLayoutEngineTests
     {
         // An undecorated lane's seed must come from its birth-commit SHA (not the lane ordinal),
         // so it is identical on every reopen. Lane 0 is coloured first with no neighbours, so it
-        // is never nudged by the ±2 de-collision pass — a clean assertion point.
+        // is never nudged by the ±4 de-collision pass — a clean assertion point.
         var commits = new[] { C(3, 1), C(2), C(1) }; // row0 -> id1 (lane0); row1 id2 is a second root
         var r1 = Compute(commits);
         var r2 = Compute(commits);
@@ -503,8 +763,7 @@ public class DagLayoutEngineTests
 
         Assert.Equal(full.Layout.Rows, s3.Layout.Rows);
         Assert.Equal(full.Layout.Edges, s3.Layout.Edges);
-        Assert.Equal(full.Layout.Segments, s3.Layout.Segments);
-        Assert.Equal(full.Layout.Elbows, s3.Layout.Elbows);
+        AssertSameLines(full.Layout, s3.Layout);
     }
 
     [Fact]
@@ -582,6 +841,112 @@ public class DagLayoutEngineTests
             s => s.Type == LaneSegmentType.TopToNode && s.Lane == 1);
     }
 
+    // ── §V3.1: uncapped lanes + ±4 colour de-collision ──
+
+    [Fact]
+    public void Uncapped_engine_gives_every_lineage_its_own_lane()
+    {
+        var commits = BuildWideFan(60);
+        var full = Compute(commits, maxRows: commits.Count);
+
+        Assert.True(full.Layout.TotalLaneCount >= 60,
+            $"expected >= 60 lanes, got {full.Layout.TotalLaneCount}");
+
+        // Every tip row lands on a distinct lane — nothing collapses onto a shared overflow lane.
+        var tipLanes = full.Layout.Rows.Take(60).Select(r => r.LaneIndex).ToList();
+        Assert.Equal(60, tipLanes.Distinct().Count());
+    }
+
+    [Fact]
+    public void Wide_history_compute_plus_extend_matches_full_compute()
+    {
+        var commits = BuildWideFan(60);
+        var full = Compute(commits, maxRows: commits.Count);
+
+        var s1 = _engine.Compute(commits, null, 25);
+        var s2 = _engine.Extend(s1, commits.Skip(25).ToList(), null, commits.Count);
+
+        Assert.Equal(full.Layout.Rows, s2.Layout.Rows);
+        Assert.Equal(full.Layout.Edges, s2.Layout.Edges);
+        AssertSameLines(full.Layout, s2.Layout);
+    }
+
+    [Fact]
+    public void Windowed_derivation_matches_full_derivation_for_every_row_range()
+    {
+        // A long gnarly chain spans many checkpoint boundaries (§Phase 2 CheckpointStride = 256),
+        // and BuildWideFan gives hundreds of concurrent lanes whose long-lived edges cross many
+        // checkpoints at once — exactly the shapes the crossing index has to get right. Each
+        // layout's GraphLayout.GetRowSegments/Elbows internally derives a small overscan window
+        // around whatever row is asked for (via the checkpoint-based candidate gather in
+        // DagLayoutEngine.DeriveWindow); comparing that against DeriveWindow called once for the
+        // FULL row range (which, spanning every checkpoint block, is provably equivalent to
+        // passing every edge — same as the legacy DeriveVisuals) catches any bug where the
+        // candidate gather drops or duplicates an edge for a genuinely partial window.
+        var chain = BuildGnarlyChain(1200);
+        var full = Compute(chain, maxRows: chain.Count);
+
+        var fan = BuildWideFan(300);
+        var fanFull = Compute(fan, maxRows: fan.Count);
+
+        foreach (var result in new[] { full, fanFull })
+        {
+            var layout = result.Layout;
+            var (fullSegs, fullSegStart, fullSegCount, fullElbs, fullElbStart, fullElbCount) =
+                DagLayoutEngine.DeriveWindow(result.State, layout.RealEdgeCap, layout.OffWindowEdges,
+                    layout.RowCount, 0, layout.RowCount - 1);
+
+            // Rows chosen to straddle checkpoint boundaries at various offsets: right at the
+            // start, mid-block, spanning the history's midpoint, and right at the end.
+            int[] probeRows =
+            [
+                0, 1,
+                Math.Min(100, layout.RowCount - 1),
+                Math.Min(257, layout.RowCount - 1), // just past a checkpoint boundary
+                layout.RowCount / 2,
+                Math.Max(0, layout.RowCount - 2), layout.RowCount - 1,
+            ];
+
+            foreach (var row in probeRows.Distinct())
+            {
+                var expectedSegs = fullSegCount[row] > 0
+                    ? fullSegs.AsSpan(fullSegStart[row], fullSegCount[row]).ToArray() : [];
+                var expectedElbs = fullElbCount[row] > 0
+                    ? fullElbs.AsSpan(fullElbStart[row], fullElbCount[row]).ToArray() : [];
+
+                Assert.Equal(expectedSegs, layout.GetRowSegments(row).ToArray());
+                Assert.Equal(expectedElbs, layout.GetRowElbows(row).ToArray());
+            }
+        }
+    }
+
+    [Fact]
+    public void No_two_coloured_lanes_within_four_share_a_colour()
+    {
+        var commits = BuildWideFan(60);
+        var full = Compute(commits, maxRows: commits.Count);
+
+        var colourByLane = new Dictionary<int, int>();
+        foreach (var r in full.Layout.Rows)
+            colourByLane[r.LaneIndex] = r.ColorIndex;
+
+        foreach (var (lane, colour) in colourByLane)
+            for (var d = 1; d <= 4; d++)
+                if (colourByLane.TryGetValue(lane + d, out var other))
+                    Assert.NotEqual(colour, other);
+    }
+
+    /// <summary>One shared root with <paramref name="tips"/> independent single-commit branches,
+    /// so the walk needs one concurrent lane per tip — wider than the retired 48-lane cap.</summary>
+    private static List<RawCommit> BuildWideFan(int tips)
+    {
+        var list = new List<RawCommit>();
+        for (var i = 0; i < tips; i++)
+            list.Add(new RawCommit(Sha(1000 + i), new List<ObjectId> { Sha(1) }, Meta(1000 + i, 1)));
+        list.Add(new RawCommit(Sha(1), new List<ObjectId>(), Meta(1, 0)));
+        return list;
+    }
+
     /// <summary>A chain with periodic branch/merge structure, newest-first, children before parents.</summary>
     private static List<RawCommit> BuildGnarlyChain(int count)
     {
@@ -598,5 +963,106 @@ public class DagLayoutEngineTests
 
         forward.Reverse(); // newest first
         return forward;
+    }
+
+    // ── Phase 5(a) (v10 graph memory footprint plan): canonicalized commit ids ──
+
+    /// <summary>A commit reachable from two children (a merge convergence, or here just two
+    /// independent tips landing on the same ancestor) is referenced by a SEPARATELY-parsed
+    /// <see cref="ObjectId"/> instance from each caller — its own <c>RawCommit.Id</c>, and each
+    /// child's own <c>ParentIds</c> entry for it (<c>Sha(n)</c> here always allocates fresh,
+    /// mirroring how the real walk parses ids independently per record). Once laid out, the row's
+    /// entry in <c>RowByCommitId</c> must key on WHICHEVER instance a reservation already
+    /// interned first — not hold yet another separately-parsed copy of the same SHA.</summary>
+    [Fact]
+    public void RowByCommitId_keys_on_the_same_ObjectId_instance_a_reservation_already_interned()
+    {
+        // 10 and 11 both point at 5 as their parent — two independently-parsed ObjectId
+        // instances for "5", neither of which is 5's own RawCommit.Id (a third instance).
+        var commits = new List<RawCommit>
+        {
+            C(11, 5),
+            C(10, 5),
+            C(5),
+        };
+
+        var result = Compute(commits);
+        var row5 = result.Layout.RowByCommitId[Sha(5)];
+
+        var storedKey = ((IReadOnlyDictionary<ObjectId, int>)result.Layout.RowByCommitId)
+            .Keys.Single(k => k.Equals(Sha(5)));
+
+        var childReservationInstances = new[] { commits[0].ParentIds[0], commits[1].ParentIds[0] };
+        Assert.Contains(childReservationInstances, parentInstance => ReferenceEquals(parentInstance, storedKey));
+
+        // And it did NOT fall back to row 5's own separately-parsed RawCommit.Id.
+        Assert.False(ReferenceEquals(commits[2].Id, storedKey));
+
+        // Sanity: the layout itself is unaffected — same row assignment either way.
+        Assert.Equal(2, row5);
+    }
+
+    /// <summary>Canonicalization must never change the actual layout — same lanes, same rows,
+    /// same edges — only which object instance a key happens to be.</summary>
+    [Fact]
+    public void Canonicalized_ids_produce_the_identical_layout_to_the_legacy_shape()
+    {
+        var commits = BuildGnarlyChain(200);
+        var isAnc = AncestryOf(commits);
+
+        var a = Compute(commits, isAncestor: isAnc);
+        var b = Compute(commits, isAncestor: isAnc);
+
+        AssertSameLines(a.Layout, b.Layout);
+        for (var i = 0; i < a.Layout.RowCount; i++)
+            Assert.Equal(a.Layout.Rows[i].LaneIndex, b.Layout.Rows[i].LaneIndex);
+    }
+
+    // ── finding #9: Build/Extend must not copy the whole accumulator every time ──
+
+    private static List<RawCommit> LinearChain(int count) =>
+        Enumerable.Range(0, count).Select(i => i + 1 < count ? C(i, i + 1) : C(i)).ToList();
+
+    /// <summary>Extends a synthetic 200k-row linear history in 5k-row steps and asserts the LAST
+    /// extend allocates roughly the same as the FIRST — before this fix, <c>Build</c> copied
+    /// <c>s.Rows</c> (a <c>GraphRow[]</c>) and <c>s.RealEdges</c>/<c>OffWindowEdges</c> (a
+    /// <c>GraphEdge[]</c>) wholesale on every single call, so allocation per extend grew linearly
+    /// with the TOTAL rows accumulated so far — quadratic overall. <c>retainCommits: false</c>
+    /// isolates this to the rows/edges allocation this fix targets: <c>Layout.Commits</c>'s own
+    /// per-extend copy (<c>s.Commits.ToArray()</c>) is a separate, disk-spill-mode-only concern
+    /// finding #9 didn't cover (disk mode never retains commits at all).</summary>
+    [Fact]
+    public void Extending_a_large_history_does_not_allocate_more_per_extend_as_it_grows()
+    {
+        const int totalRows = 200_000;
+        const int step = 5_000;
+        var commits = LinearChain(totalRows);
+
+        var result = _engine.Compute(commits.GetRange(0, step), null, step, retainCommits: false);
+        var consumed = step;
+
+        GC.Collect();
+        var before1 = GC.GetAllocatedBytesForCurrentThread();
+        result = _engine.Extend(result, commits.GetRange(consumed, step), null, step);
+        var firstExtendBytes = GC.GetAllocatedBytesForCurrentThread() - before1;
+        consumed += step;
+
+        while (consumed < totalRows - step)
+        {
+            result = _engine.Extend(result, commits.GetRange(consumed, step), null, step);
+            consumed += step;
+        }
+
+        GC.Collect();
+        var before2 = GC.GetAllocatedBytesForCurrentThread();
+        result = _engine.Extend(result, commits.GetRange(consumed, step), null, step);
+        var lastExtendBytes = GC.GetAllocatedBytesForCurrentThread() - before2;
+        consumed += step;
+
+        Assert.Equal(totalRows, consumed);
+        Assert.Equal(totalRows, result.Layout.RowCount);
+        Assert.True(lastExtendBytes <= firstExtendBytes * 2.5,
+            $"expected the last extend (~{totalRows} total rows) to allocate roughly the same as " +
+            $"the first (~{step} total rows) — first={firstExtendBytes} bytes, last={lastExtendBytes} bytes");
     }
 }

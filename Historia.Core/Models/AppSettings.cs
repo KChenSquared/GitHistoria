@@ -128,6 +128,66 @@ public sealed record AppSettings
     /// </summary>
     public bool GraphMetadataFromDisk { get; init; } = true;
 
+    /// <summary>
+    /// v10.1.3: when on (default), a large repository (≥ 30,000 commits walked, checked as the
+    /// §7.6 background spill proceeds in 25k-row chunks) that has no commit-graph file yet gets
+    /// one written in the background (<c>git commit-graph write --reachable</c>). A commit-graph
+    /// is what lets Git's own <c>--topo-order</c> walk (the CLI graph engine) expand lazily by
+    /// generation number instead of touching the whole history up front.
+    /// </summary>
+    public bool WriteCommitGraphForLargeRepos { get; init; } = true;
+
+    /// <summary>
+    /// 2026-09-12 memoryshrink review, finding #16: when on, a large (200,000+ row), exhausted
+    /// on-disk graph store whose walk key has moved (a fetch, a new branch) is brought up to date
+    /// by splicing in just the added/removed commits (<see cref="Historia.Services.Graph.GraphMetaSplice"/>)
+    /// instead of a full re-walk, when every guard passes — falling back to the ordinary reorder
+    /// otherwise. Off by default: experimental, and only pays off on histories large enough that a
+    /// full re-walk is itself expensive. Read once at startup — a change takes effect on the next
+    /// launch of Historia.
+    /// </summary>
+    public bool EnableGraphSplice { get; init; }
+
+    /// <summary>
+    /// v10.1.3: how many rows the graph's silent background crawler (§V10.1.2) pre-loads into
+    /// the resident layout before stopping, so scrolling stays responsive without loading the
+    /// full history's worth of rows up front. Deeper history still loads on scroll and reaches
+    /// disk in full via the §7.6 background spill regardless of this cap. <c>0</c> means
+    /// uncapped — the crawler runs all the way to the resident-row ceiling
+    /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 300,000.
+    /// </summary>
+    public int SilentCrawlRowCap { get; init; } = 300_000;
+
+    public const int MinSilentCrawlRowCap = 0;
+
+    /// <summary>
+    /// #25: was pinned to <see cref="GraphLimits.MaxResidentRowsDisk"/> (2,000,000), which left no
+    /// way to set the crawl cap between that and <see cref="MaxResidentRowCap"/> (10,000,000)
+    /// except through <c>0</c> (uncapped). Matches the resident-cap maximum instead.
+    /// </summary>
+    public const int MaxSilentCrawlRowCap = MaxResidentRowCap;
+
+    /// <summary>Math.Clamp to the accepted <see cref="SilentCrawlRowCap"/> range. Follows the
+    /// house style for a bounded numeric setting.</summary>
+    public static int ClampSilentCrawlRowCap(int value) => Math.Clamp(value, MinSilentCrawlRowCap, MaxSilentCrawlRowCap);
+
+    /// <summary>
+    /// v10.1.3: the resident-row hardcap (§7.3, §7.6) applied when
+    /// <see cref="GraphMetadataFromDisk"/> is on — the absolute ceiling on how many rows the
+    /// graph layout will ever keep resident for one repository, regardless of scrolling or the
+    /// background crawler/spill. Raising it lets a very large repository's full history become
+    /// reachable at the cost of more resident memory; lowering it tightens the memory ceiling at
+    /// the cost of capping history earlier. Read once at startup — a change takes effect on the
+    /// next launch. Default 2,000,000 (<see cref="GraphLimits.MaxResidentRowsDisk"/>).
+    /// </summary>
+    public int ResidentRowCap { get; init; } = GraphLimits.MaxResidentRowsDisk;
+
+    public const int MinResidentRowCap = GraphLimits.MaxResidentRowsMemory;
+    public const int MaxResidentRowCap = 10_000_000;
+
+    /// <summary>Math.Clamp to the accepted <see cref="ResidentRowCap"/> range.</summary>
+    public static int ClampResidentRowCap(int value) => Math.Clamp(value, MinResidentRowCap, MaxResidentRowCap);
+
     /// <summary>Issue-key → URL rules applied to commit messages (§V2-17.6). Account-free.</summary>
     public IReadOnlyList<IssueAutolinkRule> IssueAutolinks { get; init; } = [];
 

@@ -15,6 +15,7 @@ public class SettingsServiceTests : IDisposable
         Assert.True(svc.Current.PersistRepoCache);
         Assert.True(svc.Current.GraphMetadataFromDisk); // default on
         Assert.True(svc.Current.AutoFetchEnabled); // §12.1 default on
+        Assert.False(svc.Current.EnableGraphSplice); // Phase 5 (M5.1), finding #16: default off
     }
 
     // ── §12.1: v15 → v16 (auto-fetch toggle) ──
@@ -247,6 +248,17 @@ public class SettingsServiceTests : IDisposable
         Assert.Equal(AppSettings.MinFixedTabWidth, AppSettings.ClampFixedTabWidth(0));
         Assert.Equal(AppSettings.MaxFixedTabWidth, AppSettings.ClampFixedTabWidth(int.MaxValue));
         Assert.Equal(200, AppSettings.ClampFixedTabWidth(200));
+    }
+
+    // ── #25: silent-crawl cap ceiling matches the resident-cap ceiling ──
+
+    [Fact]
+    public void ClampSilentCrawlRowCap_accepts_values_above_the_old_2M_ceiling()
+    {
+        Assert.Equal(AppSettings.MinSilentCrawlRowCap, AppSettings.ClampSilentCrawlRowCap(-1));
+        Assert.Equal(3_000_000, AppSettings.ClampSilentCrawlRowCap(3_000_000));
+        Assert.Equal(AppSettings.MaxResidentRowCap, AppSettings.MaxSilentCrawlRowCap);
+        Assert.Equal(AppSettings.MaxSilentCrawlRowCap, AppSettings.ClampSilentCrawlRowCap(int.MaxValue));
     }
 
     [Fact]

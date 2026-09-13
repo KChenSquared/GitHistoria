@@ -9,9 +9,10 @@ public sealed partial class CommitGraphControl : Control
 {
     private const double MinRowHeight = 20;
     private const double MaxRowHeight = 44;
-    private const double MinLaneWidth = 13;
+    private const double MinLaneWidth = 15; // §V3.1: raised from 13 with the +2px lane width
     private const double MaxLaneWidth = 60;
-    private const double NodeRadius = 5.5;
+    /// <summary>§V3.2: commit nodes are round dots again (the §V3.1 diamond was reverted).</summary>
+    private const double NodeRadius = 5;
     private const double RowTextSize = 14;
     private const double HeaderTextSize = 12;
     private const double BadgeLabelSize = 14;
@@ -24,12 +25,13 @@ public sealed partial class CommitGraphControl : Control
     /// HEAD badge→node connector.</summary>
     private const double LaneStrokeWidth = 2.0;
 
-    private double _laneWidth = 16;
+    private double _laneWidth = 18; // §V3.1: raised from 16 (+2px)
     private double LaneWidth => _laneWidth;
 
     private IServiceProvider _services = default!;
     private IWorkspaceService _workspace = default!;
     private IGraphLayoutService _layoutService = default!;
+    private IBackgroundWorkGate? _backgroundWorkGate;
     private IThemeService _theme = default!;
     private IDialogService _dialogs = default!;
     private INotificationService _notifications = default!;
@@ -42,10 +44,23 @@ public sealed partial class CommitGraphControl : Control
 
     // §7.6 takes effect on the next launch, and GraphLayoutService snapshots it at construction.
     // Snapshot it here too so the control's resident-row ceiling always matches the service's —
-    // a mid-session toggle must not make the control cap at the 1M disk limit while metadata is
-    // still fully resident (the 250k memory limit exists precisely to bound that allocation).
+    // a mid-session toggle must not make the control cap at the configurable disk-mode ceiling
+    // (AppSettings.ResidentRowCap, clamped to 500k..10M) while metadata is still fully resident
+    // (the 500k memory limit exists precisely to bound that allocation).
     private bool _graphMetaFromDisk;
-    private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk);
+    private int _residentRowCapSetting;
+    private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk, _residentRowCapSetting);
+
+    // §V10.1.2/v10.1.3: the silent background crawler pre-loads only this many rows into the
+    // resident layout. Deeper history loads on demand as the user scrolls (EnsureExtendedAsync,
+    // up to ResidentRowCap) and reaches disk in full via the §7.6 background spill (which also
+    // feeds Ctrl+F search). Crawling all the way to ResidentRowCap (2,000,000 on a big repo)
+    // built a multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
+    // Configurable (AppSettings.SilentCrawlRowCap, default 300,000); 0 means uncapped, i.e. the
+    // crawler runs to ResidentRowCap same as an explicit scroll would. Snapshotted at
+    // construction like _graphMetaFromDisk — a mid-session change takes effect on next launch.
+    private int _silentCrawlRowCap;
+    private int SilentCrawlRowCap => _silentCrawlRowCap <= 0 ? ResidentRowCap : Math.Min(_silentCrawlRowCap, ResidentRowCap);
 
     private IReadOnlyList<GraphColumn> _columns = GraphColumnDefaults.All;
     private bool _graphWidthPinned;
@@ -101,7 +116,8 @@ public sealed partial class CommitGraphControl : Control
         int TargetRow,
         int BatchSize,
         TaskCompletionSource? Completion,
-        CancellationToken Token);
+        CancellationToken Token,
+        bool Background = false); // silent crawler → low-priority repo gate; scroll → foreground
 
     private Channel<ExtendRequest>? _extendChannel;
     private int _cappedNotified;
@@ -109,6 +125,20 @@ public sealed partial class CommitGraphControl : Control
     private double _rowHeight = 26;
     private double _scrollOffset;
     private double _hScrollOffset;
+
+    // §V3.1 in-graph lane pan: scrolls the lanes INSIDE the Graph column without moving any
+    // other column, so any lane is reachable while Message stays on screen. In DIP, lane space.
+    // Per repo for the session only (reset to lane 0 at launch) — saved on repo switch, restored
+    // on Attach, never persisted.
+    private double _graphPanOffset;
+    private readonly Dictionary<string, double> _panByRepo = new(StringComparer.Ordinal);
+
+    /// <summary>Widest the lanes can be panned: the natural graph width minus what the column
+    /// shows. Zero when every lane already fits.</summary>
+    private double MaxPan =>
+        Math.Max(0, NaturalGraphWidth(_layout?.Layout.TotalLaneCount ?? 0) - _graphColWidth);
+
+    private void ClampPan() => _graphPanOffset = Math.Clamp(_graphPanOffset, 0, MaxPan);
 
     private int _hoverRow = -1;
     private int _selectedRow = -1;
@@ -235,7 +265,6 @@ public sealed partial class CommitGraphControl : Control
     private SolidColorBrush _selectionBar = new(Colors.SlateBlue);
     private SolidColorBrush _hoverFill = new(Colors.DimGray);
     private Pen _hoverPen = new(new SolidColorBrush(Colors.White), 1);
-    private Pen _overflowPen = new(new SolidColorBrush(Colors.Gray), 1) { DashStyle = DashStyle.Dash };
     // v8.4: the repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
     private Pen _cogPen = new(new SolidColorBrush(Colors.DimGray), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
     private static readonly Geometry _cogGeo = Geometry.Parse(Historia.Components.IconPaths.Get("settings"));
@@ -268,14 +297,23 @@ public sealed partial class CommitGraphControl : Control
         };
 
         _scrollBar = new ScrollBar { Orientation = Orientation.Vertical, Width = 12, IsVisible = false, [Grid.ColumnProperty] = 0 };
-        _scrollBar.Scroll += (_, _) => { _scrollOffset = _scrollBar.Value; OnScrolled(); };
-        // While the user is pressing/dragging the bar, background row-loading can still trigger
-        // ArrangeOverride passes (as more rows stream in). Those used to reassert Maximum/Value
-        // from our own stale `_scrollOffset` every single pass, fighting the ScrollBar's internal
-        // Track drag math and leaving the thumb desynced from the pointer — it would then eat
-        // clicks until a wheel scroll forced a clean resync. Suppress that clobbering while the
-        // pointer is down on the bar; the Scroll event above keeps `_scrollOffset` in sync anyway.
-        _scrollBar.AddHandler(PointerPressedEvent, (_, _) => _scrollBarUserActive = true, RoutingStrategies.Tunnel);
+        // While the user is dragging the thumb, background row-loading keeps triggering
+        // ArrangeOverride passes (more rows stream in). Those must not reassert Maximum/Value
+        // from our own stale `_scrollOffset`, which fights the ScrollBar's internal Track drag
+        // math and desyncs the thumb from the pointer. `_scrollBarUserActive` gates that — and
+        // it is driven by the ScrollBar's OWN Scroll event type, not pointer capture: a
+        // ThumbTrack means a drag is in progress, and EVERY drag ends with EndScroll regardless
+        // of where the pointer is released. (An earlier version latched on PointerPressed and
+        // cleared on PointerReleased/CaptureLost on the bar; releasing the mouse away from the
+        // bar fired neither, so the latch stuck on forever and the bar froze until a wheel
+        // scroll forced a resync — the "scrollbar stuck at the bottom" bug.)
+        _scrollBar.Scroll += (_, e) =>
+        {
+            _scrollBarUserActive = e.ScrollEventType == ScrollEventType.ThumbTrack;
+            _scrollOffset = _scrollBar.Value;
+            OnScrolled();
+        };
+        // Belt-and-braces: any of these unlatch too, and can never leave it stuck.
         _scrollBar.AddHandler(PointerReleasedEvent, (_, _) => _scrollBarUserActive = false, RoutingStrategies.Tunnel);
         _scrollBar.PointerCaptureLost += (_, _) => _scrollBarUserActive = false;
         _hScrollBar = new ScrollBar { Orientation = Orientation.Horizontal, Height = 12, IsVisible = false };
@@ -364,6 +402,7 @@ public sealed partial class CommitGraphControl : Control
         _services = services;
         _workspace = services.GetRequiredService<IWorkspaceService>();
         _layoutService = services.GetRequiredService<IGraphLayoutService>();
+        _backgroundWorkGate = services.GetService<IBackgroundWorkGate>();
         _theme = services.GetRequiredService<IThemeService>();
         _dialogs = services.GetRequiredService<IDialogService>();
         _notifications = services.GetRequiredService<INotificationService>();
@@ -373,6 +412,8 @@ public sealed partial class CommitGraphControl : Control
         _settings = services.GetRequiredService<Historia.Services.Settings.ISettingsService>();
         _scrollProbe = services.GetRequiredService<Historia.Services.UI.IScrollDirectionProbe>();
         _graphMetaFromDisk = _settings.Current.GraphMetadataFromDisk;
+        _residentRowCapSetting = _settings.Current.ResidentRowCap;
+        _silentCrawlRowCap = _settings.Current.SilentCrawlRowCap;
         _repoLayout = services.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
 
         _repoLayout.Changed += OnRepoLayoutChanged;
@@ -453,6 +494,10 @@ public sealed partial class CommitGraphControl : Control
             _state.RevealCommitRequested -= OnRevealCommitRequested;
         }
 
+        // §V3.1: stash this repo's lane-pan offset for the session before switching away.
+        if (_context is { } leaving)
+            _panByRepo[Historia.Services.Settings.IRepoLayoutService.KeyFor(leaving.RepositoryPath)] = _graphPanOffset;
+
         CancelAndDisposeLayoutCts();
         SetLayout(null);               // release the commit-store lease before switching repos
         ClearReveal();                 // a running pump exits when it sees _revealTarget == null
@@ -470,11 +515,14 @@ public sealed partial class CommitGraphControl : Control
             _graphWidthPinned = layout.GraphWidthPinned;
             _manuallySized.Clear();
             _zoomOverridesPin = false;
+            _graphPanOffset = _panByRepo.GetValueOrDefault(
+                Historia.Services.Settings.IRepoLayoutService.KeyFor(context.RepositoryPath));
         }
         else
         {
             _columns = GraphColumnDefaults.All;
             _graphWidthPinned = false;
+            _graphPanOffset = 0;
         }
 
         if (_state is not null)
@@ -534,12 +582,23 @@ public sealed partial class CommitGraphControl : Control
     private void OnRepoLayoutChanged(object? sender, Historia.Services.Settings.RepoLayoutChangedEventArgs e)
         => Dispatcher.UIThread.Post(() =>
         {
-            if (_context is null
-                || !string.Equals(e.RepoPath, Historia.Services.Settings.IRepoLayoutService.KeyFor(_context.RepositoryPath), StringComparison.Ordinal)
-                || ReferenceEquals(e.Layout.Columns, _columns))
+            if (_context is null)
                 return;
-            _columns = e.Layout.Columns;
-            _graphWidthPinned = e.Layout.GraphWidthPinned;
+            // §V3.1: accept this repo's own change and any application-wide column change.
+            var mine = string.Equals(e.RepoPath,
+                Historia.Services.Settings.IRepoLayoutService.KeyFor(_context.RepositoryPath), StringComparison.Ordinal);
+            var global = string.Equals(e.RepoPath,
+                Historia.Services.Settings.IRepoLayoutService.GlobalKey, StringComparison.Ordinal);
+            if (!mine && !global)
+                return;
+
+            // Re-read the merged view (global order + visibility with this repo's session
+            // widths) rather than trusting e.Layout, whose widths are defaults for a global change.
+            var layout = _repoLayout.Get(_context.RepositoryPath);
+            if (ReferenceEquals(layout.Columns, _columns))
+                return;
+            _columns = layout.Columns;
+            _graphWidthPinned = layout.GraphWidthPinned;
             InvalidateMeasure();
             InvalidateArrange();
             InvalidateVisual();
@@ -554,7 +613,17 @@ public sealed partial class CommitGraphControl : Control
     private void OnSelectedCommitChanged(object? sender, SelectionChangedEventArgs e)
     {
         _selectedRow = ResolveRow(e.CommitId);
+        AutoPanToSelectedRow();
         InvalidateVisual();
+    }
+
+    /// <summary>§V3.1: pan the Graph column so the selected commit's lane is visible. Runs from
+    /// the one place the selected row changes (row click, clamped-node click, keyboard nav,
+    /// Ctrl+F step, reveal) — never from hover.</summary>
+    private void AutoPanToSelectedRow()
+    {
+        if (_selectedRow >= 0 && _layout is { } l && _selectedRow < l.Layout.RowCount)
+            EnsureLaneInView(l.Layout.Rows[_selectedRow].LaneIndex);
     }
 
     private void OnRevealCommitRequested(object? sender, RevealCommitEventArgs e)
@@ -565,6 +634,7 @@ public sealed partial class CommitGraphControl : Control
             // Already loaded — jump straight there and drop any pending reveal.
             ClearReveal();
             _selectedRow = row;
+            AutoPanToSelectedRow();
             CenterRow(row);
             InvalidateVisual();
             return;
@@ -595,6 +665,7 @@ public sealed partial class CommitGraphControl : Control
                 if (row >= 0)
                 {
                     _selectedRow = row;
+                    AutoPanToSelectedRow();
                     if (!_revealUserTookOver)
                         CenterRow(row);
                     break;
@@ -711,7 +782,10 @@ public sealed partial class CommitGraphControl : Control
     }
 
     private int ResolveRow(ObjectId? id)
-        => id is not null && _layout is { } l && l.Layout.RowByCommitId.TryGetValue(id, out var row) ? row : -1;
+        // §Phase 2: RowByCommitId is shared with the layout service's still-growing accumulator
+        // (not copied per snapshot), so an older layout must ignore rows beyond its own RowCount.
+        => id is not null && _layout is { } l && l.Layout.RowByCommitId.TryGetValue(id, out var row)
+            && row < l.Layout.RowCount ? row : -1;
 
     /// <summary>§7.3: rows laid out in the first, fast phase before the configured
     /// "Initial rows loaded" batch, so a repo open / switch paints almost immediately.</summary>
@@ -788,6 +862,11 @@ public sealed partial class CommitGraphControl : Control
             // graph-paint attempt is done. WorkspaceService.InitializeContextAsync is waiting on
             // this (bounded by its own timeout) before it starts touching the repo itself.
             context.MarkFirstGraphPaintDone();
+
+            // v10 graph memory footprint plan, Phase 1: the background-write gate's other half
+            // of "done loading" -- this context's first-paint attempt FOR THE CURRENT FOCUS,
+            // whether it painted, was cancelled, or failed.
+            _backgroundWorkGate?.ReportGraphSettled(context);
         }
     }
 
@@ -804,6 +883,8 @@ public sealed partial class CommitGraphControl : Control
         _selectedRow = ResolveRow(_state?.SelectedCommitId);
         RecomputeMatches();
         InvalidateMeasure();
+        // §V3.1: TotalLaneCount drives the auto Graph width — re-arrange, not just re-paint.
+        InvalidateArrange();
         InvalidateVisual();
     }
 
@@ -914,10 +995,13 @@ public sealed partial class CommitGraphControl : Control
                         continue;
                     }
 
-                    var cap = ResidentRowCap;
+                    // The silent crawler stops at SilentCrawlRowCap (by design, not a memory
+                    // limit — no toast); scroll-driven requests run to the true resident cap.
+                    var cap = req.Background ? SilentCrawlRowCap : ResidentRowCap;
                     if (current.Layout.RowCount >= cap)
                     {
-                        NotifyResidentCapReached(current.Layout.RowCount);
+                        if (!req.Background)
+                            NotifyResidentCapReached(current.Layout.RowCount);
                         req.Completion?.TrySetResult();
                         break;
                     }
@@ -931,7 +1015,7 @@ public sealed partial class CommitGraphControl : Control
 
                     try
                     {
-                        var extended = await _layoutService.ExtendLayoutAsync(req.Context, current, batch, ct).ConfigureAwait(false);
+                        var extended = await _layoutService.ExtendLayoutAsync(req.Context, current, batch, ct, req.Background).ConfigureAwait(false);
                         if (extended.Layout.RowCount > current.Layout.RowCount && ReferenceEquals(req.Context, _context))
                         {
                             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -941,6 +1025,7 @@ public sealed partial class CommitGraphControl : Control
 
                                 SetLayout(extended);
                                 InvalidateMeasure();
+                                InvalidateArrange(); // lane count can grow -> auto Graph width
                                 InvalidateVisual();
                             });
                         }
@@ -1000,24 +1085,31 @@ public sealed partial class CommitGraphControl : Control
         try
         {
             await Task.Yield();
-            var cap = ResidentRowCap;
+
+            // §V10.1.2: don't pre-load history until this tab has fully loaded (first paint +
+            // its own identity resolution + first RefreshAllAsync). Otherwise the crawl floods
+            // the foreground repo gate with ~1 request/second and the tab's own status/branch
+            // work is starved (observed: a 47 s footer freeze mid-crawl on linux). Bounded
+            // guard for a headless/no-signal path. Mirrors MaybeStartBackgroundSpill.
+            await Task.WhenAny(context.FirstFullLoad, Task.Delay(TimeSpan.FromSeconds(30), ct)).ConfigureAwait(false);
+            if (ct.IsCancellationRequested || !ReferenceEquals(context, _context))
+                return;
+
+            var cap = SilentCrawlRowCap;
 
             while (!ct.IsCancellationRequested && ReferenceEquals(context, _context))
             {
                 if (_layout is not { } current || current.Layout.IsComplete)
                     break;
                 if (current.Layout.RowCount >= cap)
-                {
-                    NotifyResidentCapReached(current.Layout.RowCount);
-                    break;
-                }
+                    break; // reached the silent pre-load ceiling — deeper history loads on scroll
 
                 if (_extendChannel is not { } channel)
                     break;
 
                 var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 const int batch = 5_000;
-                if (!channel.Writer.TryWrite(new ExtendRequest(context, -1, batch, tcs, ct)))
+                if (!channel.Writer.TryWrite(new ExtendRequest(context, -1, batch, tcs, ct, Background: true)))
                     break;
 
                 await tcs.Task.WaitAsync(ct).ConfigureAwait(false);
@@ -1033,7 +1125,8 @@ public sealed partial class CommitGraphControl : Control
         => Dispatcher.UIThread.Post(() =>
         {
             _themeMode = e.NewTheme;
-            RebuildThemeResources();
+            RebuildThemeResources(); // recomputes _refsBaseWidth, an input to Resolve
+            InvalidateArrange();
             InvalidateVisual();
         });
 
@@ -1069,7 +1162,6 @@ public sealed partial class CommitGraphControl : Control
         _selectionBar = new SolidColorBrush(primary);
         _hoverPen = new Pen(new SolidColorBrush(primary), 2.0);
         _cogPen = new Pen(new SolidColorBrush(muted), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
-        _overflowPen = new Pen(new SolidColorBrush(ToColor(palette["text-faint"])), 2.0) { DashStyle = DashStyle.Dash };
         var warn = palette["warning"];
         _matchFill = new SolidColorBrush(AvColor.FromArgb(0x30, warn.R, warn.G, warn.B));
 
@@ -1155,9 +1247,32 @@ public sealed partial class CommitGraphControl : Control
             double.IsInfinity(availableSize.Height) ? 400 : availableSize.Height);
     }
 
+    /// <summary>§V3.1: resolve the column band into <see cref="_resolvedColumns"/>,
+    /// <see cref="_bandWidth"/>, <see cref="_graphColLeft"/>, <see cref="_graphColWidth"/> and
+    /// clamp the lane pan. Runs in <see cref="ArrangeOverride"/> (so the scrollbar logic there
+    /// sees this frame's band width, not last frame's) and again at the top of
+    /// <see cref="Render"/>. Pure geometry — safe to call more than once per frame.</summary>
+    private void ResolveColumnBand(double width)
+    {
+        var totalLanes = _layout?.Layout.TotalLaneCount ?? 0;
+        var res = GraphColumnLayout.Resolve(_columns, width, LaneWidth, totalLanes,
+            _graphWidthPinned && !_zoomOverridesPin, _refsBaseWidth, _manuallySized);
+        _resolvedColumns = res.Columns as ResolvedColumn[] ?? [.. res.Columns];
+        _bandWidth = res.BandWidth;
+        _graphColLeft = 0;
+        _graphColWidth = 0;
+        foreach (var c in _resolvedColumns)
+            if (c.Kind == GraphColumnKind.Graph) { _graphColLeft = c.Left; _graphColWidth = c.Width; }
+        ClampPan();
+    }
+
     protected override Size ArrangeOverride(Size finalSize)
     {
         _queryBar.Arrange(new Rect(0, HeaderHeight, finalSize.Width, QueryBarHeight));
+
+        // Resolve the band before the scrollbar logic below reads _bandWidth — during an
+        // interactive sidebar drag the arrange pass would otherwise see last frame's width.
+        ResolveColumnBand(finalSize.Width);
 
         var contentHeight = (_layout?.Layout.RowCount ?? 0) * _rowHeight;
         var rowArea = finalSize.Height - RowsTop;
@@ -1176,11 +1291,13 @@ public sealed partial class CommitGraphControl : Control
             _scrollBar.ViewportSize = viewport;
             _scrollBar.LargeChange = viewport;
             _scrollBar.SmallChange = _rowHeight;
+            // Always keep our mirror inside the (possibly just-grown or just-shrunk) range —
+            // an out-of-range `_scrollOffset` is what left the bar unusable when Maximum moved
+            // under a drag. Only push the value back into the ScrollBar when the user is NOT
+            // mid-drag, so we never fight its Track math.
+            _scrollOffset = Math.Clamp(_scrollOffset, 0, _scrollBar.Maximum);
             if (!_scrollBarUserActive)
-            {
-                _scrollOffset = Math.Min(_scrollOffset, _scrollBar.Maximum);
                 _scrollBar.Value = _scrollOffset;
-            }
         }
         else
         {
@@ -1229,10 +1346,17 @@ public sealed partial class CommitGraphControl : Control
             var anchorY = e.GetPosition(this).Y;
             var rowAtAnchor = anchorY >= RowsTop ? (_scrollOffset + anchorY - RowsTop) / _rowHeight : (double?)null;
 
+            var laneBefore = _laneWidth;
             _rowHeight = Math.Clamp(_rowHeight * factor, MinRowHeight, MaxRowHeight);
             _laneWidth = Math.Clamp(_laneWidth * factor, MinLaneWidth, MaxLaneWidth);
             _zoomOverridesPin = true;
             _elbowGeometryCache.Clear();
+
+            // §V3.1: scale the pan by the same ratio the lane width actually changed by, so the
+            // same lanes stay in view; ClampPan again once the resolved column width settles.
+            if (laneBefore > 0)
+                _graphPanOffset *= _laneWidth / laneBefore;
+            ClampPan();
 
             if (rowAtAnchor is { } r)
                 _scrollOffset = Math.Max(0, r * _rowHeight - (anchorY - RowsTop));
@@ -1241,6 +1365,27 @@ public sealed partial class CommitGraphControl : Control
             InvalidateVisual();
             e.Handled = true;
             return;
+        }
+
+        // §V3.1: Shift+wheel, or a trackpad horizontal swipe, over the Graph column's rows pans
+        // the lanes. Some platforms deliver Shift+wheel as Delta.X already, so accept either.
+        // With no hidden lanes (MaxPan == 0) this falls through to vertical scrolling, as today.
+        if (MaxPan > 0)
+        {
+            var wpos = e.GetPosition(this);
+            if (wpos.Y >= RowsTop && ColumnKindAt(wpos.X) == GraphColumnKind.Graph)
+            {
+                var pan = e.Delta.X != 0 ? e.Delta.X
+                        : (e.KeyModifiers & KeyModifiers.Shift) != 0 ? delta
+                        : 0;
+                if (pan != 0)
+                {
+                    _graphPanOffset = Math.Clamp(_graphPanOffset - pan * 40, 0, MaxPan);
+                    InvalidateVisual();
+                    e.Handled = true;
+                    return;
+                }
+            }
         }
 
         _scrollOffset = Math.Clamp(_scrollOffset - delta * 40, 0, Math.Max(0, _scrollBar.Maximum));
@@ -1273,7 +1418,13 @@ public sealed partial class CommitGraphControl : Control
             var delta = pos.X - _resizeStartX;
             var eff = _resizeInverted ? -delta : delta;
             var min = GraphColumnDefaults.MinWidthFor(_resizeKind);
-            var w = Math.Max(min, _resizeStartWidth + eff);
+            var max = GraphColumnDefaults.MaxWidthFor(_resizeKind);
+            // §V3.1: Graph never drags wider than the lanes the layout uses (skip until a
+            // layout has lanes). Applying the ceiling during the drag — not only on save —
+            // also removes the snap-back when a non-Graph column is released past 2,000px.
+            if (_resizeKind == GraphColumnKind.Graph && _layout is { } l && l.Layout.TotalLaneCount > 0)
+                max = Math.Clamp(NaturalGraphWidth(l.Layout.TotalLaneCount), min, max);
+            var w = Math.Clamp(_resizeStartWidth + eff, min, max);
             _columns = WithColumnWidth(_columns, _resizeKind, w);
             if (_resizeKind == GraphColumnKind.Graph)
             {
@@ -1728,11 +1879,34 @@ public sealed partial class CommitGraphControl : Control
         _ = _repoLayout.UpdateAsync(ctx.RepositoryPath, l => l with { Columns = cols, GraphWidthPinned = pinned });
     }
 
+    /// <summary>§V3.1: the width that shows every lane the layout uses, plus one lane of margin
+    /// for the right-edge tick.</summary>
+    private double NaturalGraphWidth(int lanes) => (lanes + 1) * LaneWidth;
+
     private void AutoFitColumn(GraphColumnKind kind)
     {
         if (_layout is not { } result)
             return;
         var layout = result.Layout;
+
+        // §V3.1: Graph auto-fit stretches to show the whole graph at once — every lane plus one
+        // lane of tick margin — bounded by the floor and the hand-edit sanity ceiling. (Without
+        // this it measured an empty string and landed on its 150px floor.)
+        if (kind == GraphColumnKind.Graph)
+        {
+            var floor = GraphColumnDefaults.MinWidthFor(GraphColumnKind.Graph);
+            var fitWidth = Math.Clamp(NaturalGraphWidth(layout.TotalLaneCount), floor,
+                GraphColumnDefaults.MaxWidthFor(GraphColumnKind.Graph));
+
+            _columns = WithColumnWidth(_columns, kind, fitWidth);
+            _graphWidthPinned = true;
+            _zoomOverridesPin = false;
+            PersistColumns();
+            InvalidateArrange();
+            InvalidateVisual();
+            return;
+        }
+
         var rowArea = Bounds.Height - RowsTop;
         var first = Math.Max(0, (int)(_scrollOffset / _rowHeight));
         var last = Math.Min(layout.RowCount - 1, (int)((_scrollOffset + rowArea) / _rowHeight));
@@ -1845,7 +2019,7 @@ public sealed partial class CommitGraphControl : Control
     {
         if (_layout is not { } l || row < 0 || row >= l.Layout.RowCount)
             return false;
-        var cx = LaneX(l.Layout.Rows[row].LaneIndex);
+        var cx = NodeX(l.Layout.Rows[row].LaneIndex, out _);
         var cy = RowY(row) + _rowHeight / 2;
         var dx = p.X - cx;
         var dy = p.Y - cy;
@@ -2183,15 +2357,9 @@ public sealed partial class CommitGraphControl : Control
         var size = Bounds.Size;
         dc.DrawRectangle(_bg, null, new Rect(size));
 
-        var totalLanes = _layout?.Layout.TotalLaneCount ?? 0;
-        var res = GraphColumnLayout.Resolve(_columns, size.Width, LaneWidth, totalLanes,
-            _graphWidthPinned && !_zoomOverridesPin, _refsBaseWidth, _manuallySized);
-        _resolvedColumns = res.Columns as ResolvedColumn[] ?? [.. res.Columns];
-        _bandWidth = res.BandWidth;
-        _graphColLeft = 0;
-        _graphColWidth = 0;
-        foreach (var c in _resolvedColumns)
-            if (c.Kind == GraphColumnKind.Graph) { _graphColLeft = c.Left; _graphColWidth = c.Width; }
+        // Resolved in ArrangeOverride each frame; re-resolve here defensively (idempotent) so a
+        // Render that somehow precedes an arrange still has a band.
+        ResolveColumnBand(size.Width);
 
         DrawHeaderBand(dc, size.Width);
 
@@ -2204,7 +2372,15 @@ public sealed partial class CommitGraphControl : Control
         }
 
         if (_layout is not { } result)
+        {
+            // §V10.1.2: nothing painted yet — the optimistic snapshot missed and the real walk
+            // is still priming (on a large, never-before-opened repo that can be tens of
+            // seconds; see GraphLayoutService.StartWalk's tip-priority prime). Previously this
+            // frame was just the background + header band, indistinguishable from "broken" for
+            // that whole stretch.
+            DrawInitialLoadingPlaceholder(dc, size);
             return;
+        }
 
         try
         {
@@ -2281,8 +2457,10 @@ public sealed partial class CommitGraphControl : Control
             {
                 var gr = layout.Rows[row];
                 var colorIndex = gr.ColorIndex;
-                var rawLeft = _graphColLeft + gr.LaneIndex * LaneWidth - _hScrollOffset;
-                var fillLeft = Math.Max(gx, rawLeft);
+                // §V3.2: the wash starts at the commit's own node — the graph line it sits on —
+                // and runs right to the column edge, rather than beginning half a lane to its
+                // left and covering the whole lane band.
+                var fillLeft = Math.Max(gx, NodeX(gr.LaneIndex, out _));
                 if (washRight > fillLeft)
                     dc.DrawRectangle(LaneFill(colorIndex), null, new Rect(fillLeft, y, washRight - fillLeft, _rowHeight));
                 // The solid right-edge tick is drawn in DrawGraphColumn, AFTER the edges, so a
@@ -2314,7 +2492,7 @@ public sealed partial class CommitGraphControl : Control
                 switch (col.Kind)
                 {
                     case GraphColumnKind.Graph:
-                        DrawGraphColumn(dc, layout, first, last, x);
+                        DrawGraphColumn(dc, layout, first, last, x, size.Width);
                         break;
                     case GraphColumnKind.Refs:
                         DrawRefsColumn(dc, decosByRow, first, last, x, col.Width);
@@ -2387,7 +2565,7 @@ public sealed partial class CommitGraphControl : Control
 
                 var gr = layout.Rows[row];
                 var startX = _badgeRightEdge.GetValueOrDefault(row, refsRightFallback);
-                var endX = LaneX(gr.LaneIndex);
+                var endX = NodeX(gr.LaneIndex, out _);
                 if (endX <= startX + 0.5)
                     continue;
 
@@ -2458,6 +2636,17 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
+    /// <summary>§V10.1.2: shown instead of a blank graph body while this context has no layout
+    /// at all yet — the optimistic snapshot missed and the real walk hasn't produced its first
+    /// batch. Distinct from <see cref="DrawRevealPlaceholder"/> (which has a target commit and a
+    /// live row count to show); here there is nothing to report yet beyond "still working".</summary>
+    private void DrawInitialLoadingPlaceholder(DrawingContext dc, Size size)
+    {
+        var rowAreaH = Math.Max(0, size.Height - RowsTop);
+        var text = Text("Loading history…", _textMuted, size.Width - 80, HeaderTextSize);
+        dc.DrawText(text, new Point((size.Width - text.Width) / 2, RowsTop + rowAreaH * 0.45));
+    }
+
     /// <summary>The blanked-graph placeholder: a stand-in ref badge centred in the Branch/Tags
     /// column, and a borderless "Loading history… N rows" line just below it. Shown while the
     /// reveal pump walks toward an as-yet-unrendered commit (§7.3).</summary>
@@ -2500,10 +2689,16 @@ public sealed partial class CommitGraphControl : Control
         dc.DrawText(sub, new Point((size.Width - sub.Width) / 2, RowsTop + rowAreaH * 0.70));
     }
 
-    private void DrawGraphColumn(DrawingContext dc, GraphLayout layout, int first, int last, double colX)
+    private void DrawGraphColumn(DrawingContext dc, GraphLayout layout, int first, int last, double colX, double viewportWidth)
     {
         var hoverLane = _hoverRow >= 0 && _hoverRow < layout.RowCount ? layout.Rows[_hoverRow].LaneIndex : -1;
-        var overflowLane = layout.TotalLaneCount >= _query.MaxLanes ? _query.MaxLanes - 1 : -1;
+
+        // §V3.1: cull lane geometry against the visible span — the Graph column intersected with
+        // the viewport — with a small margin for the pen width. A stretched or panned column
+        // "contains" every lane, so culling against the column edge alone would skip nothing;
+        // this stops issuing draw calls for lines nobody can see.
+        var minVisibleX = Math.Max(colX, 0) - 4;
+        var maxVisibleX = Math.Min(colX + _graphColWidth, viewportWidth) + 4;
 
         // Draw segments and elbows directly for visible rows in O(visible rows) time
         for (var row = first; row <= last; row++)
@@ -2517,9 +2712,11 @@ public sealed partial class CommitGraphControl : Control
                 foreach (var seg in segments)
                 {
                     var x = LaneX(seg.Lane);
-                    var isOverflow = overflowLane >= 0 && seg.Lane == overflowLane;
+                    if (x < minVisibleX || x > maxVisibleX)
+                        continue;
+
                     var isEmph = hoverLane >= 0 && seg.Lane == hoverLane;
-                    var pen = isOverflow ? _overflowPen : isEmph ? EmphPen(seg.ColorIndex) : LanePen(seg.ColorIndex);
+                    var pen = isEmph ? EmphPen(seg.ColorIndex) : LanePen(seg.ColorIndex);
 
                     if (seg.Type == LaneSegmentType.Full)
                         dc.DrawLine(pen, new Point(x, y), new Point(x, y + _rowHeight));
@@ -2536,9 +2733,14 @@ public sealed partial class CommitGraphControl : Control
                 foreach (var elbow in elbows)
                 {
                     var fromX = LaneX(elbow.FromLane);
-                    var isOverflow = overflowLane >= 0 && (elbow.FromLane == overflowLane || elbow.ToLane == overflowLane);
+                    var toX = LaneX(elbow.ToLane);
+                    // An elbow spans [min(fromX, toX), max(fromX, toX)]; skip it only when that
+                    // whole span is outside the visible span.
+                    if (Math.Max(fromX, toX) < minVisibleX || Math.Min(fromX, toX) > maxVisibleX)
+                        continue;
+
                     var isEmph = hoverLane >= 0 && (elbow.FromLane == hoverLane || elbow.ToLane == hoverLane);
-                    var pen = isOverflow ? _overflowPen : isEmph ? EmphPen(elbow.ColorIndex) : LanePen(elbow.ColorIndex);
+                    var pen = isEmph ? EmphPen(elbow.ColorIndex) : LanePen(elbow.ColorIndex);
 
                     DrawElbow(dc, pen, elbow.FromLane, elbow.ToLane, fromX, y, elbow.Kind);
                 }
@@ -2560,20 +2762,58 @@ public sealed partial class CommitGraphControl : Control
     /// lane colour (§V6).</summary>
     private void DrawGraphNodes(DrawingContext dc, GraphLayout layout, int first, int last)
     {
-        var overflowLane = layout.TotalLaneCount >= _query.MaxLanes ? _query.MaxLanes - 1 : -1;
         for (var row = first; row <= last; row++)
         {
             var gr = layout.Rows[row];
-            var cx = LaneX(gr.LaneIndex);
+            var cx = NodeX(gr.LaneIndex, out _);
             var cy = RowY(row) + _rowHeight / 2;
-            var pen = gr.LaneIndex == overflowLane ? _overflowPen : null;
-            dc.DrawEllipse(LaneBrush(gr.ColorIndex), pen, new Point(cx, cy), NodeRadius, NodeRadius);
+
+            dc.DrawEllipse(LaneBrush(gr.ColorIndex), null,
+                new Point(cx, cy), NodeRadius, NodeRadius);
             if (row == _hoverRow)
                 dc.DrawEllipse(null, _hoverPen, new Point(cx, cy), NodeRadius + 2, NodeRadius + 2);
         }
     }
 
-    private double LaneX(int lane) => _graphColLeft + (lane + 0.5) * LaneWidth - _hScrollOffset;
+    // §V3.1: _hScrollOffset scrolls the whole column band; _graphPanOffset scrolls only the
+    // lanes inside the Graph column. Culling, NodeX edge-clamping, the lane wash, badge
+    // connectors and hover emphasis all derive from LaneX, so they follow the pan automatically.
+    private double LaneX(int lane) => _graphColLeft + (lane + 0.5) * LaneWidth - _hScrollOffset - _graphPanOffset;
+
+    /// <summary>§V3.1: pan just enough to bring <paramref name="lane"/> inside the visible part
+    /// of the Graph column, leaving one lane of margin. A no-op when the lane already shows or
+    /// nothing is hidden. Never called from hover.</summary>
+    private void EnsureLaneInView(int lane)
+    {
+        if (MaxPan <= 0)
+        {
+            if (_graphPanOffset != 0) { _graphPanOffset = 0; InvalidateVisual(); }
+            return;
+        }
+        var left = lane * LaneWidth;                    // lane's left edge in pan space
+        var right = left + LaneWidth;
+        var view = _graphColWidth - TickWidth;
+        if (left < _graphPanOffset)
+            _graphPanOffset = left - LaneWidth;         // one lane of margin
+        else if (right > _graphPanOffset + view)
+            _graphPanOffset = right - view + LaneWidth;
+        ClampPan();
+        InvalidateVisual();
+    }
+
+    /// <summary>§V3.1: screen x of a commit node — always its plain lane centre. The single
+    /// source of a node's x: the drawn dot, its hit area, its lane wash and its badge connector
+    /// all read from here so they always agree.
+    /// <para>§V10.1.2: there is no longer an edge-clamp while the lanes are panned
+    /// (<c>_graphPanOffset != 0</c>). It pinned the dot to the column edge but the lane
+    /// segments / elbows kept reading <see cref="LaneX"/>, so a shift+scroll pan visibly
+    /// detached the dots from their lines. Panned-out dots and lines now clip against the Graph
+    /// column together, exactly like narrowing the column with the divider.</para></summary>
+    private double NodeX(int laneIndex, out bool clamped)
+    {
+        clamped = false;
+        return LaneX(laneIndex);
+    }
 
     private const double IconBox = 12;
     private const double IconGap = 4;

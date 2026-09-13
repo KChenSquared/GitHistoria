@@ -16,6 +16,29 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // §V3-9.3: restored-but-not-yet-focused tabs whose InitializeContextAsync has been deferred.
     // They get the ordinary open path on first focus, exactly once.
     private readonly HashSet<RepositoryContext> _deferredInit = [];
+
+    // §V10.1.2: serial background-init pump. Auto-fetch (§12.1) force-initialises every restored
+    // tab; doing that concurrently fanned out ~11 identity history-walks + status refreshes at
+    // once and starved the tab the user is actually staring at (observed: linux first paint ~86s
+    // on an 11-tab restore). These now drain one at a time, and not until the focused tab has
+    // fully loaded. A newly focused deferred tab jumps the queue (FocusInternal).
+    private readonly List<RepositoryContext> _bgInitQueue = [];
+    private bool _bgInitPumpIdle = true;
+    private RepositoryContext? _foregroundInit; // the focused/opened tab currently initialising
+
+    // v10.1.3: per-attempt cancellation for whichever context is currently running
+    // InitializeContextCoreAsync, linked to (but distinct from) RepositoryContext.Lifetime —
+    // Lifetime only ever cancels on tab close, but a focus switch away from a still-loading tab
+    // needs to interrupt its identity/refresh work without tearing the tab down. Entry removed by
+    // the owning InitializeContextAsync's own finally once its attempt ends.
+    private readonly Dictionary<RepositoryContext, CancellationTokenSource> _attemptCts = [];
+
+    // v10.1.3: signalled (and replaced) every time _foregroundInit changes, so
+    // DrainBackgroundInitQueueAsync's wait on the current foreground tab's FirstFullLoad can wake
+    // immediately when that tab gets interrupted instead of waiting on a signal that, per the
+    // interrupt contract below, will never come on its own.
+    private TaskCompletionSource _foregroundChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     private AtomicFileWriter? _sessionWriter;
     private AtomicFileWriter SessionWriter => _sessionWriter ??= new AtomicFileWriter(AppPaths.SessionFile);
     private string? _restoredFocusPath;
@@ -24,11 +47,15 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // briefly before opening the rest of the session's tabs -- see RestoreSessionAsync for why.
     private static readonly TimeSpan FocusPriorityYield = TimeSpan.FromMilliseconds(60);
 
-    // v8.2: InitializeContextAsync waits up to this long for the graph control's first paint
-    // before touching the repo itself -- see InitializeContextAsync for why. Generous on purpose:
-    // it only matters when nothing ever signals (no graph control attached -- a headless open, a
-    // test), where it's a one-time ceiling rather than a typical wait.
+    // v8.2: a background (force-initialised, no graph control attached) tab waits at most this
+    // long for a first-paint signal that will never come before its identity/refresh runs.
     private static readonly TimeSpan GraphPriorityTimeout = TimeSpan.FromSeconds(8);
+
+    // §V10.1.2: the FOCUSED tab's graph control WILL paint — wait for that, not a short guess,
+    // before its identity resolution + RefreshAllAsync take the repo gate. 8s was far too short
+    // on a big repo (linux first paint alone is tens of seconds), so identity/refresh jumped the
+    // gate mid-first-walk and stalled it for ~60s. This ceiling is only a stuck-guard.
+    private static readonly TimeSpan GraphFirstPaintCeiling = TimeSpan.FromSeconds(120);
 
     public WorkspaceService(
         IServiceProvider services,
@@ -42,6 +69,16 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         _recents = recents;
         _profiles = profiles;
         _identity = identity;
+    }
+
+    /// <summary>v10.1.3: sets <see cref="_foregroundInit"/> and wakes anything awaiting
+    /// <see cref="_foregroundChanged"/> (the background pump). Caller must hold <see cref="_sync"/>.</summary>
+    private void SetForegroundInit(RepositoryContext? context)
+    {
+        _foregroundInit = context;
+        var prev = _foregroundChanged;
+        _foregroundChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        prev.TrySetResult();
     }
 
     public event EventHandler<FocusedRepositoryChangedEventArgs>? FocusedRepositoryChanged;
@@ -112,9 +149,29 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         if (recordRecent)
             await _recents.AddAsync(context.RepositoryPath, context.DisplayName, ct).ConfigureAwait(false);
         if (initialize)
-            _ = InitializeContextAsync(context);
+        {
+            lock (_sync) SetForegroundInit(context);
+            _ = InitializeContextAsync(context, foreground: true);
+        }
 
         return context;
+    }
+
+    /// <summary>v10.1.3: outcome of one <see cref="InitializeContextCoreAsync"/> attempt, used to
+    /// decide whether <see cref="RepositoryContext.MarkFirstFullLoadDone"/> should fire.</summary>
+    private enum InitOutcome
+    {
+        /// <summary>Identity resolution and the first refresh both ran to completion.</summary>
+        Completed,
+
+        /// <summary>Cancelled because focus moved away mid-attempt (see <see cref="FocusInternal"/>) —
+        /// the tab is still open and still needs a full load, so FirstFullLoad must stay unset;
+        /// the attempt is requeued and will be retried.</summary>
+        Interrupted,
+
+        /// <summary>Cancelled because the tab itself was closed (RepositoryContext.Lifetime)
+        /// — nothing left to retry; FirstFullLoad is still marked done so any waiter unblocks.</summary>
+        Closed,
     }
 
     /// <summary>
@@ -122,65 +179,119 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     /// performs the first full state refresh. Runs off the open path so a large repo does not
     /// hold up the tab appearing.
     /// </summary>
-    private async Task InitializeContextAsync(RepositoryContext context)
+    private async Task InitializeContextAsync(RepositoryContext context, bool foreground)
+    {
+        // v10.1.3: an attempt-scoped token, linked to (not the same as) context.Lifetime, so
+        // FocusInternal can cancel just this attempt — interrupting identity/refresh work for a
+        // tab that lost focus — without tearing down the tab itself (only a real close does that).
+        var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(context.Lifetime);
+        lock (_sync) _attemptCts[context] = attemptCts;
+
+        try
+        {
+            var outcome = await InitializeContextCoreAsync(context, foreground, attemptCts.Token).ConfigureAwait(false);
+            if (outcome != InitOutcome.Interrupted)
+                context.MarkFirstFullLoadDone(); // §12.1: unblock any auto-fetch waiter
+        }
+        finally
+        {
+            lock (_sync)
+            {
+                if (_attemptCts.TryGetValue(context, out var current) && ReferenceEquals(current, attemptCts))
+                    _attemptCts.Remove(context);
+                if (foreground && ReferenceEquals(_foregroundInit, context))
+                    SetForegroundInit(null);
+            }
+            attemptCts.Dispose();
+        }
+    }
+
+    private async Task<InitOutcome> InitializeContextCoreAsync(RepositoryContext context, bool foreground, CancellationToken attemptToken)
     {
         // Let the graph control's own first walk for this context claim the repo's single-access
         // gate uncontended. Without this, identity resolution below (and RefreshAllAsync after
         // it) starts within a few hundred ms of the tab opening and can hold that gate for
         // seconds on a large repo -- observed: 3+s of the graph's fingerprint+load work sitting
         // in the queue behind it, on a repo where the graph's own paint takes barely over a
-        // second once it actually gets a turn. Task.WhenAny never throws or propagates either
-        // branch's outcome, so no try/catch is needed here -- a cancelled Lifetime is caught by
-        // the identity-resolution try/catch right below instead.
-        await Task.WhenAny(context.FirstGraphPaint, Task.Delay(GraphPriorityTimeout, context.Lifetime)).ConfigureAwait(false);
+        // second once it actually gets a turn. §V10.1.2: the focused tab's graph WILL paint, so
+        // wait for that (large stuck-guard ceiling); a background force-init has no graph
+        // attached, so only the short ceiling applies. Task.WhenAny never throws or propagates
+        // either branch's outcome, so no try/catch is needed here.
+        var ceiling = foreground ? GraphFirstPaintCeiling : GraphPriorityTimeout;
+        await Task.WhenAny(context.FirstGraphPaint, Task.Delay(ceiling, attemptToken)).ConfigureAwait(false);
+
+        // v10.1.3: identity resolution and the first refs/status refresh don't depend on each
+        // other (refresh never reads the active profile identity sets) — run them concurrently
+        // so the changed/staged-files panel (which just reacts to RefreshAllAsync's StatusChanged)
+        // starts populating right after first paint instead of waiting on identity to finish
+        // first. Both use attemptToken so a focus-loss interrupt cancels both at once.
+        var identityTask = ResolveIdentityAsync(context, attemptToken);
+        var refreshTask = context.State.RefreshAllAsync(attemptToken);
 
         try
         {
-            var key = await _identity.ResolveAsync(context, context.Lifetime).ConfigureAwait(false);
+            // identityTask never throws (it swallows everything itself, including cancellation),
+            // so only refreshTask can fault this — an OperationCanceledException here means the
+            // tab closed or its attempt was interrupted mid-refresh.
+            await Task.WhenAll(identityTask, refreshTask).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Classified below.
+        }
+
+        if (attemptToken.IsCancellationRequested)
+            return context.Lifetime.IsCancellationRequested ? InitOutcome.Closed : InitOutcome.Interrupted;
+        return InitOutcome.Completed;
+    }
+
+    /// <summary>Repo→profile identity resolution and the cascading active-profile bind/touch/git-config
+    /// write (§9.3.1, §9.4, §9.6). Never throws — a failure here must not stop the repo from
+    /// opening, and cancellation is classified by the caller against <see cref="InitOutcome"/>.</summary>
+    private async Task ResolveIdentityAsync(RepositoryContext context, CancellationToken ct)
+    {
+        try
+        {
+            var key = await _identity.ResolveAsync(context, ct).ConfigureAwait(false);
 
             // Keep the binding's last-known path fresh — the rename case working as intended (§9.3.1).
             var existingBinding = _profiles.GetProfileForRepository(key);
             if (existingBinding is not null)
-                await _profiles.BindProfileToRepositoryAsync(key, context.RepositoryPath, existingBinding.Id, context.Lifetime).ConfigureAwait(false);
+                await _profiles.BindProfileToRepositoryAsync(key, context.RepositoryPath, existingBinding.Id, ct).ConfigureAwait(false);
 
             var profile = _profiles.ResolveActiveProfile(key);
             context.State.SetActiveProfile(profile);
             if (profile is not null)
             {
-                await _profiles.TouchProfileAsync(profile.Id, context.Lifetime).ConfigureAwait(false);
+                await _profiles.TouchProfileAsync(profile.Id, ct).ConfigureAwait(false);
 
                 // §9.6: when the repo has no existing user.name/user.email, write the profile's
                 // values. A mismatch with existing values is surfaced by the repo view as a
                 // non-blocking banner rather than being overwritten here.
                 if (!context.IsBare)
                 {
-                    var (name, email) = await context.Gateway.GetConfiguredIdentityAsync(context.Lifetime).ConfigureAwait(false);
+                    var (name, email) = await context.Gateway.GetConfiguredIdentityAsync(ct).ConfigureAwait(false);
                     if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(email))
-                        await _profiles.ApplyProfileToGitConfigAsync(profile, context.RepositoryPath, GitConfigScope.Local, context.Lifetime).ConfigureAwait(false);
+                    {
+                        // Finding #12: check the attempt token before starting the git-config
+                        // write, then run the write itself with CancellationToken.None. A focus
+                        // switch mid-write used to cancel GitCliService.RunAsync, which kills the
+                        // git process (GitCliService.cs) and can leave .git/config.lock behind.
+                        // The write keeps its own 15 s per-call timeout (ProfileService.SetConfigAsync),
+                        // so an uncancellable write still can't hang forever.
+                        ct.ThrowIfCancellationRequested();
+                        await _profiles.ApplyProfileToGitConfigAsync(profile, context.RepositoryPath, GitConfigScope.Local, CancellationToken.None).ConfigureAwait(false);
+                    }
                 }
             }
         }
         catch (OperationCanceledException)
         {
-            context.MarkFirstFullLoadDone(); // §12.1: unblock any auto-fetch waiter on close
-            return;
+            // Classified by the caller.
         }
         catch
         {
             // Identity/profile resolution failure must not stop the repo from opening.
-        }
-
-        try
-        {
-            await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // Tab closed during first refresh.
-        }
-        finally
-        {
-            context.MarkFirstFullLoadDone(); // §12.1
         }
     }
 
@@ -283,6 +394,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         {
             _open.Remove(context);
             _deferredInit.Remove(context);
+            _bgInitQueue.Remove(context); // v10.1.3: don't leave a closed tab queued for retry
             wasFocused = ReferenceEquals(_focused, context);
             if (wasFocused)
             {
@@ -294,13 +406,13 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService)) as Historia.Services.Graph.IGraphLayoutService)
             ?.Forget(context);
 
-        // V5 §3.3: close any terminal session bound to this repo so its shell releases the
-        // working-directory handle before the context is disposed.
-        if (context.IdentityKey is { } repoKey
-            && _services.GetService(typeof(Historia.Services.Terminal.ITerminalSessionService))
+        // V5 §3.3: close the terminal session bound to this tab so its shell releases the
+        // working-directory handle before the context is disposed. Keyed by the tab's own id,
+        // so a second tab open on the same repository keeps its shell running.
+        if (_services.GetService(typeof(Historia.Services.Terminal.ITerminalSessionService))
                is Historia.Services.Terminal.ITerminalSessionService terminals)
         {
-            try { await terminals.CloseForRepositoryAsync(repoKey).ConfigureAwait(false); }
+            try { await terminals.CloseForTabAsync(context.Id).ConfigureAwait(false); }
             catch { /* teardown must not be blocked by a terminal close */ }
         }
 
@@ -369,7 +481,15 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             && string.Equals(p, focusedPath, StringComparison.OrdinalIgnoreCase));
         var focusTarget = existing ?? paths.FirstOrDefault(System.IO.Directory.Exists);
         _restoredFocusPath = focusTarget;
-        Historia.Diagnostics.PerfLog.Mark($"RestoreSessionAsync focusTarget resolved ({paths.Count} paths, focus={System.IO.Path.GetFileName(focusTarget)})");
+        // Trim a trailing separator before GetFileName: RepositoryPath (the source of both
+        // "paths" and "focusedPath" once persisted) is libgit2's WorkingDirectory, which always
+        // ends in one, and GetFileName returns "" for a path ending in a separator — this used
+        // to make a perfectly-resolved focusTarget print as empty here and look like a resolution
+        // bug when it wasn't one.
+        var focusTargetName = focusTarget is null
+            ? "(none)"
+            : System.IO.Path.GetFileName(focusTarget.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
+        Historia.Diagnostics.PerfLog.Mark($"RestoreSessionAsync focusTarget resolved ({paths.Count} paths, focus={focusTargetName})");
 
         // v8.2: kick off every existing path's RepositoryContext.Open concurrently right away,
         // instead of opening them one at a time as the loop below reaches each in its turn --
@@ -461,37 +581,293 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     }
 
     /// <summary>§12.1 (AF4): force a still-deferred session-restore tab through the ordinary
-    /// initialize path now, instead of waiting for its first focus — auto-fetch needs every open
-    /// repo fully loaded before its loop starts. No-op for a tab that is already initializing.</summary>
+    /// initialize path, instead of waiting for its first focus — auto-fetch needs every open
+    /// repo fully loaded before its loop starts. §V10.1.2: enqueued onto the serial background
+    /// pump rather than fired immediately, so a restore does not fan every tab's identity walk +
+    /// status refresh out at once. No-op for a tab that is already initialising.</summary>
     public void EnsureInitialized(RepositoryContext context)
     {
-        bool needsInit;
         lock (_sync)
-            needsInit = _deferredInit.Remove(context);
-        if (needsInit)
-            _ = InitializeContextAsync(context);
+        {
+            if (!_deferredInit.Remove(context))
+                return;
+            _bgInitQueue.Add(context);
+            if (_bgInitPumpIdle)
+            {
+                _bgInitPumpIdle = false;
+                _ = Task.Run(DrainBackgroundInitQueueAsync);
+            }
+        }
+    }
+
+    /// <summary>Initialises the queued background tabs one at a time, and never before the
+    /// focused tab has fully loaded — that tab is what the user is waiting on.</summary>
+    private async Task DrainBackgroundInitQueueAsync()
+    {
+        while (true)
+        {
+            RepositoryContext? foreground, next;
+            Task foregroundChanged;
+            lock (_sync)
+            {
+                if (_bgInitQueue.Count == 0) { _bgInitPumpIdle = true; return; }
+                foreground = _foregroundInit;
+                next = _bgInitQueue[0];
+                foregroundChanged = _foregroundChanged.Task;
+            }
+
+            // Let the focused tab finish loading first (its own graph paint + identity +
+            // RefreshAllAsync). If it is itself the next queued item, don't wait on it here.
+            // v10.1.3: also race against _foregroundChanged — if `foreground` gets interrupted
+            // (FocusInternal), its FirstFullLoad will never complete on its own anymore, so
+            // without this the pump would wait forever on exactly the tab it just displaced.
+            if (foreground is not null && !ReferenceEquals(foreground, next))
+            {
+                try { await Task.WhenAny(foreground.FirstFullLoad.WaitAsync(foreground.Lifetime), foregroundChanged).ConfigureAwait(false); }
+                catch { /* focused tab closed before it finished — carry on */ }
+                continue; // re-snapshot: foreground/queue-front may have changed while we waited
+            }
+
+            lock (_sync)
+            {
+                if (_bgInitQueue.Count == 0) { _bgInitPumpIdle = true; return; }
+                next = _bgInitQueue[0];
+                _bgInitQueue.RemoveAt(0);
+                if (!_open.Contains(next))
+                    continue; // closed while queued
+            }
+
+            try { await InitializeContextAsync(next, foreground: false).ConfigureAwait(false); }
+            catch { /* one tab's init failing must not stall the rest */ }
+        }
     }
 
     private void FocusInternal(RepositoryContext context)
     {
         RepositoryContext? old;
         bool needsInit;
+        CancellationTokenSource? toCancel = null;
         lock (_sync)
         {
             if (ReferenceEquals(_focused, context))
                 return;
             old = _focused;
             _focused = context;
-            needsInit = _deferredInit.Remove(context);
+
+            // v10.1.3: interrupt the outgoing tab's in-flight identity/refresh work, if any, so
+            // the tab the user is now looking at doesn't queue behind it. A tab whose FirstFullLoad
+            // already completed has nothing to interrupt. The interrupted attempt is requeued at
+            // the front of the background pump (ahead of never-started tabs) to resume once
+            // priority frees up — RefreshAllAsync is read-only, and identity resolution's only
+            // write (seeding git config from the active profile, §9.6) checks the attempt token
+            // before starting and then runs uncancelled (finding #12), so re-running from scratch
+            // is fine: either the write never started, or it already completed.
+            if (old is not null && !old.FirstFullLoad.IsCompleted && _attemptCts.TryGetValue(old, out var oldCts))
+            {
+                toCancel = oldCts;
+                if (!_bgInitQueue.Contains(old))
+                    _bgInitQueue.Insert(0, old);
+                if (_bgInitPumpIdle)
+                {
+                    _bgInitPumpIdle = false;
+                    _ = Task.Run(DrainBackgroundInitQueueAsync);
+                }
+            }
+
+            // Promote the newly focused context to immediate init if it still needs one — a
+            // never-started deferred placeholder, a previously interrupted tab sitting in
+            // _bgInitQueue, or one the pump is already actively running (relabel it as the
+            // foreground target rather than starting a second concurrent attempt against it).
+            needsInit = false;
+            if (!context.FirstFullLoad.IsCompleted)
+            {
+                var wasQueued = _deferredInit.Remove(context) | _bgInitQueue.Remove(context);
+                if (wasQueued)
+                {
+                    needsInit = true;
+                    SetForegroundInit(context);
+                }
+                else if (_attemptCts.ContainsKey(context))
+                {
+                    SetForegroundInit(context); // already running — just becomes the priority tab
+                }
+            }
         }
 
-        // §V3-9.3: a placeholder tab initialises through the ordinary open path on first focus.
+        // §I-6.7 / rule 18: never run cancellation callbacks while holding _sync.
+        toCancel?.Cancel();
+
+        // Finding #1: stop the newly focused context's own inactive-tab headless job (queued or
+        // running) before its foreground graph work can start — that job and this tab's own
+        // background spill both write to the same on-disk store, so the focused tab must never
+        // start writing while its headless pass might still be running. Fire-and-forget: the
+        // graph service's own writer serializes against it internally regardless.
+        if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
+            is Historia.Services.Graph.IGraphLayoutService graphSvcForFocus)
+            _ = graphSvcForFocus.CancelInactiveTabCachingAsync(context);
+
+        // §V3-9.3: a placeholder (or previously interrupted) tab initialises through the ordinary
+        // open path on first/renewed focus.
         if (needsInit)
-            _ = InitializeContextAsync(context);
+            _ = InitializeContextAsync(context, foreground: true);
 
         PersistSession(); // §V3-9.3: focus is recorded, not only tab-set changes.
         FocusedRepositoryChanged?.Invoke(this, new FocusedRepositoryChangedEventArgs(old, context));
+
+        // v10 graph memory footprint plan, Phase 1b/1c: release the outgoing tab's graph memory
+        // and, once the newly focused tab is done loading, hand the freed heap back to the OS.
+        if (old is not null)
+            _ = HibernateAndReclaimAsync(old, context);
     }
+
+    // Finding #10: an aggressive, blocking, compacting GC.Collect after every tab switch pays a
+    // full-heap pause and (LargeObjectHeapCompactionMode.CompactOnce) a LOH compaction even when
+    // the outgoing tab held only a few MB, and Aggressive also decommits, so the next tab pays to
+    // re-commit. Only worth it once the heap has actually grown enough to matter.
+    private const long CompactHeapThresholdBytes = 1L * 1024 * 1024 * 1024; // 1 GiB
+    private const long CompactLohThresholdBytes = 256L * 1024 * 1024; // 256 MiB
+
+    /// <summary>Finding #10: whether the managed heap (or the large-object heap alone) is big
+    /// enough to justify the blocking, compacting GC in <see cref="HibernateAndReclaimAsync"/>.
+    /// A small heap gains nothing from the pause and just pays the decommit-then-recommit cost on
+    /// the next tab switch.</summary>
+    internal static bool ShouldCompactAfterHibernate(long heapBytes, long lohBytes) =>
+        heapBytes >= CompactHeapThresholdBytes || lohBytes >= CompactLohThresholdBytes;
+
+    /// <summary>Phase 1b: releases everything the outgoing tab's graph held in memory (cancels its
+    /// background spill, disposes its live walk, drops its resident commit list). Phase 1c: once
+    /// the newly focused tab's background-write gate opens (so the pause never lands inside its
+    /// own first paint) and focus has been stable for 2s (so a burst of switches triggers one
+    /// collection, not several), runs a compacting GC to actually shrink the working set — below
+    /// ~90% memory load the GC prefers background collections that free live objects without
+    /// returning the heap size to the OS. Finding #10: skipped when neither the managed heap nor
+    /// the LOH has grown past its threshold — see <see cref="ShouldCompactAfterHibernate"/>.</summary>
+    private async Task HibernateAndReclaimAsync(RepositoryContext old, RepositoryContext newContext)
+    {
+        if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
+            is Historia.Services.Graph.IGraphLayoutService graphSvc)
+        {
+            try { await graphSvc.Hibernate(old).ConfigureAwait(false); }
+            catch { /* best effort — memory release must never surface as a fatal error */ }
+        }
+
+        if (_services.GetService(typeof(IBackgroundWorkGate)) is IBackgroundWorkGate gate)
+        {
+            try { await gate.WaitUntilOpenAsync(newContext.Lifetime).ConfigureAwait(false); }
+            catch { return; } // the new tab closed before it finished loading
+        }
+
+        try { await Task.Delay(TimeSpan.FromSeconds(2), newContext.Lifetime).ConfigureAwait(false); }
+        catch { return; } // focus moved again (or the tab closed) during the debounce
+
+        lock (_sync)
+        {
+            if (!ReferenceEquals(_focused, newContext))
+                return; // focus moved again right at the debounce boundary
+        }
+
+        // Finding #10: gate the blocking, compacting collection on actual heap growth. verified
+        // against this repo's own PerfLog.Memory (Historia.Core/Diagnostics/PerfLog.cs): .NET's
+        // GCMemoryInfo.GenerationInfo is a GCGenerationInfo[] indexed by generation, where index 3
+        // is the large object heap (index 4 is the pinned object heap; absent on runtimes too old
+        // to report it, hence the length check) and HeapSizeBytes is the managed heap's total size
+        // as of the end of the last GC.
+        var info = GC.GetGCMemoryInfo();
+        var gen = info.GenerationInfo;
+        var lohBytes = gen.Length > 3 ? gen[3].SizeAfterBytes : 0L;
+        if (!ShouldCompactAfterHibernate(info.HeapSizeBytes, lohBytes))
+        {
+            static long Mb(long bytes) => bytes / (1024 * 1024);
+            Historia.Diagnostics.PerfLog.Mark(
+                $"tab-switch GC compaction skipped (heap={Mb(info.HeapSizeBytes)}MB, loh={Mb(lohBytes)}MB)");
+        }
+        else
+        {
+            Historia.Diagnostics.PerfLog.Memory("before tab-switch GC compaction");
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+            sw.Stop();
+            Historia.Diagnostics.PerfLog.Memory("after tab-switch GC compaction");
+            Historia.Diagnostics.PerfLog.Mark($"tab-switch GC compaction: {sw.Elapsed.TotalMilliseconds:F1}ms");
+        }
+
+        // v10 graph memory footprint plan, Phase 4: once the active tab is settled (gate open,
+        // focus stable, its own reclaim done), queue every OTHER open tab for the headless
+        // commit-graph + disk-cache pipeline. GraphBackgroundWriter runs them one at a time,
+        // behind the same gate, so this never contends with the active tab's own work.
+        _ = RunInactiveTabPipelineAsync(newContext);
+    }
+
+    /// <summary>Phase 4: queues every open tab except <paramref name="activeContext"/> for
+    /// <c>IGraphLayoutService.RunHeadlessCacheAsync</c>. Waits for the background-init pump to be
+    /// idle first — a session restore's own identity/status work takes priority over this purely
+    /// optional caching. Finding #1: a job is stopped both by its own tab closing
+    /// (<c>RepositoryContext.Lifetime</c>) AND by that tab gaining focus
+    /// (<see cref="FocusInternal"/> calls <c>IGraphLayoutService.CancelInactiveTabCachingAsync</c>
+    /// for the newly focused context before its own foreground spill can start) — the headless
+    /// pipeline and a focused tab's own background spill both write to the same on-disk store, so
+    /// letting a headless pass for the tab the user just switched to keep running would race it.
+    /// <c>GraphMetaWriter.AppendSpillBatch</c>/<c>TryCommitReorder</c> re-check the on-disk header
+    /// under a per-repo lock as a second line of defence regardless.</summary>
+    private async Task RunInactiveTabPipelineAsync(RepositoryContext activeContext)
+    {
+        try
+        {
+            if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
+                is not Historia.Services.Graph.IGraphLayoutService graphSvc)
+                return;
+
+            if (!await WaitForBackgroundInitIdleAsync(activeContext.Lifetime).ConfigureAwait(false))
+                return;
+
+            List<RepositoryContext> targets;
+            lock (_sync)
+            {
+                if (!ReferenceEquals(_focused, activeContext))
+                    return; // focus moved again while this waited
+                targets = [.. _open.Where(c => !ReferenceEquals(c, activeContext))];
+            }
+
+            var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeRemoteBranches = true };
+            foreach (var context in targets)
+                graphSvc.EnqueueInactiveTabCaching(context, query);
+        }
+        catch (OperationCanceledException)
+        {
+            // The active tab closed while this waited — nothing left to queue for.
+        }
+        catch (Exception ex)
+        {
+            // Headless caching is a pure optimisation; never let it surface as a fatal error.
+            Historia.Diagnostics.PerfLog.Mark($"RunInactiveTabPipelineAsync failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Waits until <see cref="_bgInitPumpIdle"/> is true, <paramref name="ct"/> is
+    /// cancelled, or <see cref="BackgroundInitIdleWaitCap"/> elapses. Polling rather than a
+    /// signal: this is a low-urgency background optimisation (Phase 4), not on any user-visible
+    /// latency path, so a short delay loop is simpler and no less correct than threading a new
+    /// completion source through every one of the pump's several mutation points. Capped rather
+    /// than unconditional: this is a best-effort caching pass, not a correctness dependency, and
+    /// must never wait forever on an internal signal — the next focus change tries again.</summary>
+    private async Task<bool> WaitForBackgroundInitIdleAsync(CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + BackgroundInitIdleWaitCap;
+        while (true)
+        {
+            bool idle;
+            lock (_sync) idle = _bgInitPumpIdle;
+            if (idle)
+                return true;
+            if (DateTime.UtcNow >= deadline)
+                return false;
+            try { await Task.Delay(250, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return false; }
+        }
+    }
+
+    private static readonly TimeSpan BackgroundInitIdleWaitCap = TimeSpan.FromSeconds(30);
 
     private void RaiseOpenChanged()
     {
