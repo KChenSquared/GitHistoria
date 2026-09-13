@@ -43,6 +43,16 @@ namespace Historia.Services.Graph;
 /// commit-graph write may now briefly overlap a lowest-priority headless walk's non-git work —
 /// an accepted trade-off, since only one process-level write can ever run at a time either way.
 /// </para>
+/// <para>
+/// Finding #1: a tab gaining focus stops its own queued or running inactive-tab job outright
+/// (<see cref="CancelInactiveTabAsync"/>, called by <c>WorkspaceService.FocusInternal</c>) rather
+/// than letting it keep running to completion — the headless pipeline and that tab's own
+/// foreground spill both write to the same on-disk store, and only cancelling the headless side
+/// (never mid-write; see the docs on the write path above) keeps the two from ever appending at
+/// once. <see cref="GraphMetaWriter.AppendSpillBatch"/> and
+/// <see cref="GraphMetaWriter.TryCommitReorder"/> are the second line of defence, re-checking the
+/// on-disk header under a per-repo lock before every write.
+/// </para>
 /// </summary>
 internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService settings, IBackgroundWorkGate? gate = null)
 {
@@ -72,13 +82,21 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
         new(StringComparer.OrdinalIgnoreCase);
     private readonly object _sync = new();
 
-    private readonly Queue<(RepositoryContext Context, Func<CancellationToken, Task> Work)> _inactiveQueue = new();
+    private readonly Queue<(RepositoryContext Context, Func<CancellationToken, Task> Work, CancellationTokenSource Cts, TaskCompletionSource Done)> _inactiveQueue = new();
 
     // Contexts currently queued (enqueued but not yet dequeued for running) — backs the
     // de-duplication in EnqueueInactiveTab (finding #11). A context is removed from this set the
     // moment its job is dequeued, so a fresh EnqueueInactiveTab call for the same context while
     // its previous job is actually running queues a new run rather than being dropped.
     private readonly HashSet<string> _queuedContextIds = new(StringComparer.Ordinal);
+
+    // Finding #1 (cancel-on-focus): every queued or currently-running inactive job's own
+    // cancellation source and completion signal, keyed by context id. A context can briefly have
+    // two entries at once — one finishing its run while a fresh call (the "queued" dedupe doesn't
+    // apply to a running job) queues another — so each context id maps to a list; a job removes
+    // its own entry when it exits (cancelled, failed, or finished), never anyone else's.
+    private readonly Dictionary<string, List<(CancellationTokenSource Cts, TaskCompletionSource Done)>> _inactiveJobs =
+        new(StringComparer.Ordinal);
     private bool _pumping;
 
     /// <summary>
@@ -118,7 +136,16 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
             if (!_queuedContextIds.Add(context.Id))
                 return; // already queued and not yet running — de-dupe.
 
-            _inactiveQueue.Enqueue((context, headlessWork));
+            // Finding #1: this job's own cancellation is linked to the context's Lifetime (a tab
+            // close still stops it) AND to CancelInactiveTabAsync below (focus arriving stops it
+            // too) — neither owns the other; either can fire independently.
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(context.Lifetime);
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!_inactiveJobs.TryGetValue(context.Id, out var jobs))
+                _inactiveJobs[context.Id] = jobs = [];
+            jobs.Add((cts, done));
+
+            _inactiveQueue.Enqueue((context, headlessWork, cts, done));
             if (!_pumping)
             {
                 _pumping = true;
@@ -127,27 +154,49 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
         }
     }
 
+    /// <summary>Finding #1: cancels <paramref name="context"/>'s queued or running inactive job(s)
+    /// and returns a task that completes once every one of them has actually exited. A no-op (a
+    /// completed task) if there is none.</summary>
+    public Task CancelInactiveTabAsync(RepositoryContext context)
+    {
+        List<(CancellationTokenSource Cts, TaskCompletionSource Done)>? jobs;
+        lock (_sync)
+            _inactiveJobs.TryGetValue(context.Id, out jobs);
+        if (jobs is null || jobs.Count == 0)
+            return Task.CompletedTask;
+
+        // Snapshot before cancelling: a job's finally block removes its own entry from the live
+        // list under _sync as soon as it exits, so iterating the live list while cancelling could
+        // skip or double-handle an entry.
+        (CancellationTokenSource Cts, TaskCompletionSource Done)[] snapshot;
+        lock (_sync)
+            snapshot = [.. jobs];
+        foreach (var (cts, _) in snapshot)
+            try { cts.Cancel(); } catch (ObjectDisposedException) { }
+        return Task.WhenAll(snapshot.Select(j => j.Done.Task));
+    }
+
     private async Task DrainInactiveQueueAsync()
     {
         while (true)
         {
-            (RepositoryContext Context, Func<CancellationToken, Task> Work)? item;
+            (RepositoryContext Context, Func<CancellationToken, Task> Work, CancellationTokenSource Cts, TaskCompletionSource Done)? item;
             lock (_sync)
             {
                 if (_inactiveQueue.Count == 0) { _pumping = false; return; }
                 item = _inactiveQueue.Dequeue();
                 _queuedContextIds.Remove(item.Value.Context.Id);
             }
-            var (context, work) = item.Value;
+            var (context, work, cts, done) = item.Value;
             try
             {
                 if (gate is not null)
-                    await gate.WaitUntilOpenAsync(context.Lifetime).ConfigureAwait(false);
+                    await gate.WaitUntilOpenAsync(cts.Token).ConfigureAwait(false);
                 // Its own serializer, separate from _serial — see the class doc comment. A long
                 // headless walk here never makes the active tab's own commit-graph write (which
                 // only ever needs _serial, and briefly) wait behind it.
-                await _headlessSerial.WaitAsync(context.Lifetime).ConfigureAwait(false);
-                try { await work(context.Lifetime).ConfigureAwait(false); }
+                await _headlessSerial.WaitAsync(cts.Token).ConfigureAwait(false);
+                try { await work(cts.Token).ConfigureAwait(false); }
                 finally { _headlessSerial.Release(); }
             }
             catch (OperationCanceledException)
@@ -157,6 +206,20 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
             catch
             {
                 // A headless job failing must not stall the rest of the queue.
+            }
+            finally
+            {
+                lock (_sync)
+                {
+                    if (_inactiveJobs.TryGetValue(context.Id, out var jobs))
+                    {
+                        jobs.RemoveAll(j => ReferenceEquals(j.Cts, cts));
+                        if (jobs.Count == 0)
+                            _inactiveJobs.Remove(context.Id);
+                    }
+                }
+                done.TrySetResult();
+                try { cts.Dispose(); } catch { /* best effort */ }
             }
         }
     }

@@ -22,6 +22,26 @@ internal static class GraphCachePaths
 }
 
 /// <summary>
+/// 2026-09-12 memoryshrink review, finding #1: one lock object per repo cache stem, shared by
+/// every <see cref="GraphMetaWriter"/> for that repo (the active tab's own spill, an inactive
+/// tab's headless spool/reorder). Every <c>.meta.*</c> mutation — <see cref="GraphMetaWriter.Reset"/>,
+/// an append + <see cref="GraphMetaWriter.Commit"/>, <see cref="GraphMetaWriter.WriteOrder"/>,
+/// <see cref="GraphMetaWriter.WriteTips"/>, <see cref="GraphMetaWriter.CommitReorder"/> — takes
+/// this lock and re-checks the on-disk header before writing, so two writers racing for the same
+/// repo's store can never interleave (see <see cref="GraphMetaWriter.AppendSpillBatch"/> and
+/// <see cref="GraphMetaWriter.TryCommitReorder"/>). Keyed by stem, not repo path, since the stem
+/// is already the case-folded, slash-normalised identity the files themselves are named after.
+/// </summary>
+internal static class GraphCacheLocks
+{
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, object> Locks =
+        new(StringComparer.Ordinal);
+
+    public static object For(string repoPath) =>
+        Locks.GetOrAdd(GraphCachePaths.Stem(repoPath), static _ => new object());
+}
+
+/// <summary>
 /// On-disk, random-access store for the graph's per-commit metadata (§7.6). When the
 /// "Read commit details from disk" setting is on, <see cref="GraphLayoutService"/> spills the
 /// laid-out rows here and points <see cref="GraphLayout.Commits"/> at a
@@ -426,6 +446,102 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
 
     private static string Clean(string s)
         => s.Replace('\n', ' ').Replace('\r', ' ').Replace(GraphMetaStore.Sep, ' ');
+
+    /// <summary>Finding #1: appends a spill batch under this repo's <see cref="GraphCacheLocks"/>
+    /// lock, re-checking the on-disk header first rather than trusting the caller's own idea of
+    /// <paramref name="from"/> — another writer for this same repo (the inactive-tab headless
+    /// spool/reorder, or another cache instance) may have moved the store underneath it.
+    /// <list type="bullet">
+    /// <item>Header absent, an old version, or a different walk key: only a legitimate reset
+    /// (<paramref name="from"/> == 0) proceeds — <see cref="Reset"/> then append. Any other
+    /// mismatch (<paramref name="from"/> &gt; 0) is a <see cref="SpillOutcome.Conflict"/>: this
+    /// writer expected to continue a store that no longer exists at the key it started from.</item>
+    /// <item>Header matches this walk key and its <c>RowCount</c> equals <paramref name="from"/>:
+    /// the normal case — append and commit.</item>
+    /// <item>Header matches and its <c>RowCount</c> is already &gt;= <paramref name="to"/>:
+    /// another writer already durably wrote this exact range (the same deterministic walk) —
+    /// <see cref="SpillOutcome.Adopted"/>, caller adopts the existing rows instead of appending.</item>
+    /// <item>Header matches but its <c>RowCount</c> falls strictly between <paramref name="from"/>
+    /// and <paramref name="to"/>: a gap — <see cref="SpillOutcome.Conflict"/>.</item>
+    /// </list>
+    /// </summary>
+    public (SpillOutcome Outcome, int RowCount) AppendSpillBatch(IReadOnlyList<RawCommit> rows, int from, int to, bool exhausted)
+    {
+        lock (GraphCacheLocks.For(repoPath))
+        {
+            var existing = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches, engine);
+            var matchesKey = existing.Ok && existing.WalkKey == fingerprint;
+
+            if (!matchesKey)
+            {
+                if (from != 0)
+                    return (SpillOutcome.Conflict, existing.RowCount);
+                Reset();
+            }
+            else if (existing.RowCount >= to)
+            {
+                return (SpillOutcome.Adopted, existing.RowCount);
+            }
+            else if (existing.RowCount != from)
+            {
+                return (SpillOutcome.Conflict, existing.RowCount);
+            }
+
+            Append(rows, 0, to - from);
+            Commit(to, exhausted);
+            return (SpillOutcome.Appended, to);
+        }
+    }
+
+    /// <summary>Finding #1: the reorder's atomic switch-over, under this repo's
+    /// <see cref="GraphCacheLocks"/> lock. Re-reads the header and requires it to still match
+    /// exactly what the reorder started from (<paramref name="expectedOldWalkKey"/>, <paramref
+    /// name="expectedOldExhausted"/>, <paramref name="expectedOldOrderVersion"/>, <paramref
+    /// name="expectedOldRecordCount"/>) — the walk that built <paramref name="order"/> /
+    /// <paramref name="newRecords"/> read the old store well before this call, off the lock, so
+    /// another writer (a live foreground open of this same repo, or a second headless job) could
+    /// have moved it in the meantime. Any mismatch abandons the whole attempt; the old order stays
+    /// authoritative. Returns whether the commit actually happened.</summary>
+    public bool TryCommitReorder(
+        long expectedOldWalkKey, bool expectedOldExhausted, int expectedOldOrderVersion, int expectedOldRecordCount,
+        int[] order, IReadOnlyList<RawCommit> newRecords, IReadOnlyList<ObjectId> sortedTips)
+    {
+        lock (GraphCacheLocks.For(repoPath))
+        {
+            var probe = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches, engine);
+            if (!probe.Ok || probe.WalkKey != expectedOldWalkKey || probe.Exhausted != expectedOldExhausted
+                || probe.OrderVersion != expectedOldOrderVersion || probe.RecordCount != expectedOldRecordCount)
+                return false;
+
+            Append(newRecords, 0, newRecords.Count);
+            var newOrderVersion = expectedOldOrderVersion + 1;
+            if (!WriteOrder(newOrderVersion, order))
+                return false;
+            WriteTips(sortedTips);
+            CommitReorder(
+                rowCount: order.Length,
+                recordCount: expectedOldRecordCount + newRecords.Count,
+                orderVersion: newOrderVersion,
+                exhausted: true);
+            return true;
+        }
+    }
+}
+
+/// <summary>Outcome of <see cref="GraphMetaWriter.AppendSpillBatch"/> — finding #1.</summary>
+internal enum SpillOutcome
+{
+    /// <summary>The batch was appended and the header committed normally.</summary>
+    Appended,
+
+    /// <summary>Another writer already durably wrote this exact range; the caller should adopt
+    /// the existing rows (<see cref="GraphMetaStore.ProbeExisting"/>'s returned row count) instead
+    /// of appending anything.</summary>
+    Adopted,
+
+    /// <summary>The on-disk header no longer matches what this writer expected to continue from —
+    /// the caller must stop spilling for this cache and let the next compute resync.</summary>
+    Conflict,
 }
 
 /// <summary>

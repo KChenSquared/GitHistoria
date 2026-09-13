@@ -403,6 +403,8 @@ public class WorkspaceServiceTests : IAsyncDisposable
         public List<RepositoryContext> Enqueued { get; } = [];
 
         public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query) => Enqueued.Add(context);
+        public Task CancelInactiveTabCachingAsync(RepositoryContext context) { Cancelled.Add(context); return Task.CompletedTask; }
+        public List<RepositoryContext> Cancelled { get; } = [];
 
         public Task<GraphLayoutResult> ComputeLayoutAsync(RepositoryContext context, GraphQuery query, int maxRows = 10000, CancellationToken ct = default)
             => throw new NotImplementedException();
@@ -450,6 +452,39 @@ public class WorkspaceServiceTests : IAsyncDisposable
 
         Assert.Equal(2, fakeGraph.Enqueued.Count);
         Assert.DoesNotContain(fakeGraph.Enqueued, c => Norm(c.RepositoryPath) == Norm(r3.Path));
+
+        await ws.DisposeAsync();
+    }
+
+    // ── finding #1: focus cancels the newly focused context's own inactive-tab headless job ──
+
+    [Fact(Timeout = 20000)]
+    public async Task Focus_cancels_the_newly_focused_contexts_inactive_tab_job()
+    {
+        var fakeGraph = new RecordingGraphLayoutService();
+        var provider = new OverrideServiceProvider(_host.Provider, typeof(IGraphLayoutService), fakeGraph);
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var recents = _recents = new RecentRepositoryService(_host.Settings);
+        var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
+        var identity = new RepoIdentityService(cli);
+        var ws = new WorkspaceService(provider, cli, recents, profiles, identity);
+
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        var ctx1 = await ws.OpenAsync(r1.Path); // focus lands on ctx1
+        ctx1.MarkFirstFullLoadDone();
+        var ctx2 = await ws.OpenAsync(r2.Path); // focus moves to ctx2
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (fakeGraph.Cancelled.Count < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        // Both contexts were, at some point, the newly focused one — each focus change must
+        // cancel that tab's own inactive-tab job before its foreground graph work can start, even
+        // though in this test neither ever actually had one queued.
+        Assert.Contains(ctx1, fakeGraph.Cancelled);
+        Assert.Contains(ctx2, fakeGraph.Cancelled);
 
         await ws.DisposeAsync();
     }

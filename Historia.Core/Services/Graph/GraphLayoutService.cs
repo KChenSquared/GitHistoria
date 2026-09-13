@@ -18,6 +18,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// waiting can be stuck behind the spill to roughly one chunk's pull.</summary>
     private const int SpillWalkChunkRows = 25_000;
 
+    /// <summary>Rows per batch of the disk-spill write, both for the active tab's background
+    /// spill and the headless per-tab pipeline. See <see cref="TestSpillBatchRowsOverride"/>.</summary>
+    private const int DefaultSpillBatchRows = 25_000;
+
+    /// <summary>Finding #1 test seam: when &gt; 0, overrides <see cref="DefaultSpillBatchRows"/>
+    /// for both the active-tab background spill and the headless spool — so a fixture repo with
+    /// only a few hundred commits can still exercise multi-batch write races that would otherwise
+    /// need a 25,000-row history to trigger. Left at 0 (production default) outside tests; a test
+    /// that sets it must reset it to 0 when done, since it's process-wide state.</summary>
+    internal static int TestSpillBatchRowsOverride;
+
     /// <summary>Minimum row-count growth between debounced <see cref="GraphWalkCache.Save"/>
     /// calls for the same cache (see <see cref="RepoCache.WalkCacheSavedRows"/>).</summary>
     private const int WalkCacheSaveStride = 5_000;
@@ -393,7 +404,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 }
 
                 if (gateOpen && cache.WalkKey != 0 && rowCount > cache.SpilledRows)
-                    SpillRange(cache, repoPath, includeRemotes, cache.SpilledRows, rowCount, result.Layout.IsComplete);
+                {
+                    // Outcome is deliberately unobserved here: Appended/Adopted both leave
+                    // cache.MetaStore ready to serve below; a Conflict leaves it null, and the
+                    // fallback further down (a fresh ReadWindow-built array) already handles that.
+                    _ = SpillRange(cache, repoPath, includeRemotes, cache.SpilledRows, rowCount, result.Layout.IsComplete);
+                }
                 else
                     cache.MetaStore?.SetCount(Math.Max(cache.MetaStore.Count, rowCount));
 
@@ -434,39 +450,62 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// through <see cref="DiskCommitStore"/>, since <see cref="GraphMetaWriter"/> swallows IO
     /// errors and <c>cache.SpilledRows</c> must never advance on faith alone — "the disk cache is
     /// never a correctness dependency") does it also drop those rows from the resident pending
-    /// buffer via <see cref="TrimConfirmedSpilled"/>. Caller holds <c>cache.SpillSync</c>.</summary>
-    private static void SpillRange(
+    /// buffer via <see cref="TrimConfirmedSpilled"/>. Caller holds <c>cache.SpillSync</c>.
+    /// <para>
+    /// Finding #1: the actual append goes through <see cref="GraphMetaWriter.AppendSpillBatch"/>,
+    /// which re-checks the on-disk header under this repo's cache-wide writer lock before writing
+    /// — so an inactive-tab headless job and this cache's own spill can never both append to the
+    /// same store. A <see cref="SpillOutcome.Adopted"/> result means another writer already wrote
+    /// this exact range; a <see cref="SpillOutcome.Conflict"/> means the header moved out from
+    /// under this writer entirely (a reorder, a reset by another writer) — the caller must stop
+    /// spilling for this cache and let the next compute/headless pass resync from scratch.
+    /// </para>
+    /// </summary>
+    private static SpillOutcome SpillRange(
         RepoCache cache, string repoPath, bool includeRemotes, int from, int to, bool exhausted)
     {
         if (to <= from)
-            return;
+            return SpillOutcome.Appended;
         List<RawCommit> snap;
         lock (cache)
         {
             to = Math.Min(to, from + cache.Commits.Count);
             if (to <= from)
-                return;
+                return SpillOutcome.Appended;
             snap = cache.Commits.GetRange(0, to - from);
         }
         cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, includeRemotes, cache.Engine);
-        if (from == 0)
-        {
-            cache.MetaWriter.Reset();
-            cache.MetaStore?.Dispose();
-            cache.MetaStore = null;
-        }
-        cache.MetaWriter.Append(snap, 0, snap.Count);
-        cache.MetaWriter.Commit(to, exhausted);
-        cache.MetaComplete = exhausted;
-        Diagnostics.PerfLog.Mark($"graph cache write: spill {snap.Count} rows ({repoPath})");
 
-        cache.MetaStore ??= GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, to, cache.Engine);
-        cache.MetaStore?.SetCount(to);
-        if (cache.MetaStore is { } store && store.Count >= to)
-            TrimConfirmedSpilled(cache, to);
-        // else: the write or the read-back didn't confirm — leave cache.Commits and
-        // cache.SpilledRows where they are; SpillAndSwap's ReadWindow-based fallback and the
-        // next spill attempt both cope, and no data is lost.
+        var (outcome, rowCount) = cache.MetaWriter.AppendSpillBatch(snap, from, to, exhausted);
+        switch (outcome)
+        {
+            case SpillOutcome.Conflict:
+                // The header no longer matches what this writer expected — don't keep serving a
+                // store that may now belong to a different walk key. The next compute/headless
+                // pass reopens/re-probes from scratch.
+                cache.MetaStore?.Dispose();
+                cache.MetaStore = null;
+                return outcome;
+
+            case SpillOutcome.Adopted:
+                cache.MetaStore?.Dispose();
+                cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount, cache.Engine);
+                AdoptDurableStore(cache, rowCount);
+                return outcome;
+
+            default:
+                cache.MetaComplete = exhausted;
+                Diagnostics.PerfLog.Mark($"graph cache write: spill {snap.Count} rows ({repoPath})");
+
+                cache.MetaStore ??= GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, to, cache.Engine);
+                cache.MetaStore?.SetCount(to);
+                if (cache.MetaStore is { } store && store.Count >= to)
+                    TrimConfirmedSpilled(cache, to);
+                // else: the write or the read-back didn't confirm — leave cache.Commits and
+                // cache.SpilledRows where they are; SpillAndSwap's ReadWindow-based fallback and
+                // the next spill attempt both cope, and no data is lost.
+                return outcome;
+        }
     }
 
     /// <summary>Phase 3a: once <paramref name="confirmedRows"/> leading rows THIS SESSION JUST
@@ -578,7 +617,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// </summary>
     private void MaybeStartBackgroundSpill(RepositoryContext context, RepoCache cache, GraphQuery query)
     {
-        const int BatchRows = 25_000;
+        var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
         var cap = GraphLimits.GetMaxResidentRows(_metaFromDisk, _residentRowCap);
 
         lock (cache.SpillSync)
@@ -605,6 +644,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // A gate-less test ctor (no IBackgroundWorkGate supplied) behaves as "always
                 // open", matching every existing test's expectations.
                 await WaitForGateAsync(ct).ConfigureAwait(false);
+                if (ct.IsCancellationRequested)
+                    return;
+
+                // Finding #1 (cancel-on-focus): if this context's inactive-tab headless job is
+                // still queued or running when it gains focus, wait for it to actually exit before
+                // this spill's first write — otherwise the headless job and this spill could both
+                // append to the same on-disk store at once. A no-op when there's no such job (the
+                // overwhelming common case) or no background writer configured (test ctors).
+                if (_backgroundWriter is not null)
+                    await _backgroundWriter.CancelInactiveTabAsync(context).ConfigureAwait(false);
                 if (ct.IsCancellationRequested)
                     return;
 
@@ -639,9 +688,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     lastPreloadMemoryMark = walkedSoFar;
                     _backgroundWriter?.MaybeSchedule(context, walkedSoFar);
 
-                    // Spill whatever this chunk produced, in <= BatchRows batches, before walking
+                    // Spill whatever this chunk produced, in <= batchRows batches, before walking
                     // further — Phase 1: every writer awaits the gate before it starts AND
                     // between batches, so a tab switch pauses within one batch's write.
+                    var conflicted = false;
                     while (true)
                     {
                         await WaitForGateAsync(ct).ConfigureAwait(false);
@@ -654,21 +704,26 @@ public sealed class GraphLayoutService : IGraphLayoutService
                         {
                             var total = Math.Min(TotalWalked(cache), cap);
                             from = cache.SpilledRows;
-                            to = Math.Min(total, from + BatchRows);
+                            to = Math.Min(total, from + batchRows);
                             doneSpilling = to >= total;
-                            if (to > from)
-                                SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to,
-                                    exhausted: doneSpilling && walkDone && cache.Exhausted);
+                            if (to > from
+                                && SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to,
+                                    exhausted: doneSpilling && walkDone && cache.Exhausted) == SpillOutcome.Conflict)
+                                conflicted = true;
                         }
                         if (to / 100_000 != lastDiskWriterMemoryMark / 100_000)
                             Diagnostics.PerfLog.Memory($"disk writer {to} rows ({context.DisplayName})");
                         lastDiskWriterMemoryMark = to;
-                        if (to <= from || doneSpilling)
+                        if (to <= from || doneSpilling || conflicted)
                             break;
                         await Task.Delay(150, ct).ConfigureAwait(false); // let UI git ops interleave
                     }
 
-                    if (walkDone || ct.IsCancellationRequested)
+                    // Finding #1: a conflict means the on-disk header moved out from under this
+                    // writer entirely (another writer reset or reordered it) — stop this whole
+                    // background spill attempt rather than keep hammering a store it no longer
+                    // safely understands. The next ComputeLayoutAsync/ExtendLayoutAsync resyncs.
+                    if (walkDone || ct.IsCancellationRequested || conflicted)
                         break;
                     await Task.Delay(150, ct).ConfigureAwait(false); // let foreground + crawl gate work in
                 }
@@ -702,6 +757,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// <inheritdoc/>
     public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query) =>
         _backgroundWriter?.EnqueueInactiveTab(context, ct => RunHeadlessCacheAsync(context, query, ct));
+
+    /// <inheritdoc/>
+    public Task CancelInactiveTabCachingAsync(RepositoryContext context) =>
+        _backgroundWriter?.CancelInactiveTabAsync(context) ?? Task.CompletedTask;
 
     /// <inheritdoc/>
     public async Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct)
@@ -762,7 +821,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// spilled stays on disk.</summary>
     private async Task RunHeadlessSpoolAsync(RepositoryContext context, GraphQuery query, CancellationToken ct)
     {
-        const int BatchRows = 25_000;
+        var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
         var cache = new RepoCache { Scope = query.RefScope, IncludeRemotes = query.IncludeRemoteBranches };
         try
         {
@@ -773,7 +832,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     break;
 
                 int target;
-                lock (cache) target = cache.SpilledRows + cache.Commits.Count + BatchRows;
+                lock (cache) target = cache.SpilledRows + cache.Commits.Count + batchRows;
                 await EnsureWalkedAsync(context, query, cache, target, ct, background: true, lowestPriority: true)
                     .ConfigureAwait(false);
 
@@ -785,12 +844,20 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     break;
 
                 int from, to;
+                var conflicted = false;
                 lock (cache.SpillSync)
                 {
                     lock (cache) { from = cache.SpilledRows; to = cache.SpilledRows + cache.Commits.Count; }
-                    if (to > from)
-                        SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to, exhausted: walkDone);
+                    if (to > from
+                        && SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to, exhausted: walkDone)
+                            == SpillOutcome.Conflict)
+                        conflicted = true;
                 }
+                // Finding #1: a conflict here means the active tab (or another headless job)
+                // already moved this repo's store out from under this spool — stop; the next
+                // RunHeadlessCacheAsync call re-probes and resyncs.
+                if (conflicted)
+                    break;
                 if (walkDone)
                 {
                     _backgroundWriter?.MaybeSchedule(context, TotalWalked(cache));
@@ -840,9 +907,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
             List<RawCommit> newWalkCommits;
             lock (cache) newWalkCommits = [.. cache.Commits];
 
-            // Re-probe right before committing: the old store must still be exactly what step 1
-            // saw (another job, or a live foreground open of this same repo, could have changed
-            // it while this walk ran) or this reorder's base table no longer applies.
+            // Cheap pre-check (unlocked): the old store must still look like what step 1 saw
+            // before paying for BuildShaIndex/GraphMetaReorder.Build against it at all. The real
+            // guard is TryCommitReorder's own re-check under the writer lock, immediately before
+            // it actually commits — this only avoids doing the work when it's obviously stale.
             var oldProbe = GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches, cache.Engine);
             if (!oldProbe.Ok || !oldProbe.Exhausted || oldProbe.WalkKey == newWalkKey)
                 return; // stale, gone, or someone else already brought it up to date
@@ -854,17 +922,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
             if (ct.IsCancellationRequested)
                 return;
 
+            // Finding #1: the actual switch-over is atomic under this repo's cache-wide writer
+            // lock — TryCommitReorder re-reads the header there and requires it to still match
+            // exactly (walk key, Exhausted, OrderVersion, RecordCount) what oldProbe saw above,
+            // since another writer (a live foreground open of this same repo) could have moved it
+            // during BuildShaIndex/Build, which both run off any lock.
             var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches, cache.Engine);
-            writer.Append(plan.NewRecords, 0, plan.NewRecords.Count);
-            var newOrderVersion = oldProbe.OrderVersion + 1;
-            if (!writer.WriteOrder(newOrderVersion, plan.Order))
-                return; // best-effort — the old order stays authoritative on any write failure
-            writer.WriteTips([.. sortedTips.Select(sha => new ObjectId(sha))]);
-            writer.CommitReorder(
-                rowCount: plan.Order.Length,
-                recordCount: oldStore.RecordCount + plan.NewRecords.Count,
-                orderVersion: newOrderVersion,
-                exhausted: true);
+            if (!writer.TryCommitReorder(
+                    oldProbe.WalkKey, oldProbe.Exhausted, oldProbe.OrderVersion, oldProbe.RecordCount,
+                    plan.Order, plan.NewRecords, [.. sortedTips.Select(sha => new ObjectId(sha))]))
+                return; // best-effort — the old order stays authoritative on any mismatch or write failure
 
             Diagnostics.PerfLog.Mark(
                 $"graph cache write: reorder {plan.NewRecords.Count} new records, {plan.Order.Length} rows ({repoPath})");

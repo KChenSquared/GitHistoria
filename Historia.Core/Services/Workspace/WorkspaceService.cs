@@ -697,6 +697,15 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         // §I-6.7 / rule 18: never run cancellation callbacks while holding _sync.
         toCancel?.Cancel();
 
+        // Finding #1: stop the newly focused context's own inactive-tab headless job (queued or
+        // running) before its foreground graph work can start — that job and this tab's own
+        // background spill both write to the same on-disk store, so the focused tab must never
+        // start writing while its headless pass might still be running. Fire-and-forget: the
+        // graph service's own writer serializes against it internally regardless.
+        if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
+            is Historia.Services.Graph.IGraphLayoutService graphSvcForFocus)
+            _ = graphSvcForFocus.CancelInactiveTabCachingAsync(context);
+
         // §V3-9.3: a placeholder (or previously interrupted) tab initialises through the ordinary
         // open path on first/renewed focus.
         if (needsInit)
@@ -793,12 +802,14 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     /// <summary>Phase 4: queues every open tab except <paramref name="activeContext"/> for
     /// <c>IGraphLayoutService.RunHeadlessCacheAsync</c>. Waits for the background-init pump to be
     /// idle first — a session restore's own identity/status work takes priority over this purely
-    /// optional caching. Simplification versus the plan's exact recipe: a job is stopped only by
-    /// its own tab closing (<c>RepositoryContext.Lifetime</c>), not by that tab being focused
-    /// mid-job — since a headless job never touches this service's live <c>_caches</c> entries or
-    /// produces a layout, a tab focused while its own headless pass is still running just finishes
-    /// that pass in the background rather than being cut off at the next batch boundary; nothing
-    /// is corrupted or duplicated, only briefly redundant.</summary>
+    /// optional caching. Finding #1: a job is stopped both by its own tab closing
+    /// (<c>RepositoryContext.Lifetime</c>) AND by that tab gaining focus
+    /// (<see cref="FocusInternal"/> calls <c>IGraphLayoutService.CancelInactiveTabCachingAsync</c>
+    /// for the newly focused context before its own foreground spill can start) — the headless
+    /// pipeline and a focused tab's own background spill both write to the same on-disk store, so
+    /// letting a headless pass for the tab the user just switched to keep running would race it.
+    /// <c>GraphMetaWriter.AppendSpillBatch</c>/<c>TryCommitReorder</c> re-check the on-disk header
+    /// under a per-repo lock as a second line of defence regardless.</summary>
     private async Task RunInactiveTabPipelineAsync(RepositoryContext activeContext)
     {
         try

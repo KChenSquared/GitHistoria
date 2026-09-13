@@ -87,4 +87,14 @@ public interface IGraphLayoutService
     /// currently focused.
     /// </summary>
     void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query);
+
+    /// <summary>
+    /// 2026-09-12 memoryshrink review, finding #1: cancels <paramref name="context"/>'s
+    /// inactive-tab headless job — queued or already running — and returns a task that completes
+    /// once it has actually exited. Called when a tab gains focus, before its own foreground
+    /// spill can start writing, so the headless pipeline and the newly focused tab's spill never
+    /// both append to the same on-disk store. A no-op (a completed task) if there is no such job,
+    /// or this service has no background writer configured (a test-only ctor).
+    /// </summary>
+    Task CancelInactiveTabCachingAsync(RepositoryContext context);
 }
