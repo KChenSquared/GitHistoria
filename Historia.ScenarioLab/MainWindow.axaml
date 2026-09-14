@@ -1,0 +1,135 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        x:Class="Historia.ScenarioLab.MainWindow"
+        Title="Historia ScenarioLab"
+        Width="1200" Height="750"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource ColorBg}">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- Top button bar -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource ColorChrome}"
+                BorderBrush="{DynamicResource ColorBorder}"
+                BorderThickness="0,0,0,1"
+                Padding="8,6">
+            <Grid ColumnDefinitions="Auto,Auto,12,Auto,Auto,*,Auto">
+                <Button Grid.Column="0" x:Name="SaveButton" Content="Save" ToolTip.Tip="Save script (Ctrl+S)" Margin="0,0,6,0" />
+                <Button Grid.Column="1" x:Name="ExecuteButton" Content="Execute" Classes="primary" ToolTip.Tip="Execute scenario" />
+
+                <!-- Divider -->
+                <Rectangle Grid.Column="2" Width="1" Fill="{DynamicResource ColorBorderStrong}" Margin="6,4" />
+
+                <Button Grid.Column="3" x:Name="PurgeLocalsButton" Content="Purge Locals" Margin="0,0,6,0" ToolTip.Tip="Purge Local 1 and Local 2 folders" />
+                <Button Grid.Column="4" x:Name="PurgeRemotesButton" Content="Purge Remotes" ToolTip.Tip="Purge Remotes folder" />
+
+                <Button Grid.Column="6" x:Name="SettingsButton" Content="Settings" ToolTip.Tip="Configure scenario directories" />
+            </Grid>
+        </Border>
+
+        <!-- Body grid -->
+        <Grid Grid.Row="1" x:Name="BodyGrid">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="280" MinWidth="180" MaxWidth="500" />
+                <ColumnDefinition Width="4" />
+                <ColumnDefinition Width="*" MinWidth="300" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Nav column -->
+            <Grid Grid.Column="0" x:Name="NavColumnGrid" Background="{DynamicResource ColorChrome}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="65*" MinHeight="100" />
+                    <RowDefinition Height="4" />
+                    <RowDefinition Height="35*" MinHeight="80" />
+                </Grid.RowDefinitions>
+
+                <!-- Script tree placeholder -->
+                <ContentControl Grid.Row="0" x:Name="NavTreeHost">
+                    <Border BorderBrush="{DynamicResource ColorBorder}" BorderThickness="0,0,0,1">
+                        <TextBlock Text="Scripts Tree Placeholder"
+                                   Foreground="{DynamicResource ColorTextMuted}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
+                    </Border>
+                </ContentControl>
+
+                <GridSplitter Grid.Row="1"
+                              ResizeDirection="Rows"
+                              Background="{DynamicResource ColorBorder}"
+                              Height="4" />
+
+                <!-- File Info placeholder -->
+                <ContentControl Grid.Row="2" x:Name="FileInfoHost">
+                    <TextBlock Text="File Info Placeholder"
+                               Foreground="{DynamicResource ColorTextMuted}"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                </ContentControl>
+            </Grid>
+
+            <!-- Column Splitter -->
+            <GridSplitter Grid.Column="1"
+                          ResizeDirection="Columns"
+                          Background="{DynamicResource ColorBorder}"
+                          Width="4" />
+
+            <!-- Main column (Editor + Output) -->
+            <Grid Grid.Column="2" x:Name="MainColumnGrid">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="60*" MinHeight="100" />
+                    <RowDefinition Height="4" />
+                    <RowDefinition Height="40*" MinHeight="80" />
+                </Grid.RowDefinitions>
+
+                <!-- Editor placeholder -->
+                <ContentControl Grid.Row="0" x:Name="EditorHost" Background="{DynamicResource ColorBg}">
+                    <TextBlock Text="Editor Placeholder"
+                               Foreground="{DynamicResource ColorTextMuted}"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                </ContentControl>
+
+                <GridSplitter Grid.Row="1"
+                              ResizeDirection="Rows"
+                              Background="{DynamicResource ColorBorder}"
+                              Height="4" />
+
+                <!-- Output placeholder -->
+                <ContentControl Grid.Row="2" x:Name="OutputHost" Background="{DynamicResource ColorChrome}">
+                    <TextBlock Text="Output Placeholder"
+                               Foreground="{DynamicResource ColorTextMuted}"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center" />
+                </ContentControl>
+            </Grid>
+        </Grid>
+
+        <!-- Status bar -->
+        <Border Grid.Row="2"
+                Background="{DynamicResource ColorChrome}"
+                BorderBrush="{DynamicResource ColorBorder}"
+                BorderThickness="0,1,0,0"
+                Padding="8,3"
+                MinHeight="24">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0"
+                           x:Name="StatusFilePathText"
+                           Text="No script open"
+                           Foreground="{DynamicResource ColorTextMuted}"
+                           FontSize="12"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           x:Name="StatusSettingsText"
+                           Text="Settings incomplete"
+                           Foreground="{DynamicResource ColorTextMuted}"
+                           FontSize="12"
+                           VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

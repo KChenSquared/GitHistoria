@@ -1,0 +1,111 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Historia.ScenarioLab.App"
+             RequestedThemeVariant="Dark">
+    <Application.Resources>
+        <SolidColorBrush x:Key="ColorBg" Color="#1F1F1F" />
+        <SolidColorBrush x:Key="ColorChrome" Color="#181818" />
+        <SolidColorBrush x:Key="ColorSurface" Color="#202020" />
+        <SolidColorBrush x:Key="ColorSurface2" Color="#313131" />
+        <SolidColorBrush x:Key="ColorBorder" Color="#2B2B2B" />
+        <SolidColorBrush x:Key="ColorBorderStrong" Color="#3C3C3C" />
+        <SolidColorBrush x:Key="ColorText" Color="#CCCCCC" />
+        <SolidColorBrush x:Key="ColorTextMuted" Color="#9D9D9D" />
+        <SolidColorBrush x:Key="ColorPrimary" Color="#0078D4" />
+        <SolidColorBrush x:Key="ColorPrimaryHover" Color="#026EC1" />
+        <SolidColorBrush x:Key="ColorDanger" Color="#F85149" />
+        <SolidColorBrush x:Key="ColorListHover" Color="#2B2B2B" />
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme />
+        <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
+
+        <!-- Classless button: transparent ground, 1px outline, plain text, subtle hover fill -->
+        <Style Selector="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="12,6" />
+        </Style>
+        <Style Selector="Button:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+        </Style>
+        <Style Selector="Button:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+        </Style>
+        <Style Selector="Button:disabled">
+            <Setter Property="Opacity" Value="0.4" />
+        </Style>
+
+        <!-- Primary button -->
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="{DynamicResource ColorPrimary}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="12,6" />
+        </Style>
+        <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorPrimaryHover}" />
+        </Style>
+        <Style Selector="Button.primary:disabled">
+            <Setter Property="Opacity" Value="0.4" />
+        </Style>
+
+        <!-- Danger button -->
+        <Style Selector="Button.danger">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorDanger}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorDanger}" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="12,6" />
+        </Style>
+        <Style Selector="Button.danger:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorDanger}" />
+        </Style>
+        <Style Selector="Button.danger:disabled">
+            <Setter Property="Opacity" Value="0.4" />
+        </Style>
+
+        <!-- Secondary button -->
+        <Style Selector="Button.secondary">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="12,6" />
+        </Style>
+        <Style Selector="Button.secondary:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+        </Style>
+        <Style Selector="Button.secondary:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+        </Style>
+        <Style Selector="Button.secondary:disabled">
+            <Setter Property="Opacity" Value="0.4" />
+        </Style>
+
+        <!-- Flat button -->
+        <Style Selector="Button.flat">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+            <Setter Property="CornerRadius" Value="3" />
+            <Setter Property="Padding" Value="6,4" />
+        </Style>
+        <Style Selector="Button.flat:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+        </Style>
+        <Style Selector="Button.flat:disabled">
+            <Setter Property="Opacity" Value="0.28" />
+        </Style>
+    </Application.Styles>
+</Application>
