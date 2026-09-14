@@ -10,6 +10,7 @@ public partial class MainWindow : Window
         _currentSettings = LabSettingsStore.Load();
 
         SettingsButton.Click += async (_, _) => await OpenSettingsAsync();
+        NavPanel.ScriptSelected += path => StatusFilePathText.Text = path;
 
         Opened += async (_, _) =>
         {
