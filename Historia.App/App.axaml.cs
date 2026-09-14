@@ -230,6 +230,7 @@ public sealed class App : Application
         services.AddSingleton<Historia.Services.Profiles.IRepoIdentityService, Historia.Services.Profiles.RepoIdentityService>();
         services.AddSingleton<IRecentRepositoryService, RecentRepositoryService>();
         services.AddSingleton<IWorkspaceService, WorkspaceService>();
+        services.AddSingleton<ICloneService, CloneService>();
         services.AddSingleton<IKeyboardCommandRouter, KeyboardCommandRouter>();
         services.AddSingleton<INavigationBus, NavigationBus>();
 
