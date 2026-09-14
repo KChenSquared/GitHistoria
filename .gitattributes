@@ -3,3 +3,6 @@
 *.ico binary
 *.jpg binary
 *.png binary
+
+Historia.ScenarioLab/**/*.sh text eol=lf
+Historia.ScenarioLab/templates/** binary
