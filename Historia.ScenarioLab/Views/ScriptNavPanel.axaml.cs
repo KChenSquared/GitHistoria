@@ -3,9 +3,10 @@ namespace Historia.ScenarioLab.Views;
 public partial class ScriptNavPanel : UserControl
 {
     public event Action<string>? ScriptSelected;
+    public event Action<string, string>? ScriptRenamed;
+    public event Action<string>? NodeDeleted;
 
     private List<WorkspaceNode> _nodes = new();
-    private readonly HashSet<string> _expandedPaths = new(StringComparer.OrdinalIgnoreCase);
 
     public WorkspaceNode? SelectedNode => ScriptTreeView.SelectedItem as WorkspaceNode;
     public string? SelectedPath => SelectedNode?.FullPath;
@@ -122,6 +123,93 @@ public partial class ScriptNavPanel : UserControl
             var newScript = ScriptWorkspace.AddScript(targetFolder, name);
             Refresh(newScript);
             ScriptSelected?.Invoke(newScript);
+        }
+    }
+
+    private async void OnRenameNodeClick(object? sender, RoutedEventArgs e)
+    {
+        var node = (sender as MenuItem)?.DataContext as WorkspaceNode ?? SelectedNode;
+        if (node is null) return;
+
+        var owner = GetOwnerWindow();
+        if (owner is null) return;
+
+        if (node is ScriptNode script)
+        {
+            var targetFolder = Path.GetDirectoryName(script.FullPath) ?? LabPaths.Scripts;
+            var initial = script.ScriptName;
+            var newName = await LabDialogs.PromptAsync(
+                owner,
+                "Rename Script",
+                "New script name:",
+                initial: initial,
+                validate: n => ScriptWorkspace.ValidateScriptName(n, targetFolder, LabPaths.Scripts, existingPath: script.FullPath));
+
+            if (!string.IsNullOrWhiteSpace(newName) && !string.Equals(newName, initial, StringComparison.OrdinalIgnoreCase))
+            {
+                var oldPath = script.FullPath;
+                try
+                {
+                    var newPath = ScriptWorkspace.Rename(script, newName, LabPaths.Scripts, LabPaths.Templates);
+                    Refresh(newPath);
+                    ScriptRenamed?.Invoke(oldPath, newPath);
+                }
+                catch (Exception ex)
+                {
+                    await LabDialogs.ConfirmAsync(owner, "Rename Failed", ex.Message, confirmText: "OK");
+                }
+            }
+        }
+        else if (node is FolderNode folder)
+        {
+            var targetFolder = Path.GetDirectoryName(folder.FullPath) ?? LabPaths.Scripts;
+            var initial = folder.Name;
+            var newName = await LabDialogs.PromptAsync(
+                owner,
+                "Rename Folder",
+                "New folder name:",
+                initial: initial,
+                validate: n => ScriptWorkspace.ValidateFolderName(n, targetFolder, existingPath: folder.FullPath));
+
+            if (!string.IsNullOrWhiteSpace(newName) && !string.Equals(newName, initial, StringComparison.OrdinalIgnoreCase))
+            {
+                var oldPath = folder.FullPath;
+                try
+                {
+                    var newPath = ScriptWorkspace.Rename(folder, newName, LabPaths.Scripts, LabPaths.Templates);
+                    Refresh(newPath);
+                    ScriptRenamed?.Invoke(oldPath, newPath);
+                }
+                catch (Exception ex)
+                {
+                    await LabDialogs.ConfirmAsync(owner, "Rename Failed", ex.Message, confirmText: "OK");
+                }
+            }
+        }
+    }
+
+    private async void OnDeleteNodeClick(object? sender, RoutedEventArgs e)
+    {
+        var node = (sender as MenuItem)?.DataContext as WorkspaceNode ?? SelectedNode;
+        if (node is null) return;
+
+        var owner = GetOwnerWindow();
+        if (owner is null) return;
+
+        var desc = ScriptWorkspace.DescribeDeletion(node, LabPaths.Templates);
+        var confirmed = await LabDialogs.ConfirmAsync(
+            owner,
+            "Confirm Delete",
+            desc,
+            confirmText: "Delete",
+            danger: true);
+
+        if (confirmed)
+        {
+            var path = node.FullPath;
+            ScriptWorkspace.Delete(node, LabPaths.Templates);
+            Refresh();
+            NodeDeleted?.Invoke(path);
         }
     }
 }

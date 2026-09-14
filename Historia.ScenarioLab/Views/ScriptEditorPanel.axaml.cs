@@ -70,6 +70,12 @@ public partial class ScriptEditorPanel : UserControl
         }
     }
 
+    public void RetargetPath(string newPath)
+    {
+        CurrentPath = newPath;
+        UpdateGrammar(newPath);
+    }
+
     public void Close()
     {
         _isLoading = true;

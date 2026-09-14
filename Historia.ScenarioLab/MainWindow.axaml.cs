@@ -14,6 +14,8 @@ public partial class MainWindow : Window
         SaveButton.Click += async (_, _) => await SaveCurrentScriptAsync();
 
         NavPanel.ScriptSelected += async path => await OnScriptSelectedAsync(path);
+        NavPanel.ScriptRenamed += (oldPath, newPath) => OnNodeRenamed(oldPath, newPath);
+        NavPanel.NodeDeleted += path => OnNodeDeleted(path);
 
         EditorPanel.DirtyChanged += _ => UpdateTitle();
 
@@ -95,6 +97,39 @@ public partial class MainWindow : Window
         else
         {
             LoadScript(newPath);
+        }
+    }
+
+    private void OnNodeRenamed(string oldPath, string newPath)
+    {
+        if (EditorPanel.CurrentPath is null) return;
+
+        if (string.Equals(EditorPanel.CurrentPath, oldPath, StringComparison.OrdinalIgnoreCase))
+        {
+            EditorPanel.RetargetPath(newPath);
+            StatusFilePathText.Text = newPath;
+            UpdateTitle();
+        }
+        else if (EditorPanel.CurrentPath.StartsWith(oldPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            var sub = EditorPanel.CurrentPath.Substring(oldPath.Length);
+            var updatedPath = newPath + sub;
+            EditorPanel.RetargetPath(updatedPath);
+            StatusFilePathText.Text = updatedPath;
+            UpdateTitle();
+        }
+    }
+
+    private void OnNodeDeleted(string deletedPath)
+    {
+        if (EditorPanel.CurrentPath is null) return;
+
+        if (string.Equals(EditorPanel.CurrentPath, deletedPath, StringComparison.OrdinalIgnoreCase) ||
+            EditorPanel.CurrentPath.StartsWith(deletedPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            EditorPanel.Close();
+            StatusFilePathText.Text = "No script open";
+            UpdateTitle();
         }
     }
 

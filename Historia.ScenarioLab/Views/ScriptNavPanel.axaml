@@ -51,12 +51,24 @@
             <TreeView.DataTemplates>
                 <TreeDataTemplate DataType="services:FolderNode" ItemsSource="{Binding Children}">
                     <StackPanel Orientation="Horizontal" Spacing="6" Height="24">
+                        <StackPanel.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Rename…" Click="OnRenameNodeClick" />
+                                <MenuItem Header="Delete" Click="OnDeleteNodeClick" Foreground="{DynamicResource ColorDanger}" />
+                            </ContextMenu>
+                        </StackPanel.ContextMenu>
                         <TextBlock Text="📁" FontSize="11" VerticalAlignment="Center" />
                         <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Foreground="{DynamicResource ColorText}" FontSize="12" />
                     </StackPanel>
                 </TreeDataTemplate>
                 <DataTemplate DataType="services:ScriptNode">
                     <StackPanel Orientation="Horizontal" Spacing="6" Height="24">
+                        <StackPanel.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Rename…" Click="OnRenameNodeClick" />
+                                <MenuItem Header="Delete" Click="OnDeleteNodeClick" Foreground="{DynamicResource ColorDanger}" />
+                            </ContextMenu>
+                        </StackPanel.ContextMenu>
                         <TextBlock Text="📜" FontSize="11" VerticalAlignment="Center" />
                         <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Foreground="{DynamicResource ColorText}" FontSize="12" />
                     </StackPanel>
