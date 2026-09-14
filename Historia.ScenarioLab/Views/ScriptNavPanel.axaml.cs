@@ -7,6 +7,7 @@ public partial class ScriptNavPanel : UserControl
     public event Action<string>? NodeDeleted;
 
     private List<WorkspaceNode> _nodes = new();
+    private bool _operationsEnabled = true;
 
     public WorkspaceNode? SelectedNode => ScriptTreeView.SelectedItem as WorkspaceNode;
     public string? SelectedPath => SelectedNode?.FullPath;
@@ -28,6 +29,14 @@ public partial class ScriptNavPanel : UserControl
         };
 
         Loaded += (_, _) => Refresh();
+    }
+
+    public void SetOperationsEnabled(bool enabled)
+    {
+        _operationsEnabled = enabled;
+        AddFolderButton.IsEnabled = enabled;
+        AddScriptButton.IsEnabled = enabled;
+        RefreshButton.IsEnabled = enabled;
     }
 
     public void Refresh(string? pathToSelect = null)
@@ -89,6 +98,7 @@ public partial class ScriptNavPanel : UserControl
 
     private async Task OnAddFolderAsync()
     {
+        if (!_operationsEnabled) return;
         var owner = GetOwnerWindow();
         if (owner is null) return;
 
@@ -108,6 +118,7 @@ public partial class ScriptNavPanel : UserControl
 
     private async Task OnAddScriptAsync()
     {
+        if (!_operationsEnabled) return;
         var owner = GetOwnerWindow();
         if (owner is null) return;
 
@@ -128,6 +139,7 @@ public partial class ScriptNavPanel : UserControl
 
     private async void OnRenameNodeClick(object? sender, RoutedEventArgs e)
     {
+        if (!_operationsEnabled) return;
         var node = (sender as MenuItem)?.DataContext as WorkspaceNode ?? SelectedNode;
         if (node is null) return;
 
@@ -190,6 +202,7 @@ public partial class ScriptNavPanel : UserControl
 
     private async void OnDeleteNodeClick(object? sender, RoutedEventArgs e)
     {
+        if (!_operationsEnabled) return;
         var node = (sender as MenuItem)?.DataContext as WorkspaceNode ?? SelectedNode;
         if (node is null) return;
 

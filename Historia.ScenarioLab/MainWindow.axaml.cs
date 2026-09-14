@@ -8,6 +8,10 @@ public partial class MainWindow : Window
     private bool _isSyncingFromBoxes;
     private bool _isSyncingFromEditor;
 
+    private readonly ScriptRunner _runner = new();
+    private CancellationTokenSource? _runCts;
+    private bool _isRunning;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -15,7 +19,7 @@ public partial class MainWindow : Window
 
         SettingsButton.Click += async (_, _) => await OpenSettingsAsync();
         SaveButton.Click += async (_, _) => await SaveCurrentScriptAsync();
-        ExecuteButton.Click += async (_, _) => await ExecuteCurrentScriptAsync();
+        ExecuteButton.Click += async (_, _) => await OnExecuteOrStopClickAsync();
         PurgeLocalsButton.Click += async (_, _) => await PurgeLocalsAsync();
         PurgeRemotesButton.Click += async (_, _) => await PurgeRemotesAsync();
 
@@ -23,7 +27,11 @@ public partial class MainWindow : Window
         NavPanel.ScriptRenamed += (oldPath, newPath) => OnNodeRenamed(oldPath, newPath);
         NavPanel.NodeDeleted += path => OnNodeDeleted(path);
 
-        EditorPanel.DirtyChanged += _ => UpdateTitle();
+        EditorPanel.DirtyChanged += _ =>
+        {
+            UpdateTitle();
+            UpdateUiState();
+        };
 
         FileInfo.HeaderEdited += OnHeaderEditedFromBoxes;
 
@@ -47,6 +55,7 @@ public partial class MainWindow : Window
         Opened += async (_, _) =>
         {
             UpdateSettingsStatus();
+            UpdateUiState();
             if (!_currentSettings.IsComplete || _currentSettings.Validate(LabPaths.RepoRoot).Count > 0)
             {
                 await OpenSettingsAsync();
@@ -56,6 +65,12 @@ public partial class MainWindow : Window
         Closing += async (_, e) =>
         {
             if (_isClosingConfirmed) return;
+
+            if (_isRunning)
+            {
+                _runCts?.Cancel();
+                _runner.Stop();
+            }
 
             if (EditorPanel.IsDirty && !string.IsNullOrEmpty(EditorPanel.CurrentPath))
             {
@@ -79,7 +94,146 @@ public partial class MainWindow : Window
 
         UpdateSettingsStatus();
         UpdateTitle();
+        UpdateUiState();
         FileInfo.SetDisabled();
+    }
+
+    private void UpdateUiState()
+    {
+        var settingsValid = _currentSettings.IsComplete && _currentSettings.Validate(LabPaths.RepoRoot).Count == 0;
+        var hasScript = !string.IsNullOrEmpty(EditorPanel.CurrentPath);
+
+        if (_isRunning)
+        {
+            ExecuteButton.Content = "Stop";
+            ExecuteButton.Classes.Clear();
+            ExecuteButton.Classes.Add("danger");
+            ExecuteButton.IsEnabled = true;
+
+            SaveButton.IsEnabled = false;
+            PurgeLocalsButton.IsEnabled = false;
+            PurgeRemotesButton.IsEnabled = false;
+            SettingsButton.IsEnabled = false;
+            NavPanel.SetOperationsEnabled(false);
+            EditorPanel.IsEnabled = true;
+        }
+        else
+        {
+            ExecuteButton.Content = "Execute";
+            ExecuteButton.Classes.Clear();
+            ExecuteButton.Classes.Add("primary");
+            ExecuteButton.IsEnabled = settingsValid && hasScript;
+
+            SaveButton.IsEnabled = hasScript;
+            PurgeLocalsButton.IsEnabled = settingsValid;
+            PurgeRemotesButton.IsEnabled = settingsValid;
+            SettingsButton.IsEnabled = true;
+            NavPanel.SetOperationsEnabled(true);
+            EditorPanel.IsEnabled = true;
+        }
+    }
+
+    private async Task OnExecuteOrStopClickAsync()
+    {
+        if (_isRunning)
+        {
+            _runCts?.Cancel();
+            _runner.Stop();
+            return;
+        }
+
+        if (string.IsNullOrEmpty(EditorPanel.CurrentPath))
+        {
+            LogOutput.AppendLine("No script open to execute.");
+            return;
+        }
+
+        if (!_currentSettings.IsComplete || _currentSettings.Validate(LabPaths.RepoRoot).Count > 0)
+        {
+            LogOutput.AppendLine("Cannot execute: settings are incomplete.");
+            return;
+        }
+
+        // 1. Save first
+        await SaveCurrentScriptAsync();
+
+        // 2. Counts for all 3 folders
+        var c1 = FolderPurger.CountTopLevel(_currentSettings.Local1);
+        var c2 = FolderPurger.CountTopLevel(_currentSettings.Local2);
+        var c3 = FolderPurger.CountTopLevel(_currentSettings.Remotes);
+        var total = c1 + c2 + c3;
+
+        if (total > 0)
+        {
+            var scriptName = Path.GetFileName(EditorPanel.CurrentPath);
+            var msg = $"Purge Local 1 ({c1}), Local 2 ({c2}), Remotes ({c3}) and run '{scriptName}'?";
+            var confirmed = await LabDialogs.ConfirmAsync(this, "Execute Scenario", msg, confirmText: "Purge & Run", danger: true);
+            if (!confirmed) return;
+        }
+
+        // 3. Purge all three folders
+        LogOutput.Clear();
+        LogOutput.AppendLine("Purging Local 1, Local 2, and Remotes before run...");
+
+        var purgeFailed = false;
+        await Task.Run(() =>
+        {
+            var r1 = FolderPurger.PurgeContents(_currentSettings.Local1, LabPaths.RepoRoot);
+            var r2 = FolderPurger.PurgeContents(_currentSettings.Local2, LabPaths.RepoRoot);
+            var r3 = FolderPurger.PurgeContents(_currentSettings.Remotes, LabPaths.RepoRoot);
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (r1.Failures.Count > 0 || r2.Failures.Count > 0 || r3.Failures.Count > 0)
+                {
+                    purgeFailed = true;
+                    foreach (var f in r1.Failures) LogOutput.AppendLine($"  [FAIL Local 1] {f}");
+                    foreach (var f in r2.Failures) LogOutput.AppendLine($"  [FAIL Local 2] {f}");
+                    foreach (var f in r3.Failures) LogOutput.AppendLine($"  [FAIL Remotes] {f}");
+                    LogOutput.AppendLine("[ERROR] Purge failed. Aborting execution.");
+                }
+                else
+                {
+                    LogOutput.AppendLine($"Purged Local 1 ({r1.DeletedCount}), Local 2 ({r2.DeletedCount}), Remotes ({r3.DeletedCount}).");
+                }
+            });
+        });
+
+        if (purgeFailed) return;
+
+        // 4. Run
+        _isRunning = true;
+        UpdateUiState();
+        _runCts = new CancellationTokenSource();
+
+        LogOutput.AppendLine($"▶ {Path.GetFileName(EditorPanel.CurrentPath)}");
+
+        ScriptRunResult res;
+        try
+        {
+            var scriptPath = EditorPanel.CurrentPath;
+            res = await _runner.RunAsync(
+                scriptPath,
+                _currentSettings,
+                line => LogOutput.AppendLine(line),
+                _runCts.Token);
+        }
+        finally
+        {
+            _isRunning = false;
+            _runCts.Dispose();
+            _runCts = null;
+            UpdateUiState();
+        }
+
+        if (res.WasStopped)
+        {
+            LogOutput.AppendLine("stopped");
+        }
+        else
+        {
+            LogOutput.AppendLine($"exit {res.ExitCode} in {res.Duration.TotalSeconds:F1}s");
+        }
     }
 
     private void OnHeaderEditedFromBoxes(string shortText, string longText)
@@ -201,6 +355,7 @@ public partial class MainWindow : Window
             FileInfo.SetDisabled();
             StatusFilePathText.Text = "No script open";
             UpdateTitle();
+            UpdateUiState();
         }
     }
 
@@ -209,50 +364,15 @@ public partial class MainWindow : Window
         EditorPanel.Load(path);
         StatusFilePathText.Text = path;
         UpdateTitle();
+        UpdateUiState();
         SyncBoxesFromEditor();
-    }
-
-    private readonly ScriptRunner _runner = new();
-
-    private async Task ExecuteCurrentScriptAsync()
-    {
-        if (string.IsNullOrEmpty(EditorPanel.CurrentPath))
-        {
-            LogOutput.AppendLine("No script open to execute.");
-            return;
-        }
-
-        if (!_currentSettings.IsComplete || _currentSettings.Validate(LabPaths.RepoRoot).Count > 0)
-        {
-            LogOutput.AppendLine("Cannot execute: settings are incomplete.");
-            return;
-        }
-
-        await SaveCurrentScriptAsync();
-        LogOutput.Clear();
-        LogOutput.AppendLine($"▶ {Path.GetFileName(EditorPanel.CurrentPath)}");
-
-        var scriptPath = EditorPanel.CurrentPath;
-        var res = await _runner.RunAsync(
-            scriptPath,
-            _currentSettings,
-            line => LogOutput.AppendLine(line),
-            CancellationToken.None);
-
-        if (res.WasStopped)
-        {
-            LogOutput.AppendLine("stopped");
-        }
-        else
-        {
-            LogOutput.AppendLine($"exit {res.ExitCode} in {res.Duration.TotalSeconds:F1}s");
-        }
     }
 
     private async Task SaveCurrentScriptAsync()
     {
         await EditorPanel.SaveAsync();
         UpdateTitle();
+        UpdateUiState();
     }
 
     private async Task PurgeLocalsAsync()
@@ -343,6 +463,7 @@ public partial class MainWindow : Window
         {
             _currentSettings = dialog.Settings;
             UpdateSettingsStatus();
+            UpdateUiState();
         }
     }
 }
