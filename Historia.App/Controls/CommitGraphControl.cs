@@ -52,15 +52,17 @@ public sealed partial class CommitGraphControl : Control
     private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk, _residentRowCapSetting);
 
     // §V10.1.2: the silent background crawler pre-loads only this many rows into the
-    // resident layout. Deeper history loads on demand as the user scrolls (EnsureExtendedAsync,
-    // up to ResidentRowCap) and reaches disk in full via the §7.6 background spill (which also
-    // feeds Ctrl+F search). Crawling all the way to ResidentRowCap (2,000,000 on a big repo)
-    // built a multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
-    // Configurable (AppSettings.SilentCrawlRowCap, default 300,000); 0 means uncapped, i.e. the
+    // resident layout after first paint, advancing in discrete threshold steps as the user
+    // scrolls (R3/R4). Deeper history reaches disk in full via the §7.6 background spill
+    // regardless of this cap (R2). Crawling all the way to ResidentRowCap (2,000,000 on a big
+    // repo) built a multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
+    // Configurable (AppSettings.SilentCrawlRowCap, default 100,000); 0 means uncapped, i.e. the
     // crawler runs to ResidentRowCap same as an explicit scroll would. Snapshotted at
     // construction like _graphMetaFromDisk — a mid-session change takes effect on next launch.
     private int _silentCrawlRowCap;
-    private int SilentCrawlRowCap => _silentCrawlRowCap <= 0 ? ResidentRowCap : Math.Min(_silentCrawlRowCap, ResidentRowCap);
+    private GraphCrawlThreshold _crawl = new(0, 0);
+    private int _crawlTarget;
+    private int _crawlRunning;
 
     private IReadOnlyList<GraphColumn> _columns = GraphColumnDefaults.All;
     private bool _graphWidthPinned;
@@ -417,6 +419,8 @@ public sealed partial class CommitGraphControl : Control
         _graphMetaFromDisk = _settings.Current.GraphMetadataFromDisk;
         _residentRowCapSetting = _settings.Current.ResidentRowCap;
         _silentCrawlRowCap = _settings.Current.SilentCrawlRowCap;
+        _crawl = new GraphCrawlThreshold(_silentCrawlRowCap, ResidentRowCap);
+        _crawlTarget = _crawl.Target;
         _repoLayout = services.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
 
         _repoLayout.Changed += OnRepoLayoutChanged;
@@ -792,6 +796,7 @@ public sealed partial class CommitGraphControl : Control
         _scrollOffset = Math.Clamp(row * _rowHeight + _rowHeight / 2 - viewH / 2, 0, max);
         _scrollBar.Value = _scrollOffset;
         _ = EnsureExtendedAsync((int)((_scrollOffset + viewH) / _rowHeight) + 1);
+        NoteViewportBottom();
     }
 
     private int ResolveRow(ObjectId? id)
@@ -810,6 +815,8 @@ public sealed partial class CommitGraphControl : Control
         _layoutCts = new CancellationTokenSource();
         var ct = _layoutCts.Token;
         InitializeExtendPump(context, ct);
+        _crawl = new GraphCrawlThreshold(_silentCrawlRowCap, ResidentRowCap);
+        _crawlTarget = _crawl.Target;
 
         if (_firstPaintStartTimestamp == 0)
         {
@@ -1049,9 +1056,9 @@ public sealed partial class CommitGraphControl : Control
                         continue;
                     }
 
-                    // The silent crawler stops at SilentCrawlRowCap (by design, not a memory
+                    // The silent crawler stops at _crawlTarget (by design, not a memory
                     // limit — no toast); scroll-driven requests run to the true resident cap.
-                    var cap = req.Background ? SilentCrawlRowCap : ResidentRowCap;
+                    var cap = req.Background ? Math.Min(Volatile.Read(ref _crawlTarget), ResidentRowCap) : ResidentRowCap;
                     if (current.Layout.RowCount >= cap)
                     {
                         if (!req.Background)
@@ -1136,6 +1143,9 @@ public sealed partial class CommitGraphControl : Control
 
     private async Task StartBackgroundSilentLoadAsync(RepositoryContext context, CancellationToken ct)
     {
+        if (Interlocked.CompareExchange(ref _crawlRunning, 1, 0) != 0)
+            return;
+
         try
         {
             await Task.Yield();
@@ -1149,10 +1159,9 @@ public sealed partial class CommitGraphControl : Control
             if (ct.IsCancellationRequested || !ReferenceEquals(context, _context))
                 return;
 
-            var cap = SilentCrawlRowCap;
-
             while (!ct.IsCancellationRequested && ReferenceEquals(context, _context))
             {
+                var cap = Volatile.Read(ref _crawlTarget);
                 if (_layout is not { } current || current.Layout.IsComplete)
                     break;
                 if (current.Layout.RowCount >= cap)
@@ -1171,6 +1180,23 @@ public sealed partial class CommitGraphControl : Control
         }
         catch (OperationCanceledException) { }
         catch { }
+        finally
+        {
+            Interlocked.Exchange(ref _crawlRunning, 0);
+        }
+    }
+
+    private void NoteViewportBottom()
+    {
+        var row = (int)((_scrollOffset + Bounds.Height - RowsTop) / _rowHeight) + 1;
+        if (_crawl.Advance(row))
+        {
+            var target = _crawl.Target;
+            Volatile.Write(ref _crawlTarget, target);
+            Historia.Diagnostics.PerfLog.Mark($"graph crawl target → {target} (viewport row {row})");
+            if (Volatile.Read(ref _crawlRunning) == 0 && _context is { } ctx && _layoutCts is { } cts)
+                _ = StartBackgroundSilentLoadAsync(ctx, cts.Token);
+        }
     }
 
     // ── Theme ──
@@ -1458,6 +1484,7 @@ public sealed partial class CommitGraphControl : Control
         CloseRefList();
         var lastVisible = (int)((_scrollOffset + Bounds.Height - RowsTop) / _rowHeight) + 1;
         _ = EnsureExtendedAsync(lastVisible);
+        NoteViewportBottom();
         InvalidateVisual();
     }
 
@@ -1732,6 +1759,7 @@ public sealed partial class CommitGraphControl : Control
             _scrollOffset = top + _rowHeight - viewHeight;
         _scrollOffset = Math.Clamp(_scrollOffset, 0, Math.Max(0, _scrollBar.Maximum));
         _scrollBar.Value = _scrollOffset;
+        NoteViewportBottom();
     }
 
     private void ApplyQueryFromBar()
