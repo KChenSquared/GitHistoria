@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>Application settings (V4 port of Settings.razor).</summary>
 public sealed class SettingsView : UserControl, IDisposable
@@ -338,64 +338,8 @@ public sealed class SettingsView : UserControl, IDisposable
             Width = 140,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        var residentRowCapPrev = c.ResidentRowCap;
-        var residentRowCapDialogOpen = false;
-        async void CommitResidentRowCap()
-        {
-            // Re-entrancy guard: reverting the value on Cancel below can itself provoke a
-            // second LostFocus/Enter while the first dialog is still closing — ignore it.
-            if (residentRowCapDialogOpen)
-                return;
-
-            var next = AppSettings.ClampResidentRowCap((int)(residentRowCap.Value ?? residentRowCapPrev));
-            if (next == residentRowCapPrev)
-                return;
-
-            residentRowCapDialogOpen = true;
-            try
-            {
-                // A click on the spin-button arrows moves focus in/out of the control's internal
-                // TextBox, which fires this same LostFocus — while its RepeatButton's own pointer
-                // capture is still active. Opening a modal dialog right away can strand that
-                // capture (the button reads as permanently pressed, repeating forever) because the
-                // dialog's nested loop takes over before the pending PointerReleased is processed.
-                // Flushing the Input-priority queue first lets that release land normally.
-                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, Avalonia.Threading.DispatcherPriority.Input);
-
-                next = AppSettings.ClampResidentRowCap((int)(residentRowCap.Value ?? residentRowCapPrev));
-                if (next == residentRowCapPrev)
-                    return;
-
-                // #4: raising the cap is not destructive — a plain confirm, and only when the
-                // committed value is higher than the saved one. Lowering saves silently.
-                if (next > residentRowCapPrev)
-                {
-                    var proceed = await _dialogs.ConfirmAsync(
-                        "Change the resident row cap?",
-                        "Raising this value lets a very large repository keep more rows in memory. Applies after restart of Historia.",
-                        confirmLabel: "Continue");
-
-                    if (!proceed)
-                    {
-                        residentRowCap.Value = residentRowCapPrev;
-                        return;
-                    }
-                }
-
-                residentRowCapPrev = next;
-                await _cfg.UpdateAsync(s => s with { ResidentRowCap = next });
-            }
-            finally
-            {
-                residentRowCapDialogOpen = false;
-            }
-        }
-        residentRowCap.LostFocus += (_, _) => CommitResidentRowCap();
-        residentRowCap.AddHandler(InputElement.KeyDownEvent, (_, e) =>
-        {
-            if (e.Key == Key.Enter)
-                CommitResidentRowCap();
-        }, handledEventsToo: true);
+        WireResidentRowCapCommit(residentRowCap, c.ResidentRowCap, _dialogs,
+            next => _cfg.UpdateAsync(s => s with { ResidentRowCap = next }));
         advBody.Children.Add(WithHint(LabeledRow("Resident row cap", residentRowCap),
             "The absolute ceiling on how many rows the graph will keep resident for one repository, regardless of scrolling. Applies after restart of Historia."));
         advBody.Margin = new Thickness(0, 10, 0, 0);
@@ -457,7 +401,7 @@ public sealed class SettingsView : UserControl, IDisposable
     /// handler added here on the same control, so by the time this fires <c>nud.Value</c> already
     /// reflects what's on screen — no extra text-to-value step is needed.
     /// </summary>
-    private static void WireNumericCommit(NumericUpDown nud, int initial, Func<int, int> clamp, Action<int> commit)
+    internal static void WireNumericCommit(NumericUpDown nud, int initial, Func<int, int> clamp, Action<int> commit)
     {
         var prev = initial;
         void TryCommit()
@@ -473,6 +417,86 @@ public sealed class SettingsView : UserControl, IDisposable
         {
             if (e.Key == Key.Enter)
                 TryCommit();
+        }, handledEventsToo: true);
+    }
+
+    internal static void WireResidentRowCapCommit(
+        NumericUpDown residentRowCap,
+        int initial,
+        IDialogService dialogs,
+        Func<int, Task> updateAsync)
+    {
+        var prev = initial;
+        var dialogOpen = false;
+
+        async void Commit()
+        {
+            // Re-entrancy guard: reverting the value on Cancel below can itself provoke a
+            // second LostFocus/Enter while the first dialog is still closing — ignore it.
+            if (dialogOpen)
+                return;
+
+            var next = AppSettings.ClampResidentRowCap((int)(residentRowCap.Value ?? prev));
+            if (next == prev)
+                return;
+
+            dialogOpen = true;
+            try
+            {
+                // Committing from the same Enter keystroke that's about to open a modal dialog
+                // races the physical key: the dialog's own default button (Cancel, here — a
+                // destructive confirm defaults to safe) can end up catching that same keystroke's
+                // trailing key-up the instant the new window takes focus, auto-cancelling itself
+                // before the user ever sees it. Flushing the Input-priority queue alone (as this
+                // used to do) isn't enough — that's Avalonia's queue, not the OS message queue the
+                // native key-up is still sitting in. A short real-time delay lets that message
+                // land on the field (harmless — NumericUpDown has no Enter-linked side effect
+                // after commit) before the dialog exists to steal it. Also covers the same race
+                // for the spin-button-click-driven LostFocus path (see the capture note below).
+                await Task.Delay(150);
+
+                // A click on the spin-button arrows moves focus in/out of the control's internal
+                // TextBox, which fires this same LostFocus — while its RepeatButton's own pointer
+                // capture is still active. Opening a modal dialog right away can strand that
+                // capture (the button reads as permanently pressed, repeating forever) because the
+                // dialog's nested loop takes over before the pending PointerReleased is processed.
+                // Flushing the Input-priority queue first lets that release land normally.
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, Avalonia.Threading.DispatcherPriority.Input);
+
+                // Only update next from a live Value — if a Rebuild() ran during the
+                // await and detached this control, Value comes back null. Falling back
+                // to prev would make next == prev and silently discard the committed value.
+                var liveVal = residentRowCap.Value;
+                if (liveVal.HasValue)
+                    next = AppSettings.ClampResidentRowCap((int)liveVal.Value);
+                if (next == prev)
+                    return;
+
+                var proceed = await dialogs.ConfirmDestructiveAsync(
+                    "Change the resident row cap?",
+                    "Changing this value affects how many rows the graph will keep resident in memory for large repositories. Applies after restart of Historia.",
+                    "Continue");
+
+                if (!proceed)
+                {
+                    residentRowCap.Value = prev;
+                    return;
+                }
+
+                prev = next;
+                await updateAsync(next);
+            }
+            finally
+            {
+                dialogOpen = false;
+            }
+        }
+
+        residentRowCap.LostFocus += (_, _) => Commit();
+        residentRowCap.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+                Commit();
         }, handledEventsToo: true);
     }
 

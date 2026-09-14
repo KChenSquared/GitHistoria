@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Workspace;
+namespace Historia.Services.Workspace;
 
 /// <inheritdoc cref="IWorkspaceService"/>
 public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
@@ -718,6 +718,8 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         // and, once the newly focused tab is done loading, hand the freed heap back to the OS.
         if (old is not null)
             _ = HibernateAndReclaimAsync(old, context);
+        else
+            _ = QueueInitialInactiveTabPipelineAsync(context);
     }
 
     // Finding #10: an aggressive, blocking, compacting GC.Collect after every tab switch pays a
@@ -841,6 +843,40 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         {
             // Headless caching is a pure optimisation; never let it surface as a fatal error.
             Historia.Diagnostics.PerfLog.Mark($"RunInactiveTabPipelineAsync failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Cold-launch path: the first focus has no outgoing tab to hibernate, but the
+    /// inactive tabs still need their headless disk-cache + commit-graph pipeline. Waits for
+    /// the same preconditions <see cref="HibernateAndReclaimAsync"/> does (gate open, bg-init
+    /// idle, focus stable) — minus the GC compaction (nothing to reclaim on a fresh start)
+    /// and minus the 2s debounce (no focus churn to absorb on the initial tab).</summary>
+    private async Task QueueInitialInactiveTabPipelineAsync(RepositoryContext context)
+    {
+        try
+        {
+            if (_services.GetService(typeof(IBackgroundWorkGate)) is IBackgroundWorkGate gate)
+            {
+                try { await gate.WaitUntilOpenAsync(context.Lifetime).ConfigureAwait(false); }
+                catch { return; }
+            }
+
+            if (!await WaitForBackgroundInitIdleAsync(context.Lifetime).ConfigureAwait(false))
+                return;
+
+            lock (_sync)
+            {
+                if (!ReferenceEquals(_focused, context))
+                    return;
+            }
+
+            _ = RunInactiveTabPipelineAsync(context);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            Historia.Diagnostics.PerfLog.Mark(
+                $"QueueInitialInactiveTabPipelineAsync failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
 
