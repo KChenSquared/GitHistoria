@@ -1,5 +1,3 @@
-using System.Collections.Concurrent;
-
 namespace Historia.ScenarioLab.Views;
 
 public partial class OutputPanel : UserControl

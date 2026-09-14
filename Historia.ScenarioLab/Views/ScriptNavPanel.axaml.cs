@@ -43,7 +43,11 @@ public partial class ScriptNavPanel : UserControl
     {
         pathToSelect ??= SelectedPath;
 
+        var expandedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        CollectExpandedPaths(_nodes, expandedPaths);
+
         _nodes = ScriptWorkspace.LoadTree(LabPaths.Scripts);
+        RestoreExpandedPaths(_nodes, expandedPaths);
         ScriptTreeView.ItemsSource = _nodes;
 
         if (!string.IsNullOrEmpty(pathToSelect))
@@ -54,11 +58,55 @@ public partial class ScriptNavPanel : UserControl
 
     public bool SelectPath(string fullPath)
     {
+        ExpandAncestors(_nodes, fullPath);
         var node = FindNode(_nodes, fullPath);
         if (node is not null)
         {
             ScriptTreeView.SelectedItem = node;
             return true;
+        }
+        return false;
+    }
+
+    private static void CollectExpandedPaths(IEnumerable<WorkspaceNode> nodes, HashSet<string> expanded)
+    {
+        foreach (var node in nodes)
+        {
+            if (node.IsExpanded)
+                expanded.Add(node.FullPath);
+
+            if (node is FolderNode folder)
+                CollectExpandedPaths(folder.Children, expanded);
+        }
+    }
+
+    private static void RestoreExpandedPaths(IEnumerable<WorkspaceNode> nodes, HashSet<string> expanded)
+    {
+        foreach (var node in nodes)
+        {
+            if (expanded.Contains(node.FullPath))
+                node.IsExpanded = true;
+
+            if (node is FolderNode folder)
+                RestoreExpandedPaths(folder.Children, expanded);
+        }
+    }
+
+    private static bool ExpandAncestors(IEnumerable<WorkspaceNode> nodes, string targetPath)
+    {
+        foreach (var node in nodes)
+        {
+            if (string.Equals(node.FullPath, targetPath, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (node is FolderNode folder)
+            {
+                if (ExpandAncestors(folder.Children, targetPath))
+                {
+                    folder.IsExpanded = true;
+                    return true;
+                }
+            }
         }
         return false;
     }
@@ -133,7 +181,20 @@ public partial class ScriptNavPanel : UserControl
         {
             var newScript = ScriptWorkspace.AddScript(targetFolder, name);
             Refresh(newScript);
-            ScriptSelected?.Invoke(newScript);
+        }
+    }
+
+    private void OnContextMenuOpening(object? sender, CancelEventArgs e)
+    {
+        if (sender is ContextMenu menu)
+        {
+            foreach (var item in menu.Items)
+            {
+                if (item is MenuItem mi)
+                {
+                    mi.IsEnabled = _operationsEnabled;
+                }
+            }
         }
     }
 
@@ -163,8 +224,8 @@ public partial class ScriptNavPanel : UserControl
                 try
                 {
                     var newPath = ScriptWorkspace.Rename(script, newName, LabPaths.Scripts, LabPaths.Templates);
-                    Refresh(newPath);
                     ScriptRenamed?.Invoke(oldPath, newPath);
+                    Refresh(newPath);
                 }
                 catch (Exception ex)
                 {
@@ -189,8 +250,8 @@ public partial class ScriptNavPanel : UserControl
                 try
                 {
                     var newPath = ScriptWorkspace.Rename(folder, newName, LabPaths.Scripts, LabPaths.Templates);
-                    Refresh(newPath);
                     ScriptRenamed?.Invoke(oldPath, newPath);
+                    Refresh(newPath);
                 }
                 catch (Exception ex)
                 {
@@ -221,8 +282,8 @@ public partial class ScriptNavPanel : UserControl
         {
             var path = node.FullPath;
             ScriptWorkspace.Delete(node, LabPaths.Templates);
-            Refresh();
             NodeDeleted?.Invoke(path);
+            Refresh();
         }
     }
 }

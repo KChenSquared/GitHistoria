@@ -63,49 +63,10 @@ public sealed record LabSettings(string Local1 = "", string Local2 = "", string 
 
     private static void ValidateField(string key, string path, string label, string repoRoot, Dictionary<string, string> errors)
     {
-        if (string.IsNullOrWhiteSpace(path))
+        var error = FolderPurger.CheckPathSafety(path, label, repoRoot);
+        if (error is not null)
         {
-            errors[key] = $"{label} path is required.";
-            return;
-        }
-
-        string full;
-        try
-        {
-            if (!Path.IsPathRooted(path))
-            {
-                errors[key] = $"{label} must be an absolute path.";
-                return;
-            }
-            full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        }
-        catch (Exception ex)
-        {
-            errors[key] = $"Invalid path: {ex.Message}";
-            return;
-        }
-
-        var root = Path.GetPathRoot(full)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase))
-        {
-            errors[key] = $"{label} cannot be a drive root.";
-            return;
-        }
-
-        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (string.Equals(full, userProfile, StringComparison.OrdinalIgnoreCase))
-        {
-            errors[key] = $"{label} cannot be the user profile root.";
-            return;
-        }
-
-        var cleanRepoRoot = Path.GetFullPath(repoRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (string.Equals(full, cleanRepoRoot, StringComparison.OrdinalIgnoreCase) ||
-            full.StartsWith(cleanRepoRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-        {
-            errors[key] = $"{label} cannot be inside the Historia repository.";
-            return;
+            errors[key] = error;
         }
     }
 }

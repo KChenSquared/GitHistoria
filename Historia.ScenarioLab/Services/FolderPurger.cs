@@ -23,38 +23,59 @@ public static class FolderPurger
         }
     }
 
-    public static void ValidateGuards(string path, string repoRoot)
+    public static string? CheckPathSafety(string path, string label, string repoRoot)
     {
         if (string.IsNullOrWhiteSpace(path))
-            throw new ArgumentException("Path cannot be empty.");
+            return $"{label} path is required.";
 
-        if (!Path.IsPathRooted(path))
-            throw new ArgumentException($"Path '{path}' must be absolute.");
+        string full;
+        try
+        {
+            if (!Path.IsPathRooted(path))
+                return $"{label} must be an absolute path.";
 
-        var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch (Exception ex)
+        {
+            return $"Invalid path: {ex.Message}";
+        }
 
         var root = Path.GetPathRoot(full)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"Cannot purge drive root '{path}'.");
+            return $"{label} cannot be a drive root.";
 
         var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (string.Equals(full, userProfile, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"Cannot purge user profile root '{path}'.");
+            return $"{label} cannot be the user profile root.";
 
         var cleanRepo = Path.GetFullPath(repoRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (string.Equals(full, cleanRepo, StringComparison.OrdinalIgnoreCase) ||
             full.StartsWith(cleanRepo + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException($"Cannot purge folder inside the repository '{path}'.");
+            return $"{label} cannot be inside the Historia repository.";
         }
 
-        // Ancestor of lab root
+        if (cleanRepo.StartsWith(full + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{label} cannot be an ancestor of the Historia repository.";
+        }
+
         var labRoot = Path.GetFullPath(LabPaths.Root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (labRoot.StartsWith(full + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException($"Cannot purge ancestor of ScenarioLab root '{path}'.");
+            return $"{label} cannot be an ancestor of ScenarioLab root.";
         }
+
+        return null;
+    }
+
+    public static void ValidateGuards(string path, string repoRoot)
+    {
+        var error = CheckPathSafety(path, $"Path '{path}'", repoRoot);
+        if (error is not null)
+            throw new InvalidOperationException(error);
     }
 
     public static PurgeResult PurgeContents(string path, string repoRoot)

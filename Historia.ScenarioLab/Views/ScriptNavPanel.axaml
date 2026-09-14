@@ -48,11 +48,16 @@
                   Background="Transparent"
                   BorderThickness="0"
                   Padding="4">
+            <TreeView.Styles>
+                <Style Selector="TreeViewItem" x:DataType="services:WorkspaceNode">
+                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                </Style>
+            </TreeView.Styles>
             <TreeView.DataTemplates>
                 <TreeDataTemplate DataType="services:FolderNode" ItemsSource="{Binding Children}">
                     <StackPanel Orientation="Horizontal" Spacing="6" Height="24">
                         <StackPanel.ContextMenu>
-                            <ContextMenu>
+                            <ContextMenu Opening="OnContextMenuOpening">
                                 <MenuItem Header="Rename…" Click="OnRenameNodeClick" />
                                 <MenuItem Header="Delete" Click="OnDeleteNodeClick" Foreground="{DynamicResource ColorDanger}" />
                             </ContextMenu>
@@ -64,7 +69,7 @@
                 <DataTemplate DataType="services:ScriptNode">
                     <StackPanel Orientation="Horizontal" Spacing="6" Height="24">
                         <StackPanel.ContextMenu>
-                            <ContextMenu>
+                            <ContextMenu Opening="OnContextMenuOpening">
                                 <MenuItem Header="Rename…" Click="OnRenameNodeClick" />
                                 <MenuItem Header="Delete" Click="OnDeleteNodeClick" Foreground="{DynamicResource ColorDanger}" />
                             </ContextMenu>

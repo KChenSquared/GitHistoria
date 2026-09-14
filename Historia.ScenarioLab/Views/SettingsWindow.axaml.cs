@@ -122,13 +122,33 @@ public partial class SettingsWindow : Window
         try
         {
             if (!Directory.Exists(candidate.Local1)) Directory.CreateDirectory(candidate.Local1);
-            if (!Directory.Exists(candidate.Local2)) Directory.CreateDirectory(candidate.Local2);
-            if (!Directory.Exists(candidate.Remotes)) Directory.CreateDirectory(candidate.Remotes);
         }
         catch (Exception ex)
         {
             Local1ErrorText.Text = $"Could not create folder: {ex.Message}";
             Local1ErrorText.IsVisible = true;
+            return;
+        }
+
+        try
+        {
+            if (!Directory.Exists(candidate.Local2)) Directory.CreateDirectory(candidate.Local2);
+        }
+        catch (Exception ex)
+        {
+            Local2ErrorText.Text = $"Could not create folder: {ex.Message}";
+            Local2ErrorText.IsVisible = true;
+            return;
+        }
+
+        try
+        {
+            if (!Directory.Exists(candidate.Remotes)) Directory.CreateDirectory(candidate.Remotes);
+        }
+        catch (Exception ex)
+        {
+            RemotesErrorText.Text = $"Could not create folder: {ex.Message}";
+            RemotesErrorText.IsVisible = true;
             return;
         }
 

@@ -12,6 +12,7 @@ public partial class ScriptEditorPanel : UserControl
 
     public TextEditor TextEditor => Editor;
     public string? CurrentPath { get; private set; }
+    public bool IsSaveEnabled { get; set; } = true;
 
     public bool IsDirty
     {
@@ -43,7 +44,10 @@ public partial class ScriptEditorPanel : UserControl
         {
             if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Key == Key.S)
             {
-                await SaveAsync();
+                if (IsSaveEnabled)
+                {
+                    await SaveAsync();
+                }
                 e.Handled = true;
             }
         };

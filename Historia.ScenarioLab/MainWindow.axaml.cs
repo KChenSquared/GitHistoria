@@ -11,6 +11,7 @@ public partial class MainWindow : Window
     private readonly ScriptRunner _runner = new();
     private CancellationTokenSource? _runCts;
     private bool _isRunning;
+    private bool _isPurging;
 
     public MainWindow()
     {
@@ -103,12 +104,28 @@ public partial class MainWindow : Window
         var settingsValid = _currentSettings.IsComplete && _currentSettings.Validate(LabPaths.RepoRoot).Count == 0;
         var hasScript = !string.IsNullOrEmpty(EditorPanel.CurrentPath);
 
+        EditorPanel.IsSaveEnabled = !_isRunning && !_isPurging && hasScript;
+
         if (_isRunning)
         {
             ExecuteButton.Content = "Stop";
             ExecuteButton.Classes.Clear();
             ExecuteButton.Classes.Add("danger");
             ExecuteButton.IsEnabled = true;
+
+            SaveButton.IsEnabled = false;
+            PurgeLocalsButton.IsEnabled = false;
+            PurgeRemotesButton.IsEnabled = false;
+            SettingsButton.IsEnabled = false;
+            NavPanel.SetOperationsEnabled(false);
+            EditorPanel.IsEnabled = true;
+        }
+        else if (_isPurging)
+        {
+            ExecuteButton.Content = "Execute";
+            ExecuteButton.Classes.Clear();
+            ExecuteButton.Classes.Add("primary");
+            ExecuteButton.IsEnabled = false;
 
             SaveButton.IsEnabled = false;
             PurgeLocalsButton.IsEnabled = false;
@@ -142,6 +159,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_isPurging)
+        {
+            return;
+        }
+
         if (string.IsNullOrEmpty(EditorPanel.CurrentPath))
         {
             LogOutput.AppendLine("No script open to execute.");
@@ -171,68 +193,90 @@ public partial class MainWindow : Window
             if (!confirmed) return;
         }
 
-        // 3. Purge all three folders
-        LogOutput.Clear();
-        LogOutput.AppendLine("Purging Local 1, Local 2, and Remotes before run...");
-
-        var purgeFailed = false;
-        await Task.Run(() =>
-        {
-            var r1 = FolderPurger.PurgeContents(_currentSettings.Local1, LabPaths.RepoRoot);
-            var r2 = FolderPurger.PurgeContents(_currentSettings.Local2, LabPaths.RepoRoot);
-            var r3 = FolderPurger.PurgeContents(_currentSettings.Remotes, LabPaths.RepoRoot);
-
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (r1.Failures.Count > 0 || r2.Failures.Count > 0 || r3.Failures.Count > 0)
-                {
-                    purgeFailed = true;
-                    foreach (var f in r1.Failures) LogOutput.AppendLine($"  [FAIL Local 1] {f}");
-                    foreach (var f in r2.Failures) LogOutput.AppendLine($"  [FAIL Local 2] {f}");
-                    foreach (var f in r3.Failures) LogOutput.AppendLine($"  [FAIL Remotes] {f}");
-                    LogOutput.AppendLine("[ERROR] Purge failed. Aborting execution.");
-                }
-                else
-                {
-                    LogOutput.AppendLine($"Purged Local 1 ({r1.DeletedCount}), Local 2 ({r2.DeletedCount}), Remotes ({r3.DeletedCount}).");
-                }
-            });
-        });
-
-        if (purgeFailed) return;
-
-        // 4. Run
+        // Lock UI immediately before purge begins
         _isRunning = true;
         UpdateUiState();
         _runCts = new CancellationTokenSource();
 
-        LogOutput.AppendLine($"▶ {Path.GetFileName(EditorPanel.CurrentPath)}");
-
-        ScriptRunResult res;
         try
         {
+            // 3. Purge all three folders
+            LogOutput.Clear();
+            LogOutput.AppendLine("Purging Local 1, Local 2, and Remotes before run...");
+
+            var purgeFailed = false;
+            await Task.Run(() =>
+            {
+                try
+                {
+                    var r1 = FolderPurger.PurgeContents(_currentSettings.Local1, LabPaths.RepoRoot);
+                    var r2 = FolderPurger.PurgeContents(_currentSettings.Local2, LabPaths.RepoRoot);
+                    var r3 = FolderPurger.PurgeContents(_currentSettings.Remotes, LabPaths.RepoRoot);
+
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        if (r1.Failures.Count > 0 || r2.Failures.Count > 0 || r3.Failures.Count > 0)
+                        {
+                            purgeFailed = true;
+                            foreach (var f in r1.Failures) LogOutput.AppendLine($"  [FAIL Local 1] {f}");
+                            foreach (var f in r2.Failures) LogOutput.AppendLine($"  [FAIL Local 2] {f}");
+                            foreach (var f in r3.Failures) LogOutput.AppendLine($"  [FAIL Remotes] {f}");
+                            LogOutput.AppendLine("[ERROR] Purge failed. Aborting execution.");
+                        }
+                        else
+                        {
+                            LogOutput.AppendLine($"Purged Local 1 ({r1.DeletedCount}), Local 2 ({r2.DeletedCount}), Remotes ({r3.DeletedCount}).");
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    purgeFailed = true;
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        LogOutput.AppendLine($"[ERROR] Purge failed: {ex.Message}");
+                        LogOutput.AppendLine("[ERROR] Purge failed. Aborting execution.");
+                    });
+                }
+            });
+
+            if (purgeFailed) return;
+
+            if (_runCts.IsCancellationRequested)
+            {
+                LogOutput.AppendLine("stopped");
+                return;
+            }
+
+            // 4. Run
+            LogOutput.AppendLine($"▶ {Path.GetFileName(EditorPanel.CurrentPath)}");
+
             var scriptPath = EditorPanel.CurrentPath;
-            res = await _runner.RunAsync(
+            var res = await _runner.RunAsync(
                 scriptPath,
                 _currentSettings,
                 line => LogOutput.AppendLine(line),
                 _runCts.Token);
+
+            if (res.WasStopped)
+            {
+                LogOutput.AppendLine("stopped");
+            }
+            else
+            {
+                LogOutput.AppendLine($"exit {res.ExitCode} in {res.Duration.TotalSeconds:F1}s");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogOutput.AppendLine($"[ERROR] Execution error: {ex.Message}");
         }
         finally
         {
             _isRunning = false;
-            _runCts.Dispose();
+            _runCts?.Dispose();
             _runCts = null;
             UpdateUiState();
-        }
-
-        if (res.WasStopped)
-        {
-            LogOutput.AppendLine("stopped");
-        }
-        else
-        {
-            LogOutput.AppendLine($"exit {res.ExitCode} in {res.Duration.TotalSeconds:F1}s");
         }
     }
 
@@ -377,6 +421,8 @@ public partial class MainWindow : Window
 
     private async Task PurgeLocalsAsync()
     {
+        if (_isRunning || _isPurging) return;
+
         if (!_currentSettings.IsComplete || _currentSettings.Validate(LabPaths.RepoRoot).Count > 0)
         {
             LogOutput.AppendLine("Cannot purge: settings are incomplete.");
@@ -394,27 +440,50 @@ public partial class MainWindow : Window
             if (!confirmed) return;
         }
 
-        LogOutput.AppendLine($"Purging Local 1 and Local 2...");
-        await Task.Run(() =>
+        _isPurging = true;
+        UpdateUiState();
+
+        try
         {
-            var res1 = FolderPurger.PurgeContents(_currentSettings.Local1, LabPaths.RepoRoot);
-            var res2 = FolderPurger.PurgeContents(_currentSettings.Local2, LabPaths.RepoRoot);
-
-            Dispatcher.UIThread.Post(() =>
+            LogOutput.AppendLine($"Purging Local 1 and Local 2...");
+            await Task.Run(() =>
             {
-                LogOutput.AppendLine($"Purged {res1.DeletedCount} items from Local 1.");
-                foreach (var f in res1.Failures)
-                    LogOutput.AppendLine($"  [FAIL] {f}");
+                try
+                {
+                    var res1 = FolderPurger.PurgeContents(_currentSettings.Local1, LabPaths.RepoRoot);
+                    var res2 = FolderPurger.PurgeContents(_currentSettings.Local2, LabPaths.RepoRoot);
 
-                LogOutput.AppendLine($"Purged {res2.DeletedCount} items from Local 2.");
-                foreach (var f in res2.Failures)
-                    LogOutput.AppendLine($"  [FAIL] {f}");
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        LogOutput.AppendLine($"Purged {res1.DeletedCount} items from Local 1.");
+                        foreach (var f in res1.Failures)
+                            LogOutput.AppendLine($"  [FAIL] {f}");
+
+                        LogOutput.AppendLine($"Purged {res2.DeletedCount} items from Local 2.");
+                        foreach (var f in res2.Failures)
+                            LogOutput.AppendLine($"  [FAIL] {f}");
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        LogOutput.AppendLine($"[ERROR] Purge failed: {ex.Message}");
+                    });
+                }
             });
-        });
+        }
+        finally
+        {
+            _isPurging = false;
+            UpdateUiState();
+        }
     }
 
     private async Task PurgeRemotesAsync()
     {
+        if (_isRunning || _isPurging) return;
+
         if (!_currentSettings.IsComplete || _currentSettings.Validate(LabPaths.RepoRoot).Count > 0)
         {
             LogOutput.AppendLine("Cannot purge: settings are incomplete.");
@@ -429,17 +498,38 @@ public partial class MainWindow : Window
             if (!confirmed) return;
         }
 
-        LogOutput.AppendLine($"Purging Remotes ({_currentSettings.Remotes})...");
-        await Task.Run(() =>
+        _isPurging = true;
+        UpdateUiState();
+
+        try
         {
-            var res = FolderPurger.PurgeContents(_currentSettings.Remotes, LabPaths.RepoRoot);
-            Dispatcher.UIThread.Post(() =>
+            LogOutput.AppendLine($"Purging Remotes ({_currentSettings.Remotes})...");
+            await Task.Run(() =>
             {
-                LogOutput.AppendLine($"Purged {res.DeletedCount} items from Remotes.");
-                foreach (var f in res.Failures)
-                    LogOutput.AppendLine($"  [FAIL] {f}");
+                try
+                {
+                    var res = FolderPurger.PurgeContents(_currentSettings.Remotes, LabPaths.RepoRoot);
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        LogOutput.AppendLine($"Purged {res.DeletedCount} items from Remotes.");
+                        foreach (var f in res.Failures)
+                            LogOutput.AppendLine($"  [FAIL] {f}");
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        LogOutput.AppendLine($"[ERROR] Purge failed: {ex.Message}");
+                    });
+                }
             });
-        });
+        }
+        finally
+        {
+            _isPurging = false;
+            UpdateUiState();
+        }
     }
 
     private void UpdateSettingsStatus()

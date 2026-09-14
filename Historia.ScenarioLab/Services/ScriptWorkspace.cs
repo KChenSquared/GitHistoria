@@ -1,17 +1,15 @@
-using System.Text.RegularExpressions;
-
 namespace Historia.ScenarioLab.Services;
 
 public abstract class WorkspaceNode
 {
     public required string Name { get; set; }
     public required string FullPath { get; set; }
+    public bool IsExpanded { get; set; }
 }
 
 public sealed class FolderNode : WorkspaceNode
 {
     public List<WorkspaceNode> Children { get; } = new();
-    public bool IsExpanded { get; set; }
 }
 
 public sealed class ScriptNode : WorkspaceNode
