@@ -3,7 +3,7 @@ namespace Historia.ScenarioLab.Views;
 public partial class ScriptViewerPanel : UserControl
 {
     public string? CurrentPath { get; private set; }
-    public ScriptHeaderInfo CurrentHeader { get; private set; } = new(string.Empty, string.Empty, 0, 0);
+    public ScriptHeaderInfo CurrentHeader { get; private set; } = new(string.Empty, string.Empty);
 
     public ScriptViewerPanel()
     {
@@ -30,6 +30,6 @@ public partial class ScriptViewerPanel : UserControl
     {
         CurrentPath = null;
         Viewer.Text = string.Empty;
-        CurrentHeader = new(string.Empty, string.Empty, 0, 0);
+        CurrentHeader = new(string.Empty, string.Empty);
     }
 }

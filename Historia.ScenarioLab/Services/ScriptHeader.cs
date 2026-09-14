@@ -1,6 +1,6 @@
 namespace Historia.ScenarioLab.Services;
 
-public sealed record ScriptHeaderInfo(string Short, string Long, int Offset, int Length);
+public sealed record ScriptHeaderInfo(string Short, string Long);
 
 /// <summary>
 /// Parses the structured comment header block in bash scripts.
@@ -15,7 +15,7 @@ public static class ScriptHeader
     public static ScriptHeaderInfo Parse(string text)
     {
         if (string.IsNullOrEmpty(text))
-            return new ScriptHeaderInfo(string.Empty, string.Empty, 0, 0);
+            return new ScriptHeaderInfo(string.Empty, string.Empty);
 
         // Determine where line 2 begins (after shebang)
         int startOffset;
@@ -30,18 +30,17 @@ public static class ScriptHeader
         }
 
         if (startOffset >= text.Length)
-            return new ScriptHeaderInfo(string.Empty, string.Empty, startOffset, 0);
+            return new ScriptHeaderInfo(string.Empty, string.Empty);
 
-        // Find lines starting at startOffset
-        var lines = SplitLinesWithOffsets(text, startOffset);
+        var lines = SplitLines(text, startOffset);
         if (lines.Count == 0)
-            return new ScriptHeaderInfo(string.Empty, string.Empty, startOffset, 0);
+            return new ScriptHeaderInfo(string.Empty, string.Empty);
 
-        var firstLine = lines[0].Text.TrimEnd('\r');
+        var firstLine = lines[0].TrimEnd('\r');
         if (!firstLine.StartsWith("# @short:", StringComparison.OrdinalIgnoreCase) &&
             !firstLine.StartsWith("#@short:", StringComparison.OrdinalIgnoreCase))
         {
-            return new ScriptHeaderInfo(string.Empty, string.Empty, startOffset, 0);
+            return new ScriptHeaderInfo(string.Empty, string.Empty);
         }
 
         var prefixLen = firstLine.StartsWith("# @short:", StringComparison.OrdinalIgnoreCase)
@@ -49,13 +48,12 @@ public static class ScriptHeader
             : "#@short:".Length;
         var shortText = firstLine[prefixLen..].Trim();
 
-        var blockEnd = lines[0].EndOffset;
         var longLines = new List<string>();
         var inLong = false;
 
         for (int i = 1; i < lines.Count; i++)
         {
-            var lineText = lines[i].Text.TrimEnd('\r');
+            var lineText = lines[i].TrimEnd('\r');
 
             if (!inLong)
             {
@@ -63,7 +61,6 @@ public static class ScriptHeader
                     lineText.Equals("#@long:", StringComparison.OrdinalIgnoreCase))
                 {
                     inLong = true;
-                    blockEnd = lines[i].EndOffset;
                     continue;
                 }
                 break;
@@ -73,12 +70,10 @@ public static class ScriptHeader
             if (lineText.StartsWith("#  "))
             {
                 longLines.Add(lineText[3..]);
-                blockEnd = lines[i].EndOffset;
             }
             else if (lineText == "#" || lineText.Trim() == "#")
             {
                 longLines.Add(string.Empty);
-                blockEnd = lines[i].EndOffset;
             }
             else
             {
@@ -88,36 +83,21 @@ public static class ScriptHeader
         }
 
         var longText = inLong ? string.Join("\n", longLines) : string.Empty;
-        var length = blockEnd - startOffset;
-        return new ScriptHeaderInfo(shortText, longText, startOffset, length);
+        return new ScriptHeaderInfo(shortText, longText);
     }
 
-    private sealed record LineOffset(string Text, int StartOffset, int EndOffset);
-
-    private static List<LineOffset> SplitLinesWithOffsets(string text, int startAt)
+    private static List<string> SplitLines(string text, int startAt)
     {
-        var result = new List<LineOffset>();
+        var result = new List<string>();
         int current = startAt;
 
         while (current < text.Length)
         {
             int nextNewline = text.IndexOf('\n', current);
-            int lineEnd;
-            int nextStart;
-
-            if (nextNewline >= 0)
-            {
-                lineEnd = nextNewline + 1; // include \n in block end
-                nextStart = nextNewline + 1;
-            }
-            else
-            {
-                lineEnd = text.Length;
-                nextStart = text.Length;
-            }
+            int nextStart = nextNewline >= 0 ? nextNewline + 1 : text.Length;
 
             var lineText = text[current..(nextNewline >= 0 ? nextNewline : text.Length)];
-            result.Add(new LineOffset(lineText, current, lineEnd));
+            result.Add(lineText);
             current = nextStart;
         }
 
