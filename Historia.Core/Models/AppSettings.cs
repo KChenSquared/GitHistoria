@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>
 /// Application-wide settings (§10.1). Persisted as <c>settings.json</c> in
@@ -149,14 +149,14 @@ public sealed record AppSettings
     public bool EnableGraphSplice { get; init; }
 
     /// <summary>
-    /// How many rows the graph's silent background crawler (§V10.1.2) pre-loads into
-    /// the resident layout before stopping, so scrolling stays responsive without loading the
-    /// full history's worth of rows up front. Deeper history still loads on scroll and reaches
-    /// disk in full via the §7.6 background spill regardless of this cap. <c>0</c> means
-    /// uncapped — the crawler runs all the way to the resident-row ceiling
-    /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 300,000.
+    /// How many rows the graph's silent background crawler (§V10.1.2) pre-loads into the
+    /// resident layout after first paint, before stopping until the viewport scrolls past the
+    /// loaded threshold (R3/R4), advancing another this many rows each step. Deeper history
+    /// reaches disk in full via the §7.6 background spill regardless of this cap (R2).
+    /// <c>0</c> means uncapped — the crawler runs all the way to the resident-row ceiling
+    /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 100,000.
     /// </summary>
-    public int SilentCrawlRowCap { get; init; } = 300_000;
+    public int SilentCrawlRowCap { get; init; } = 100_000;
 
     public const int MinSilentCrawlRowCap = 0;
 
