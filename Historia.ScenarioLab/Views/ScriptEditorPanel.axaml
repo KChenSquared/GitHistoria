@@ -1,0 +1,20 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:avaloniaEdit="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
+             mc:Ignorable="d"
+             x:Class="Historia.ScenarioLab.Views.ScriptEditorPanel"
+             Background="{DynamicResource ColorBg}">
+
+    <Grid>
+        <avaloniaEdit:TextEditor x:Name="Editor"
+                                 ShowLineNumbers="True"
+                                 FontFamily="Cascadia Mono,Consolas,Monospace"
+                                 FontSize="13"
+                                 Background="{DynamicResource ColorBg}"
+                                 Foreground="{DynamicResource ColorText}"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 VerticalScrollBarVisibility="Visible" />
+    </Grid>
+</UserControl>

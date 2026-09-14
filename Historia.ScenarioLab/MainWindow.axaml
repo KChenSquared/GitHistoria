@@ -79,13 +79,8 @@
                     <RowDefinition Height="40*" MinHeight="80" />
                 </Grid.RowDefinitions>
 
-                <!-- Editor placeholder -->
-                <ContentControl Grid.Row="0" x:Name="EditorHost" Background="{DynamicResource ColorBg}">
-                    <TextBlock Text="Editor Placeholder"
-                               Foreground="{DynamicResource ColorTextMuted}"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center" />
-                </ContentControl>
+                <!-- Editor -->
+                <views:ScriptEditorPanel Grid.Row="0" x:Name="EditorPanel" />
 
                 <GridSplitter Grid.Row="1"
                               ResizeDirection="Rows"
