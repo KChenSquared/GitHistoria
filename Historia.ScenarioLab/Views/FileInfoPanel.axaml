@@ -1,0 +1,51 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             x:Class="Historia.ScenarioLab.Views.FileInfoPanel"
+             Background="{DynamicResource ColorChrome}">
+
+    <Border BorderBrush="{DynamicResource ColorBorder}"
+            BorderThickness="0,1,0,0"
+            Padding="8,6">
+        <Grid RowDefinitions="Auto,Auto,Auto,*" x:Name="RootGrid" IsEnabled="False">
+            <!-- Header row: Label + Counter -->
+            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,3">
+                <TextBlock Text="Short Description"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource ColorTextMuted}" />
+                <TextBlock Grid.Column="1"
+                           x:Name="ShortCounterText"
+                           Text="0/72"
+                           FontSize="11"
+                           Foreground="{DynamicResource ColorTextMuted}" />
+            </Grid>
+
+            <!-- Short Box -->
+            <TextBox Grid.Row="1"
+                     x:Name="ShortTextBox"
+                     Height="28"
+                     MaxLength="72"
+                     FontSize="12"
+                     Margin="0,0,0,8" />
+
+            <!-- Long Header -->
+            <TextBlock Grid.Row="2"
+                       Text="Long Description"
+                       FontSize="11"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource ColorTextMuted}"
+                       Margin="0,0,0,3" />
+
+            <!-- Long Box -->
+            <TextBox Grid.Row="3"
+                     x:Name="LongTextBox"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     FontSize="12" />
+        </Grid>
+    </Border>
+</UserControl>

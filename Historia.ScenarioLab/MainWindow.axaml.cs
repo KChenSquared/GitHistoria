@@ -4,6 +4,9 @@ public partial class MainWindow : Window
 {
     private LabSettings _currentSettings;
     private bool _isClosingConfirmed;
+    private readonly DispatcherTimer _editorDebounceTimer;
+    private bool _isSyncingFromBoxes;
+    private bool _isSyncingFromEditor;
 
     public MainWindow()
     {
@@ -18,6 +21,25 @@ public partial class MainWindow : Window
         NavPanel.NodeDeleted += path => OnNodeDeleted(path);
 
         EditorPanel.DirtyChanged += _ => UpdateTitle();
+
+        FileInfo.HeaderEdited += OnHeaderEditedFromBoxes;
+
+        _editorDebounceTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(150)
+        };
+        _editorDebounceTimer.Tick += (_, _) =>
+        {
+            _editorDebounceTimer.Stop();
+            SyncBoxesFromEditor();
+        };
+
+        EditorPanel.TextEditor.TextChanged += (_, _) =>
+        {
+            if (_isSyncingFromBoxes) return;
+            _editorDebounceTimer.Stop();
+            _editorDebounceTimer.Start();
+        };
 
         Opened += async (_, _) =>
         {
@@ -54,6 +76,51 @@ public partial class MainWindow : Window
 
         UpdateSettingsStatus();
         UpdateTitle();
+        FileInfo.SetDisabled();
+    }
+
+    private void OnHeaderEditedFromBoxes(string shortText, string longText)
+    {
+        if (_isSyncingFromEditor || string.IsNullOrEmpty(EditorPanel.CurrentPath))
+            return;
+
+        _isSyncingFromBoxes = true;
+        try
+        {
+            var doc = EditorPanel.TextEditor.Document;
+            var text = doc.Text;
+            var info = ScriptHeader.Parse(text);
+            var rendered = ScriptHeader.Render(shortText, longText);
+
+            doc.BeginUpdate();
+            doc.Replace(info.Offset, info.Length, rendered);
+            doc.EndUpdate();
+        }
+        finally
+        {
+            _isSyncingFromBoxes = false;
+        }
+    }
+
+    private void SyncBoxesFromEditor()
+    {
+        if (string.IsNullOrEmpty(EditorPanel.CurrentPath))
+        {
+            FileInfo.SetDisabled();
+            return;
+        }
+
+        _isSyncingFromEditor = true;
+        try
+        {
+            var text = EditorPanel.TextEditor.Text ?? string.Empty;
+            var info = ScriptHeader.Parse(text);
+            FileInfo.SetScriptHeader(info.Short, info.Long);
+        }
+        finally
+        {
+            _isSyncingFromEditor = false;
+        }
     }
 
     private void UpdateTitle()
@@ -128,6 +195,7 @@ public partial class MainWindow : Window
             EditorPanel.CurrentPath.StartsWith(deletedPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         {
             EditorPanel.Close();
+            FileInfo.SetDisabled();
             StatusFilePathText.Text = "No script open";
             UpdateTitle();
         }
@@ -138,6 +206,7 @@ public partial class MainWindow : Window
         EditorPanel.Load(path);
         StatusFilePathText.Text = path;
         UpdateTitle();
+        SyncBoxesFromEditor();
     }
 
     private async Task SaveCurrentScriptAsync()

@@ -56,13 +56,8 @@
                               Background="{DynamicResource ColorBorder}"
                               Height="4" />
 
-                <!-- File Info placeholder -->
-                <ContentControl Grid.Row="2" x:Name="FileInfoHost">
-                    <TextBlock Text="File Info Placeholder"
-                               Foreground="{DynamicResource ColorTextMuted}"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center" />
-                </ContentControl>
+                <!-- File Info -->
+                <views:FileInfoPanel Grid.Row="2" x:Name="FileInfo" />
             </Grid>
 
             <!-- Column Splitter -->
