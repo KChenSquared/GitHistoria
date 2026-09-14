@@ -1,0 +1,84 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        x:Class="Historia.ScenarioLab.Views.SettingsWindow"
+        Title="ScenarioLab Settings"
+        Width="600"
+        SizeToContent="Height"
+        CanResize="false"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="false"
+        Background="{DynamicResource ColorChrome}">
+
+    <Grid Margin="24" RowDefinitions="Auto,Auto,Auto">
+        <!-- Title & Description -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+            <TextBlock Text="Scenario Directories"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource ColorText}"
+                       Margin="0,0,0,6" />
+            <TextBlock Text="Configure scratch directories for Local 1, Local 2, and Remotes. These folders will be purged during scenario runs."
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource ColorTextMuted}" />
+        </StackPanel>
+
+        <!-- Form Rows -->
+        <StackPanel Grid.Row="1" Spacing="16">
+            <!-- Local 1 -->
+            <StackPanel Spacing="4">
+                <TextBlock Text="Local 1" FontWeight="Medium" Foreground="{DynamicResource ColorText}" />
+                <Grid ColumnDefinitions="*,8,Auto">
+                    <TextBox Grid.Column="0" x:Name="Local1Box" Watermark="e.g. C:\Scratch\ScenarioLab\Local1" />
+                    <Button Grid.Column="2" x:Name="BrowseLocal1Button" Content="Browse…" />
+                </Grid>
+                <TextBlock x:Name="Local1ErrorText"
+                           Foreground="{DynamicResource ColorDanger}"
+                           FontSize="12"
+                           IsVisible="false"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- Local 2 -->
+            <StackPanel Spacing="4">
+                <TextBlock Text="Local 2" FontWeight="Medium" Foreground="{DynamicResource ColorText}" />
+                <Grid ColumnDefinitions="*,8,Auto">
+                    <TextBox Grid.Column="0" x:Name="Local2Box" Watermark="e.g. C:\Scratch\ScenarioLab\Local2" />
+                    <Button Grid.Column="2" x:Name="BrowseLocal2Button" Content="Browse…" />
+                </Grid>
+                <TextBlock x:Name="Local2ErrorText"
+                           Foreground="{DynamicResource ColorDanger}"
+                           FontSize="12"
+                           IsVisible="false"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- Remotes -->
+            <StackPanel Spacing="4">
+                <TextBlock Text="Remotes" FontWeight="Medium" Foreground="{DynamicResource ColorText}" />
+                <Grid ColumnDefinitions="*,8,Auto">
+                    <TextBox Grid.Column="0" x:Name="RemotesBox" Watermark="e.g. C:\Scratch\ScenarioLab\Remotes" />
+                    <Button Grid.Column="2" x:Name="BrowseRemotesButton" Content="Browse…" />
+                </Grid>
+                <TextBlock x:Name="RemotesErrorText"
+                           Foreground="{DynamicResource ColorDanger}"
+                           FontSize="12"
+                           IsVisible="false"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Button Bar -->
+        <StackPanel Grid.Row="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Spacing="10"
+                    Margin="0,24,0,0">
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="true" />
+            <Button x:Name="SaveButton" Content="Save" Classes="primary" IsDefault="true" />
+        </StackPanel>
+    </Grid>
+</Window>
