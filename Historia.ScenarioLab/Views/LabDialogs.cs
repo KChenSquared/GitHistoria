@@ -1,14 +1,7 @@
 namespace Historia.ScenarioLab.Views;
 
-public enum SaveDiscardCancelResult
-{
-    Save,
-    Discard,
-    Cancel
-}
-
 /// <summary>
-/// Code-built modal dialogs for confirmations, prompts, and unsaved changes.
+/// Code-built modal dialogs for confirmations and prompts.
 /// </summary>
 public static class LabDialogs
 {
@@ -238,91 +231,5 @@ public static class LabDialogs
         };
 
         return await dialog.ShowDialog<string?>(owner);
-    }
-
-    public static async Task<SaveDiscardCancelResult> SaveDiscardCancelAsync(
-        Window owner,
-        string fileName)
-    {
-        var dialog = new Window
-        {
-            Title = "Unsaved Changes",
-            Width = 460,
-            CanResize = false,
-            SizeToContent = SizeToContent.Height,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            ShowInTaskbar = false
-        };
-        dialog.Bind(Window.BackgroundProperty, new DynamicResourceExtension("ColorChrome"));
-
-        var grid = new Grid
-        {
-            Margin = new Thickness(20),
-            RowDefinitions = new RowDefinitions("*,Auto")
-        };
-
-        var messageText = new TextBlock
-        {
-            Text = $"Do you want to save changes to '{fileName}'?",
-            TextWrapping = TextWrapping.Wrap,
-            FontSize = 14,
-            LineHeight = 20,
-            Margin = new Thickness(0, 0, 0, 20)
-        };
-        messageText.Bind(TextBlock.ForegroundProperty, new DynamicResourceExtension("ColorText"));
-        grid.Children.Add(messageText);
-
-        var buttonBar = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 10
-        };
-        Grid.SetRow(buttonBar, 1);
-
-        var cancelButton = new Button
-        {
-            Content = "Cancel",
-            IsCancel = true
-        };
-        cancelButton.Click += (_, _) => dialog.Close(SaveDiscardCancelResult.Cancel);
-
-        var discardButton = new Button
-        {
-            Content = "Discard"
-        };
-        discardButton.Classes.Add("danger");
-        discardButton.Click += (_, _) => dialog.Close(SaveDiscardCancelResult.Discard);
-
-        var saveButton = new Button
-        {
-            Content = "Save",
-            IsDefault = true
-        };
-        saveButton.Classes.Add("primary");
-        saveButton.Click += (_, _) => dialog.Close(SaveDiscardCancelResult.Save);
-
-        buttonBar.Children.Add(cancelButton);
-        buttonBar.Children.Add(discardButton);
-        buttonBar.Children.Add(saveButton);
-        grid.Children.Add(buttonBar);
-
-        dialog.Content = grid;
-
-        dialog.KeyDown += (_, e) =>
-        {
-            if (e.Key == Key.Escape)
-            {
-                dialog.Close(SaveDiscardCancelResult.Cancel);
-                e.Handled = true;
-            }
-            else if (e.Key == Key.Enter)
-            {
-                dialog.Close(SaveDiscardCancelResult.Save);
-                e.Handled = true;
-            }
-        };
-
-        return await dialog.ShowDialog<SaveDiscardCancelResult>(owner);
     }
 }
