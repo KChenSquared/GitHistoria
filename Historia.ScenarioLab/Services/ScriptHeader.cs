@@ -3,7 +3,7 @@ namespace Historia.ScenarioLab.Services;
 public sealed record ScriptHeaderInfo(string Short, string Long, int Offset, int Length);
 
 /// <summary>
-/// Parses, renders, and replaces the structured comment header block in bash scripts.
+/// Parses the structured comment header block in bash scripts.
 /// Grammar:
 ///   Line 1: #!/usr/bin/env bash
 ///   Line 2: # @short: <text> (required, &lt;= 72 chars)
@@ -90,42 +90,6 @@ public static class ScriptHeader
         var longText = inLong ? string.Join("\n", longLines) : string.Empty;
         var length = blockEnd - startOffset;
         return new ScriptHeaderInfo(shortText, longText, startOffset, length);
-    }
-
-    public static string Render(string shortText, string longText)
-    {
-        var sb = new StringBuilder();
-        sb.Append("# @short: ").Append(shortText.Trim()).Append('\n');
-
-        if (!string.IsNullOrWhiteSpace(longText))
-        {
-            sb.Append("# @long:\n");
-            var normalized = longText.Replace("\r\n", "\n").Replace('\r', '\n');
-            var lines = normalized.Split('\n');
-            foreach (var line in lines)
-            {
-                if (string.IsNullOrEmpty(line))
-                {
-                    sb.Append("#\n");
-                }
-                else
-                {
-                    sb.Append("#  ").Append(line).Append('\n');
-                }
-            }
-        }
-
-        return sb.ToString();
-    }
-
-    public static string Replace(string text, string shortText, string longText)
-    {
-        var info = Parse(text);
-        var rendered = Render(shortText, longText);
-
-        var before = text[..info.Offset];
-        var after = text[(info.Offset + info.Length)..];
-        return before + rendered + after;
     }
 
     private sealed record LineOffset(string Text, int StartOffset, int EndOffset);
