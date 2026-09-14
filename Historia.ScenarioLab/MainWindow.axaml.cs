@@ -15,6 +15,8 @@ public partial class MainWindow : Window
 
         SettingsButton.Click += async (_, _) => await OpenSettingsAsync();
         SaveButton.Click += async (_, _) => await SaveCurrentScriptAsync();
+        PurgeLocalsButton.Click += async (_, _) => await PurgeLocalsAsync();
+        PurgeRemotesButton.Click += async (_, _) => await PurgeRemotesAsync();
 
         NavPanel.ScriptSelected += async path => await OnScriptSelectedAsync(path);
         NavPanel.ScriptRenamed += (oldPath, newPath) => OnNodeRenamed(oldPath, newPath);
@@ -213,6 +215,73 @@ public partial class MainWindow : Window
     {
         await EditorPanel.SaveAsync();
         UpdateTitle();
+    }
+
+    private async Task PurgeLocalsAsync()
+    {
+        if (!_currentSettings.IsComplete || _currentSettings.Validate(LabPaths.RepoRoot).Count > 0)
+        {
+            LogOutput.AppendLine("Cannot purge: settings are incomplete.");
+            return;
+        }
+
+        var count1 = FolderPurger.CountTopLevel(_currentSettings.Local1);
+        var count2 = FolderPurger.CountTopLevel(_currentSettings.Local2);
+        var total = count1 + count2;
+
+        if (total > 0)
+        {
+            var msg = $"Purge Local 1 ({count1} items at '{_currentSettings.Local1}') and Local 2 ({count2} items at '{_currentSettings.Local2}')?";
+            var confirmed = await LabDialogs.ConfirmAsync(this, "Purge Locals", msg, confirmText: "Purge", danger: true);
+            if (!confirmed) return;
+        }
+
+        LogOutput.AppendLine($"Purging Local 1 and Local 2...");
+        await Task.Run(() =>
+        {
+            var res1 = FolderPurger.PurgeContents(_currentSettings.Local1, LabPaths.RepoRoot);
+            var res2 = FolderPurger.PurgeContents(_currentSettings.Local2, LabPaths.RepoRoot);
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                LogOutput.AppendLine($"Purged {res1.DeletedCount} items from Local 1.");
+                foreach (var f in res1.Failures)
+                    LogOutput.AppendLine($"  [FAIL] {f}");
+
+                LogOutput.AppendLine($"Purged {res2.DeletedCount} items from Local 2.");
+                foreach (var f in res2.Failures)
+                    LogOutput.AppendLine($"  [FAIL] {f}");
+            });
+        });
+    }
+
+    private async Task PurgeRemotesAsync()
+    {
+        if (!_currentSettings.IsComplete || _currentSettings.Validate(LabPaths.RepoRoot).Count > 0)
+        {
+            LogOutput.AppendLine("Cannot purge: settings are incomplete.");
+            return;
+        }
+
+        var count = FolderPurger.CountTopLevel(_currentSettings.Remotes);
+        if (count > 0)
+        {
+            var msg = $"Purge Remotes ({count} items at '{_currentSettings.Remotes}')?";
+            var confirmed = await LabDialogs.ConfirmAsync(this, "Purge Remotes", msg, confirmText: "Purge", danger: true);
+            if (!confirmed) return;
+        }
+
+        LogOutput.AppendLine($"Purging Remotes ({_currentSettings.Remotes})...");
+        await Task.Run(() =>
+        {
+            var res = FolderPurger.PurgeContents(_currentSettings.Remotes, LabPaths.RepoRoot);
+            Dispatcher.UIThread.Post(() =>
+            {
+                LogOutput.AppendLine($"Purged {res.DeletedCount} items from Remotes.");
+                foreach (var f in res.Failures)
+                    LogOutput.AppendLine($"  [FAIL] {f}");
+            });
+        });
     }
 
     private void UpdateSettingsStatus()

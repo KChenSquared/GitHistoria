@@ -82,13 +82,8 @@
                               Background="{DynamicResource ColorBorder}"
                               Height="4" />
 
-                <!-- Output placeholder -->
-                <ContentControl Grid.Row="2" x:Name="OutputHost" Background="{DynamicResource ColorChrome}">
-                    <TextBlock Text="Output Placeholder"
-                               Foreground="{DynamicResource ColorTextMuted}"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center" />
-                </ContentControl>
+                <!-- Output -->
+                <views:OutputPanel Grid.Row="2" x:Name="LogOutput" />
             </Grid>
         </Grid>
 
