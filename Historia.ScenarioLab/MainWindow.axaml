@@ -18,17 +18,16 @@
                 BorderBrush="{DynamicResource ColorBorder}"
                 BorderThickness="0,0,0,1"
                 Padding="8,6">
-            <Grid ColumnDefinitions="Auto,Auto,12,Auto,Auto,*,Auto">
-                <Button Grid.Column="0" x:Name="SaveButton" Content="Save" ToolTip.Tip="Save script (Ctrl+S)" Margin="0,0,6,0" />
-                <Button Grid.Column="1" x:Name="ExecuteButton" Content="Execute" Classes="primary" ToolTip.Tip="Execute scenario" />
+            <Grid ColumnDefinitions="Auto,12,Auto,Auto,*,Auto">
+                <Button Grid.Column="0" x:Name="ExecuteButton" Content="Execute" Classes="primary" ToolTip.Tip="Execute scenario" />
 
                 <!-- Divider -->
-                <Rectangle Grid.Column="2" Width="1" Fill="{DynamicResource ColorBorderStrong}" Margin="6,4" />
+                <Rectangle Grid.Column="1" Width="1" Fill="{DynamicResource ColorBorderStrong}" Margin="6,4" />
 
-                <Button Grid.Column="3" x:Name="PurgeLocalsButton" Content="Purge Locals" Margin="0,0,6,0" ToolTip.Tip="Purge Local 1 and Local 2 folders" />
-                <Button Grid.Column="4" x:Name="PurgeRemotesButton" Content="Purge Remotes" ToolTip.Tip="Purge Remotes folder" />
+                <Button Grid.Column="2" x:Name="PurgeLocalsButton" Content="Purge Locals" Margin="0,0,6,0" ToolTip.Tip="Purge Local 1 and Local 2 folders" />
+                <Button Grid.Column="3" x:Name="PurgeRemotesButton" Content="Purge Remotes" ToolTip.Tip="Purge Remotes folder" />
 
-                <Button Grid.Column="6" x:Name="SettingsButton" Content="Settings" ToolTip.Tip="Configure scenario directories" />
+                <Button Grid.Column="5" x:Name="SettingsButton" Content="Settings" ToolTip.Tip="Configure scenario directories" />
             </Grid>
         </Border>
 
@@ -74,8 +73,8 @@
                     <RowDefinition Height="40*" MinHeight="80" />
                 </Grid.RowDefinitions>
 
-                <!-- Editor -->
-                <views:ScriptEditorPanel Grid.Row="0" x:Name="EditorPanel" />
+                <!-- Viewer -->
+                <views:ScriptViewerPanel Grid.Row="0" x:Name="ViewerPanel" />
 
                 <GridSplitter Grid.Row="1"
                               ResizeDirection="Rows"
