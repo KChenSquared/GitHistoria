@@ -12,7 +12,6 @@ global using Avalonia.Platform.Storage;
 global using Avalonia.Styling;
 global using Avalonia.Threading;
 global using AvaloniaEdit;
-global using AvaloniaEdit.TextMate;
 global using Historia.ScenarioLab.Services;
 global using Historia.ScenarioLab.Views;
 global using System;
@@ -28,6 +27,5 @@ global using System.Text.Json;
 global using System.Text.RegularExpressions;
 global using System.Threading;
 global using System.Threading.Tasks;
-global using TextMateSharp.Grammars;
 
 global using Path = System.IO.Path;
