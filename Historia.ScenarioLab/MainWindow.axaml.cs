@@ -15,6 +15,7 @@ public partial class MainWindow : Window
 
         SettingsButton.Click += async (_, _) => await OpenSettingsAsync();
         SaveButton.Click += async (_, _) => await SaveCurrentScriptAsync();
+        ExecuteButton.Click += async (_, _) => await ExecuteCurrentScriptAsync();
         PurgeLocalsButton.Click += async (_, _) => await PurgeLocalsAsync();
         PurgeRemotesButton.Click += async (_, _) => await PurgeRemotesAsync();
 
@@ -209,6 +210,43 @@ public partial class MainWindow : Window
         StatusFilePathText.Text = path;
         UpdateTitle();
         SyncBoxesFromEditor();
+    }
+
+    private readonly ScriptRunner _runner = new();
+
+    private async Task ExecuteCurrentScriptAsync()
+    {
+        if (string.IsNullOrEmpty(EditorPanel.CurrentPath))
+        {
+            LogOutput.AppendLine("No script open to execute.");
+            return;
+        }
+
+        if (!_currentSettings.IsComplete || _currentSettings.Validate(LabPaths.RepoRoot).Count > 0)
+        {
+            LogOutput.AppendLine("Cannot execute: settings are incomplete.");
+            return;
+        }
+
+        await SaveCurrentScriptAsync();
+        LogOutput.Clear();
+        LogOutput.AppendLine($"▶ {Path.GetFileName(EditorPanel.CurrentPath)}");
+
+        var scriptPath = EditorPanel.CurrentPath;
+        var res = await _runner.RunAsync(
+            scriptPath,
+            _currentSettings,
+            line => LogOutput.AppendLine(line),
+            CancellationToken.None);
+
+        if (res.WasStopped)
+        {
+            LogOutput.AppendLine("stopped");
+        }
+        else
+        {
+            LogOutput.AppendLine($"exit {res.ExitCode} in {res.Duration.TotalSeconds:F1}s");
+        }
     }
 
     private async Task SaveCurrentScriptAsync()
