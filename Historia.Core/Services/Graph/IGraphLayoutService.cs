@@ -106,4 +106,14 @@ public interface IGraphLayoutService
     /// "Write a commit-graph file for large repositories" setting is off.
     /// </summary>
     void RefreshCommitGraphAfterFetch(RepositoryContext context);
+
+    /// <summary>
+    /// Pre-caches a newly cloned repository's commit-graph and layout cache before its tab is
+    /// opened (§6.6.1, R5). Runs ahead of the background-work gate. Writes the commit-graph first,
+    /// then spools the full history walk to disk. Progress reports the commit-graph phase and then
+    /// each spilled batch. Cancellation stops caching while keeping whatever was already durably
+    /// written.
+    /// </summary>
+    Task PrecacheClonedRepositoryAsync(
+        RepositoryContext context, GraphQuery query, IProgress<GitProgress>? progress, CancellationToken ct);
 }

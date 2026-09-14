@@ -795,18 +795,40 @@ public sealed class GraphLayoutService : IGraphLayoutService
         _backgroundWriter?.RefreshAfterFetch(context);
 
     /// <inheritdoc/>
-    public async Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct)
+    public async Task PrecacheClonedRepositoryAsync(
+        RepositoryContext context, GraphQuery query, IProgress<GitProgress>? progress, CancellationToken ct)
     {
-        if (!SpillEnabled(query))
-            return; // disk-backed metadata off, or an unsupported query shape — nothing to do headlessly
+        progress?.Report(new GitProgress { Phase = CloneStatus.CommitGraphPhase });
+        if (_backgroundWriter is not null)
+            await _backgroundWriter.WriteForCloneAsync(context, ct).ConfigureAwait(false);
 
+        if (!SpillEnabled(query))
+            return;
+
+        progress?.Report(new GitProgress { Phase = CloneStatus.CachingPhase, ObjectsDone = 0 });
+        var probe = await ProbeStoreAsync(context, query, ct).ConfigureAwait(false);
+
+        var rowsProgress = progress is null
+            ? null
+            : new SynchronousProgress<int>(rows =>
+                progress.Report(new GitProgress { Phase = CloneStatus.CachingPhase, ObjectsDone = rows }));
+
+        var rows = await RunHeadlessSpoolAsync(context, query, probe.Tips, ct, ignoreGate: true, rowsSpilled: rowsProgress)
+            .ConfigureAwait(false);
+
+        _backgroundWriter?.RecordWrite(context.GitDirectory, rows);
+    }
+
+    private Task<(
+        long WalkKey,
+        string[] Tips,
+        (bool Ok, int RowCount, bool Exhausted) Current,
+        (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) Existing)> ProbeStoreAsync(
+        RepositoryContext context, GraphQuery query, CancellationToken ct)
+    {
         var repoPath = context.RepositoryPath;
         var expectedEngine = ExpectedEngine(query);
-
-        // Step 1 — one low-priority gate turn: tip resolution + walk key (ms even at linux's 948
-        // refs) and a header-only probe both at the current key and at whatever key
-        // the store was last written under, regardless of match.
-        var probe = await context.WithRepositoryBackgroundAsync(repo =>
+        return context.WithRepositoryBackgroundAsync(repo =>
         {
             var fp = ComputeFingerprint(repo, query, out var allRefs);
             var tips = ResolveTipShas(repo, query, allRefs);
@@ -816,7 +838,21 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 Tips: tips,
                 Current: GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches, expectedEngine),
                 Existing: GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches, expectedEngine));
-        }, ct).ConfigureAwait(false);
+        }, ct);
+    }
+
+    /// <inheritdoc/>
+    public async Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct)
+    {
+        if (!SpillEnabled(query))
+            return; // disk-backed metadata off, or an unsupported query shape — nothing to do headlessly
+
+        var repoPath = context.RepositoryPath;
+
+        // Step 1 — one low-priority gate turn: tip resolution + walk key (ms even at linux's 948
+        // refs) and a header-only probe both at the current key and at whatever key
+        // the store was last written under, regardless of match.
+        var probe = await ProbeStoreAsync(context, query, ct).ConfigureAwait(false);
 
         if (probe.Current is { Ok: true, Exhausted: true })
         {
@@ -1009,8 +1045,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// no <see cref="RepoCache"/> ever added to <see cref="_caches"/> and no layout produced.
     /// Cancelling <paramref name="ct"/> stops at the next batch boundary; whatever was already
     /// spilled stays on disk.</summary>
-    private async Task RunHeadlessSpoolAsync(
-        RepositoryContext context, GraphQuery query, string[] sortedTips, CancellationToken ct)
+    private async Task<int> RunHeadlessSpoolAsync(
+        RepositoryContext context, GraphQuery query, string[] sortedTips, CancellationToken ct,
+        bool ignoreGate = false, IProgress<int>? rowsSpilled = null)
     {
         var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
         var cache = new RepoCache { Scope = query.RefScope, IncludeRemotes = query.IncludeRemoteBranches };
@@ -1027,9 +1064,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
         {
             while (!ct.IsCancellationRequested)
             {
-                await WaitForGateAsync(ct).ConfigureAwait(false);
-                if (ct.IsCancellationRequested)
-                    break;
+                if (!ignoreGate)
+                {
+                    await WaitForGateAsync(ct).ConfigureAwait(false);
+                    if (ct.IsCancellationRequested)
+                        break;
+                }
 
                 int target;
                 lock (cache) target = cache.SpilledRows + cache.Commits.Count + batchRows;
@@ -1039,9 +1079,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 bool walkDone;
                 lock (cache) walkDone = cache.Exhausted;
 
-                await WaitForGateAsync(ct).ConfigureAwait(false);
-                if (ct.IsCancellationRequested)
-                    break;
+                if (!ignoreGate)
+                {
+                    await WaitForGateAsync(ct).ConfigureAwait(false);
+                    if (ct.IsCancellationRequested)
+                        break;
+                }
 
                 int from, to;
                 var conflicted = false;
@@ -1051,10 +1094,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     fullWalkFromZero ??= from == 0;
                     var fullWalkElapsed = walkDone && fullWalkFromZero == true ? walkStopwatch.Elapsed : (TimeSpan?)null;
                     var tipsForCommit = walkDone ? sortedTips.Select(sha => new ObjectId(sha)).ToArray() : null;
-                    if (to > from
-                        && SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to, exhausted: walkDone, fullWalkElapsed, tipsForCommit)
-                            == SpillOutcome.Conflict)
-                        conflicted = true;
+                    if (to > from)
+                    {
+                        var outcome = SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to, exhausted: walkDone, fullWalkElapsed, tipsForCommit);
+                        if (outcome == SpillOutcome.Conflict)
+                            conflicted = true;
+                        else
+                            rowsSpilled?.Report(to);
+                    }
                 }
                 // A conflict here means the active tab (or another headless job)
                 // already moved this repo's store out from under this spool — stop; the next
@@ -1068,6 +1115,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 }
                 await Task.Delay(150, ct).ConfigureAwait(false);
             }
+            if (!cache.Exhausted)
+                ct.ThrowIfCancellationRequested();
+            return TotalWalked(cache);
         }
         finally
         {

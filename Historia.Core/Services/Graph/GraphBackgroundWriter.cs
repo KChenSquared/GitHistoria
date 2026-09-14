@@ -303,6 +303,55 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
     }
 
     /// <summary>
+    /// Writes a commit-graph for a newly cloned repository ahead of the background gate (§6.6.1, R5).
+    /// Skips the 30k-commit threshold. If cancelled before acquiring the serial lock, the write is
+    /// skipped. Once the git process starts, it runs with <see cref="CancellationToken.None"/> to avoid leaving
+    /// stale lock files. Adds gitdir to <see cref="_attemptedFresh"/> and does NOT touch <see cref="_lastWrite"/>.
+    /// </summary>
+    public async Task WriteForCloneAsync(RepositoryContext context, CancellationToken ct)
+    {
+        if (!settings.Current.WriteCommitGraphForLargeRepos || !cli.IsGitAvailable)
+            return;
+
+        var gitDir = context.GitDirectory;
+        await _serial.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            lock (_sync) _attemptedFresh.Add(gitDir);
+
+            var args = new[] { "commit-graph", "write", "--reachable" };
+
+            using var _ = Diagnostics.PerfLog.Scope($"GraphBackgroundWriter.writeForClone({context.DisplayName})");
+            var result = await cli.RunAsync(new GitCliRequest
+            {
+                Arguments = args,
+                WorkingDirectory = context.RepositoryPath,
+                Timeout = Timeout.InfiniteTimeSpan,
+                LowerPriority = true,
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            if (!result.IsSuccess)
+                Diagnostics.PerfLog.Mark($"GraphBackgroundWriter: clone write failed (exit={result.ExitCode}) for {context.DisplayName}");
+        }
+        finally
+        {
+            _serial.Release();
+        }
+    }
+
+    /// <summary>
+    /// Records that a commit-graph write finished and was sized to <paramref name="rowCount"/> rows,
+    /// so subsequent staleness checks start from the actual cloned size.
+    /// </summary>
+    public void RecordWrite(string gitDir, int rowCount)
+    {
+        lock (_sync)
+        {
+            _lastWrite[gitDir] = (rowCount, DateTime.UtcNow);
+        }
+    }
+
+    /// <summary>
     /// Fire-and-forget refresh of
     /// <paramref name="context"/>'s commit-graph after a successful auto-fetch. Unlike
     /// <see cref="MaybeSchedule"/>'s own-write tracking (<see cref="ShouldRefresh"/>), this

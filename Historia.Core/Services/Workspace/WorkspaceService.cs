@@ -57,6 +57,16 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // gate mid-first-walk and stalled it for ~60s. This ceiling is only a stuck-guard.
     private static readonly TimeSpan GraphFirstPaintCeiling = TimeSpan.FromSeconds(120);
 
+    /// <summary>
+    /// Default query for repository tabs (§7.6, R5). Must match <c>CommitGraphControl._query</c>'s default.
+    /// Used by clone precache and inactive-tab background caching so the store matches the tab's first walk.
+    /// </summary>
+    internal static readonly GraphQuery TabGraphQuery = new()
+    {
+        RefScope = GraphRefScope.AllRefs,
+        IncludeRemoteBranches = true,
+    };
+
     public WorkspaceService(
         IServiceProvider services,
         IGitCliService cli,
@@ -382,7 +392,26 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             throw HistoriaGitException.FromCli(result, "Clone");
         }
 
-        return await OpenAsync(targetDirectory, ct).ConfigureAwait(false);
+        var context = await Task.Run(() => RepositoryContext.Open(targetDirectory, _services)).ConfigureAwait(false);
+        if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
+            is Historia.Services.Graph.IGraphLayoutService graphSvc)
+        {
+            try
+            {
+                await graphSvc.PrecacheClonedRepositoryAsync(context, TabGraphQuery, progress, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Cancellation during pre-cache keeps the clone and opens the tab (R5).
+            }
+            catch (Exception ex)
+            {
+                Historia.Diagnostics.PerfLog.Mark($"PrecacheClonedRepositoryAsync failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        return await OpenCoreAsync(
+            targetDirectory, focus: true, initialize: true, CancellationToken.None, prefetched: Task.FromResult(context)).ConfigureAwait(false);
     }
 
     public async Task CloseAsync(RepositoryContext context)
@@ -822,9 +851,8 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                 targets = [.. _open.Where(c => !ReferenceEquals(c, activeContext))];
             }
 
-            var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeRemoteBranches = true };
             foreach (var context in targets)
-                graphSvc.EnqueueInactiveTabCaching(context, query);
+                graphSvc.EnqueueInactiveTabCaching(context, TabGraphQuery);
         }
         catch (OperationCanceledException)
         {

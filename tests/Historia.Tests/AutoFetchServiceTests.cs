@@ -447,6 +447,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         public Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct) => throw new NotImplementedException();
         public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query) => throw new NotImplementedException();
         public Task CancelInactiveTabCachingAsync(RepositoryContext context) => throw new NotImplementedException();
+        public Task PrecacheClonedRepositoryAsync(RepositoryContext context, GraphQuery query, IProgress<GitProgress>? progress, CancellationToken ct) => throw new NotImplementedException();
     }
 
     /// <summary>A hand-pumped stand-in for the production <c>Task.Delay</c> seam: records every
