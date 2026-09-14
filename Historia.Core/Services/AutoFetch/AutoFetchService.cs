@@ -267,7 +267,7 @@ public sealed class AutoFetchService : IAutoFetchService
         {
             await _host.FetchAsync(context, ct).ConfigureAwait(false);
 
-            // Finding #17: refresh this repo's commit-graph after every successful fetch (the
+            // Refresh this repo's commit-graph after every successful fetch (the
             // [InitialFetch] callers above and the [AutoFetch] loop both go through here). Itself
             // fire-and-forget and best-effort — never allowed to fail this fetch or the loop.
             try { _graphLayoutService?.RefreshCommitGraphAfterFetch(context); }

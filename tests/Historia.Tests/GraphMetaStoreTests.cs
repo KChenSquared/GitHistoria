@@ -124,7 +124,7 @@ public sealed class GraphMetaStoreTests : IDisposable
         AssertRowEqual(Row(13), store[13]);
     }
 
-    /// <summary>Phase 3a: <c>SetCount</c> reads only the <c>.idx</c> tail appended since the
+    /// <summary><c>SetCount</c> reads only the <c>.idx</c> tail appended since the
     /// last call (a background spill calls it once per batch) instead of re-reading the whole
     /// file every time. This is a correctness check across several incremental calls — every
     /// previously-adopted row must still resolve correctly after each new tail read merges in.</summary>
@@ -345,9 +345,9 @@ public sealed class GraphMetaStoreTests : IDisposable
     [Fact]
     public void A_version_1_style_header_is_rejected_not_misread()
     {
-        // Simulates a store written before v10.1.2 added parent bytes to .dat: same layout, one
+        // Simulates an older-version store: same layout, one
         // version number lower. TryOpen/Probe/ProbeAny must all treat it as absent, never try to
-        // decode records in the old (parent-less) shape.
+        // decode records in the old shape.
         Write(10, exhausted: true);
         var hdrPath = GraphCachePaths.File(Repo, GraphMetaStore.HdrExt);
         var hdr = JsonSerializer.Deserialize<GraphMetaStore.Header>(File.ReadAllBytes(hdrPath), GraphMetaStore.Json)!;

@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// Phase 3c of the v10 graph memory footprint plan: commit records are split from row order.
+/// Commit records are split from row order.
 /// <see cref="GraphMetaReorder"/> is the pure planning half (no file/git access — see its own
 /// doc comment); these tests exercise it directly, then exercise the on-disk order indirection
 /// it feeds (<see cref="GraphMetaWriter.WriteOrder"/> / <see cref="GraphMetaWriter.CommitReorder"/>
@@ -34,7 +34,7 @@ public sealed class GraphMetaReorderTests : IDisposable
 
     // ── GraphMetaReorder.Build (pure, no I/O) ──
 
-    /// <summary>Finding #5: <see cref="GraphMetaReorder.Build"/> now keys existing records on
+    /// <summary><see cref="GraphMetaReorder.Build"/> keys existing records on
     /// <see cref="CompactShaIndex"/> (an 8-byte id prefix, verified against the full id) instead
     /// of a 40-char hex string — this builds one from the same (id, record) pairs the old
     /// <c>Dictionary&lt;string,int&gt;</c> literals in these tests used to express.</summary>

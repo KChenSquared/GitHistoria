@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Graph;
+namespace Historia.Services.Graph;
 
 /// <summary>
 /// Pure C# DAG layout algorithm (§7.3). Converts a topologically ordered commit stream
@@ -171,7 +171,7 @@ public sealed class DagLayoutEngine
             });
             if (s.RetainCommits)
                 s.Commits.Add(commit.Metadata);
-            // Phase 5(a): reuse whatever instance a child's reservation already interned for this
+            // Reuse whatever instance a child's reservation already interned for this
             // SHA (the common case — a parent's reservation exists before the parent's own row
             // does, in a topo walk) instead of keeping commit.Id's own freshly-parsed copy too.
             s.RowByCommitId[Intern(s, commit.Id)] = row;
@@ -230,7 +230,7 @@ public sealed class DagLayoutEngine
         var offWindowList = RegenerateOffWindow(s);
         var offWindow = offWindowList.ToArray();
 
-        // Finding #9: neither Rows nor Edges is materialized here any more — GraphLayout.Rows is
+        // Neither Rows nor Edges is materialized here any more — GraphLayout.Rows is
         // a RowCount-bounded VIEW straight over s.Rows (now a ChunkedAppendList, never copied),
         // and GraphLayout.Edges is computed lazily on first access (nothing in App or Core code
         // actually reads it). EdgeCount is just the sum of what those two arrays' lengths would
@@ -622,7 +622,7 @@ public sealed class DagLayoutEngine
 
         if (head is { } h && !tips[0].Id.Equals(h.Id))
         {
-            // §10.1.3 finding #15 (decision C): the libgit2 CalculateHistoryDivergence oracle is
+            // The libgit2 CalculateHistoryDivergence oracle is
             // retired everywhere — every real caller now passes isAncestor: null and gets the
             // exact in-window check below for free (no repo access, no gate). The parameter stays
             // only so tests can inject a stand-in oracle against a synthetic DAG.
@@ -694,7 +694,7 @@ public sealed class DagLayoutEngine
     }
 
     /// <summary>
-    /// §10.1.3 finding #15: exact in-window ancestry check that answers the same question the
+    /// Exact in-window ancestry check that answers the same question the
     /// retired libgit2 oracle did — <c>isAncestor(a, b)</c> is true when commit <paramref
     /// name="h"/> is an ancestor of (or equal to) <paramref name="t"/> — using ONLY the already
     /// scanned topo-ordered prefix (<paramref name="commits"/>[0, <see cref="TipPriorityScanHorizon"/>)),
@@ -779,7 +779,7 @@ public sealed class DagLayoutEngine
             s.ReservedLaneCount[res.RawLane] = s.ReservedLaneCount.GetValueOrDefault(res.RawLane) + 1;
     }
 
-    /// <summary>Phase 5(a): returns the one canonical <see cref="ObjectId"/> instance for this
+    /// <summary>Returns the one canonical <see cref="ObjectId"/> instance for this
     /// SHA — the first instance ever seen for it, whether that was as a reservation key or a row.
     /// Every later reference to the same commit reuses it instead of holding its own separately
     /// parsed copy.</summary>

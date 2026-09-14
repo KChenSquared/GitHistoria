@@ -1,4 +1,4 @@
-﻿namespace Historia.Controls;
+namespace Historia.Controls;
 
 /// <summary>
 /// The bottom terminal dock (V5 §7): a 6 px splitter, a live-session tab strip, a small
@@ -242,7 +242,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
             Dispatcher.UIThread.Post(() => _terminal.Focus());
     }
 
-    // ── follow the focused repository (V8.4) ────────────────────────────────────────────────
+    // ── follow the focused repository ───────────────────────────────────────────────────────
 
     private void OnFocusedRepositoryChanged(object? sender, FocusedRepositoryChangedEventArgs e)
         => Dispatcher.UIThread.Post(() =>

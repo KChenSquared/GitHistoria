@@ -133,7 +133,7 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
         Assert.Equal(fullIds, new HashSet<ObjectId>(seen)); // same set as one big walk
     }
 
-    /// <summary>§10.1.3 finding #18: an annotated tag's ref target is the TAG OBJECT, not the
+    /// <summary>An annotated tag's ref target is the TAG OBJECT, not the
     /// commit it points at. Before the fix, <c>GraphLayoutService.ResolveTipShas</c> called
     /// <c>repo.Lookup&lt;Commit&gt;(target)</c> straight on that target and silently dropped the
     /// tip when it returned null — exactly this fixture's shape (a release tagged on a branch that

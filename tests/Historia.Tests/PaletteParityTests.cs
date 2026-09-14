@@ -1,10 +1,9 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>
 /// §V2-3 / §V2-15.1: <see cref="HistoriaPalette"/> is the single source of truth for every colour
-/// the app paints. V4 §split removed <c>wwwroot/app.css</c> (the theme is now generated from
-/// this table by <c>AvaloniaThemeApplier</c>), so the CSS-parity check is replaced by a
-/// self-consistency check: every theme defines exactly the declared token set, and each hex
+/// the app paints (the theme is generated from this table by <c>AvaloniaThemeApplier</c>).
+/// Asserts self-consistency: every theme defines exactly the declared token set, and each hex
 /// round-trips.
 /// </summary>
 public class PaletteParityTests
@@ -42,8 +41,8 @@ public class PaletteParityTests
         Assert.Equal(Color.FromRgb(0x1F, 0x1F, 0x1F), HistoriaPalette.Get(EffectiveTheme.Light, "ref-label"));
     }
 
-    // §V3-B correction: the dark/HC white-lift is withdrawn — the palette hues are the SOLID
-    // line and pill-border colour, so EdgeColorFor is the identity in every theme.
+    // §V3-B: the palette hues are the SOLID line and pill-border colour, so EdgeColorFor
+    // is the identity in every theme.
     [Theory]
     [InlineData(EffectiveTheme.Dark)]
     [InlineData(EffectiveTheme.Light)]

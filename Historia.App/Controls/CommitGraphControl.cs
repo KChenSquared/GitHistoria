@@ -9,9 +9,9 @@ public sealed partial class CommitGraphControl : Control
 {
     private const double MinRowHeight = 20;
     private const double MaxRowHeight = 44;
-    private const double MinLaneWidth = 15; // §V3.1: raised from 13 with the +2px lane width
+    private const double MinLaneWidth = 15; // §V3.1
     private const double MaxLaneWidth = 60;
-    /// <summary>§V3.2: commit nodes are round dots again (the §V3.1 diamond was reverted).</summary>
+    /// <summary>§V3.2: commit node radius.</summary>
     private const double NodeRadius = 5;
     private const double RowTextSize = 14;
     private const double HeaderTextSize = 12;
@@ -51,7 +51,7 @@ public sealed partial class CommitGraphControl : Control
     private int _residentRowCapSetting;
     private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk, _residentRowCapSetting);
 
-    // §V10.1.2/v10.1.3: the silent background crawler pre-loads only this many rows into the
+    // §V10.1.2: the silent background crawler pre-loads only this many rows into the
     // resident layout. Deeper history loads on demand as the user scrolls (EnsureExtendedAsync,
     // up to ResidentRowCap) and reaches disk in full via the §7.6 background spill (which also
     // feeds Ctrl+F search). Crawling all the way to ResidentRowCap (2,000,000 on a big repo)
@@ -204,7 +204,7 @@ public sealed partial class CommitGraphControl : Control
     private GraphDecoration? _refListFor;
     private DispatcherTimer? _refListCloseTimer;
 
-    // v8.1 fix: the graph builds a fresh ContextMenu per right-click (content depends on hit
+    // The graph builds a fresh ContextMenu per right-click (content depends on hit
     // position — column header / overflow chip / pill / row), so there's no single control-owned
     // ContextMenu for Avalonia to auto-close when a new one opens. Track the live one and close it
     // explicitly, or a second right-click (or an overflow/pill menu opened from within another)
@@ -271,7 +271,7 @@ public sealed partial class CommitGraphControl : Control
     private SolidColorBrush _selectionBar = new(Colors.SlateBlue);
     private SolidColorBrush _hoverFill = new(Colors.DimGray);
     private Pen _hoverPen = new(new SolidColorBrush(Colors.White), 1);
-    // v8.4: the repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
+    // The repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
     private Pen _cogPen = new(new SolidColorBrush(Colors.DimGray), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
     private static readonly Geometry _cogGeo = Geometry.Parse(Historia.Components.IconPaths.Get("settings"));
     private Rect _refsCogRect;
@@ -309,10 +309,7 @@ public sealed partial class CommitGraphControl : Control
         // math and desyncs the thumb from the pointer. `_scrollBarUserActive` gates that — and
         // it is driven by the ScrollBar's OWN Scroll event type, not pointer capture: a
         // ThumbTrack means a drag is in progress, and EVERY drag ends with EndScroll regardless
-        // of where the pointer is released. (An earlier version latched on PointerPressed and
-        // cleared on PointerReleased/CaptureLost on the bar; releasing the mouse away from the
-        // bar fired neither, so the latch stuck on forever and the bar froze until a wheel
-        // scroll forced a resync — the "scrollbar stuck at the bottom" bug.)
+        // of where the pointer is released.
         _scrollBar.Scroll += (_, e) =>
         {
             _scrollBarUserActive = e.ScrollEventType == ScrollEventType.ThumbTrack;
@@ -830,7 +827,7 @@ public sealed partial class CommitGraphControl : Control
             const int full = 2_500;
             var quick = Math.Min(QuickInitialRows, full);
 
-            // v8.2: paint an optimistic snapshot from the on-disk walk cache before the real
+            // Paint an optimistic snapshot from the on-disk walk cache before the real
             // quick phase below even starts — that phase still has to pay for a full ref
             // enumeration (ComputeFingerprint) before it can so much as check the cache, and on
             // a large repo that alone can take a while. This shortcut skips straight to a plain
@@ -859,7 +856,7 @@ public sealed partial class CommitGraphControl : Control
                 }
             }
 
-            // Phase 1: a tiny batch for an immediate first paint (<15ms). Phase 2 extends smoothly.
+            // Immediate first paint (<15ms), then extend smoothly.
             if (quick < full)
             {
                 var fast = await Task.Run(
@@ -921,9 +918,9 @@ public sealed partial class CommitGraphControl : Control
             // this (bounded by its own timeout) before it starts touching the repo itself.
             context.MarkFirstGraphPaintDone();
 
-            // v10 graph memory footprint plan, Phase 1: the background-write gate's other half
-            // of "done loading" -- this context's first-paint attempt FOR THE CURRENT FOCUS,
-            // whether it painted, was cancelled, or failed.
+            // The background-write gate's other half of "done loading" -- this context's
+            // first-paint attempt FOR THE CURRENT FOCUS, whether it painted, was cancelled, or
+            // failed.
             _backgroundWorkGate?.ReportGraphSettled(context);
         }
     }
@@ -950,8 +947,7 @@ public sealed partial class CommitGraphControl : Control
     /// store lease: takes one on the new layout's store and releases the one held for the old,
     /// so a disk-backed store's file handle stays open exactly as long as this control can still
     /// render from it — even after <c>GraphLayoutService</c> drops its own reference on a
-    /// RefsChanged re-walk (that race previously closed the handle mid-<see cref="Render"/> and
-    /// terminated the process). Idempotent when the store instance is unchanged (an in-place
+    /// RefsChanged re-walk. Idempotent when the store instance is unchanged (an in-place
     /// Extend reuses it). Must run on the UI thread.
     /// <para>Returns false when the new layout's store was already closed by a concurrent final
     /// Dispose (<see cref="ICommitStore.AddRef"/> returned null) — the layout is dead on arrival
@@ -1781,7 +1777,7 @@ public sealed partial class CommitGraphControl : Control
 
         if (pos.Y < HeaderHeight)
         {
-            // v8.4: the cog at the right of the BRANCH / TAGS header opens this repo's settings.
+            // The cog at the right of the BRANCH / TAGS header opens this repo's settings.
             if (_context is { } cogCtx && _refsCogRect.Contains(pos))
             {
                 _workspace.Focus(cogCtx);
@@ -2353,8 +2349,7 @@ public sealed partial class CommitGraphControl : Control
             var props = e.GetCurrentPoint(rowBorder).Properties;
             if (props.IsRightButtonPressed)
             {
-                // Same context menu as right-clicking this ref's badge directly on the graph —
-                // the stacked-tag popup previously had no right-click menu at all.
+                // Same context menu as right-clicking this ref's badge directly on the graph.
                 e.Handled = true;
                 ShowPillContextMenu(new GraphDecoration
                 {
@@ -2433,9 +2428,7 @@ public sealed partial class CommitGraphControl : Control
         {
             // §V10.1.2: nothing painted yet — the optimistic snapshot missed and the real walk
             // is still priming (on a large, never-before-opened repo that can be tens of
-            // seconds; see GraphLayoutService.StartWalk's tip-priority prime). Previously this
-            // frame was just the background + header band, indistinguishable from "broken" for
-            // that whole stretch.
+            // seconds; see GraphLayoutService.StartWalk's tip-priority prime).
             DrawInitialLoadingPlaceholder(dc, size);
             return;
         }
@@ -2668,8 +2661,8 @@ public sealed partial class CommitGraphControl : Control
                 GraphColumnKind.Sha => "SHA",
                 _ => "",
             };
-            // v8.4: the repo-settings cog lives at the right edge of the BRANCH / TAGS header
-            // (it used to be a per-tab button). Reserve room so the label ellipsises before it.
+            // The repo-settings cog lives at the right edge of the BRANCH / TAGS header.
+            // Reserve room so the label ellipsises before it.
             var cogRoom = col.Kind == GraphColumnKind.Refs && _context is not null ? CogSize + 12 : 0;
             var ft = Text(label, _headerText, Math.Max(10, col.Width - 12 - cogRoom), HeaderTextSize);
             dc.DrawText(ft, new Point(x + 8, (HeaderHeight - ft.Height) / 2));
@@ -3171,7 +3164,7 @@ public sealed partial class CommitGraphControl : Control
         return when.ToString("yyyy-MM-dd");
     }
 
-    // v8.4: the Date column shows the full local wall-clock timestamp plus the "how long ago"
+    // The Date column shows the full local wall-clock timestamp plus the "how long ago"
     // relative form in parentheses — e.g. "09/05/2026 - 02:30 PM (17h)".
     private static string DateCell(DateTimeOffset when)
         => when.ToLocalTime().ToString("MM/dd/yyyy - hh:mm tt", CultureInfo.InvariantCulture)

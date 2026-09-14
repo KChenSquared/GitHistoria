@@ -1,7 +1,7 @@
 namespace Historia.Services.Workspace;
 
 /// <summary>
-/// v10 graph memory footprint plan, Phase 1: no background writer (a commit-graph write, or a
+/// No background writer (a commit-graph write, or a
 /// graph disk-cache write of any kind — <c>.meta.*</c> create/append/truncate/header/order,
 /// <c>.json.gz</c> save) for ANY tab may start until the focused tab is "done loading". The gate
 /// is open when either no tab is focused, or the focused tab has finished both its graph's first

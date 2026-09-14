@@ -15,7 +15,7 @@ public class SettingsServiceTests : IDisposable
         Assert.True(svc.Current.PersistRepoCache);
         Assert.True(svc.Current.GraphMetadataFromDisk); // default on
         Assert.True(svc.Current.AutoFetchEnabled); // §12.1 default on
-        Assert.False(svc.Current.EnableGraphSplice); // Phase 5 (M5.1), finding #16: default off
+        Assert.False(svc.Current.EnableGraphSplice); // Default off
     }
 
     // ── §12.1: v15 → v16 (auto-fetch toggle) ──
@@ -216,7 +216,7 @@ public class SettingsServiceTests : IDisposable
         Assert.Equal(9000, AppSettings.ClampTerminalScrollback(9000));
     }
 
-    // ── V5.5: v9 → v10 (tab-width mode) ──
+    // ── Tab-width mode ──
 
     [Fact]
     public void V9_file_loads_with_dynamic_tab_width_default()

@@ -54,13 +54,13 @@ public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityServi
                 Arguments = ["rev-list", "--max-parents=0", "--branches", "--remotes", "--tags"],
                 WorkingDirectory = context.RepositoryPath,
                 Timeout = TimeSpan.FromSeconds(120),
-                // Finding #24: the libgit2 fallback below (and every other caller of it, e.g.
+                // The libgit2 fallback below (and every other caller of it, e.g.
                 // GitLogStream.cs) ignores `git replace` refs entirely, so the CLI path must too —
                 // otherwise a repo using replace grafts computes a different smallest root through
                 // this path than through the libgit2 fallback, and the identity key (and its
                 // repo-profiles.json binding) silently disagrees depending on which path ran.
                 ExtraEnvironment = new Dictionary<string, string> { ["GIT_NO_REPLACE_OBJECTS"] = "1" },
-                // Finding #24: the libgit2 fallback below (and every other caller of it, e.g.
+                // The libgit2 fallback below (and every other caller of it, e.g.
                 // GitLogStream.cs) ignores `git replace` refs entirely, so the CLI path must too —
                 // otherwise a repo using replace grafts computes a different smallest root through
                 // this path than through the libgit2 fallback, and the identity key (and its

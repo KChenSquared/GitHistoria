@@ -3,7 +3,7 @@ using System.Reflection;
 namespace Historia.Tests;
 
 /// <summary>
-/// Phase 3a of the v10 graph memory footprint plan: once rows are confirmed durable in the
+/// Once rows are confirmed durable in the
 /// §7.6 disk store, they are trimmed out of the resident pending buffer
 /// (<c>RepoCache.Commits</c>) instead of staying resident for the rest of the session. These
 /// tests drive the real <see cref="GraphLayoutService"/> code path, using reflection only to
@@ -100,9 +100,9 @@ public sealed class GraphSpoolTests : IAsyncDisposable
             await Task.Delay(50);
 
         Assert.Equal(total, SpilledRows(cache));
-        // Phase 3a's whole point: once every row is confirmed durable, none of it needs to stay
+        // Once every row is confirmed durable, none of it needs to stay
         // resident — this is what bounds RepoCache.Commits at "pre-gate rows + one batch" instead
-        // of the whole walked history (the plan's Phase 3a acceptance criterion).
+        // of the whole walked history.
         Assert.Equal(0, ResidentCount(cache));
 
         svc.Forget(ctx);

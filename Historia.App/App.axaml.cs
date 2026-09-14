@@ -1,4 +1,4 @@
-﻿namespace Historia;
+namespace Historia;
 
 /// <summary>
 /// Composition root and startup sequence (§6.2.2, §6.3) — the Avalonia port of the WPF
@@ -303,13 +303,11 @@ public sealed class App : Application
         var notifications = Services.GetRequiredService<INotificationService>();
         var settings = Services.GetRequiredService<ISettingsService>();
 
-        // v8.2: resolving the git executable and restoring session tabs used to run
-        // sequentially, but the restore path never touches IGitExecutableLocator — it only
-        // needs libgit2, via RepositoryContext.Open. Restoring the focused tab is what starts
-        // its commit-graph walk (CommitGraphControl.Bind → ComputeLayoutAsync), so serializing
-        // it behind the locator resolve delayed that walk's start by however long the resolve
-        // took, eating into the splash window meant to hide exactly that work. Running them
-        // concurrently lets the graph walk for an already-known tab start immediately.
+        // Resolving the git executable and restoring session tabs run concurrently because
+        // the restore path never touches IGitExecutableLocator — it only needs libgit2, via
+        // RepositoryContext.Open. Restoring the focused tab is what starts its commit-graph walk
+        // (CommitGraphControl.Bind → ComputeLayoutAsync); running them concurrently lets the
+        // graph walk for an already-known tab start immediately.
         var resolveGit = ResolveGitAsync(locator, settings, notifications);
         var restoreTabs = settings.Current.RestoreSessionTabs
             ? RestoreSessionTabsAsync(Services.GetRequiredService<IWorkspaceService>(), notifications)

@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>
 /// §V2-15.1: every name referenced by an <c>&lt;Icon Name="…"&gt;</c> in any <c>.razor</c>
@@ -7,31 +7,19 @@
 /// </summary>
 public class IconPathTests
 {
-    // Names in the §V2-9.2 set with no Blazor consumer yet: the section-header chevrons and
-    // ref-type glyphs land in M5/M10; "settings" now lives in the native WPF app menu (§V2-9.3)
-    // which renders text, not <Icon>, so the Blazor glyph is kept for a later re-entry point.
-    // §V3-7.4: the graph control (a .cs file) now parses "branch", "remote" and "tag" into WPF
-    // geometry, so the scan below must read .cs too or they still look unreferenced.
-    // V4: the Blazor views are gone; several glyphs are only used by panels not yet re-ported
-    // to Avalonia (sidebar rename/pencil, folder/package/lock chrome). Reserved until the
-    // remaining views land.
+    // Glyphs reserved until remaining views or affordances consume them.
     private static readonly HashSet<string> ReservedForLaterMilestones =
         new(StringComparer.Ordinal)
         {
             "chevron-right", "chevron-down", "stash", "pencil", "folder", "package", "lock", "unlock",
-            // v8 M1: Lucide glyphs vendored ahead of the milestones that consume them
-            // (M4 context menus, M5 shortcuts bar, M6 reveal, M8 open/clone, M13 tree view,
-            // M14 staging checkboxes, M15 stash, M11 profile wizard).
             "folder-open", "folder-search", "folder-tree", "git-branch", "git-merge",
             "git-pull-request", "git-commit-horizontal", "plus", "download", "arrow-down",
             "arrow-up", "arrow-down-to-line", "arrow-up-from-line", "check", "square",
             "square-check", "list", "key", "key-round", "copy", "github", "refresh-cw",
-            // v8.4: the "stash all" save-check glyph — consumed by the staging panel and the
+            // The "stash all" save-check glyph — consumed by the staging panel and the
             // shortcuts bar.
             "save-check",
-            // v9: the shortcuts-bar network-mode button (globe) was removed with the tri-state
-            // network policy — per-repo routing is now a profile dropdown + an "SSH only" text
-            // toggle. Glyph kept for a future network affordance.
+            // Glyph kept for network affordance.
             "globe",
         };
 
@@ -88,8 +76,8 @@ public class IconPathTests
         // Icon element name attributes in .razor; IconPaths lookups in native .cs
         // (§V3-18.2 Q8, rule 0.6 / 36).
         var rxRazor = new Regex("<Icon\\s+[^>]*?Name=\"([a-z-]+)\"", RegexOptions.IgnoreCase);
-        // V4: .cs call sites are IconPaths.Get("x") (native controls) and the ViewKit helpers
-        // Icon("x") / IconButton("x", ...) / IconGlyphPath("x", ...) (v8).
+        // .cs call sites are IconPaths.Get("x") (native controls) and the ViewKit helpers
+        // Icon("x") / IconButton("x", ...) / IconGlyphPath("x", ...).
         var rxCs = new Regex("(?:IconPaths\\.Get|\\bIcon(?:Button|GlyphPath)?)\\(\"([a-z-]+)\"");
 
         foreach (var pattern in new[] { "*.razor", "*.cs" })

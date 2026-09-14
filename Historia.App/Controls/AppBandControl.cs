@@ -1,4 +1,4 @@
-﻿namespace Historia.Controls;
+namespace Historia.Controls;
 
 /// <summary>
 /// The window's app band (Row 0, §V2-9.3): the branded app-menu button plus the repo tab
@@ -9,7 +9,7 @@
 public sealed class AppBandControl : UserControl, IDisposable
 {
     private const double RowHeight = 31;
-    // V5.5: tab width is a user setting (AppSettings.TabWidthMode). Dynamic (default) sizes each
+    // Tab width is a user setting (AppSettings.TabWidthMode). Dynamic (default) sizes each
     // tab to its label, capping the label at TabNameMaxChars so a long name only stretches the
     // tab so far. Fixed uses AppSettings.FixedTabWidth. TabWidth is the pre-layout fallback for
     // overflow maths / drag reorder and the Dynamic-mode fallback estimate.
@@ -98,7 +98,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         var word = new TextBlock { Text = "Historia", FontWeight = FontWeight.SemiBold, Margin = new Thickness(8, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
         Dyn(word, TextBlock.ForegroundProperty, "ColorText");
 
-        // v8.1: the mark + wordmark are their own click target, separate from the hamburger —
+        // The mark + wordmark are their own click target, separate from the hamburger —
         // clicking them opens the Home right panel directly, without also popping the app menu.
         var brandClick = new StackPanel
         {
@@ -269,7 +269,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         _onSettingsChanged = (_, _) => Dispatcher.UIThread.Post(() =>
         {
             ApplyTabStripMode();
-            RebuildTabs(); // V5.5: tab-width mode / fixed width changes need the tabs rebuilt
+            RebuildTabs(); // Tab-width mode / fixed width changes need the tabs rebuilt
         });
 
         _onAutoFetchStates = (_, _) => Dispatcher.UIThread.Post(RecolorAutoFetchBars);
@@ -455,8 +455,8 @@ public sealed class AppBandControl : UserControl, IDisposable
         };
         Dyn(shell, Border.BorderBrushProperty, "ColorBorder");
 
-        // V5.5: Dynamic (default) → no Width, the tab sizes to its label. Fixed → every tab is
-        // the configured pixel width (pre-V5.5 behaviour). 5 px of breathing room after the last
+        // Dynamic (default) → no Width, the tab sizes to its label. Fixed → every tab is
+        // the configured pixel width. 5 px of breathing room after the last
         // icon; the cluster's own left inset is the StackPanel margin below.
         var fixedMode = TabMode == TabWidthMode.Fixed;
         var body = new Border
@@ -503,8 +503,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         // V5 §1: terminal glyph and close — Path glyphs on identical 18×18 buttons so they match
         // in size and sit on one centre line (the old "✕" was a small font glyph that rendered
         // half-height and off-centre). The close button shows on every tab, not just the
-        // active / hovered one. v8.4: the repo-settings cog moved off the tab onto the graph's
-        // BRANCH / TAGS header.
+        // active / hovered one.
         Button IconButton(string icon, string tip, double glyphSize = 13)
         {
             var glyph = Historia.Views.ViewKit.IconGlyphPath(icon, glyphSize, "ColorTextMuted");
@@ -527,9 +526,8 @@ public sealed class AppBandControl : UserControl, IDisposable
             return b;
         }
 
-        // v8.4: the terminal entry point is a wide "> _" prompt drawn in a rectangle (stretched
-        // to fill, so it reads as a terminal window, not the old square "square-terminal" box)
-        // and vertically centred in the tab row.
+        // The terminal entry point is a wide "> _" prompt drawn in a rectangle (stretched
+        // to fill, so it reads as a terminal window) and vertically centred in the tab row.
         static Button TerminalButton()
         {
             var glyph = new Path
@@ -807,7 +805,7 @@ public sealed class AppBandControl : UserControl, IDisposable
     private bool MultiLine => _settings?.Current.EnableMultiLineTabs ?? false;
     private int MaxRows => Math.Clamp(_settings?.Current.MaxTabRows ?? 3, 2, 5);
 
-    // ── V5.5: tab width ──
+    // ── Tab width ──
 
     private TabWidthMode TabMode => _settings?.Current.TabWidthMode ?? TabWidthMode.Dynamic;
     private double FixedTabWidth =>

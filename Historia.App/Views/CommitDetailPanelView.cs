@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>Selected-commit detail: metadata, changed files, file diff (V4 port of CommitDetailPanel.razor).</summary>
 public sealed class CommitDetailPanelView : UserControl, IDisposable
@@ -559,10 +559,8 @@ public sealed class DiffView : UserControl
             }
             panel.Children.Add(hdrRow);
 
-            // v8.4: every line used to be its own SelectableTextBlock, so a mouse drag could
-            // only select within one line at a time and copy pulled just that line. The gutters
-            // and per-line backgrounds stay one row per line (fixed pixel height, so they line
-            // up with the text below), but the code itself is now a single SelectableTextBlock
+            // The gutters and per-line backgrounds stay one row per line (fixed pixel height, so
+            // they line up with the text below), but the code itself is a single SelectableTextBlock
             // spanning the whole hunk — one continuous selection, and Ctrl+C copies whatever
             // span the user dragged across, deletions included.
             const double lineH = 18;

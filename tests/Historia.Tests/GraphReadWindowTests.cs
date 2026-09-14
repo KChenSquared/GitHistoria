@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §10.1.3 M1.5, finding #7: <c>GraphLayoutService.ReadWindow</c> stitches confirmed-on-disk rows
+/// <c>GraphLayoutService.ReadWindow</c> stitches confirmed-on-disk rows
 /// and the resident pending buffer into one absolute-row-indexed list, and must never splice a
 /// short disk read (a store disposed mid-read by <c>Forget</c>/<c>Hibernate</c>, an
 /// <see cref="IOException"/>, or a concurrent from-row-0 re-spill all return fewer rows than
@@ -165,7 +165,7 @@ public sealed class GraphReadWindowTests : IDisposable
         await using var ctx = host.Open(repo.Path);
 
         // 5 rows already laid out; 15 more confirmed "on disk" behind a store we then dispose —
-        // simulating Forget/Hibernate racing this very extend (finding #7).
+        // simulating Forget/Hibernate racing this very extend.
         using var store = OpenStoreWithRows(rowCount: 20, exhausted: false);
         store.Dispose();
         var cache = NewCache(spilledRows: 20, resident: [], store);

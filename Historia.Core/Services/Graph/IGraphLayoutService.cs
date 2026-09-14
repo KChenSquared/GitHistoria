@@ -15,7 +15,7 @@ public interface IGraphLayoutService
         RepositoryContext context, GraphQuery query, int maxRows = 10_000, CancellationToken ct = default);
 
     /// <summary>
-    /// v8.2: an optimistic first paint from the last on-disk walk cache for this repo, skipping
+    /// An optimistic first paint from the last on-disk walk cache for this repo, skipping
     /// the ref-fingerprint check (and its full <c>repo.Refs.ToList()</c> enumeration) that
     /// <see cref="ComputeLayoutAsync"/> must otherwise pay before returning anything — a plain
     /// file read + JSON deserialize instead. The result may be momentarily stale (a branch
@@ -49,7 +49,7 @@ public interface IGraphLayoutService
     void Forget(RepositoryContext context);
 
     /// <summary>
-    /// v10 graph memory footprint plan, Phase 1: releases everything a tab's graph holds in
+    /// Releases everything a tab's graph holds in
     /// memory when the user switches away from it — cancels its background disk-cache spill,
     /// disposes its live walk (killing the CLI engine's <c>git.exe</c> if one is running), drops
     /// its resident commit list and decorations, and evicts its <c>.gz</c> read-cache entry.
@@ -66,7 +66,7 @@ public interface IGraphLayoutService
     int ClearPersistentCache();
 
     /// <summary>
-    /// v10 graph memory footprint plan, Phase 4: headlessly brings ONE inactive tab's on-disk
+    /// Headlessly brings ONE inactive tab's on-disk
     /// graph cache up to date — no live layout, no lasting entry in this service's own cache
     /// table, holding at most one walk batch resident at a time. A no-op if disk-backed metadata
     /// is off, this query shape isn't supported by it, or the store already matches the repo's
@@ -79,7 +79,7 @@ public interface IGraphLayoutService
     Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct);
 
     /// <summary>
-    /// Phase 4: queues <paramref name="context"/> for the headless pipeline
+    /// Queues <paramref name="context"/> for the headless pipeline
     /// (<see cref="RunHeadlessCacheAsync"/>) on this service's own background-job queue, so it
     /// runs one at a time with — and serialized against — every other inactive tab and the active
     /// tab's own commit-graph write. A no-op if this service has no background writer configured
@@ -89,7 +89,7 @@ public interface IGraphLayoutService
     void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query);
 
     /// <summary>
-    /// 2026-09-12 memoryshrink review, finding #1: cancels <paramref name="context"/>'s
+    /// Cancels <paramref name="context"/>'s
     /// inactive-tab headless job — queued or already running — and returns a task that completes
     /// once it has actually exited. Called when a tab gains focus, before its own foreground
     /// spill can start writing, so the headless pipeline and the newly focused tab's spill never
@@ -99,7 +99,7 @@ public interface IGraphLayoutService
     Task CancelInactiveTabCachingAsync(RepositoryContext context);
 
     /// <summary>
-    /// Phase 4 (2026-09-12 memoryshrink review, finding #17): fire-and-forget refresh of
+    /// Fire-and-forget refresh of
     /// <paramref name="context"/>'s commit-graph after a successful auto-fetch, through
     /// <c>GraphBackgroundWriter</c>'s serial/gated/below-normal-priority/never-killed write path.
     /// A no-op if this service has no background writer configured (a test-only ctor) or the

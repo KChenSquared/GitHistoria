@@ -255,10 +255,7 @@ public class SettingsNumericCommitTests
         });
 
         // A spin-button click sets Value directly (no Text/Enter/LostFocus involved) — this
-        // must NOT, on its own, schedule a commit or pop the confirmation dialog. Regression
-        // guard for the bug where a ValueChanged-driven debounce timer auto-committed (and
-        // opened the destructive-confirm dialog) a few hundred ms after any value change,
-        // including ones made mid-typing with no explicit commit gesture from the user.
+        // must not, on its own, schedule a commit or pop the confirmation dialog.
         nud.Value = 2_100_000;
         nud.Text = "2100000";
         await Task.Delay(300);
@@ -281,8 +278,8 @@ public class SettingsNumericCommitTests
         var commits = new List<int>();
         SettingsView.WireNumericCommit(nud, 10, v => v, commits.Add);
 
-        // Regression guard: a bare Value change (e.g. a spin-button click, or Value syncing
-        // live from typed Text) must not auto-commit on its own — only Enter/LostFocus should.
+        // A bare Value change (e.g. a spin-button click, or Value syncing live from typed Text)
+        // must not auto-commit on its own — only Enter/LostFocus should.
         nud.Value = 20;
         nud.Text = "20";
         Assert.Empty(commits);

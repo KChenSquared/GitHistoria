@@ -2,7 +2,7 @@ using System.Reflection;
 
 namespace Historia.Tests;
 
-/// <summary>v10 graph memory footprint plan, Phase 1b: <see cref="IGraphLayoutService.Hibernate"/>
+/// <summary><see cref="IGraphLayoutService.Hibernate"/>
 /// releases everything a tab's graph holds in memory on switch-away, but leaves any on-disk cache
 /// in place so a re-focus is a normal, faster-than-cold reopen.</summary>
 public sealed class GraphLayoutServiceHibernateTests : IAsyncDisposable

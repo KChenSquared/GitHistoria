@@ -1,9 +1,9 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// Phase 4 of the v10 graph memory footprint plan: <see cref="IGraphLayoutService.RunHeadlessCacheAsync"/>
+/// <see cref="IGraphLayoutService.RunHeadlessCacheAsync"/>
 /// brings an INACTIVE tab's on-disk graph cache up to date with no live layout and no lasting
-/// entry in the service's own cache table. This also exercises Phase 3c's live reorder trigger —
+/// entry in the service's own cache table. This also exercises the live reorder trigger —
 /// the headless pipeline is where it was deferred to, since there's no concurrent foreground
 /// reader to protect mid-reorder here.
 /// </summary>
@@ -120,7 +120,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
         Assert.True(grew > 0 && grew < (beforeLength / 2), $"expected a small append (~2 new records), grew by {grew} bytes from {beforeLength}");
     }
 
-    // ── M3.1, finding #5: the reorder streams in batches, never holding the whole new walk resident ──
+    // ── The reorder streams in batches, never holding the whole new walk resident ──
 
     [Fact]
     public async Task A_headless_reorder_never_holds_more_than_one_batch_of_the_new_walk_resident()
@@ -161,7 +161,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
         Assert.Equal(CommitCount + 12, doc.RootElement.GetProperty("RowCount").GetInt32());
     }
 
-    // ── M3.1, finding #6: order-file cleanup and dead-record compaction ──
+    // ── Order-file cleanup and dead-record compaction ──
 
     [Fact]
     public async Task A_second_reorder_deletes_the_first_reorders_order_file()
@@ -290,7 +290,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
         Assert.False(File.Exists(GraphCachePaths.File(_repo.Path, GraphMetaStore.HdrExt)));
     }
 
-    // ── Phase 5 (M5.1, finding #16): guard-4 baseline + tips on spool exhaustion ──
+    // ── Guard-4 baseline + tips on spool exhaustion ──
 
     [Fact]
     public async Task A_spool_reaching_exhaustion_writes_meta_tips_even_when_never_reordered()
@@ -318,7 +318,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
         Assert.True(doc.RootElement.GetProperty("LastFullWalkMs").GetInt64() > 0);
     }
 
-    // ── Phase 5 (M5.1): the guarded splice's live trigger ──
+    // ── The guarded splice's live trigger ──
 
     [Fact]
     public async Task Splice_setting_off_still_takes_the_ordinary_reorder_path()

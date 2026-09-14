@@ -187,7 +187,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         Assert.Equal(1, delay.CountOf(AutoFetchService.InitialIdle)); // still the same cycle
     }
 
-    // ── Phase 4 (finding #17): commit-graph refresh after a successful fetch ──
+    // ── Commit-graph refresh after a successful fetch ──
 
     [Fact(Timeout = 60000)]
     public async Task A_successful_fetch_triggers_exactly_one_commit_graph_refresh_for_that_repo()
@@ -390,7 +390,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
 
         public TaskCompletionSource? LoadGate { get; init; }
 
-        /// <summary>Phase 4: when set, every <see cref="FetchAsync"/> call throws instead of
+        /// <summary>When set, every <see cref="FetchAsync"/> call throws instead of
         /// succeeding — used to prove a failed fetch triggers no commit-graph refresh.</summary>
         public bool Fail { get; set; }
 
@@ -414,7 +414,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         }
     }
 
-    /// <summary>Phase 4 (finding #17): records every context <see cref="RefreshCommitGraphAfterFetch"/>
+    /// <summary>Records every context <see cref="RefreshCommitGraphAfterFetch"/>
     /// was called with — the rest of <see cref="IGraphLayoutService"/> is unused by
     /// <see cref="AutoFetchService"/> and throws if ever called.</summary>
     private sealed class RecordingGraphLayoutService : IGraphLayoutService

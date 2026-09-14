@@ -1,8 +1,8 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <summary>
 /// Detect / parse / resolve / continue / abort for any conflicted operation (§8.4.4). Every
-/// Phase 3 multi-step operation (merge, rebase, cherry-pick, revert) funnels here, which is
+/// multi-step operation (merge, rebase, cherry-pick, revert) funnels here, which is
 /// why it is built first (§8.9.1). Registered as a singleton.
 /// </summary>
 public interface IConflictService

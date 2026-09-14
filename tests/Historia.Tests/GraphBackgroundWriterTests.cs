@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// Phase 4 of the v10 graph memory footprint plan: <see cref="GraphBackgroundWriter"/> is the one
+/// <see cref="GraphBackgroundWriter"/> is the one
 /// app-wide serial queue for commit-graph writes and the inactive-tab headless pipeline. These
 /// tests use <see cref="RecordingGitCliService"/> so no real <c>git.exe</c> invocation is needed
 /// — only that the RIGHT arguments would have been sent, in the right order, without ever
@@ -112,7 +112,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task EnqueueInactiveTab_runs_jobs_one_at_a_time_in_enqueue_order()
     {
         var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
-        // Two distinct contexts — EnqueueInactiveTab now de-dupes by context (finding #11), so
+        // Two distinct contexts — EnqueueInactiveTab now de-dupes by context, so
         // this ordering test (which predates that fix) must not enqueue the same context twice.
         await using var ctx1 = _host.Open(_repo.Path);
         await using var ctx2 = _host.Open(_repo.Path);
@@ -151,7 +151,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task EnqueueInactiveTab_one_jobs_failure_does_not_stall_the_rest()
     {
         var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
-        // Two distinct contexts — see the ordering test above for why (finding #11's de-dupe).
+        // Two distinct contexts — see the ordering test above for why.
         await using var ctx1 = _host.Open(_repo.Path);
         await using var ctx2 = _host.Open(_repo.Path);
 
@@ -295,7 +295,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
         Assert.Single(cli.Requests);
     }
 
-    // ── Phase 4 (finding #17): RefreshAfterFetch ──
+    // ── RefreshAfterFetch ──
 
     [Fact]
     public async Task RefreshAfterFetch_with_an_existing_graph_writes_split_with_an_expire_time()

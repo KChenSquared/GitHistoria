@@ -1,7 +1,7 @@
 namespace Historia.Services.Graph;
 
 /// <summary>
-/// Phase 6 (v10 graph memory footprint plan, optional): builds a new row order from
+/// Builds a new row order from
 /// "added commits on top, then the old order minus removed commits" — without a full re-walk —
 /// when the guards below say it's safe and worth it. An existing commit's parents are fixed when
 /// it is created, so no existing commit can ever have a NEW commit as a parent; that is what makes
@@ -47,27 +47,21 @@ internal static class GraphMetaSplice
     /// valid order to splice from.</param>
     /// <param name="oldTipsMatch"><c>.meta.tips</c> equals the tip set the old order was built
     /// from (guard 1 continued — the caller resolves this by comparing sorted SHA lists).</param>
-    /// <param name="repoIsShallow">Guard 2 (simplified from the plan's exact recipe — see the
-    /// plan doc's Phase 6 status note): the app doesn't currently persist a snapshot of
-    /// <c>.git/shallow</c>/<c>info/grafts</c> at splice time to compare against, so this only
-    /// checks the CURRENT shallow state, not "unchanged since the order was built".</param>
+    /// <param name="repoIsShallow">Guard 2: checks the CURRENT shallow state.</param>
     /// <param name="oldRowCount">Guard 3: the OLD order's row count.</param>
     /// <param name="addedQueryElapsed">Wall time of the "added" delta query.</param>
     /// <param name="removedQueryElapsed">Wall time of the "removed" delta query.</param>
     /// <param name="lastFullWalkElapsed">Guard 4: how long a full walk of this repo last took —
-    /// supplied by the caller (Phase 5 (M5.1): read from the header's <c>LastFullWalkMs</c>,
-    /// recorded whenever a walk from row 0 reaches exhaustion). <c>&lt;= TimeSpan.Zero</c> (never
-    /// recorded, e.g. a store from before this field existed, or a repo whose disk cache was
-    /// wiped) FAILS CLOSED — finding #16 flagged the opposite (skipping the check entirely) as a
-    /// bug: an unknown baseline must never be treated as "no budget", since that would let an
-    /// arbitrarily slow delta query through unchecked.</param>
+    /// read from the header's <c>LastFullWalkMs</c> (recorded whenever a walk from row 0 reaches
+    /// exhaustion). <c>&lt;= TimeSpan.Zero</c> (never recorded, e.g. a repo whose disk cache was
+    /// wiped) FAILS CLOSED: an unknown baseline must never be treated as "no budget", since that
+    /// would let an arbitrarily slow delta query through unchecked.</param>
     /// <param name="addedCommits">The new commits, in the new walk's topo order (nearest tips
     /// first).</param>
     /// <param name="existingRecordRow">SHA → the OLD order's row for every commit already
     /// recorded (the inverse of the old order, restricted to SHAs actually referenced by it).</param>
     /// <param name="minRowsToConsider">Guard 3's threshold — defaults to <see cref="MinRowsToConsider"/>.
-    /// Overridable (Phase 5 (M5.1) step 6) so an automated fixture test can drive the wiring at a
-    /// small scale a real 200,000-row history would make impractical to build in a test.</param>
+    /// Overridable so an automated fixture test can drive the wiring at a smaller scale.</param>
     /// <param name="maxOldParentRow">Guard 5's threshold — defaults to <see cref="MaxOldParentRow"/>,
     /// overridable for the same reason.</param>
     internal static GuardResult Evaluate(

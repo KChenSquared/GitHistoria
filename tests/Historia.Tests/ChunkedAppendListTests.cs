@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// Finding #9 (2026-09-12 memoryshrink review): <see cref="ChunkedAppendList{T}"/> backs
+/// <see cref="ChunkedAppendList{T}"/> backs
 /// <c>GraphLayoutState.Rows</c> so <c>DagLayoutEngine.Build</c> never has to copy the whole
 /// accumulator into a fresh array on every Build/Extend call. These tests exercise it directly —
 /// correctness across a chunk boundary, and the concurrent single-writer/many-reader contract its

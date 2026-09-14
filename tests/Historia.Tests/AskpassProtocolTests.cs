@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-// Regression tests for security review 2026-09-07, finding 2: the askpass helper must refuse to
+// The askpass helper must refuse to
 // answer a prompt naming any host other than the one credentials were resolved for.
 public class AskpassProtocolTests
 {

@@ -16,7 +16,7 @@ public sealed class ManualFactAttribute : FactAttribute
 }
 
 /// <summary>
-/// Phase 5 (M5.1, finding #16): <see cref="GraphMetaSplice"/>'s guarded live trigger
+/// <see cref="GraphMetaSplice"/>'s guarded live trigger
 /// (<c>GraphLayoutService.TryHeadlessSpliceAsync</c>) can only be exercised at the scale its own
 /// guards care about — a real 200,000+ row history, a real fetch that moves a real branch, real
 /// pack/disk timings for guard 4's budget, and a real shallow clone for guard 2 — none of which a

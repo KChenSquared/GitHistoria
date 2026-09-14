@@ -1,7 +1,7 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>
-/// Lightweight commit row for the history list (§6.11) and, in Phase 2, the graph. Projected
+/// Lightweight commit row for the history list (§6.11) and the graph. Projected
 /// from LibGit2Sharp inside the repository gate (§6.3.1) — no live Git object is retained.
 /// </summary>
 public sealed record CommitSummary

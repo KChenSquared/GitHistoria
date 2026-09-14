@@ -1,7 +1,7 @@
 namespace Historia.Services.Graph;
 
 /// <summary>
-/// Finding #9 (2026-09-12 memoryshrink review): an append-only list backed by fixed-size chunks
+/// An append-only list backed by fixed-size chunks
 /// (16,384 elements each) instead of one contiguous, doubling array. A chunk, once allocated, is
 /// never resized or moved — at 16,384 elements a <c>GraphRow</c> chunk is a few hundred KB,
 /// comfortably off the large object heap, and growing the list never needs the huge copy
