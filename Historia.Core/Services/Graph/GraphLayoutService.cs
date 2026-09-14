@@ -80,18 +80,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// it resident. Read once — the setting takes effect on the next launch.</summary>
     private readonly bool _metaFromDisk;
 
-    /// <summary>Configurable resident-row hardcap (AppSettings.ResidentRowCap), used
-    /// as the disk-mode ceiling in place of the hardcoded default. Read once — the setting
-    /// takes effect on the next launch.</summary>
-    private readonly int _residentRowCap = GraphLimits.MaxResidentRowsDisk;
-
     public GraphLayoutService() { }
     public GraphLayoutService(ISettingsService settings)
     {
         _settings = settings;
         // Disk-backed metadata pages from the graph cache folder.
         _metaFromDisk = settings.Current.GraphMetadataFromDisk;
-        _residentRowCap = settings.Current.ResidentRowCap;
     }
 
     /// <summary>DI ctor (§3 linux cold-prime plan): with a working <see cref="IGitExecutableLocator"/>
@@ -655,16 +649,15 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private void MaybeStartBackgroundSpill(RepositoryContext context, RepoCache cache, GraphQuery query)
     {
         var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
-        var cap = GraphLimits.GetMaxResidentRows(_metaFromDisk, _residentRowCap);
 
         lock (cache.SpillSync)
         {
             // Note: cache.Exhausted (the walk finished) is NOT a reason to skip — that is exactly
             // when the remaining rows are already walked and just need spilling.
             if (!SpillEnabled(query) || cache.Fingerprint == 0 || cache.BackgroundSpillRunning
-                || cache.MetaComplete || cache.SpilledRows >= cap)
+                || cache.MetaComplete)
                 return;
-            var have = Math.Min(TotalWalked(cache), cap);
+            var have = TotalWalked(cache);
             if (cache.SpilledRows >= have && cache.Exhausted)
                 return; // everything walked so far is already on disk and there is no more
             cache.BackgroundSpillRunning = true;
@@ -700,13 +693,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // 300k rows) before the disk writer ever ran; interleaving keeps the resident
                 // pending buffer bounded to roughly one batch at a time, which is the whole point
                 // of the streaming spool.
-                var ceiling = cap + WalkOverscan;
                 var lastPreloadMemoryMark = 0;
                 var lastDiskWriterMemoryMark = 0;
                 while (true)
                 {
                     int walkTarget;
-                    lock (cache) walkTarget = Math.Min(cache.SpilledRows + cache.Commits.Count + SpillWalkChunkRows, ceiling);
+                    lock (cache) walkTarget = cache.SpilledRows + cache.Commits.Count + SpillWalkChunkRows;
                     await EnsureWalkedAsync(context, query, cache, walkTarget, ct, background: true, lowestPriority: true)
                         .ConfigureAwait(false);
 
@@ -719,7 +711,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     // already fired.
                     int walkedSoFar;
                     bool walkDone;
-                    lock (cache) { walkedSoFar = TotalWalked(cache); walkDone = cache.Exhausted || walkedSoFar >= cap; }
+                    lock (cache) { walkedSoFar = TotalWalked(cache); walkDone = cache.Exhausted; }
                     if (walkedSoFar / 50_000 != lastPreloadMemoryMark / 50_000)
                         Diagnostics.PerfLog.Memory($"silent pre-load {walkedSoFar} rows ({context.DisplayName})");
                     lastPreloadMemoryMark = walkedSoFar;
@@ -739,7 +731,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                         bool doneSpilling;
                         lock (cache.SpillSync)
                         {
-                            var total = Math.Min(TotalWalked(cache), cap);
+                            var total = TotalWalked(cache);
                             from = cache.SpilledRows;
                             to = Math.Min(total, from + batchRows);
                             doneSpilling = to >= total;
@@ -772,8 +764,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 cache.BackgroundSpillRunning = false;
                 // On exhaustion PumpCommits already disposed the walk on the gate; on an
                 // external cancel Forget/reset already DropLiveWalk'd it. This is just a
-                // belt-and-braces no-op for those paths — a walk that only reached the resident
-                // ceiling stays primed for later foreground Extends and is freed at tab close.
+                // belt-and-braces no-op for those paths.
                 if (ct.IsCancellationRequested || cache.Exhausted || cache.MetaComplete)
                     cache.DisposeLiveWalk();
 
