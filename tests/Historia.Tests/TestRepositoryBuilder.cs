@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>
 /// Generates fixture repositories programmatically with the real <c>git</c> CLI (§16.1). Each
@@ -38,6 +38,20 @@ public sealed class TestRepositoryBuilder : IDisposable
         return Git("rev-parse", "HEAD").Trim();
     }
 
+    public string CommitAt(string message, DateTimeOffset when) =>
+        CommitAt(message, when, when);
+
+    public string CommitAt(string message, DateTimeOffset authorWhen, DateTimeOffset commitWhen)
+    {
+        var env = new Dictionary<string, string>
+        {
+            ["GIT_AUTHOR_DATE"] = authorWhen.ToString("O"),
+            ["GIT_COMMITTER_DATE"] = commitWhen.ToString("O"),
+        };
+        Git(env, "commit", "-m", message, "--no-gpg-sign");
+        return Git("rev-parse", "HEAD").Trim();
+    }
+
     public TestRepositoryBuilder Checkout(string branch, bool create = false)
     {
         if (create) Git("checkout", "-b", branch);
@@ -45,7 +59,9 @@ public sealed class TestRepositoryBuilder : IDisposable
         return this;
     }
 
-    public string Git(params string[] args)
+    public string Git(params string[] args) => Git(extraEnvironment: null, args);
+
+    public string Git(IReadOnlyDictionary<string, string>? extraEnvironment, params string[] args)
     {
         var psi = new ProcessStartInfo("git")
         {
@@ -57,6 +73,11 @@ public sealed class TestRepositoryBuilder : IDisposable
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
         psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        if (extraEnvironment is not null)
+        {
+            foreach (var (k, v) in extraEnvironment)
+                psi.Environment[k] = v;
+        }
 
         using var p = Process.Start(psi)!;
         var stdout = p.StandardOutput.ReadToEnd();

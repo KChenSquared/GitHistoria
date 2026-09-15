@@ -74,7 +74,8 @@ internal sealed class GraphMetaStore
     // 3: WalkEngine in header — CLI streaming and libgit2 can order rows differently.
     // 4: Keyed on canonical sorted tip order in lockstep with GraphWalkCache.Version.
     // 5: Added RecordCount and OrderVersion to the header for order indirection.
-    internal const int Version = 5;
+    // 6: rows in commit-date order (`git log --date-order`); v5 stores were topo-ordered.
+    internal const int Version = 6;
     internal const string HdrExt = ".meta.hdr";
     internal const string DatExt = ".meta.dat";
     internal const string IdxExt = ".meta.idx";

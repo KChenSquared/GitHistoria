@@ -1,7 +1,7 @@
 namespace Historia.Services.Git;
 
 /// <summary>
-/// Pull-based <see cref="IEnumerator{T}"/> over a live <c>git log --topo-order</c> process — the
+/// Pull-based <see cref="IEnumerator{T}"/> over a live <c>git log --date-order</c> process — the
 /// primary graph-walk engine (libgit2's revwalk is the fallback, see
 /// <c>Historia.Services.Graph.GraphLayoutService</c>). Git's own in-degree topological sort
 /// expands lazily by generation number (using a commit-graph file when present) instead of
@@ -48,7 +48,7 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
     }
 
     /// <summary>
-    /// Starts <c>git log --topo-order -z --stdin --format=...</c> over <paramref name="tipShas"/>.
+    /// Starts <c>git log --date-order -z --stdin --format=...</c> over <paramref name="tipShas"/>.
     /// Returns null (spawning nothing further) when git isn't available or there are no tips —
     /// the caller falls back to the libgit2 walk in that case.
     /// </summary>
@@ -72,7 +72,7 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
         foreach (var arg in GitCliProcessSetup.DeterministicPrefix)
             psi.ArgumentList.Add(arg);
         psi.ArgumentList.Add("log");
-        psi.ArgumentList.Add("--topo-order");
+        psi.ArgumentList.Add("--date-order");
         psi.ArgumentList.Add("-z");
         psi.ArgumentList.Add("--no-mailmap");
         psi.ArgumentList.Add("--no-show-signature");

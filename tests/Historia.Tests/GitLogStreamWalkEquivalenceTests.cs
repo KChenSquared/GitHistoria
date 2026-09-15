@@ -1,11 +1,9 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §3 linux cold-prime plan, Verification item 1: the CLI streaming walk
-/// (<see cref="GitLogStream"/>, via <see cref="GraphLayoutService"/>'s 2-arg DI ctor) and the
-/// libgit2 fallback walk (the 1-arg ctor) must agree on the reachable commit set and on
-/// topological order for the same ref set — branches, a merge, a tag, and an unrelated second
-/// root, mirroring linux's own mix of tags + multiple lines of history. Skipped when git.exe
+/// The CLI streaming walk (<see cref="GitLogStream"/>, via <see cref="GraphLayoutService"/>'s 2-arg DI ctor)
+/// and the libgit2 fallback walk (the 1-arg ctor) agree on the reachable commit set and on row order
+/// (in commit-date order) for the same ref set when timestamps are distinct. Skipped when git.exe
 /// isn't discoverable by <see cref="IGitExecutableLocator"/> (the CLI engine never engages).
 /// </summary>
 public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
@@ -170,5 +168,40 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
         // The doomed-branch commit must actually be present — the annotated tag is its only
         // remaining path now that the branch itself is deleted.
         Assert.Contains(new ObjectId(doomedSha), cliIds);
+    }
+
+    [Fact]
+    public async Task Cli_and_libgit2_walks_agree_on_row_order_when_timestamps_are_distinct()
+    {
+        var locator = _host.Provider.GetRequiredService<IGitExecutableLocator>();
+        if (!locator.Current.Found)
+            return;
+
+        using var repo = TestRepositoryBuilder.Create();
+        var t0 = DateTimeOffset.Parse("2026-09-15T12:00:00Z");
+
+        repo.WriteFile("a.txt", "a").Stage().CommitAt("A", t0.AddMinutes(1));
+        repo.WriteFile("m1.txt", "m1").Stage().CommitAt("M1", t0.AddMinutes(2));
+
+        repo.Checkout("feature", create: true);
+        repo.WriteFile("f1.txt", "f1").Stage().CommitAt("F1", t0.AddMinutes(3));
+        repo.WriteFile("f2.txt", "f2").Stage().CommitAt("F2", t0.AddMinutes(5));
+
+        repo.Checkout("main");
+        repo.WriteFile("m2.txt", "m2").Stage().CommitAt("M2", t0.AddMinutes(4));
+        repo.WriteFile("m3.txt", "m3").Stage().CommitAt("M3", t0.AddMinutes(6));
+
+        await using var ctxCli = _host.Open(repo.Path);
+        ctxCli.MarkFirstGraphPaintDone(); ctxCli.MarkFirstFullLoadDone();
+        var cliResult = await new GraphLayoutService(_host.Settings, locator).ComputeLayoutAsync(ctxCli, Q, maxRows: 1000);
+
+        await using var ctxLibgit2 = _host.Open(repo.Path);
+        ctxLibgit2.MarkFirstGraphPaintDone(); ctxLibgit2.MarkFirstFullLoadDone();
+        var libgit2Result = await new GraphLayoutService(_host.Settings).ComputeLayoutAsync(ctxLibgit2, Q, maxRows: 1000);
+
+        var cliRows = RowIds(cliResult);
+        var libgit2Rows = RowIds(libgit2Result);
+
+        Assert.Equal(libgit2Rows, cliRows);
     }
 }

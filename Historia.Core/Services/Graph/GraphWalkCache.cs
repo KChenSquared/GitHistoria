@@ -1,10 +1,10 @@
 namespace Historia.Services.Graph;
 
 /// <summary>Which engine produced a persisted walk / metadata store: the CLI streaming
-/// <c>git log --topo-order</c> walk (primary, v10.1.3+) or the libgit2 revwalk (fallback). The two
-/// engines can disagree on row order for the same ref set, so a cache written by one must never be
-/// resumed (<c>skip: have</c>) by the other — see <see cref="GraphWalkCache"/> and
-/// <see cref="GraphMetaStore"/>.</summary>
+/// <c>git log --date-order</c> walk (primary, v10.1.3+) or the libgit2 revwalk (fallback). Both
+/// engines now produce date order and can differ only on equal-timestamp ties, so a cache written
+/// by one must never be resumed (<c>skip: have</c>) by the other — see <see cref="GraphWalkCache"/>
+/// and <see cref="GraphMetaStore"/>.</summary>
 internal enum WalkEngine
 {
     LibGit2 = 0,
@@ -22,7 +22,8 @@ internal sealed class GraphWalkCache
     // A file written by one walk engine must never be treated as resumable by the other,
     // since their row orders can differ for the same ref set. The CLI prime's resume skip
     // and the canonical (sorted) tip order both define the cache format compatibility.
-    private const int Version = 4;
+    // v5: rows in commit-date order; v4 files were --topo-order and must never be shown or resumed.
+    private const int Version = 5;
     private const int MaxFiles = 40;
 
     private static readonly JsonSerializerOptions Json = new() { IncludeFields = false };
