@@ -871,19 +871,24 @@ public sealed class GraphLayoutService : IGraphLayoutService
             _backgroundWriter?.MaybeSchedule(context, knownRows);
 
         // A store whose dead records (superseded by earlier reorders, never
-        // referenced by the current order) have grown past 25% of its live row count is
-        // compacted by a from-row-0 re-spill instead of yet another reorder — RunHeadlessSpoolAsync
-        // resets the store to identity order (RecordCount == RowCount) under the new key, which
-        // RunHeadlessReorderAsync's incremental append-only shape can never do on its own.
+        // referenced by the current order) have grown past 25% of its live row count, or whose
+        // unreachable dead prefix is >= 25% of .meta.dat, is compacted by a from-row-0 re-spill
+        // instead of yet another reorder — RunHeadlessSpoolAsync resets the store to identity order
+        // (RecordCount == RowCount) under the new key, which RunHeadlessReorderAsync's incremental
+        // append-only shape can never do on its own (R8).
         var deadRecordsTooHigh = probe.Existing is { Ok: true } existing
             && (long)existing.RecordCount * 3 > (long)existing.RowCount * 4;
+        var prefix = GraphMetaStore.ProbeDeadPrefix(repoPath);
+        var deadPrefixTooHigh = prefix.DatLength > 0 && prefix.DeadBytes * 4 >= prefix.DatLength;
+        if (deadPrefixTooHigh)
+            Diagnostics.PerfLog.Mark($"graph cache compaction: dead prefix {prefix.DeadBytes / 1_000_000.0:0.0}MB of {prefix.DatLength / 1_000_000.0:0.0}MB ({repoPath})");
 
-        // Step 3 — headless spool (store missing, partial at the CURRENT key, or over the dead-
-        // record threshold above) or reorder (an exhausted store exists at a DIFFERENT
+        // Step 3 — headless spool (store missing, partial at the CURRENT key, or over either
+        // compaction threshold above) or reorder (an exhausted store exists at a DIFFERENT
         // key — a fetch, a new branch — and isn't due for compaction). Reordering needs no
         // concurrent foreground reader to protect, which is exactly why this headless pipeline —
         // not the active tab's gate/spill loop — is where the live reorder trigger lands.
-        if (!probe.Current.Ok && probe.Existing is { Ok: true, Exhausted: true } && !deadRecordsTooHigh)
+        if (!probe.Current.Ok && probe.Existing is { Ok: true, Exhausted: true } && !deadRecordsTooHigh && !deadPrefixTooHigh)
         {
             // Try the guarded splice first when the setting is on —
             // it falls back to false on ANY guard rejection or query/write failure, in which case

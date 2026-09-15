@@ -464,4 +464,120 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
             GraphLayoutService.TestSpliceCommitted = null;
         }
     }
+
+    // ── Dead-prefix reclamation (R8) ──
+
+    private static void InjectDeadPrefix(string repoPath, int k)
+    {
+        var datPath = GraphCachePaths.File(repoPath, GraphMetaStore.DatExt);
+        var idxPath = GraphCachePaths.File(repoPath, GraphMetaStore.IdxExt);
+
+        var originalDat = File.ReadAllBytes(datPath);
+        var junk = new byte[k];
+        new Random(42).NextBytes(junk);
+        var newDat = new byte[k + originalDat.Length];
+        Buffer.BlockCopy(junk, 0, newDat, 0, k);
+        Buffer.BlockCopy(originalDat, 0, newDat, k, originalDat.Length);
+        File.WriteAllBytes(datPath, newDat);
+
+        var idxBytes = File.ReadAllBytes(idxPath);
+        for (var i = 0; i < idxBytes.Length; i += 8)
+        {
+            var offset = BitConverter.ToInt64(idxBytes, i);
+            BitConverter.TryWriteBytes(idxBytes.AsSpan(i, 8), offset + k);
+        }
+        File.WriteAllBytes(idxPath, idxBytes);
+    }
+
+    [Fact]
+    public async Task A_moved_store_with_a_large_dead_prefix_is_respooled_instead_of_reordered()
+    {
+        var svc = await DiskBackedServiceAsync();
+        await using (var ctx = _host.Open(_repo.Path))
+            await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None);
+
+        var datPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.DatExt);
+        var originalDatLen = (int)new FileInfo(datPath).Length;
+        var k = originalDatLen / 2; // 50% prefix, >= 25% threshold
+        InjectDeadPrefix(_repo.Path, k);
+
+        // Commit one more change so the walk key moves
+        _repo.Checkout("main");
+        _repo.WriteFile("f.txt", "new commit\n").Stage().Commit("moved walk key");
+
+        var reorderObserved = false;
+        GraphLayoutService.TestReorderBatchObserved = _ => reorderObserved = true;
+        try
+        {
+            await using var ctx2 = _host.Open(_repo.Path);
+            await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None);
+        }
+        finally
+        {
+            GraphLayoutService.TestReorderBatchObserved = null;
+        }
+
+        Assert.False(reorderObserved, "a store with a large dead prefix must be respooled, not reordered");
+        var prefix = GraphMetaStore.ProbeDeadPrefix(_repo.Path);
+        Assert.Equal(0, prefix.DeadBytes);
+
+        var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+        Assert.True(probe.Ok);
+        Assert.True(probe.Exhausted);
+        Assert.Equal(CommitCount + 1, probe.RowCount);
+        Assert.Equal(CommitCount + 1, probe.RecordCount);
+    }
+
+    [Fact]
+    public async Task A_moved_store_with_a_small_dead_prefix_still_reorders()
+    {
+        var svc = await DiskBackedServiceAsync();
+        await using (var ctx = _host.Open(_repo.Path))
+            await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None);
+
+        var datPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.DatExt);
+        var originalDatLen = (int)new FileInfo(datPath).Length;
+        var k = originalDatLen / 10; // ~9% dead prefix (< 25%)
+        InjectDeadPrefix(_repo.Path, k);
+
+        _repo.Checkout("main");
+        _repo.WriteFile("f.txt", "new commit\n").Stage().Commit("moved walk key");
+
+        var reorderObserved = false;
+        GraphLayoutService.TestReorderBatchObserved = _ => reorderObserved = true;
+        try
+        {
+            await using var ctx2 = _host.Open(_repo.Path);
+            await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None);
+        }
+        finally
+        {
+            GraphLayoutService.TestReorderBatchObserved = null;
+        }
+
+        Assert.True(reorderObserved, "a store with a small dead prefix should still reorder");
+        var prefix = GraphMetaStore.ProbeDeadPrefix(_repo.Path);
+        Assert.Equal(k, prefix.DeadBytes);
+    }
+
+    [Fact]
+    public async Task A_current_store_with_a_dead_prefix_is_left_alone()
+    {
+        var svc = await DiskBackedServiceAsync();
+        await using (var ctx = _host.Open(_repo.Path))
+            await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None);
+
+        var datPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.DatExt);
+        var originalDatLen = (int)new FileInfo(datPath).Length;
+        var k = originalDatLen / 2;
+        InjectDeadPrefix(_repo.Path, k);
+
+        var datBytesBefore = await File.ReadAllBytesAsync(datPath);
+
+        await using (var ctx2 = _host.Open(_repo.Path))
+            await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None);
+
+        var datBytesAfter = await File.ReadAllBytesAsync(datPath);
+        Assert.Equal(datBytesBefore, datBytesAfter);
+    }
 }
