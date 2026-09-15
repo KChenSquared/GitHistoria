@@ -30,6 +30,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
     private readonly ITerminalSessionService _terminals;
     private readonly IProfileService _profiles;
     private readonly IRepoIdentityService _identity;
+    private readonly IGraphLayoutService _graph;
 
     private bool _busy;
     private CancellationTokenSource? _cts;
@@ -44,7 +45,8 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         IStashService stashes,
         ITerminalSessionService terminals,
         IProfileService profiles,
-        IRepoIdentityService identity)
+        IRepoIdentityService identity,
+        IGraphLayoutService graph)
     {
         _workspace = workspace;
         _notifications = notifications;
@@ -53,6 +55,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         _terminals = terminals;
         _profiles = profiles;
         _identity = identity;
+        _graph = graph;
 
         actionBus.NetworkActionRequested += (_, action) => _ = RunAsync(action);
     }
@@ -75,6 +78,17 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         }
     }
 
+    private void RefreshCommitGraphAfterFetch(RepositoryContext repo, RepoNetworkAction op)
+    {
+        // A manual Fetch/Pull refreshes only the active tab's commit-graph (§12.1 / R3); its refs
+        // cache and graph store already refresh through RefreshAllAsync -> RefsChanged.
+        // Other tabs are never queued here.
+        try { _graph.RefreshCommitGraphAfterFetch(repo); }
+        catch { /* best effort */ }
+
+        Historia.Diagnostics.PerfLog.Mark($"manual {op}: commit-graph refresh requested ({repo.DisplayName})");
+    }
+
     private async Task ExecOpAsync(RepositoryContext repo, RepoNetworkAction op, string remote, string? branch,
         IProgress<GitProgress> progress, CancellationToken ct)
     {
@@ -82,10 +96,12 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         {
             case RepoNetworkAction.Fetch:
                 await repo.Gateway.FetchAsync(remote, new GitFetchOptions { Prune = true }, progress, ct);
+                RefreshCommitGraphAfterFetch(repo, op);
                 _notifications.Publish(NotificationSeverity.Success, $"Fetched {remote}.");
                 break;
             case RepoNetworkAction.Pull when branch is not null:
                 await repo.Gateway.PullAsync(remote, branch, new GitPullOptions(), progress, ct);
+                RefreshCommitGraphAfterFetch(repo, op);
                 _notifications.Publish(NotificationSeverity.Success, $"Pulled {remote}/{branch}.");
                 break;
             case RepoNetworkAction.Push when branch is not null:
