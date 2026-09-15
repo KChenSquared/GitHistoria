@@ -3,13 +3,13 @@ namespace Historia.Services.Graph;
 /// <summary>
 /// Builds a new row order from
 /// "added commits on top, then the old order minus removed commits" — without a full re-walk —
-/// when the guards below say it's safe and worth it. An existing commit's parents are fixed when
-/// it is created, so no existing commit can ever have a NEW commit as a parent; that is what makes
-/// prepending added rows to the (unchanged) old order always a VALID topological order over the
-/// resulting commit set, regardless of the guards. What the guards protect against is quality
-/// (lane/line blowup when many branches moved, not just the trunk) and cost (the delta queries
-/// this need can themselves be expensive on a repo with many tips) — both measured in the plan,
-/// not assumed.
+/// when the guards below say it's safe and worth it. Prepending added rows is always a valid
+/// topological order, but it equals a fresh <c>--date-order</c> walk only when every added commit
+/// is at least as new as the rows it lands above. Guard 6 enforces that. An existing commit's
+/// parents are fixed when it is created, so no existing commit can ever have a NEW commit as a
+/// parent. What the guards protect against is quality (lane/line blowup when many branches moved,
+/// not just the trunk, or date inversions) and cost (the delta queries this needs can themselves
+/// be expensive on a repo with many tips) — both measured in the plan, not assumed.
 /// <para>
 /// Deliberately has no file or git access, the same design as <see cref="GraphMetaReorder"/>:
 /// the caller resolves added/removed commits (via <c>git rev-list &lt;new tips&gt; --not
@@ -60,6 +60,9 @@ internal static class GraphMetaSplice
     /// first).</param>
     /// <param name="existingRecordRow">SHA → the OLD order's row for every commit already
     /// recorded (the inverse of the old order, restricted to SHAs actually referenced by it).</param>
+    /// <param name="newestOldTopCommitWhen">Guard 6: the newest commit timestamp among the top
+    /// <see cref="MaxOldParentRow"/> rows of the old order. Every added commit must be at least as
+    /// new as this timestamp.</param>
     /// <param name="minRowsToConsider">Guard 3's threshold — defaults to <see cref="MinRowsToConsider"/>.
     /// Overridable so an automated fixture test can drive the wiring at a smaller scale.</param>
     /// <param name="maxOldParentRow">Guard 5's threshold — defaults to <see cref="MaxOldParentRow"/>,
@@ -74,6 +77,7 @@ internal static class GraphMetaSplice
         TimeSpan lastFullWalkElapsed,
         IReadOnlyList<RawCommit> addedCommits,
         IReadOnlyDictionary<string, int> existingRecordRow,
+        DateTimeOffset newestOldTopCommitWhen,
         int? minRowsToConsider = null,
         int? maxOldParentRow = null)
     {
@@ -97,6 +101,10 @@ internal static class GraphMetaSplice
             foreach (var parent in commit.ParentIds)
                 if (existingRecordRow.TryGetValue(parent.Sha, out var oldRow) && oldRow >= oldParentLimit)
                     return GuardResult.Reject($"an added commit's old parent sits at row {oldRow} >= {oldParentLimit}");
+
+        foreach (var commit in addedCommits)
+            if (commit.Metadata.CommitWhen < newestOldTopCommitWhen)
+                return GuardResult.Reject("an added commit is older than the old order's top rows");
 
         return GuardResult.Ok();
     }

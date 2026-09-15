@@ -403,4 +403,65 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
             GraphLayoutService.TestSpliceCommitted = null;
         }
     }
+
+    [Fact]
+    public async Task Splice_rejects_a_fetched_branch_older_than_the_trunk_and_the_reorder_matches_a_fresh_walk()
+    {
+        var locator = _host.Provider.GetRequiredService<IGitExecutableLocator>();
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var svc = new GraphLayoutService(_host.Settings, locator, cli);
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true, EnableGraphSplice = true });
+
+        GraphLayoutService.TestSpliceMinRowsOverride = CommitCount;
+        GraphLayoutService.TestSpliceFullWalkElapsedOverride = TimeSpan.FromMinutes(1);
+        var spliceCalls = new List<(int Added, int Removed)>();
+        GraphLayoutService.TestSpliceCommitted = (added, removed) => spliceCalls.Add((added, removed));
+        try
+        {
+            await using (var ctx = _host.Open(_repo.Path))
+                await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None);
+
+            var probeBefore = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
+            Assert.True(probeBefore.Ok);
+            DateTimeOffset trunkCommitTime;
+            using (var storeBefore = DiskCommitStore.Open(_repo.Path, probeBefore.RowCount, probeBefore.RecordCount, probeBefore.OrderVersion))
+            {
+                trunkCommitTime = storeBefore[0].CommitWhen;
+            }
+
+            _repo.Checkout("feature", create: true);
+            _repo.WriteFile("f.txt", "feature 1\n").Stage().CommitAt("feature commit 1", trunkCommitTime.AddMinutes(-10));
+            _repo.WriteFile("f.txt", "feature 2\n").Stage().CommitAt("feature commit 2", trunkCommitTime.AddMinutes(-5));
+
+            await using (var ctx2 = _host.Open(_repo.Path))
+                await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None);
+
+            // Guard 6 rejects the splice because the added commits are older than the cached top rows.
+            Assert.Empty(spliceCalls);
+
+            // Ground truth: a plain in-memory compute of the SAME (now-checked-out) history,
+            // through a separate disk-off service/context — same pattern as above.
+            await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
+            var memSvc = new GraphLayoutService(_host.Settings, locator);
+            await using var memCtx = _host.Open(_repo.Path);
+            var expected = await memSvc.ComputeLayoutAsync(memCtx, Q);
+            Assert.Equal(CommitCount + 2, expected.Layout.RowCount);
+
+            var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
+            Assert.True(probe.Ok);
+            Assert.True(probe.OrderVersion > 0, "expected the ordinary reorder to have run");
+            Assert.Equal(CommitCount + 2, probe.RowCount);
+
+            using var store = DiskCommitStore.Open(_repo.Path, probe.RowCount, probe.RecordCount, probe.OrderVersion);
+            Assert.Equal(CommitCount + 2, store.Count);
+            for (var i = 0; i < store.Count; i++)
+                Assert.Equal(expected.Layout.Commits[i].Id, store.ReadRaw(i).Id);
+        }
+        finally
+        {
+            GraphLayoutService.TestSpliceMinRowsOverride = null;
+            GraphLayoutService.TestSpliceFullWalkElapsedOverride = null;
+            GraphLayoutService.TestSpliceCommitted = null;
+        }
+    }
 }

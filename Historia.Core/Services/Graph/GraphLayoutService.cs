@@ -985,11 +985,18 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
             // Guard 5 only ever cares about an added commit's OLD parent sitting within the top
             // MaxOldParentRow rows — no need to index the whole (possibly multi-million-row) store.
+            // Guard 6 tracks the max CommitWhen over these same top rows.
             var maxOldParentRow = TestSpliceMaxOldParentRowOverride ?? GraphMetaSplice.MaxOldParentRow;
             var capRows = Math.Min(oldProbe.RowCount, maxOldParentRow);
             var existingRecordRow = new Dictionary<string, int>(capRows);
+            var newestOldTopCommitWhen = DateTimeOffset.MinValue;
             for (var row = 0; row < capRows; row++)
-                existingRecordRow[oldStore[row].Id.Sha] = row;
+            {
+                var record = oldStore[row];
+                existingRecordRow[record.Id.Sha] = row;
+                if (record.CommitWhen > newestOldTopCommitWhen)
+                    newestOldTopCommitWhen = record.CommitWhen;
+            }
 
             var guard = GraphMetaSplice.Evaluate(
                 storeExhausted: oldProbe.Exhausted,
@@ -1001,6 +1008,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 lastFullWalkElapsed: TestSpliceFullWalkElapsedOverride ?? TimeSpan.FromMilliseconds(oldProbe.LastFullWalkMs),
                 addedCommits: addedCommits,
                 existingRecordRow: existingRecordRow,
+                newestOldTopCommitWhen: newestOldTopCommitWhen,
                 minRowsToConsider: TestSpliceMinRowsOverride,
                 maxOldParentRow: TestSpliceMaxOldParentRowOverride);
 

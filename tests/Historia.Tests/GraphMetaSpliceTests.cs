@@ -39,11 +39,13 @@ public sealed class GraphMetaSpliceTests
         TimeSpan? removedElapsed = null,
         TimeSpan? fullWalkElapsed = null,
         IReadOnlyList<RawCommit>? addedCommits = null,
-        IReadOnlyDictionary<string, int>? existingRecordRow = null) =>
+        IReadOnlyDictionary<string, int>? existingRecordRow = null,
+        DateTimeOffset? newestOldTopCommitWhen = null) =>
         GraphMetaSplice.Evaluate(
             storeExhausted, oldTipsMatch, repoIsShallow, oldRowCount,
             addedElapsed ?? FastQuery, removedElapsed ?? FastQuery, fullWalkElapsed ?? FullWalkTime,
-            addedCommits ?? [], existingRecordRow ?? new Dictionary<string, int>());
+            addedCommits ?? [], existingRecordRow ?? new Dictionary<string, int>(),
+            newestOldTopCommitWhen ?? DateTimeOffset.MinValue);
 
     [Fact]
     public void Every_guard_passing_allows_the_splice()
@@ -161,6 +163,7 @@ public sealed class GraphMetaSpliceTests
         var result = GraphMetaSplice.Evaluate(
             storeExhausted: true, oldTipsMatch: true, repoIsShallow: false, oldRowCount: 20,
             FastQuery, FastQuery, FullWalkTime, [], new Dictionary<string, int>(),
+            newestOldTopCommitWhen: DateTimeOffset.MinValue,
             minRowsToConsider: 20);
         Assert.True(result.Allowed);
     }
@@ -174,8 +177,34 @@ public sealed class GraphMetaSpliceTests
         var result = GraphMetaSplice.Evaluate(
             storeExhausted: true, oldTipsMatch: true, repoIsShallow: false, oldRowCount: 300_000,
             FastQuery, FastQuery, FullWalkTime, added, existingRow,
+            newestOldTopCommitWhen: DateTimeOffset.MinValue,
             maxOldParentRow: 2);
         Assert.False(result.Allowed);
+    }
+
+    // ── Guard 6: added commits must be at least as new as the old order's top rows ──
+
+    [Fact]
+    public void Evaluate_rejects_an_added_commit_older_than_the_old_top_rows()
+    {
+        var added = new List<RawCommit> { Commit(40) };
+        var result = EvaluateDefaults(
+            addedCommits: added,
+            newestOldTopCommitWhen: DateTimeOffset.UnixEpoch.AddMinutes(50));
+
+        Assert.False(result.Allowed);
+        Assert.Equal("an added commit is older than the old order's top rows", result.Reason);
+    }
+
+    [Fact]
+    public void Evaluate_accepts_added_commits_at_least_as_new_as_every_old_top_row()
+    {
+        var added = new List<RawCommit> { Commit(55), Commit(50) };
+        var result = EvaluateDefaults(
+            addedCommits: added,
+            newestOldTopCommitWhen: DateTimeOffset.UnixEpoch.AddMinutes(50));
+
+        Assert.True(result.Allowed);
     }
 
     // ── Build: the splice construction itself ──
@@ -259,5 +288,14 @@ public sealed class GraphMetaSpliceTests
         foreach (var (sha, row) in shaToNewRow)
             foreach (var parent in allCommits[sha].ParentIds)
                 Assert.True(shaToNewRow[parent.Sha] > row, $"{sha}'s parent {parent.Sha} must come after it (newest-first)");
+
+        // Assert non-increasing CommitWhen over the spliced rows
+        for (var row = 1; row < plan.Order.Length; row++)
+        {
+            var prevSha = recordToSha[plan.Order[row - 1]];
+            var currSha = recordToSha[plan.Order[row]];
+            Assert.True(allCommits[prevSha].Metadata.CommitWhen >= allCommits[currSha].Metadata.CommitWhen,
+                $"Row {row - 1} ({prevSha}: {allCommits[prevSha].Metadata.CommitWhen}) must be >= row {row} ({currSha}: {allCommits[currSha].Metadata.CommitWhen})");
+        }
     }
 }

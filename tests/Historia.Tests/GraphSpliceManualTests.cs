@@ -34,7 +34,7 @@ public sealed class ManualFactAttribute : FactAttribute
 /// pipeline to run (perf.log: <c>graph splice committed</c> or <c>graph splice rejected: &lt;reason&gt;</c>,
 /// or a plain <c>graph cache write: reorder …</c> mark if it fell back).</item>
 /// <item><b>Verify the spliced order equals a fresh walk:</b> run
-/// <c>git rev-list --topo-order &lt;new tip&gt;</c> and compare its SHA order to the on-disk store's
+/// <c>git rev-list --date-order &lt;new tip&gt;</c> and compare its SHA order to the on-disk store's
 /// row order (<see cref="GraphMetaStore.ProbeExisting"/> + <see cref="DiskCommitStore.Open"/>, same
 /// as <see cref="GraphHeadlessCacheTests.Rows_after_a_headless_reorder_read_back_in_the_new_walks_order"/>
 /// does at fixture scale) — they must match exactly.</item>
