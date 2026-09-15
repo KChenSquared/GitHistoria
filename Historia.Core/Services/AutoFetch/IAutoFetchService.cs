@@ -47,7 +47,8 @@ public interface IAutoFetchHost
 /// §12.1: keeps every open repository's remote-tracking refs warm without a manual Fetch. An
 /// app-lifetime singleton. Once the app has fully loaded its repo(s) it runs an optional
 /// one-shot <c>[InitialFetch]</c> and then an infinite <c>[AutoFetch]</c> loop (5&#160;min idle,
-/// then one fetch per open repo 1&#160;min apart, then restart). Gated by
+/// then one fetch per open repo 1&#160;min apart, then restart). A successful fetch also refreshes
+/// that repo's commit-graph and, for an inactive tab, queues its headless disk cache. Gated by
 /// <see cref="Historia.Models.AppSettings.AutoFetchEnabled"/> — turning it off stops the loop at
 /// once; turning it back on re-enters at the "app start with open repos" path.
 /// </summary>

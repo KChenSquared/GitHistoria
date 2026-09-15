@@ -213,7 +213,8 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
     public async Task A_failed_fetch_triggers_no_commit_graph_refresh()
     {
         var ws = NewWorkspace();
-        await ws.OpenAsync(Repo("a.txt").Path);
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+        var r2 = await ws.OpenAsync(Repo("b.txt").Path); // r2 focused, r1 inactive
 
         var host = new FakeHost { Fail = true };
         var graph = new RecordingGraphLayoutService();
@@ -222,7 +223,95 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         _svc.Start();
 
         await delay.WaitForPending("loop idle after the failed initial fetch");
+        delay.Fire(); // step to slot 0 (r1, inactive)
+        await delay.WaitForPending("step to slot 1 after failed slot 0 fetch");
         Assert.Empty(graph.Snapshot());
+        Assert.Empty(graph.EnqueuedSnapshot());
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task An_auto_fetch_of_an_inactive_tab_queues_headless_disk_caching_for_it()
+    {
+        var ws = NewWorkspace();
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+        var r2 = await ws.OpenAsync(Repo("b.txt").Path); // r2 focused, r1 inactive
+
+        var host = new FakeHost();
+        var graph = new RecordingGraphLayoutService();
+        var delay = new ManualDelayer();
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, graph);
+        _svc.Start();
+
+        // [InitialFetch] on r2 (focused): nothing queued
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
+        Assert.Same(r2, host.Snapshot()[0]);
+        Assert.Empty(graph.EnqueuedSnapshot());
+
+        // Cycle: initial idle -> slot 0 (r1, inactive)
+        await delay.WaitForPending("initial idle");
+        delay.Fire();
+
+        await WaitUntil(() => graph.EnqueuedSnapshot().Count == 1, "headless caching queued for r1");
+        var (context, query) = graph.EnqueuedSnapshot()[0];
+        Assert.Same(r1, context);
+        Assert.Equal(WorkspaceService.TabGraphQuery, query);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task The_focused_tab_is_never_queued_for_headless_disk_caching()
+    {
+        var ws = NewWorkspace();
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+        var r2 = await ws.OpenAsync(Repo("b.txt").Path); // r2 focused, r1 inactive
+
+        var host = new FakeHost();
+        var graph = new RecordingGraphLayoutService();
+        var delay = new ManualDelayer();
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, graph);
+        _svc.Start();
+
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
+        await delay.WaitForPending("initial idle");
+        delay.Fire(); // slot 0 (r1)
+
+        await delay.WaitForPending("step to slot 1");
+        delay.Fire(); // slot 1 (r2, focused)
+
+        await WaitUntil(() => host.Snapshot().Count == 3, "slot 1 fetch on r2");
+        Assert.Same(r2, host.Snapshot()[2]);
+
+        // r1 was queued, but r2 (focused) is never queued
+        var enqueued = graph.EnqueuedSnapshot();
+        Assert.DoesNotContain(enqueued, item => item.Context == r2);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task A_throwing_headless_enqueue_never_stops_the_loop()
+    {
+        var ws = NewWorkspace();
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+        var r2 = await ws.OpenAsync(Repo("b.txt").Path); // r2 focused, r1 inactive
+
+        var host = new FakeHost();
+        var graph = new RecordingGraphLayoutService { ThrowOnEnqueue = true };
+        var delay = new ManualDelayer();
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, graph);
+        _svc.Start();
+
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch on r2");
+
+        await delay.WaitForPending("initial idle");
+        delay.Fire(); // slot 0 (r1, throws on enqueue)
+
+        // Commit graph refresh for r1 still recorded
+        await WaitUntil(() => graph.Snapshot().Count >= 2, "commit-graph refresh for r1");
+        Assert.Same(r1, graph.Snapshot()[1]);
+
+        // Loop still reaches slot 1 (r2)
+        await delay.WaitForPending("step to slot 1");
+        delay.Fire();
+        await WaitUntil(() => host.Snapshot().Count == 3, "slot 1 fetch on r2");
+        Assert.Same(r2, host.Snapshot()[2]);
     }
 
     // ── gating ──
@@ -415,12 +504,16 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
     }
 
     /// <summary>Records every context <see cref="RefreshCommitGraphAfterFetch"/>
-    /// was called with — the rest of <see cref="IGraphLayoutService"/> is unused by
-    /// <see cref="AutoFetchService"/> and throws if ever called.</summary>
+    /// and <see cref="EnqueueInactiveTabCaching"/> was called with — the rest of
+    /// <see cref="IGraphLayoutService"/> is unused by <see cref="AutoFetchService"/> and throws if
+    /// ever called.</summary>
     private sealed class RecordingGraphLayoutService : IGraphLayoutService
     {
         private readonly object _g = new();
         private readonly List<RepositoryContext> _refreshed = [];
+        private readonly List<(RepositoryContext Context, GraphQuery Query)> _enqueued = [];
+
+        public bool ThrowOnEnqueue { get; set; }
 
         public void RefreshCommitGraphAfterFetch(RepositoryContext context)
         {
@@ -428,10 +521,24 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
                 _refreshed.Add(context);
         }
 
+        public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query)
+        {
+            if (ThrowOnEnqueue)
+                throw new InvalidOperationException("simulated enqueue failure");
+            lock (_g)
+                _enqueued.Add((context, query));
+        }
+
         public List<RepositoryContext> Snapshot()
         {
             lock (_g)
                 return [.. _refreshed];
+        }
+
+        public List<(RepositoryContext Context, GraphQuery Query)> EnqueuedSnapshot()
+        {
+            lock (_g)
+                return [.. _enqueued];
         }
 
         public Task<GraphLayoutResult> ComputeLayoutAsync(RepositoryContext context, GraphQuery query, int maxRows = 10000, CancellationToken ct = default)
@@ -445,7 +552,6 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         public Task Hibernate(RepositoryContext context) => throw new NotImplementedException();
         public int ClearPersistentCache() => throw new NotImplementedException();
         public Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct) => throw new NotImplementedException();
-        public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query) => throw new NotImplementedException();
         public Task CancelInactiveTabCachingAsync(RepositoryContext context) => throw new NotImplementedException();
         public Task PrecacheClonedRepositoryAsync(RepositoryContext context, GraphQuery query, IProgress<GitProgress>? progress, CancellationToken ct) => throw new NotImplementedException();
     }
