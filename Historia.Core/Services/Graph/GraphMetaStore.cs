@@ -136,7 +136,7 @@ internal sealed class GraphMetaStore
             if (!File.Exists(hdrPath))
                 return null;
 
-            var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
+            var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null
                 || hdr.Version != Version
                 || hdr.Fingerprint != fingerprint
@@ -165,7 +165,7 @@ internal sealed class GraphMetaStore
             var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
             if (!File.Exists(hdrPath))
                 return (false, 0, false);
-            var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
+            var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.Fingerprint != fingerprint
                 || hdr.IncludeRemoteBranches != includeRemoteBranches || (WalkEngine)hdr.WalkEngine != engine)
                 return (false, 0, false);
@@ -193,7 +193,7 @@ internal sealed class GraphMetaStore
             var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
             if (!File.Exists(hdrPath))
                 return (false, 0);
-            var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
+            var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
                 || (WalkEngine)hdr.WalkEngine != engine || hdr.RowCount <= 0)
                 return (false, 0);
@@ -219,7 +219,7 @@ internal sealed class GraphMetaStore
             var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
             if (!File.Exists(hdrPath))
                 return (false, 0, 0, 0, 0, false, 0);
-            var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
+            var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
                 || (WalkEngine)hdr.WalkEngine != engine)
                 return (false, 0, 0, 0, 0, false, 0);
@@ -243,7 +243,7 @@ internal sealed class GraphMetaStore
             var path = GraphCachePaths.File(repoPath, TipsExt);
             if (!File.Exists(path))
                 return null;
-            var bytes = File.ReadAllBytes(path);
+            var bytes = ReadAllBytesShared(path);
             if (bytes.Length % 20 != 0)
                 return null;
             var tips = new ObjectId[bytes.Length / 20];
@@ -299,13 +299,79 @@ internal sealed class GraphMetaStore
         }
         catch { }
     }
+
+    /// <summary>
+    /// Reads all bytes from <paramref name="path"/> sharing both ReadWrite and Delete (R7).
+    /// Every reader of a <c>.meta.*</c> file must share Delete, or <see cref="GraphMetaWriter.Reset"/>
+    /// cannot retire open files away before starting a fresh from-row-0 spill.
+    /// </summary>
+    internal static byte[] ReadAllBytesShared(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var bytes = new byte[fs.Length];
+        var read = 0;
+        while (read < bytes.Length)
+        {
+            var n = fs.Read(bytes, read, bytes.Length - read);
+            if (n <= 0) break;
+            read += n;
+        }
+        return read == bytes.Length ? bytes : bytes[..read];
+    }
+
+    /// <summary>
+    /// Measures the unreachable dead prefix at the front of <c>.meta.dat</c> (R7, R8).
+    /// Record 0's offset (the first 8 bytes of <c>.meta.idx</c>) indicates how many dead bytes
+    /// precede record 0. Returns <c>(0, 0)</c> on any miss, unreadable file, or empty file.
+    /// </summary>
+    internal static (long DeadBytes, long DatLength) ProbeDeadPrefix(string repoPath)
+    {
+        try
+        {
+            var idxPath = GraphCachePaths.File(repoPath, IdxExt);
+            var datPath = GraphCachePaths.File(repoPath, DatExt);
+            if (!File.Exists(idxPath) || !File.Exists(datPath))
+                return (0, 0);
+
+            var buf = new byte[8];
+            using (var fs = new FileStream(idxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                var read = 0;
+                while (read < 8)
+                {
+                    var n = fs.Read(buf, read, 8 - read);
+                    if (n <= 0) break;
+                    read += n;
+                }
+                if (read < 8)
+                    return (0, 0);
+            }
+
+            var deadBytes = BitConverter.ToInt64(buf, 0);
+            if (deadBytes < 0)
+                return (0, 0);
+
+            long datLen;
+            using (var datFs = new FileStream(datPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                datLen = datFs.Length;
+            }
+
+            return (deadBytes, datLen);
+        }
+        catch
+        {
+            return (0, 0);
+        }
+    }
 }
 
 /// <summary>
-/// Append-only writer for a repo's <c>.meta.*</c> set. <see cref="Reset"/> truncates for a
-/// fresh walk; <see cref="Append"/> adds laid-out rows; <see cref="Commit"/> rewrites the
-/// header. All operations swallow IO errors — the cache is an optimisation, never a
-/// correctness dependency.
+/// Append-only writer for a repo's <c>.meta.*</c> set. <see cref="Reset"/> retires existing
+/// sibling files for a fresh walk without leaving a dead prefix; <see cref="Append"/> adds
+/// laid-out rows; <see cref="Commit"/> rewrites the header. Every reader of a <c>.meta.*</c>
+/// file must share <see cref="FileShare.Delete"/>, or <see cref="Reset"/> cannot retire it.
+/// All operations swallow IO errors — the cache is an optimisation, never a correctness dependency.
 /// </summary>
 internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool includeRemoteBranches, WalkEngine engine)
 {
@@ -315,30 +381,143 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     private readonly string _search = GraphCachePaths.File(repoPath, GraphMetaStore.SearchExt);
     private readonly string _tips = GraphCachePaths.File(repoPath, GraphMetaStore.TipsExt);
 
-    /// <summary>Truncates every sibling file, including any order files (a from-row-0
-    /// re-spill starts the order over at identity too). Call before appending row 0 of a fresh
-    /// walk.</summary>
-    public void Reset()
+    /// <summary>
+    /// Retires every sibling file for this repository so a from-row-0 re-spill starts the store
+    /// over at byte 0 without dead-prefix bloat (R7). Every reader shares
+    /// <see cref="FileShare.Delete"/>, so renaming each file to a <c>.retired</c> name and then
+    /// deleting it frees the original path immediately while active readers (such as the painted
+    /// graph) keep reading their open handles until they close.
+    /// <para>
+    /// Returns <c>true</c> only if <c>.hdr</c>, <c>.dat</c>, <c>.idx</c>, <c>.search</c>, and
+    /// <c>.tips</c> no longer exist. If any primary file remains (e.g. a foreign process or
+    /// non-sharing handle blocked retirement), any moved files are rolled back and <c>false</c>
+    /// is returned so <see cref="AppendSpillBatch"/> can abort rather than appending after stale
+    /// bytes, leaving the old store intact.
+    /// </para>
+    /// <para>
+    /// Note: on Linux and macOS, renaming an open file always succeeds and <see cref="FileShare.Delete"/>
+    /// is a no-op, so the same code path holds across all platforms.
+    /// </para>
+    /// </summary>
+    public bool Reset()
     {
         try
         {
-            Directory.CreateDirectory(AppPaths.CacheDirectory);
-            foreach (var p in new[] { _hdr, _dat, _idx, _search, _tips })
-                try { File.Delete(p); } catch { }
-            DeleteOrderFiles(repoPath);
+            var cacheDir = AppPaths.CacheDirectory;
+            if (!Directory.Exists(cacheDir))
+            {
+                Directory.CreateDirectory(cacheDir);
+                return true;
+            }
+
+            var stem = GraphCachePaths.Stem(repoPath);
+
+            // Sweep leftover retired files for this stem from prior incomplete runs.
+            SweepRetiredFiles(cacheDir, stem);
+
+            // Retire primary files. If any primary file fails to move (e.g. foreign handle),
+            // roll back any files moved so far so the old store remains intact.
+            var primaryFiles = new[] { _dat, _idx, _search, _tips, _hdr };
+            var moved = new List<(string Original, string Retired)>();
+            var allMoved = true;
+
+            foreach (var p in primaryFiles)
+            {
+                if (!File.Exists(p))
+                    continue;
+
+                var retiredPath = $"{p}.{Guid.NewGuid():N}.retired";
+                try
+                {
+                    File.Move(p, retiredPath);
+                    moved.Add((p, retiredPath));
+                }
+                catch
+                {
+                    allMoved = false;
+                    break;
+                }
+            }
+
+            if (!allMoved)
+            {
+                foreach (var (orig, ret) in moved)
+                {
+                    try { File.Move(ret, orig); } catch { }
+                }
+                return false;
+            }
+
+            foreach (var (_, ret) in moved)
+            {
+                try { File.Delete(ret); } catch { /* OS removes on handle close or sweep cleans up */ }
+            }
+
+            RetireOrderFiles(cacheDir, stem);
+
+            return !File.Exists(_hdr)
+                && !File.Exists(_dat)
+                && !File.Exists(_idx)
+                && !File.Exists(_search)
+                && !File.Exists(_tips);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void SweepRetiredFiles(string cacheDir, string stem)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(cacheDir);
+            if (!dir.Exists)
+                return;
+            foreach (var f in dir.GetFiles($"{stem}.meta.*.retired"))
+            {
+                try { f.Delete(); }
+                catch { /* best effort sweep; skip locked */ }
+            }
         }
         catch { }
     }
 
-    private static void DeleteOrderFiles(string repoPath)
+    private static void RetireFile(string path)
     {
         try
         {
-            var dir = new DirectoryInfo(AppPaths.CacheDirectory);
+            if (!File.Exists(path))
+                return;
+
+            var retiredPath = $"{path}.{Guid.NewGuid():N}.retired";
+            try
+            {
+                File.Move(path, retiredPath);
+                try { File.Delete(retiredPath); } catch { /* OS removes on handle close or sweep cleans up */ }
+            }
+            catch
+            {
+                // Move failed (e.g. non-sharing lock or foreign handle): fall back to direct delete.
+                try { File.Delete(path); } catch { }
+            }
+        }
+        catch { }
+    }
+
+    private static void RetireOrderFiles(string cacheDir, string stem)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(cacheDir);
             if (!dir.Exists)
                 return;
-            foreach (var f in dir.GetFiles($"{GraphCachePaths.Stem(repoPath)}.meta.order.*"))
-                try { f.Delete(); } catch { }
+            foreach (var f in dir.GetFiles($"{stem}.meta.order.*"))
+            {
+                if (f.Name.EndsWith(".retired", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                RetireFile(f.FullName);
+            }
         }
         catch { }
     }
@@ -470,7 +649,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         {
             if (!File.Exists(_hdr))
                 return 0;
-            var existing = JsonSerializer.Deserialize<GraphMetaStore.Header>(File.ReadAllBytes(_hdr), GraphMetaStore.Json);
+            var existing = JsonSerializer.Deserialize<GraphMetaStore.Header>(GraphMetaStore.ReadAllBytesShared(_hdr), GraphMetaStore.Json);
             return existing is not null && existing.Fingerprint == fingerprint ? existing.LastFullWalkMs : 0;
         }
         catch
@@ -563,7 +742,11 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             {
                 if (from != 0)
                     return (SpillOutcome.Conflict, existing.RowCount);
-                Reset();
+                if (!Reset())
+                {
+                    Diagnostics.PerfLog.Mark($"graph cache reset blocked ({repoPath})");
+                    return (SpillOutcome.Conflict, existing.RowCount);
+                }
             }
             else if (existing.RowCount >= to)
             {
@@ -732,7 +915,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         var datPath = GraphCachePaths.File(repoPath, GraphMetaStore.DatExt);
         var idxPath = GraphCachePaths.File(repoPath, GraphMetaStore.IdxExt);
         var offsets = ReadOffsets(idxPath, recordCount);
-        var dat = File.OpenHandle(datPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var dat = File.OpenHandle(datPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var len = RandomAccess.GetLength(dat);
         int[]? order = null;
         if (orderVersion > 0)
@@ -746,7 +929,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 
     private static int[] ReadOrder(string orderPath, int rowCount)
     {
-        var bytes = File.ReadAllBytes(orderPath);
+        var bytes = GraphMetaStore.ReadAllBytesShared(orderPath);
         var n = Math.Min(rowCount, bytes.Length / 4);
         var order = new int[n];
         Buffer.BlockCopy(bytes, 0, order, 0, n * 4);
@@ -1031,7 +1214,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         try
         {
             var path = GraphCachePaths.File(_repoPath, GraphMetaStore.SearchExt);
-            using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite), Encoding.UTF8);
+            using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete), Encoding.UTF8);
             var record = -1;
             string? line;
             while ((line = reader.ReadLine()) is not null)
@@ -1076,7 +1259,9 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 
     /// <summary>Releases one lease; closes the file handle when the last one goes. Idempotent and
     /// tolerant of an over-release (a consumer disposing twice) — the handle is never closed
-    /// more than once, and never while a lease is still outstanding.</summary>
+    /// more than once, and never while a lease is still outstanding. Readers keep reading through
+    /// their open handles even if <see cref="GraphMetaWriter.Reset"/> has retired and deleted the
+    /// file on disk; the OS frees the disk allocation once the last handle closes.</summary>
     public void Dispose()
     {
         bool close;
@@ -1096,7 +1281,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 
     private static long[] ReadOffsets(string idxPath, int rowCount)
     {
-        var bytes = File.ReadAllBytes(idxPath);
+        var bytes = GraphMetaStore.ReadAllBytesShared(idxPath);
         var n = Math.Min(rowCount, bytes.Length / 8);
         var offsets = new long[n];
         for (var i = 0; i < n; i++)
@@ -1109,7 +1294,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     /// instead of <see cref="ReadOffsets"/>'s whole-file read.</summary>
     private static long[] ReadOffsetsFrom(string idxPath, int fromRow, int rowCount)
     {
-        using var fs = new FileStream(idxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var fs = new FileStream(idxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var startByte = (long)fromRow * 8;
         if (startByte >= fs.Length)
             return [];
