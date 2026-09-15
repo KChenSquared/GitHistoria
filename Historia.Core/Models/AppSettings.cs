@@ -12,7 +12,7 @@ public sealed record AppSettings
     /// (§V3-13); v5: multi-line tab strip (§V3-B); v6: persistent graph cache toggle; v7: graph
     /// row hard cap; v8: local repo-state cache toggle; v9: terminal (V5); v10: tab-width mode
     /// (V5.5); v11: custom-theme id (§V6-G9); v12: splash-screen toggle.</summary>
-    public int SchemaVersion { get; init; } = 16;
+    public int SchemaVersion { get; init; } = 18;
 
     // ── Profile &amp; Identity ──
     /// <summary>§14.2: the default profile — the clone-dialog pre-selection and what an opened
@@ -49,6 +49,12 @@ public sealed record AppSettings
 
     public DiffViewMode DefaultDiffView { get; init; } = DiffViewMode.SideBySide;
     public bool ShowAvatars { get; init; } = true;
+
+    /// <summary>
+    /// Off (default): every displayed commit date is the commit (committer) date — the date the
+    /// graph is sorted by. On: show the author date instead. Display-only; never changes row order.
+    /// </summary>
+    public bool ShowAuthorDate { get; init; }
 
     /// <summary>v8 M9: how the graph and the tab strip interpret mouse-wheel / trackpad scroll.
     /// <c>Auto</c> matches the OS "natural / inverted" setting (macOS &amp; Linux; Windows is
@@ -132,7 +138,7 @@ public sealed record AppSettings
     /// When on (default), a large repository (≥ 30,000 commits walked, checked as the
     /// §7.6 background spill proceeds in 25k-row chunks) that has no commit-graph file yet gets
     /// one written in the background (<c>git commit-graph write --reachable</c>). A commit-graph
-    /// is what lets Git's own <c>--topo-order</c> walk (the CLI graph engine) expand lazily by
+    /// is what lets Git's own <c>--date-order</c> walk (the CLI graph engine) expand lazily by
     /// generation number instead of touching the whole history up front.
     /// </summary>
     public bool WriteCommitGraphForLargeRepos { get; init; } = true;

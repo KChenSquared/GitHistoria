@@ -48,6 +48,7 @@ public sealed partial class CommitGraphControl : Control
     // (AppSettings.ResidentRowCap, clamped to 500k..10M) while metadata is still fully resident
     // (the 500k memory limit exists precisely to bound that allocation).
     private bool _graphMetaFromDisk;
+    private bool _showAuthorDate;
     private int _residentRowCapSetting;
     private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk, _residentRowCapSetting);
 
@@ -417,6 +418,7 @@ public sealed partial class CommitGraphControl : Control
         _settings = services.GetRequiredService<Historia.Services.Settings.ISettingsService>();
         _scrollProbe = services.GetRequiredService<Historia.Services.UI.IScrollDirectionProbe>();
         _graphMetaFromDisk = _settings.Current.GraphMetadataFromDisk;
+        _showAuthorDate = _settings.Current.ShowAuthorDate;
         _residentRowCapSetting = _settings.Current.ResidentRowCap;
         _silentCrawlRowCap = _settings.Current.SilentCrawlRowCap;
         _crawl = new GraphCrawlThreshold(_silentCrawlRowCap, ResidentRowCap);
@@ -424,6 +426,7 @@ public sealed partial class CommitGraphControl : Control
         _repoLayout = services.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
 
         _repoLayout.Changed += OnRepoLayoutChanged;
+        _settings.Changed += OnSettingsChanged;
 
         _themeMode = _theme.Effective;
         RebuildThemeResources();
@@ -446,6 +449,12 @@ public sealed partial class CommitGraphControl : Control
         {
             _repoLayout.Changed -= OnRepoLayoutChanged;
             _repoLayout.Changed += OnRepoLayoutChanged;
+        }
+
+        if (_settings is not null)
+        {
+            _settings.Changed -= OnSettingsChanged;
+            _settings.Changed += OnSettingsChanged;
         }
 
         // Re-take the commit-store lease Detach() dropped, if the previous layout survived the
@@ -569,6 +578,8 @@ public sealed partial class CommitGraphControl : Control
         _theme.ThemeChanged -= OnThemeChanged;
         if (_repoLayout is not null)
             _repoLayout.Changed -= OnRepoLayoutChanged;
+        if (_settings is not null)
+            _settings.Changed -= OnSettingsChanged;
         CloseRefList();
         CancelAndDisposeLayoutCts();
 
@@ -578,6 +589,18 @@ public sealed partial class CommitGraphControl : Control
         // itself is kept so that round-trip doesn't blank the graph.
         _leasedStore?.Dispose();
         _leasedStore = null;
+    }
+
+    private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
+    {
+        if (e.NewSettings.ShowAuthorDate != _showAuthorDate)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                _showAuthorDate = e.NewSettings.ShowAuthorDate;
+                InvalidateVisual();
+            });
+        }
     }
 
     // Detach can run more than once across a control's attach/detach cycles, and several
@@ -2001,7 +2024,7 @@ public sealed partial class CommitGraphControl : Control
             {
                 GraphColumnKind.Message => m.MessageShort,
                 GraphColumnKind.Author => m.AuthorName,
-                GraphColumnKind.Date => DateCell(m.AuthorWhen),
+                GraphColumnKind.Date => DateCell(CommitDateDisplay.Pick(m.AuthorWhen, m.CommitWhen, _showAuthorDate)),
                 GraphColumnKind.Sha => m.Id.Sha[..7],
                 _ => "",
             };
@@ -2593,7 +2616,7 @@ public sealed partial class CommitGraphControl : Control
                         DrawTextColumn(dc, layout, first, last, x, col.Width, m => m.AuthorName, _textMuted);
                         break;
                     case GraphColumnKind.Date:
-                        DrawTextColumn(dc, layout, first, last, x, col.Width, m => DateCell(m.AuthorWhen), _textMuted);
+                        DrawTextColumn(dc, layout, first, last, x, col.Width, m => DateCell(CommitDateDisplay.Pick(m.AuthorWhen, m.CommitWhen, _showAuthorDate)), _textMuted);
                         break;
                     case GraphColumnKind.Sha:
                         DrawTextColumn(dc, layout, first, last, x, col.Width, m => m.Id.Sha[..7], _textMuted);

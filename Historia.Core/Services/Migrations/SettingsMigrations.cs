@@ -261,3 +261,9 @@ public sealed class SettingsV16ToV17 : IJsonMigration
     }
 }
 
+/// <summary>v17 → v18: adds <c>showAuthorDate</c>. Additive — an absent key falls
+/// through to the record default (<c>false</c>) on deserialize, so this only stamps the
+/// version.</summary>
+public sealed class SettingsV17ToV18() : StampOnlyMigration(17, 18);
+
+

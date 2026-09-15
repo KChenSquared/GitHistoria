@@ -124,6 +124,7 @@ public sealed class SettingsView : UserControl, IDisposable
             _root.Children.Add(Muted("Tabs shrink to fit short repository names and grow up to ~25 characters for longer ones."));
         }
         _root.Children.Add(Muted("Graph-panel columns are configured per repository — the wrench on a repo tab."));
+        _root.Children.Add(WithHint(Check("Show author date instead of commit date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })), "The graph is always sorted by commit date. This only changes which date the Date column and commit details show."));
 
         // v8 M9: mouse-wheel / trackpad scroll direction for the graph and the tab strip.
         var wheelDir = new ComboBox { Width = 220 };
@@ -502,6 +503,14 @@ public sealed class SettingsView : UserControl, IDisposable
 
     private static Control Section(string title) => Text(title, "ColorTextMuted", 13, FontWeight.SemiBold);
     private static Control Muted(string text) { var t = Text(text, "ColorTextMuted", 11); t.TextWrapping = TextWrapping.Wrap; return t; }
+
+    private static Control WithHint(Control control, string hint)
+    {
+        var panel = new StackPanel { Spacing = 2 };
+        panel.Children.Add(control);
+        panel.Children.Add(Muted(hint));
+        return panel;
+    }
 
     private static Control Check(string label, bool value, Action<bool> onChange, bool enabled = true)
     {
