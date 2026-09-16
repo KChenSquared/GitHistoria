@@ -1,4 +1,4 @@
-﻿
+
 namespace Historia.Services.Workspace;
 
 public sealed record FocusedRepositoryChangedEventArgs(RepositoryContext? Old, RepositoryContext? New);
@@ -43,6 +43,14 @@ public interface IWorkspaceService
     /// <summary>§12.1: force a deferred session-restore tab through its initialize path now
     /// rather than on first focus. No-op if it is already initializing or fully loaded.</summary>
     void EnsureInitialized(RepositoryContext context);
+
+    /// <summary>
+    /// Enqueues a refresh for a background tab, draining on the serial background pump behind the
+    /// focused tab's first full load in app-band tab order (§F4, §F5). If <paramref name="context"/>
+    /// is currently focused, runs immediately.
+    /// </summary>
+    Task RequestBackgroundRefreshAsync(RepositoryContext context, bool full = false, CancellationToken ct = default)
+        => full ? context.State.RefreshAllAsync(ct) : context.State.RefreshStatusAsync(ct);
 
     /// <summary>
     /// Moves an open tab to <paramref name="newIndex"/> in the strip (drag-and-drop reorder,
