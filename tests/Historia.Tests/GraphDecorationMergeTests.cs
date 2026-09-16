@@ -86,6 +86,18 @@ public class GraphDecorationMergeTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task An_annotated_tag_folds_into_a_lone_branch_on_the_commit()
+    {
+        _repo.Git("tag", "-a", "v1", "-m", "release 1", "HEAD");
+
+        var decos = await DecorationsForTipAsync();
+
+        Assert.DoesNotContain(decos, d => d.Type == DecorationType.Tag);
+        var main = Assert.Single(decos, d => d.Type == DecorationType.LocalBranch);
+        Assert.Contains(main.SiblingsOrNull!, s => s.Label == "v1" && s.Type == DecorationType.Tag);
+    }
+
+    [Fact]
     public async Task A_tag_on_a_commit_with_no_branch_keeps_its_own_badge()
     {
         _repo.WriteFile("a.txt", "2\n").Stage();
@@ -98,6 +110,21 @@ public class GraphDecorationMergeTests : IAsyncDisposable
         var decos = layout.Layout.Decorations.ToArray();
 
         Assert.Single(decos, d => d.Label == "v1" && d.Type == DecorationType.Tag);
+    }
+
+    [Fact]
+    public async Task An_annotated_tag_on_a_commit_keeps_its_own_badge()
+    {
+        _repo.WriteFile("a.txt", "2\n").Stage();
+        _repo.Commit("c2");
+        _repo.Git("tag", "-a", "v-annotated", "-m", "release note", "HEAD~1");
+
+        await using var ctx = _host.Open(_repo.Path);
+        var svc = new GraphLayoutService();
+        var layout = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
+        var decos = layout.Layout.Decorations.ToArray();
+
+        Assert.Contains(decos, d => d.Label == "v-annotated" && d.Type == DecorationType.Tag);
     }
 
     [Fact]

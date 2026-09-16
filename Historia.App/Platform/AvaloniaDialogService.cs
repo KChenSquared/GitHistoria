@@ -1,4 +1,4 @@
-﻿namespace Historia.Platform;
+namespace Historia.Platform;
 
 /// <summary>
 /// App-side <see cref="IDialogService"/> (V4 §split — replaces the WPF <c>DialogService</c>).
@@ -326,7 +326,7 @@ public sealed record CloneDialogResult(
 /// Modal "Clone repository" window — its own top-level, centred on the app window, closable.
 /// Splits the destination into a wide <b>Root</b> box and a narrow <b>Folder name</b> box with
 /// the platform path separator between them, plus shallow-clone / sparse-checkout toggles and
-/// (v8.2) a checkout-identity picker: which profile to clone under and in which network mode.
+/// a checkout-identity picker: which profile to clone under and in which network mode.
 /// </summary>
 internal static class CloneDialog
 {
@@ -343,7 +343,7 @@ internal static class CloneDialog
         var shallow = new CheckBox { Content = "Shallow clone (--depth 1)" };
         var sparse = new CheckBox { Content = "Sparse checkout (--sparse)" };
 
-        // v8.2: which identity checks the clone out under, and in which network mode. The
+        // Which identity checks the clone out under, and in which network mode:
         // §13.4: the chosen identity becomes this repo's per-repo selection once the clone
         // finishes; "(Local config)" writes the Local-config marker row.
         var profileLabels = new List<string> { "Local config" };

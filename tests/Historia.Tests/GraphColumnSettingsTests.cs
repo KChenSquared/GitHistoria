@@ -104,7 +104,7 @@ public class GraphColumnSettingsTests
     {
         Assert.Equal(GraphColumnDefaults.RefsStaticFloor, GraphColumnDefaults.MinWidthFor(GraphColumnKind.Refs), 3);
         Assert.Equal(80, GraphColumnDefaults.MinWidthFor(GraphColumnKind.Sha), 3);
-        // v8.4: the Date cell carries a full "MM/DD/YYYY - HH:MM AM/PM (ago)" string.
+        // The Date cell carries a full "MM/DD/YYYY - HH:MM AM/PM (ago)" string.
         Assert.Equal(200, GraphColumnDefaults.MinWidthFor(GraphColumnKind.Date), 3);
         foreach (var k in new[] { GraphColumnKind.Graph, GraphColumnKind.Message, GraphColumnKind.Author })
             Assert.Equal(150, GraphColumnDefaults.MinWidthFor(k), 3);

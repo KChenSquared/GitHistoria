@@ -1,8 +1,8 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>
 /// A parsed file diff (§6.10.1). <see cref="DiffHunk"/>/<see cref="DiffLine"/> are the single
-/// shared hunk model used by Phase 1 (display) and Phase 3 (partial staging) — no parallel
+/// shared hunk model used by display and partial staging — no parallel
 /// model is defined elsewhere (§6.10.1, §8.2.2).
 /// </summary>
 public sealed record FileDiff
@@ -61,7 +61,7 @@ public sealed record DiffLine
     public required int? OldLineNumber { get; init; }
     public required int? NewLineNumber { get; init; }
 
-    /// <summary>For Phase 3 partial line selection.</summary>
+    /// <summary>For partial line selection.</summary>
     public bool IsSelected { get; set; }
 }
 

@@ -9,9 +9,9 @@ public sealed partial class CommitGraphControl : Control
 {
     private const double MinRowHeight = 20;
     private const double MaxRowHeight = 44;
-    private const double MinLaneWidth = 15; // §V3.1: raised from 13 with the +2px lane width
+    private const double MinLaneWidth = 15; // §V3.1
     private const double MaxLaneWidth = 60;
-    /// <summary>§V3.2: commit nodes are round dots again (the §V3.1 diamond was reverted).</summary>
+    /// <summary>§V3.2: commit node radius.</summary>
     private const double NodeRadius = 5;
     private const double RowTextSize = 14;
     private const double HeaderTextSize = 12;
@@ -48,19 +48,22 @@ public sealed partial class CommitGraphControl : Control
     // (AppSettings.ResidentRowCap, clamped to 500k..10M) while metadata is still fully resident
     // (the 500k memory limit exists precisely to bound that allocation).
     private bool _graphMetaFromDisk;
+    private bool _showAuthorDate;
     private int _residentRowCapSetting;
     private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk, _residentRowCapSetting);
 
-    // §V10.1.2/v10.1.3: the silent background crawler pre-loads only this many rows into the
-    // resident layout. Deeper history loads on demand as the user scrolls (EnsureExtendedAsync,
-    // up to ResidentRowCap) and reaches disk in full via the §7.6 background spill (which also
-    // feeds Ctrl+F search). Crawling all the way to ResidentRowCap (2,000,000 on a big repo)
-    // built a multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
-    // Configurable (AppSettings.SilentCrawlRowCap, default 300,000); 0 means uncapped, i.e. the
+    // §V10.1.2: the silent background crawler pre-loads only this many rows into the
+    // resident layout after first paint, advancing in discrete threshold steps as the user
+    // scrolls (R3/R4). Deeper history reaches disk in full via the §7.6 background spill
+    // regardless of this cap (R2). Crawling all the way to ResidentRowCap (2,000,000 on a big
+    // repo) built a multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
+    // Configurable (AppSettings.SilentCrawlRowCap, default 100,000); 0 means uncapped, i.e. the
     // crawler runs to ResidentRowCap same as an explicit scroll would. Snapshotted at
     // construction like _graphMetaFromDisk — a mid-session change takes effect on next launch.
     private int _silentCrawlRowCap;
-    private int SilentCrawlRowCap => _silentCrawlRowCap <= 0 ? ResidentRowCap : Math.Min(_silentCrawlRowCap, ResidentRowCap);
+    private GraphCrawlThreshold _crawl = new(0, 0);
+    private int _crawlTarget;
+    private int _crawlRunning;
 
     private IReadOnlyList<GraphColumn> _columns = GraphColumnDefaults.All;
     private bool _graphWidthPinned;
@@ -121,6 +124,12 @@ public sealed partial class CommitGraphControl : Control
 
     private Channel<ExtendRequest>? _extendChannel;
     private int _cappedNotified;
+
+    // ── First-paint timing diagnostics ──
+    private long _firstPaintStartTimestamp;
+    private string? _firstPaintKind;
+    private bool _firstPaintQueued;
+    private bool _firstPaintRenderLogged;
 
     private double _rowHeight = 26;
     private double _scrollOffset;
@@ -198,7 +207,7 @@ public sealed partial class CommitGraphControl : Control
     private GraphDecoration? _refListFor;
     private DispatcherTimer? _refListCloseTimer;
 
-    // v8.1 fix: the graph builds a fresh ContextMenu per right-click (content depends on hit
+    // The graph builds a fresh ContextMenu per right-click (content depends on hit
     // position — column header / overflow chip / pill / row), so there's no single control-owned
     // ContextMenu for Avalonia to auto-close when a new one opens. Track the live one and close it
     // explicitly, or a second right-click (or an overflow/pill menu opened from within another)
@@ -265,7 +274,7 @@ public sealed partial class CommitGraphControl : Control
     private SolidColorBrush _selectionBar = new(Colors.SlateBlue);
     private SolidColorBrush _hoverFill = new(Colors.DimGray);
     private Pen _hoverPen = new(new SolidColorBrush(Colors.White), 1);
-    // v8.4: the repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
+    // The repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
     private Pen _cogPen = new(new SolidColorBrush(Colors.DimGray), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
     private static readonly Geometry _cogGeo = Geometry.Parse(Historia.Components.IconPaths.Get("settings"));
     private Rect _refsCogRect;
@@ -303,10 +312,7 @@ public sealed partial class CommitGraphControl : Control
         // math and desyncs the thumb from the pointer. `_scrollBarUserActive` gates that — and
         // it is driven by the ScrollBar's OWN Scroll event type, not pointer capture: a
         // ThumbTrack means a drag is in progress, and EVERY drag ends with EndScroll regardless
-        // of where the pointer is released. (An earlier version latched on PointerPressed and
-        // cleared on PointerReleased/CaptureLost on the bar; releasing the mouse away from the
-        // bar fired neither, so the latch stuck on forever and the bar froze until a wheel
-        // scroll forced a resync — the "scrollbar stuck at the bottom" bug.)
+        // of where the pointer is released.
         _scrollBar.Scroll += (_, e) =>
         {
             _scrollBarUserActive = e.ScrollEventType == ScrollEventType.ThumbTrack;
@@ -412,11 +418,16 @@ public sealed partial class CommitGraphControl : Control
         _settings = services.GetRequiredService<Historia.Services.Settings.ISettingsService>();
         _scrollProbe = services.GetRequiredService<Historia.Services.UI.IScrollDirectionProbe>();
         _graphMetaFromDisk = _settings.Current.GraphMetadataFromDisk;
+        _showAuthorDate = _settings.Current.ShowAuthorDate;
         _residentRowCapSetting = _settings.Current.ResidentRowCap;
         _silentCrawlRowCap = _settings.Current.SilentCrawlRowCap;
+        _crawl = new GraphCrawlThreshold(_silentCrawlRowCap, ResidentRowCap);
+        _crawlTarget = _crawl.Target;
+        Volatile.Write(ref _crawlRunning, 0);
         _repoLayout = services.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
 
         _repoLayout.Changed += OnRepoLayoutChanged;
+        _settings.Changed += OnSettingsChanged;
 
         _themeMode = _theme.Effective;
         RebuildThemeResources();
@@ -439,6 +450,12 @@ public sealed partial class CommitGraphControl : Control
         {
             _repoLayout.Changed -= OnRepoLayoutChanged;
             _repoLayout.Changed += OnRepoLayoutChanged;
+        }
+
+        if (_settings is not null)
+        {
+            _settings.Changed -= OnSettingsChanged;
+            _settings.Changed += OnSettingsChanged;
         }
 
         // Re-take the commit-store lease Detach() dropped, if the previous layout survived the
@@ -486,6 +503,11 @@ public sealed partial class CommitGraphControl : Control
         if (ReferenceEquals(context, _context))
             return;
         Historia.Diagnostics.PerfLog.Mark($"graph Bind -> {(context?.RepositoryPath ?? "<none>")}");
+
+        _firstPaintStartTimestamp = context is not null ? Stopwatch.GetTimestamp() : 0;
+        _firstPaintKind = null;
+        _firstPaintQueued = false;
+        _firstPaintRenderLogged = false;
 
         if (_state is not null)
         {
@@ -541,6 +563,11 @@ public sealed partial class CommitGraphControl : Control
 
     private void Detach()
     {
+        _firstPaintStartTimestamp = 0;
+        _firstPaintKind = null;
+        _firstPaintQueued = false;
+        _firstPaintRenderLogged = false;
+
         if (_state is not null)
         {
             _state.RefsChanged -= OnRefsChanged;
@@ -552,6 +579,8 @@ public sealed partial class CommitGraphControl : Control
         _theme.ThemeChanged -= OnThemeChanged;
         if (_repoLayout is not null)
             _repoLayout.Changed -= OnRepoLayoutChanged;
+        if (_settings is not null)
+            _settings.Changed -= OnSettingsChanged;
         CloseRefList();
         CancelAndDisposeLayoutCts();
 
@@ -561,6 +590,18 @@ public sealed partial class CommitGraphControl : Control
         // itself is kept so that round-trip doesn't blank the graph.
         _leasedStore?.Dispose();
         _leasedStore = null;
+    }
+
+    private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
+    {
+        if (e.NewSettings.ShowAuthorDate != _showAuthorDate)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                _showAuthorDate = e.NewSettings.ShowAuthorDate;
+                InvalidateVisual();
+            });
+        }
     }
 
     // Detach can run more than once across a control's attach/detach cycles, and several
@@ -779,6 +820,7 @@ public sealed partial class CommitGraphControl : Control
         _scrollOffset = Math.Clamp(row * _rowHeight + _rowHeight / 2 - viewH / 2, 0, max);
         _scrollBar.Value = _scrollOffset;
         _ = EnsureExtendedAsync((int)((_scrollOffset + viewH) / _rowHeight) + 1);
+        NoteViewportBottom();
     }
 
     private int ResolveRow(ObjectId? id)
@@ -797,6 +839,18 @@ public sealed partial class CommitGraphControl : Control
         _layoutCts = new CancellationTokenSource();
         var ct = _layoutCts.Token;
         InitializeExtendPump(context, ct);
+        _crawl = new GraphCrawlThreshold(_silentCrawlRowCap, ResidentRowCap);
+        _crawlTarget = _crawl.Target;
+        Volatile.Write(ref _crawlRunning, 0);
+
+        if (_firstPaintStartTimestamp == 0)
+        {
+            _firstPaintStartTimestamp = Stopwatch.GetTimestamp();
+            _firstPaintKind = null;
+            _firstPaintQueued = false;
+            _firstPaintRenderLogged = false;
+        }
+        var startTimestamp = _firstPaintStartTimestamp;
 
         try
         {
@@ -805,7 +859,7 @@ public sealed partial class CommitGraphControl : Control
             const int full = 2_500;
             var quick = Math.Min(QuickInitialRows, full);
 
-            // v8.2: paint an optimistic snapshot from the on-disk walk cache before the real
+            // Paint an optimistic snapshot from the on-disk walk cache before the real
             // quick phase below even starts — that phase still has to pay for a full ref
             // enumeration (ComputeFingerprint) before it can so much as check the cache, and on
             // a large repo that alone can take a while. This shortcut skips straight to a plain
@@ -819,11 +873,22 @@ public sealed partial class CommitGraphControl : Control
                 if (optimistic is not null && !ct.IsCancellationRequested)
                 {
                     ApplyLayout(optimistic);
-                    Historia.Diagnostics.PerfLog.Mark($"graph optimistic paint ({optimistic.Layout.RowCount} rows)");
+                    if (!_firstPaintQueued)
+                    {
+                        _firstPaintQueued = true;
+                        _firstPaintKind = "optimistic";
+                        var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                        Historia.Diagnostics.PerfLog.Mark(
+                            $"graph first paint queued: optimistic ({optimistic.Layout.RowCount} rows, {elapsedMs:F1}ms total)");
+                    }
+                    else
+                    {
+                        Historia.Diagnostics.PerfLog.Mark($"graph optimistic paint ({optimistic.Layout.RowCount} rows)");
+                    }
                 }
             }
 
-            // Phase 1: a tiny batch for an immediate first paint (<15ms). Phase 2 extends smoothly.
+            // Immediate first paint (<15ms), then extend smoothly.
             if (quick < full)
             {
                 var fast = await Task.Run(
@@ -831,14 +896,25 @@ public sealed partial class CommitGraphControl : Control
                 if (ct.IsCancellationRequested)
                     return;
                 ApplyLayout(fast);
-                Historia.Diagnostics.PerfLog.Mark($"graph quick paint ({fast.Layout.RowCount} rows)");
+                if (!_firstPaintQueued)
+                {
+                    _firstPaintQueued = true;
+                    _firstPaintKind = "quick";
+                    var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                    Historia.Diagnostics.PerfLog.Mark(
+                        $"graph first paint queued: quick ({fast.Layout.RowCount} rows, {elapsedMs:F1}ms total)");
+                }
+                else
+                {
+                    Historia.Diagnostics.PerfLog.Mark($"graph quick paint ({fast.Layout.RowCount} rows)");
+                }
 
                 var rest = await Task.Run(
                     () => _layoutService.ExtendLayoutAsync(context, fast, full - fast.Layout.RowCount, ct), ct).ConfigureAwait(true);
                 if (ct.IsCancellationRequested)
                     return;
                 ApplyLayout(rest);
-                Historia.Diagnostics.PerfLog.Mark($"graph first paint queued ({rest.Layout.RowCount} rows)");
+                Historia.Diagnostics.PerfLog.Mark($"graph initial batch extend queued ({rest.Layout.RowCount} rows)");
                 _ = StartBackgroundSilentLoadAsync(context, ct);
                 return;
             }
@@ -848,7 +924,18 @@ public sealed partial class CommitGraphControl : Control
             if (ct.IsCancellationRequested)
                 return;
             ApplyLayout(result);
-            Historia.Diagnostics.PerfLog.Mark($"graph first paint queued ({result.Layout.RowCount} rows)");
+            if (!_firstPaintQueued)
+            {
+                _firstPaintQueued = true;
+                _firstPaintKind = "full";
+                var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+                Historia.Diagnostics.PerfLog.Mark(
+                    $"graph first paint queued: full ({result.Layout.RowCount} rows, {elapsedMs:F1}ms total)");
+            }
+            else
+            {
+                Historia.Diagnostics.PerfLog.Mark($"graph first paint queued ({result.Layout.RowCount} rows)");
+            }
             _ = StartBackgroundSilentLoadAsync(context, ct);
         }
         catch (OperationCanceledException) { }
@@ -863,9 +950,9 @@ public sealed partial class CommitGraphControl : Control
             // this (bounded by its own timeout) before it starts touching the repo itself.
             context.MarkFirstGraphPaintDone();
 
-            // v10 graph memory footprint plan, Phase 1: the background-write gate's other half
-            // of "done loading" -- this context's first-paint attempt FOR THE CURRENT FOCUS,
-            // whether it painted, was cancelled, or failed.
+            // The background-write gate's other half of "done loading" -- this context's
+            // first-paint attempt FOR THE CURRENT FOCUS, whether it painted, was cancelled, or
+            // failed.
             _backgroundWorkGate?.ReportGraphSettled(context);
         }
     }
@@ -892,8 +979,7 @@ public sealed partial class CommitGraphControl : Control
     /// store lease: takes one on the new layout's store and releases the one held for the old,
     /// so a disk-backed store's file handle stays open exactly as long as this control can still
     /// render from it — even after <c>GraphLayoutService</c> drops its own reference on a
-    /// RefsChanged re-walk (that race previously closed the handle mid-<see cref="Render"/> and
-    /// terminated the process). Idempotent when the store instance is unchanged (an in-place
+    /// RefsChanged re-walk. Idempotent when the store instance is unchanged (an in-place
     /// Extend reuses it). Must run on the UI thread.
     /// <para>Returns false when the new layout's store was already closed by a concurrent final
     /// Dispose (<see cref="ICommitStore.AddRef"/> returned null) — the layout is dead on arrival
@@ -995,9 +1081,9 @@ public sealed partial class CommitGraphControl : Control
                         continue;
                     }
 
-                    // The silent crawler stops at SilentCrawlRowCap (by design, not a memory
+                    // The silent crawler stops at _crawlTarget (by design, not a memory
                     // limit — no toast); scroll-driven requests run to the true resident cap.
-                    var cap = req.Background ? SilentCrawlRowCap : ResidentRowCap;
+                    var cap = req.Background ? Math.Min(Volatile.Read(ref _crawlTarget), ResidentRowCap) : ResidentRowCap;
                     if (current.Layout.RowCount >= cap)
                     {
                         if (!req.Background)
@@ -1082,6 +1168,9 @@ public sealed partial class CommitGraphControl : Control
 
     private async Task StartBackgroundSilentLoadAsync(RepositoryContext context, CancellationToken ct)
     {
+        if (Interlocked.CompareExchange(ref _crawlRunning, 1, 0) != 0)
+            return;
+
         try
         {
             await Task.Yield();
@@ -1095,10 +1184,9 @@ public sealed partial class CommitGraphControl : Control
             if (ct.IsCancellationRequested || !ReferenceEquals(context, _context))
                 return;
 
-            var cap = SilentCrawlRowCap;
-
             while (!ct.IsCancellationRequested && ReferenceEquals(context, _context))
             {
+                var cap = Volatile.Read(ref _crawlTarget);
                 if (_layout is not { } current || current.Layout.IsComplete)
                     break;
                 if (current.Layout.RowCount >= cap)
@@ -1117,6 +1205,23 @@ public sealed partial class CommitGraphControl : Control
         }
         catch (OperationCanceledException) { }
         catch { }
+        finally
+        {
+            Interlocked.Exchange(ref _crawlRunning, 0);
+        }
+    }
+
+    private void NoteViewportBottom()
+    {
+        var row = (int)((_scrollOffset + Bounds.Height - RowsTop) / _rowHeight) + 1;
+        if (_crawl.Advance(row))
+        {
+            var target = _crawl.Target;
+            Volatile.Write(ref _crawlTarget, target);
+            Historia.Diagnostics.PerfLog.Mark($"graph crawl target → {target} (viewport row {row})");
+            if (Volatile.Read(ref _crawlRunning) == 0 && _context is { } ctx && _layoutCts is { } cts)
+                _ = StartBackgroundSilentLoadAsync(ctx, cts.Token);
+        }
     }
 
     // ── Theme ──
@@ -1404,6 +1509,7 @@ public sealed partial class CommitGraphControl : Control
         CloseRefList();
         var lastVisible = (int)((_scrollOffset + Bounds.Height - RowsTop) / _rowHeight) + 1;
         _ = EnsureExtendedAsync(lastVisible);
+        NoteViewportBottom();
         InvalidateVisual();
     }
 
@@ -1678,6 +1784,7 @@ public sealed partial class CommitGraphControl : Control
             _scrollOffset = top + _rowHeight - viewHeight;
         _scrollOffset = Math.Clamp(_scrollOffset, 0, Math.Max(0, _scrollBar.Maximum));
         _scrollBar.Value = _scrollOffset;
+        NoteViewportBottom();
     }
 
     private void ApplyQueryFromBar()
@@ -1723,7 +1830,7 @@ public sealed partial class CommitGraphControl : Control
 
         if (pos.Y < HeaderHeight)
         {
-            // v8.4: the cog at the right of the BRANCH / TAGS header opens this repo's settings.
+            // The cog at the right of the BRANCH / TAGS header opens this repo's settings.
             if (_context is { } cogCtx && _refsCogRect.Contains(pos))
             {
                 _workspace.Focus(cogCtx);
@@ -1919,7 +2026,7 @@ public sealed partial class CommitGraphControl : Control
             {
                 GraphColumnKind.Message => m.MessageShort,
                 GraphColumnKind.Author => m.AuthorName,
-                GraphColumnKind.Date => DateCell(m.AuthorWhen),
+                GraphColumnKind.Date => DateCell(CommitDateDisplay.Pick(m.AuthorWhen, m.CommitWhen, _showAuthorDate)),
                 GraphColumnKind.Sha => m.Id.Sha[..7],
                 _ => "",
             };
@@ -2295,8 +2402,7 @@ public sealed partial class CommitGraphControl : Control
             var props = e.GetCurrentPoint(rowBorder).Properties;
             if (props.IsRightButtonPressed)
             {
-                // Same context menu as right-clicking this ref's badge directly on the graph —
-                // the stacked-tag popup previously had no right-click menu at all.
+                // Same context menu as right-clicking this ref's badge directly on the graph.
                 e.Handled = true;
                 ShowPillContextMenu(new GraphDecoration
                 {
@@ -2375,9 +2481,7 @@ public sealed partial class CommitGraphControl : Control
         {
             // §V10.1.2: nothing painted yet — the optimistic snapshot missed and the real walk
             // is still priming (on a large, never-before-opened repo that can be tens of
-            // seconds; see GraphLayoutService.StartWalk's tip-priority prime). Previously this
-            // frame was just the background + header band, indistinguishable from "broken" for
-            // that whole stretch.
+            // seconds; see GraphLayoutService.StartWalk's tip-priority prime).
             DrawInitialLoadingPlaceholder(dc, size);
             return;
         }
@@ -2386,6 +2490,16 @@ public sealed partial class CommitGraphControl : Control
         {
             RenderRows(dc, size, result);
             _renderFailStreak = 0;
+
+            if (!_firstPaintRenderLogged && _firstPaintStartTimestamp != 0)
+            {
+                _firstPaintRenderLogged = true;
+                var elapsedMs = Stopwatch.GetElapsedTime(_firstPaintStartTimestamp).TotalMilliseconds;
+                var kind = _firstPaintKind ?? "layout";
+                Historia.Diagnostics.PerfLog.Mark(
+                    $"graph first paint rendered: {kind} ({result.Layout.RowCount} rows, {elapsedMs:F1}ms total)");
+                _firstPaintStartTimestamp = 0;
+            }
         }
         catch (Exception ex) when (ex is ObjectDisposedException or IOException or InvalidDataException
                                    or ArgumentOutOfRangeException or IndexOutOfRangeException)
@@ -2504,7 +2618,7 @@ public sealed partial class CommitGraphControl : Control
                         DrawTextColumn(dc, layout, first, last, x, col.Width, m => m.AuthorName, _textMuted);
                         break;
                     case GraphColumnKind.Date:
-                        DrawTextColumn(dc, layout, first, last, x, col.Width, m => DateCell(m.AuthorWhen), _textMuted);
+                        DrawTextColumn(dc, layout, first, last, x, col.Width, m => DateCell(CommitDateDisplay.Pick(m.AuthorWhen, m.CommitWhen, _showAuthorDate)), _textMuted);
                         break;
                     case GraphColumnKind.Sha:
                         DrawTextColumn(dc, layout, first, last, x, col.Width, m => m.Id.Sha[..7], _textMuted);
@@ -2600,8 +2714,8 @@ public sealed partial class CommitGraphControl : Control
                 GraphColumnKind.Sha => "SHA",
                 _ => "",
             };
-            // v8.4: the repo-settings cog lives at the right edge of the BRANCH / TAGS header
-            // (it used to be a per-tab button). Reserve room so the label ellipsises before it.
+            // The repo-settings cog lives at the right edge of the BRANCH / TAGS header.
+            // Reserve room so the label ellipsises before it.
             var cogRoom = col.Kind == GraphColumnKind.Refs && _context is not null ? CogSize + 12 : 0;
             var ft = Text(label, _headerText, Math.Max(10, col.Width - 12 - cogRoom), HeaderTextSize);
             dc.DrawText(ft, new Point(x + 8, (HeaderHeight - ft.Height) / 2));
@@ -3103,7 +3217,7 @@ public sealed partial class CommitGraphControl : Control
         return when.ToString("yyyy-MM-dd");
     }
 
-    // v8.4: the Date column shows the full local wall-clock timestamp plus the "how long ago"
+    // The Date column shows the full local wall-clock timestamp plus the "how long ago"
     // relative form in parentheses — e.g. "09/05/2026 - 02:30 PM (17h)".
     private static string DateCell(DateTimeOffset when)
         => when.ToLocalTime().ToString("MM/dd/yyyy - hh:mm tt", CultureInfo.InvariantCulture)

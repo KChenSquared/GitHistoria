@@ -3,9 +3,9 @@ namespace Historia.Views;
 /// <summary>
 /// Working tree, staging area and commit box. Changes (unstaged) and Staged are the two
 /// resizable sections, with a checkbox column on each and a green ⬇ Stage / red ⬆ Unstage
-/// arrow pair in the Staged header (v9.5) acting on the checked rows; the two lists are
+/// arrow pair in the Staged header acting on the checked rows; the two lists are
 /// resized by dragging the Staged section's top border. The commit-message strip is fixed size
-/// and pinned to the bottom, below both (v8.2) — it doesn't trade space with either list.
+/// and pinned to the bottom, below both — it doesn't trade space with either list.
 /// </summary>
 public sealed class StagingPanelView : UserControl, IDisposable
 {
@@ -61,12 +61,12 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private bool _stashing;
     private bool _suppressSelectAll;
 
-    // v8.1: matches RefNavigatorView.SectionMaxHeight — the commit-message section caps its
+    // Matches RefNavigatorView.SectionMaxHeight — the commit-message section caps its
     // content at the same height as the left-hand ref navigator's sections, so a long message
-    // scrolls internally instead of growing the (fixed-size, v8.2) message strip without bound.
+    // scrolls internally instead of growing the message strip without bound.
     private const double SectionMaxHeight = 240;
     private const double StageSplitterHeight = 7;
-    // v9.5: Changes is pinned to the top and is the only section the splitter resizes; it can't
+    // Changes is pinned to the top and is the only section the splitter resizes; it can't
     // be dragged shorter than this. Staged fills whatever's left (down to StagedMinHeight) and
     // the commit strip is docked to the bottom at a fixed height, so neither can be pushed off
     // screen no matter where the split sits.
@@ -184,7 +184,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         conflictInner.Children.Add(_conflictRows);
         _conflictStrip.Child = conflictInner;
 
-        // ── layout (v9.5) ──────────────────────────────────────────────────────────────────
+        // ── layout ──────────────────────────────────────────────────────────────────────────
         // A DockPanel keeps each piece in its own lane so a drag can never push one off-screen:
         //   • the conflict strip docks to the top,
         //   • the commit-message strip docks to the bottom at its own (capped) content height —
@@ -195,8 +195,8 @@ public sealed class StagingPanelView : UserControl, IDisposable
         // simply absorbs the remainder. Changes is therefore pinned to the top and is the only
         // section the drag grows or shrinks; Staged only ever gets "the rest" (floored at
         // StagedMinHeight by the row's MinHeight), so it can't be driven off the bottom either.
-        // v9.5 also moved the stage/unstage arrows up into the Staged header's empty middle
-        // column so they line up with the "Staged" label.
+        // The stage/unstage arrows sit in the Staged header's empty middle column so they line up
+        // with the "Staged" label.
         var arrowStrip = new StackPanel
         {
             Orientation = Orientation.Horizontal,

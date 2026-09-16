@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 public class WorkspaceServiceTests : IAsyncDisposable
 {
@@ -26,10 +26,8 @@ public class WorkspaceServiceTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Regression: re-opening an already-open repo used to call FocusInternal (which raises
-    /// FocusedRepositoryChanged) from inside `lock (_sync)`. A handler marshalling to the UI
-    /// thread then deadlocked against any other thread reading OpenRepositories / Focused.
-    /// The event must be raised with the lock released.
+    /// Re-opening an already-open repo raises <see cref="IWorkspaceService.FocusedRepositoryChanged"/>
+    /// with the lock released, avoiding deadlock with UI thread marshaling.
     /// </summary>
     [Fact(Timeout = 20000)]
     public async Task Reopening_an_open_repo_does_not_raise_focus_event_under_the_lock()
@@ -56,7 +54,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    // ── security review 2026-09-07, finding 3: clone URL validation ──
+    // ── Clone URL validation ──
 
     [Theory]
     [InlineData("--upload-pack=calc.exe")]
@@ -94,6 +92,44 @@ public class WorkspaceServiceTests : IAsyncDisposable
         {
             await ws.DisposeAsync();
             try { if (Directory.Exists(target)) Directory.Delete(target, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task CloneAsync_focuses_an_existing_tab_instead_of_opening_a_duplicate()
+    {
+        var ws = NewWorkspace();
+        using var source = Repo("a.txt");
+        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-dedup-{Guid.NewGuid():N}");
+
+        try
+        {
+            var first = await ws.CloneAsync(source.Path, target, new Historia.Services.Workspace.CloneOptions(), progress: null);
+            Assert.Single(ws.OpenRepositories);
+            Assert.Same(first, ws.Focused);
+
+            foreach (var f in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories))
+                File.SetAttributes(f, FileAttributes.Normal);
+            Directory.Delete(target, recursive: true);
+
+            var second = await ws.CloneAsync(source.Path, target, new Historia.Services.Workspace.CloneOptions(), progress: null);
+            Assert.Same(first, second);
+            Assert.Single(ws.OpenRepositories);
+            Assert.Same(first, ws.Focused);
+        }
+        finally
+        {
+            await ws.DisposeAsync();
+            try
+            {
+                if (Directory.Exists(target))
+                {
+                    foreach (var f in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories))
+                        File.SetAttributes(f, FileAttributes.Normal);
+                    Directory.Delete(target, recursive: true);
+                }
+            }
+            catch { /* best effort */ }
         }
     }
 
@@ -256,7 +292,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         Assert.Single(node["paths"]!.AsArray());
     }
 
-    // ── v10.1.3: focus-priority interrupt-and-promote ──
+    // ── Focus-priority interrupt-and-promote ──
 
     [Fact(Timeout = 20000)]
     public async Task Focusing_away_mid_init_leaves_FirstFullLoad_incomplete_until_retried()
@@ -360,7 +396,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    // ── v10.1.3: identity resolution runs concurrently with the first refs/status refresh ──
+    // ── Identity resolution runs concurrently with the first refs/status refresh ──
 
     [Fact(Timeout = 20000)]
     public async Task RefreshAllAsync_runs_concurrently_with_identity_resolution_not_after_it()
@@ -386,7 +422,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    // ── v10 graph memory footprint plan, Phase 4: headless caching for inactive tabs ──
+    // ── Headless caching for inactive tabs ──
 
     /// <summary>Overrides one service type while delegating everything else to a real provider —
     /// so <see cref="WorkspaceService"/>'s <c>IGraphLayoutService</c> can be swapped for a
@@ -418,6 +454,16 @@ public class WorkspaceServiceTests : IAsyncDisposable
         public int ClearPersistentCache() => 0;
         public Task RunHeadlessCacheAsync(RepositoryContext context, GraphQuery query, CancellationToken ct) => Task.CompletedTask;
         public void RefreshCommitGraphAfterFetch(RepositoryContext context) { }
+
+        public Func<RepositoryContext, GraphQuery, IProgress<GitProgress>?, CancellationToken, Task>? PrecacheAsync { get; set; }
+        public List<RepositoryContext> Precached { get; } = [];
+
+        public async Task PrecacheClonedRepositoryAsync(RepositoryContext context, GraphQuery query, IProgress<GitProgress>? progress, CancellationToken ct)
+        {
+            Precached.Add(context);
+            if (PrecacheAsync is not null)
+                await PrecacheAsync(context, query, progress, ct);
+        }
     }
 
     [Fact(Timeout = 20000)]
@@ -457,7 +503,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    // ── finding #1: focus cancels the newly focused context's own inactive-tab headless job ──
+    // ── Focus cancels the newly focused context's own inactive-tab headless job ──
 
     [Fact(Timeout = 20000)]
     public async Task Focus_cancels_the_newly_focused_contexts_inactive_tab_job()
@@ -490,7 +536,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    // ── finding #10: gate the tab-switch compacting GC on actual heap growth ──
+    // ── Gate the tab-switch compacting GC on actual heap growth ──
 
     [Theory]
     [InlineData(0L, 0L, false)]
@@ -504,7 +550,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         Assert.Equal(expected, WorkspaceService.ShouldCompactAfterHibernate(heapBytes, lohBytes));
     }
 
-    // ── finding #12: a focus switch mid-git-config-write must not cancel the write ──
+    // ── A focus switch mid-git-config-write must not cancel the write ──
 
     /// <summary>A minimal <see cref="IProfileService"/> whose <see cref="ApplyProfileToGitConfigAsync"/>
     /// blocks until released and records the token it was actually invoked with, so the test can
@@ -604,6 +650,76 @@ public class WorkspaceServiceTests : IAsyncDisposable
         Assert.True(profiles.WriteCompleted, "the write must run to completion even though the attempt was interrupted");
 
         await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task CloneAsync_precaches_before_the_tab_opens()
+    {
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
+        var locator = _host.Provider.GetRequiredService<IGitExecutableLocator>();
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var realGraph = new GraphLayoutService(_host.Settings, locator, cli);
+        var provider = new OverrideServiceProvider(_host.Provider, typeof(IGraphLayoutService), realGraph);
+        var recents = _recents = new RecentRepositoryService(_host.Settings);
+        var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
+        var identity = new RepoIdentityService(cli);
+        var ws = new WorkspaceService(provider, cli, recents, profiles, identity);
+
+        using var source = Repo("a.txt");
+        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-precache-{Guid.NewGuid():N}");
+
+        try
+        {
+            var ctx = await ws.CloneAsync(source.Path, target, new Historia.Services.Workspace.CloneOptions(), progress: null);
+            var hdrPath = GraphCachePaths.File(target, GraphMetaStore.HdrExt);
+            Assert.True(File.Exists(hdrPath));
+
+            using var doc = JsonDocument.Parse(File.ReadAllBytes(hdrPath));
+            Assert.True(doc.RootElement.GetProperty("Exhausted").GetBoolean());
+            Assert.Equal(ctx, ws.Focused);
+        }
+        finally
+        {
+            await ws.DisposeAsync();
+            try { if (Directory.Exists(target)) Directory.Delete(target, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact(Timeout = 20000)]
+    public async Task CloneAsync_cancelled_during_caching_still_opens_the_tab()
+    {
+        using var cts = new CancellationTokenSource();
+        var fakeGraph = new RecordingGraphLayoutService
+        {
+            PrecacheAsync = async (_, _, _, ct) =>
+            {
+                cts.Cancel();
+                ct.ThrowIfCancellationRequested();
+                await Task.CompletedTask;
+            }
+        };
+        var provider = new OverrideServiceProvider(_host.Provider, typeof(IGraphLayoutService), fakeGraph);
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var recents = _recents = new RecentRepositoryService(_host.Settings);
+        var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
+        var identity = new RepoIdentityService(cli);
+        var ws = new WorkspaceService(provider, cli, recents, profiles, identity);
+
+        using var source = Repo("a.txt");
+        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-cancel-precache-{Guid.NewGuid():N}");
+
+        try
+        {
+            var ctx = await ws.CloneAsync(source.Path, target, new Historia.Services.Workspace.CloneOptions(), progress: null, ct: cts.Token);
+            Assert.NotNull(ctx);
+            Assert.True(Directory.Exists(Path.Combine(target, ".git")));
+            Assert.Equal(ctx, ws.Focused);
+        }
+        finally
+        {
+            await ws.DisposeAsync();
+            try { if (Directory.Exists(target)) Directory.Delete(target, recursive: true); } catch { /* best effort */ }
+        }
     }
 
     public async ValueTask DisposeAsync() => await _host.DisposeAsync();

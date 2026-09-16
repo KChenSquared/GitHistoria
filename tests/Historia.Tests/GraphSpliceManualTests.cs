@@ -16,7 +16,7 @@ public sealed class ManualFactAttribute : FactAttribute
 }
 
 /// <summary>
-/// Phase 5 (M5.1, finding #16): <see cref="GraphMetaSplice"/>'s guarded live trigger
+/// <see cref="GraphMetaSplice"/>'s guarded live trigger
 /// (<c>GraphLayoutService.TryHeadlessSpliceAsync</c>) can only be exercised at the scale its own
 /// guards care about — a real 200,000+ row history, a real fetch that moves a real branch, real
 /// pack/disk timings for guard 4's budget, and a real shallow clone for guard 2 — none of which a
@@ -34,7 +34,7 @@ public sealed class ManualFactAttribute : FactAttribute
 /// pipeline to run (perf.log: <c>graph splice committed</c> or <c>graph splice rejected: &lt;reason&gt;</c>,
 /// or a plain <c>graph cache write: reorder …</c> mark if it fell back).</item>
 /// <item><b>Verify the spliced order equals a fresh walk:</b> run
-/// <c>git rev-list --topo-order &lt;new tip&gt;</c> and compare its SHA order to the on-disk store's
+/// <c>git rev-list --date-order &lt;new tip&gt;</c> and compare its SHA order to the on-disk store's
 /// row order (<see cref="GraphMetaStore.ProbeExisting"/> + <see cref="DiskCommitStore.Open"/>, same
 /// as <see cref="GraphHeadlessCacheTests.Rows_after_a_headless_reorder_read_back_in_the_new_walks_order"/>
 /// does at fixture scale) — they must match exactly.</item>

@@ -55,6 +55,9 @@ dotnet build
 
 # Launch the application
 dotnet run
+
+# Launch ScenarioLab (test scenario generator & runner)
+dotnet run --project Historia.ScenarioLab
 ```
 
 ### macOS: ad-hoc signing

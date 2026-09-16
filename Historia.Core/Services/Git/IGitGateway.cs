@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Git;
+namespace Historia.Services.Git;
 
 /// <summary>
 /// The only Git surface the UI and higher-level services talk to (§6.4.2). Decides per
@@ -15,9 +15,7 @@ public interface IGitGateway
     Task<RepositoryStatus> GetStatusAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// Paged linear commit history (§I-6.4.2). Intentionally retained though unused by the UI:
-    /// Phase 2 replaced the plain history list with the native graph, and V2's M10 folded its
-    /// search into the graph header (§V2-17.3). Kept as the paged-history API surface — the
+    /// Paged linear commit history (§I-6.4.2). Retained as the paged-history API surface — the
     /// underlying <c>LibGit2Service.ProjectCommits</c> is still covered by tests.
     /// </summary>
     Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default);
@@ -57,8 +55,7 @@ public interface IGitGateway
 
     /// <summary>Commits reachable from <paramref name="target"/>..HEAD — i.e. how many commits
     /// would leave the branch if it were reset to <paramref name="target"/> — via
-    /// <c>git rev-list --count</c> (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c>,
-    /// which finding #15 measured at ~22 s on far-apart commits).</summary>
+    /// <c>git rev-list --count</c> (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c>).</summary>
     Task<int> CountCommitsLeavingAsync(string target, CancellationToken ct = default);
 
     // ── Ref mutations ──

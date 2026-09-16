@@ -41,7 +41,7 @@ public sealed record GitCliRequest
     /// <summary>When set, written to the process's stdin and then closed (e.g. a patch for <c>git apply -</c>).</summary>
     public string? StandardInput { get; init; }
 
-    /// <summary>v10 graph memory footprint plan, Phase 4: run the process at
+    /// <summary>Run the process at
     /// <see cref="System.Diagnostics.ProcessPriorityClass.BelowNormal"/> — for background,
     /// self-contained git operations (a commit-graph write) that should never contend with a
     /// user-driven git invocation for CPU. Never killed once started regardless of this flag

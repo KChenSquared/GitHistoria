@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>
 /// Immutable per-commit metadata, projected from LibGit2Sharp inside the repository gate
@@ -125,7 +125,7 @@ public enum EdgeType
 }
 
 /// <summary>Decoration label attached to a commit row (§7.2). Named to avoid a clash with the
-/// Phase 1 <see cref="CommitDecoration"/> used by the plain history list.</summary>
+/// <see cref="CommitDecoration"/> used by the plain history list.</summary>
 public readonly record struct GraphDecoration
 {
     public required int RowIndex { get; init; }
@@ -248,7 +248,7 @@ public sealed class ArrayCommitStore(CommitMetadata[] items) : ICommitStore
 /// </summary>
 public sealed class GraphLayout : IDisposable
 {
-    /// <summary>Finding #9: a <see cref="RowCount"/>-bounded VIEW over <see cref="SourceState"/>'s
+    /// <summary>A <see cref="RowCount"/>-bounded VIEW over <see cref="SourceState"/>'s
     /// own chunked row accumulator — never a fresh array copy. Computed from <see
     /// cref="SourceState"/>/<see cref="RowCount"/> (both set before this is ever read), so it
     /// needs no initializer of its own. Indexer, <c>Count</c> and <c>Length</c> (source
@@ -256,7 +256,7 @@ public sealed class GraphLayout : IDisposable
     /// <see cref="GraphRowsView"/>'s own doc comment for the concurrency contract.</summary>
     public GraphRowsView Rows => new(SourceState, RowCount);
 
-    /// <summary>Phase 2: the shared, append-only accumulator that <see cref="DagLayoutEngine"/>
+    /// <summary>The shared, append-only accumulator that <see cref="DagLayoutEngine"/>
     /// derives lines from on demand. Null only for a layout with no engine behind it (<see
     /// cref="Empty"/>) — there are no rows to derive lines for either way.</summary>
     internal GraphLayoutState? SourceState { get; init; }
@@ -285,7 +285,7 @@ public sealed class GraphLayout : IDisposable
     /// public required member cannot coexist; <see cref="DagLayoutEngine"/> always sets it.</summary>
     public ICommitStore Commits { get; internal set; } = ArrayCommitStore.Empty;
 
-    /// <summary>Finding #9: materialized lazily on first access, from <see cref="SourceState"/>'s
+    /// <summary>Materialized lazily on first access, from <see cref="SourceState"/>'s
     /// real-edge accumulator (capped at <see cref="RealEdgeCap"/>, for the same snapshot-isolation
     /// reason <see cref="Rows"/> is capped at <see cref="RowCount"/>) plus this snapshot's own
     /// <see cref="OffWindowEdges"/>. Nothing in App or Core code actually reads this — only tests
@@ -472,7 +472,7 @@ public sealed class GraphLayout : IDisposable
 }
 
 /// <summary>
-/// Finding #9: a <see cref="GraphLayout.RowCount"/>-bounded, read-only view over a
+/// A <see cref="GraphLayout.RowCount"/>-bounded, read-only view over a
 /// <see cref="GraphLayoutState"/>'s own chunked row accumulator — what
 /// <see cref="GraphLayout.Rows"/> hands back instead of a fresh <c>GraphRow[]</c> copy on every
 /// Build/Extend call. Deliberately a plain class with no custom <c>Equals</c>/<c>GetHashCode</c>

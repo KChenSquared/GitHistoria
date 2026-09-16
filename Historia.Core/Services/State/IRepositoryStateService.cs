@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.State;
+namespace Historia.Services.State;
 
 public sealed record StatusChangedEventArgs(RepositoryStatus Status);
 public sealed record SelectionChangedEventArgs(ObjectId? CommitId);
@@ -13,8 +13,8 @@ public sealed record OpenDiffChangedEventArgs(DiffRequest? Request);
 
 /// <summary>
 /// The contract between every producer (Git services, watcher, profile service) and every
-/// consumer (WPF controls and Blazor components) for a single repository (§6.7). Phase 2's
-/// graph and Phase 3's power tools plug into this same surface unchanged.
+/// consumer (WPF controls and Blazor components) for a single repository (§6.7). The
+/// graph and power tools plug into this same surface unchanged.
 /// <para>
 /// Threading contract: all mutation happens on a background thread; every event is raised on
 /// the WPF dispatcher captured at construction. Consumers must unsubscribe on dispose.

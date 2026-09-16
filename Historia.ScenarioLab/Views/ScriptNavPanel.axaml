@@ -1,0 +1,85 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:services="clr-namespace:Historia.ScenarioLab.Services"
+             mc:Ignorable="d"
+             x:Class="Historia.ScenarioLab.Views.ScriptNavPanel"
+             Background="{DynamicResource ColorChrome}">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Header -->
+        <Border Grid.Row="0"
+                BorderBrush="{DynamicResource ColorBorder}"
+                BorderThickness="0,0,0,1"
+                Padding="8,4">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="Scripts"
+                           FontWeight="SemiBold"
+                           FontSize="12"
+                           Foreground="{DynamicResource ColorTextMuted}"
+                           VerticalAlignment="Center" />
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                    <Button x:Name="AddFolderButton"
+                            Content="+ Folder"
+                            Classes="flat"
+                            ToolTip.Tip="Add Folder"
+                            FontSize="11" />
+                    <Button x:Name="AddScriptButton"
+                            Content="+ Script"
+                            Classes="flat"
+                            ToolTip.Tip="Add Script"
+                            FontSize="11" />
+                    <Button x:Name="RefreshButton"
+                            Content="↻"
+                            Classes="flat"
+                            ToolTip.Tip="Refresh tree"
+                            FontSize="12" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Tree View -->
+        <TreeView Grid.Row="1"
+                  x:Name="ScriptTreeView"
+                  Background="Transparent"
+                  BorderThickness="0"
+                  Padding="4">
+            <TreeView.Styles>
+                <Style Selector="TreeViewItem" x:DataType="services:WorkspaceNode">
+                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                </Style>
+            </TreeView.Styles>
+            <TreeView.DataTemplates>
+                <TreeDataTemplate DataType="services:FolderNode" ItemsSource="{Binding Children}">
+                    <StackPanel Orientation="Horizontal" Spacing="6" Height="24">
+                        <StackPanel.ContextMenu>
+                            <ContextMenu Opening="OnContextMenuOpening">
+                                <MenuItem Header="Rename…" Click="OnRenameNodeClick" />
+                                <MenuItem Header="Delete" Click="OnDeleteNodeClick" Foreground="{DynamicResource ColorDanger}" />
+                            </ContextMenu>
+                        </StackPanel.ContextMenu>
+                        <TextBlock Text="📁" FontSize="11" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Foreground="{DynamicResource ColorText}" FontSize="12" />
+                    </StackPanel>
+                </TreeDataTemplate>
+                <DataTemplate DataType="services:ScriptNode">
+                    <StackPanel Orientation="Horizontal" Spacing="6" Height="24">
+                        <StackPanel.ContextMenu>
+                            <ContextMenu Opening="OnContextMenuOpening">
+                                <MenuItem Header="Rename…" Click="OnRenameNodeClick" />
+                                <MenuItem Header="Delete" Click="OnDeleteNodeClick" Foreground="{DynamicResource ColorDanger}" />
+                            </ContextMenu>
+                        </StackPanel.ContextMenu>
+                        <TextBlock Text="📜" FontSize="11" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Foreground="{DynamicResource ColorText}" FontSize="12" />
+                    </StackPanel>
+                </DataTemplate>
+            </TreeView.DataTemplates>
+        </TreeView>
+
+    </Grid>
+</UserControl>

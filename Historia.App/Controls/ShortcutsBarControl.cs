@@ -1,4 +1,4 @@
-﻿namespace Historia.Controls;
+namespace Historia.Controls;
 
 /// <summary>
 /// v8 M5: a single continuous bar between the app band and the three body panels — full window
@@ -62,7 +62,7 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
                        .OpenOrFocusAsync(AppBandControl.RepoOrigin(ctx));
         });
 
-        // v8.4: Branch — create a branch at the currently selected commit (HEAD when nothing is
+        // Branch — create a branch at the currently selected commit (HEAD when nothing is
         // selected). Stash — "stash all", named "Stash of <branch>" or a prompted name. Both use
         // the same chrome as Fetch / Pull / Push.
         _branchBtn = IconTextButton("git-branch", "Branch", "Create a branch at the selected commit",

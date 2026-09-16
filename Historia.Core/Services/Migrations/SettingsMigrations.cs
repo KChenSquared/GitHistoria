@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Migrations;
+namespace Historia.Services.Migrations;
 
 /// <summary>
 /// v0 → v1 migration for <c>settings.json</c> (§9.3, §14 <c>Migrations/V0ToV1.cs</c>).
@@ -245,3 +245,25 @@ public sealed class SettingsV14ToV15 : IJsonMigration
 /// through to the record default (<c>true</c>) on deserialize, so this only stamps the
 /// version.</summary>
 public sealed class SettingsV15ToV16() : StampOnlyMigration(15, 16);
+
+/// <summary>v16 → v17: lowers the default <c>silentCrawlRowCap</c> from 300,000 to 100,000 (R1).
+/// Rewrites stored <c>300000</c> to <c>100000</c>; preserves any other user-chosen value.</summary>
+public sealed class SettingsV16ToV17 : IJsonMigration
+{
+    public int FromVersion => 16;
+    public int ToVersion => 17;
+
+    public void Apply(JsonObject document)
+    {
+        if (document["silentCrawlRowCap"]?.GetValue<int?>() == 300_000)
+            document["silentCrawlRowCap"] = 100_000;
+        document["schemaVersion"] = 17;
+    }
+}
+
+/// <summary>v17 → v18: adds <c>showAuthorDate</c>. Additive — an absent key falls
+/// through to the record default (<c>false</c>) on deserialize, so this only stamps the
+/// version.</summary>
+public sealed class SettingsV17ToV18() : StampOnlyMigration(17, 18);
+
+

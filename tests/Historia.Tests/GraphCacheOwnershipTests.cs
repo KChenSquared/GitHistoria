@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// 2026-09-12 memoryshrink review, finding #1: two writers (the focused tab's own spill and an
+/// Two writers (the focused tab's own spill and an
 /// inactive tab's headless spool/reorder) could both append to the same repo's <c>.meta.*</c>
 /// store, producing a duplicated or misordered on-disk history. The fix has two layers, each
 /// covered here:
@@ -157,7 +157,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
         var reorderWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true, Engine);
         var order = new[] { 0, 1, 2, 3, 4, 5 }; // rows 0..4 reuse old records, row 5 is new
         var newRecords = RawRange(5, 1);
-        // Finding #5: the new record is appended (streaming) BEFORE the commit, exactly as
+        // The new record is appended (streaming) BEFORE the commit, exactly as
         // GraphLayoutService.RunHeadlessReorderAsync does per batch.
         Assert.True(reorderWriter.AppendReorderBatch(newRecords, expectedWalkKey: before.Fingerprint));
 
@@ -198,7 +198,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
 
         Assert.False(ok);
         // The old order stays authoritative — untouched by the abandoned attempt. The record
-        // AppendReorderBatch already wrote above is now a harmless dead record (finding #6
+        // AppendReorderBatch already wrote above is now a harmless dead record (compaction
         // compacts these away later); it doesn't corrupt anything since nothing references it.
         var after = ReadHeader();
         Assert.Equal(mutated.Fingerprint, after.Fingerprint);
@@ -294,10 +294,10 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
 
     // ── the race itself: a headless spool and a foreground spill on the same repo ──
 
-    /// <summary>The scenario finding #1 describes directly: an inactive tab's headless spool and
+    /// <summary>An inactive tab's headless spool and
     /// the focused tab's own spill both targeting the same repo's store at once, with tiny batches
     /// so the race window is wide open across many batch boundaries. Without the writer-lock
-    /// re-check this reliably produces a duplicated or misordered store (finding #1's own failure
+    /// re-check this reliably produces a duplicated or misordered store (failure
     /// scenario); with it, every writer either appends cleanly, adopts, or backs off — so the
     /// final store is always exactly the fixture's commit history, once.</summary>
     [Fact(Timeout = 60_000)]

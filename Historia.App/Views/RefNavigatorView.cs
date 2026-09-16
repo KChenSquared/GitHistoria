@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>
 /// The sidebar ref navigator (V4 port of Sidebar.razor + RefNavigator.razor +
@@ -41,7 +41,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         _expanded.Clear();
     }
 
-    // Folder expansion, keyed by RefTreeNode.FullPath (or "remote:<name>") — v8.2: holds paths
+    // Folder expansion, keyed by RefTreeNode.FullPath (or "remote:<name>") — holds paths
     // TOGGLED AWAY from their depth's default, not "is open" directly, so depth 0 (Local
     // Branches' own top-level folders, and each remote's own root — the level "origin" sits at)
     // can default to expanded while every folder nested inside one of those (depth 1+) still

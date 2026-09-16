@@ -1,4 +1,4 @@
-﻿# Historia — Constitution
+# Historia — Constitution
 
 The invariants. Every one of these was learned the hard way, from a real defect or a real
 design decision. The `(§I-…)`, `(§V2-…)`, and `(§V3-…)` citations point into the initial, v2,
@@ -293,3 +293,18 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     `AppLog.Write` / `AppLog.Operation` call at a new seam only when it is not already covered by
     one of those. `PerfLog` stays a **separate** tool, scoped to startup/latency timing
     only — it is not part of this system and is not a model for adding another one.
+39. **Source files document the present, never their own edit history.**
+    - **39.1 — No transition comments.** Never leave comments explaining what you changed, why
+      you changed it, or what the previous code looked like (e.g., `// Updated to fix X`,
+      `// Iteration 3`, `// OLD CODE:`).
+    - **39.2 — No inline changelogs.** Source files are not a git log. Do not add modification
+      history to file headers, function blocks, or inline comments.
+    - **39.3 — State-based documentation only.** Comments must only explain the business logic
+      and "why" of the current state for future developers. A comment that would not make sense
+      to someone reading the file for the first time — because it references a previous version
+      of the code — does not belong.
+    - **39.4 — Explain in chat only.** If you need to summarize changes or explain your
+      reasoning, do so entirely in the chat window or commit message. Never put change
+      explanations in the source files.
+    - **39.5 — Clean up stale history.** If you encounter old transition comments from previous
+      AI iterations while editing a file, delete them silently.

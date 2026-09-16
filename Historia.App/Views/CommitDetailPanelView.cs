@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>Selected-commit detail: metadata, changed files, file diff (V4 port of CommitDetailPanel.razor).</summary>
 public sealed class CommitDetailPanelView : UserControl, IDisposable
@@ -18,6 +18,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     private bool _renderBody = true;
     private CancellationTokenSource? _loadCts;
     private bool _disposed;
+    private CommitDetail? _detail;
 
     private IReadOnlyList<FileStatusEntry> _files = [];
     private Dictionary<string, List<FileStatusEntry>>? _treeByFolder;
@@ -34,6 +35,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         _notifications = sp.GetRequiredService<INotificationService>();
         _settings = sp.GetRequiredService<ISettingsService>();
         _launcher = sp.GetRequiredService<Historia.Services.UI.IExternalLauncher>();
+        _settings.Changed += OnSettingsChanged;
 
         var header = new StackPanel { Spacing = 8, Margin = new Thickness(12, 12, 12, 0) };
         var back = TextButton("← Working copy", () => _ctx.State.SetSelectedCommit(null));
@@ -110,6 +112,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
             {
                 if (ct.IsCancellationRequested || _id != currentId) return;
 
+                _detail = detail;
                 var rules = _settings.Current.IssueAutolinks;
                 var fs = DetailFontSize;
                 _head.Children.Clear();
@@ -205,7 +208,10 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
             Spacing = 8,
             HorizontalAlignment = HorizontalAlignment.Right,
         };
-        right.Children.Add(Text($"{detail.AuthorWhen:yyyy-MM-dd HH:mm}", "ColorTextMuted", 12));
+        var displayedDate = CommitDateDisplay.Pick(detail.AuthorWhen, detail.CommitWhen, _settings.Current.ShowAuthorDate);
+        var dateText = Text($"{displayedDate:yyyy-MM-dd HH:mm}", "ColorTextMuted", 12);
+        ToolTip.SetTip(dateText, $"Committed {detail.CommitWhen:yyyy-MM-dd HH:mm}\nAuthored {detail.AuthorWhen:yyyy-MM-dd HH:mm}");
+        right.Children.Add(dateText);
 
         var hash = Text(detail.Id.Sha[..10], "ColorAccent", 12);
         hash.TextDecorations = TextDecorations.Underline;
@@ -447,8 +453,22 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _settings.Changed -= OnSettingsChanged;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
+    }
+
+    private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
+    {
+        if (e.NewSettings.ShowAuthorDate != e.OldSettings.ShowAuthorDate)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_disposed || _detail is null || _head.Children.Count < 2)
+                    return;
+                _head.Children[1] = BuildMetaRow(_detail);
+            });
+        }
     }
 }
 
@@ -559,10 +579,8 @@ public sealed class DiffView : UserControl
             }
             panel.Children.Add(hdrRow);
 
-            // v8.4: every line used to be its own SelectableTextBlock, so a mouse drag could
-            // only select within one line at a time and copy pulled just that line. The gutters
-            // and per-line backgrounds stay one row per line (fixed pixel height, so they line
-            // up with the text below), but the code itself is now a single SelectableTextBlock
+            // The gutters and per-line backgrounds stay one row per line (fixed pixel height, so
+            // they line up with the text below), but the code itself is a single SelectableTextBlock
             // spanning the whole hunk — one continuous selection, and Ctrl+C copies whatever
             // span the user dragged across, deletions included.
             const double lineH = 18;

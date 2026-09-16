@@ -1,10 +1,10 @@
-﻿namespace Historia.Services.Graph;
+namespace Historia.Services.Graph;
 
 /// <summary>Which engine produced a persisted walk / metadata store: the CLI streaming
-/// <c>git log --topo-order</c> walk (primary, v10.1.3+) or the libgit2 revwalk (fallback). The two
-/// engines can disagree on row order for the same ref set, so a cache written by one must never be
-/// resumed (<c>skip: have</c>) by the other — see <see cref="GraphWalkCache"/> and
-/// <see cref="GraphMetaStore"/>.</summary>
+/// <c>git log --date-order</c> walk (primary, v10.1.3+) or the libgit2 revwalk (fallback). Both
+/// engines now produce date order and can differ only on equal-timestamp ties, so a cache written
+/// by one must never be resumed (<c>skip: have</c>) by the other — see <see cref="GraphWalkCache"/>
+/// and <see cref="GraphMetaStore"/>.</summary>
 internal enum WalkEngine
 {
     LibGit2 = 0,
@@ -19,15 +19,11 @@ internal enum WalkEngine
 /// </summary>
 internal sealed class GraphWalkCache
 {
-    // v10.1.3: bumped 2 -> 3 to add WalkEngine (see that enum) — a file written by one walk
-    // engine must never be treated as resumable by the other, since their row orders can differ
-    // for the same ref set. A v2 file predates the marker and is rejected outright, forcing a
-    // one-time re-walk per repo.
-    // Phase 0.5 (v10 graph memory footprint plan): bumped 3 -> 4. The CLI prime's resume skip
-    // fix and the canonical (sorted) tip order both change a repo's walk output for an unchanged
-    // fingerprint — a v3 file could silently disagree with what a fresh walk now produces, so it
-    // is rejected outright and every repo re-walks once.
-    private const int Version = 4;
+    // A file written by one walk engine must never be treated as resumable by the other,
+    // since their row orders can differ for the same ref set. The CLI prime's resume skip
+    // and the canonical (sorted) tip order both define the cache format compatibility.
+    // v5: rows in commit-date order; v4 files were --topo-order and must never be shown or resumed.
+    private const int Version = 5;
     private const int MaxFiles = 40;
 
     private static readonly JsonSerializerOptions Json = new() { IncludeFields = false };
@@ -116,7 +112,7 @@ internal sealed class GraphWalkCache
     }
 
     /// <summary>
-    /// v8.2: loads the cached walk WITHOUT checking it still matches the repo's current refs —
+    /// Loads the cached walk WITHOUT checking it still matches the repo's current refs —
     /// for an optimistic first paint the caller shows immediately, before the fresh ref-
     /// fingerprint check (which needs a full <c>repo.Refs.ToList()</c> enumeration) even
     /// completes. The result may be momentarily stale: a branch moved, a new commit landed, or
@@ -150,7 +146,7 @@ internal sealed class GraphWalkCache
         return GetOrConvert(entry!, metadataOnDisk);
     }
 
-    /// <summary>v10 graph memory footprint plan, Phase 1 (R4): drops this repo's cached read
+    /// <summary>Drops this repo's cached read
     /// entry (the raw DTO plus up to two converted <see cref="Loaded"/> commit lists) — called on
     /// <see cref="GraphLayoutService.Hibernate"/> so a warm-loaded repo's walk cache doesn't stay
     /// resident for the rest of the session after the tab is switched away from. A miss on the

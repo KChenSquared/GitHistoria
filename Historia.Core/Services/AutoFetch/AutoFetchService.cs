@@ -260,6 +260,10 @@ public sealed class AutoFetchService : IAutoFetchService
         }
     }
 
+    /// <summary>
+    /// §12.1: runs one fetch for <paramref name="context"/>. On success, also refreshes that repo's
+    /// commit-graph and, for an inactive tab, queues its headless disk cache. Failures stop quietly.
+    /// </summary>
     /// <returns><c>true</c> if the fetch completed without error.</returns>
     private async Task<bool> SafeFetchAsync(RepositoryContext context, CancellationToken ct)
     {
@@ -267,11 +271,23 @@ public sealed class AutoFetchService : IAutoFetchService
         {
             await _host.FetchAsync(context, ct).ConfigureAwait(false);
 
-            // Finding #17: refresh this repo's commit-graph after every successful fetch (the
+            // Refresh this repo's commit-graph after every successful fetch (the
             // [InitialFetch] callers above and the [AutoFetch] loop both go through here). Itself
             // fire-and-forget and best-effort — never allowed to fail this fetch or the loop.
             try { _graphLayoutService?.RefreshCommitGraphAfterFetch(context); }
             catch { /* §12.1: commit-graph maintenance must never take the loop down */ }
+
+            // Bring an inactive tab's on-disk graph cache up to date headlessly (§12.1 / R1).
+            // Never queued for the focused tab (R2: its own RefsChanged re-spill covers it).
+            if (context != _workspace.Focused)
+            {
+                try
+                {
+                    _graphLayoutService?.EnqueueInactiveTabCaching(context, WorkspaceService.TabGraphQuery);
+                    Diagnostics.PerfLog.Mark($"auto-fetch: queued headless disk cache ({context.DisplayName})");
+                }
+                catch { /* §12.1: headless disk caching must never take the loop down */ }
+            }
 
             return true;
         }

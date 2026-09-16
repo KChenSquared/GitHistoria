@@ -1,4 +1,4 @@
-﻿namespace Historia;
+namespace Historia;
 
 internal static class Program
 {
@@ -34,7 +34,7 @@ internal static class Program
             // helper must only ever answer for the host GitGateway resolved them for, never for
             // whatever host git.exe ends up contacting (a redirected pushurl, an insteadOf
             // rewrite, a submodule URL). HISTORIA_ASKPASS_HOST is set alongside the credentials
-            // by the caller that composed them (security review 2026-09-07, finding 2).
+            // by the caller that composed them.
             var expectedHost = Environment.GetEnvironmentVariable("HISTORIA_ASKPASS_HOST");
             var answer = Historia.Services.Git.AskpassProtocol.PromptHostMatches(prompt, expectedHost)
                 ? (prompt.Contains("Username", StringComparison.OrdinalIgnoreCase)

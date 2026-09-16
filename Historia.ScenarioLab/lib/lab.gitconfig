@@ -1,0 +1,17 @@
+[user]
+	name = ScenarioLab
+	email = scenariolab@example.com
+[init]
+	defaultBranch = main
+[core]
+	autocrlf = false
+[commit]
+	gpgsign = false
+[tag]
+	gpgsign = false
+[protocol "file"]
+	allow = always
+[advice]
+	detachedHead = false
+[pull]
+	rebase = false

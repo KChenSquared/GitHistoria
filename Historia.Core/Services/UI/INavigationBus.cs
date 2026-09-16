@@ -1,7 +1,7 @@
-﻿namespace Historia.Services.UI;
+namespace Historia.Services.UI;
 
 /// <summary>
-/// Cross-WebView navigation channel (§6.2.1). Phase 2 hosts the sidebar and the detail area in
+/// Cross-WebView navigation channel (§6.2.1). Hosts the sidebar and the detail area in
 /// two separate <c>BlazorWebView</c> instances with the native commit graph between them; the
 /// sidebar publishes navigation intents here and the detail root consumes them. Singleton.
 /// </summary>

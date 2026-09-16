@@ -1,0 +1,44 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:avaloniaEdit="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
+             mc:Ignorable="d"
+             x:Class="Historia.ScenarioLab.Views.OutputPanel"
+             Background="{DynamicResource ColorChrome}">
+
+    <Grid RowDefinitions="Auto,*">
+        <!-- Header -->
+        <Border Grid.Row="0"
+                BorderBrush="{DynamicResource ColorBorder}"
+                BorderThickness="0,0,0,1"
+                Padding="8,4">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="Output"
+                           FontWeight="SemiBold"
+                           FontSize="11"
+                           Foreground="{DynamicResource ColorTextMuted}"
+                           VerticalAlignment="Center" />
+                <Button Grid.Column="1"
+                        x:Name="ClearButton"
+                        Content="Clear"
+                        Classes="flat"
+                        FontSize="11"
+                        Padding="6,2" />
+            </Grid>
+        </Border>
+
+        <!-- Output Editor -->
+        <avaloniaEdit:TextEditor Grid.Row="1"
+                                 x:Name="OutputEditor"
+                                 IsReadOnly="True"
+                                 ShowLineNumbers="False"
+                                 FontFamily="Cascadia Mono,Consolas,Monospace"
+                                 FontSize="12"
+                                 Background="{DynamicResource ColorChrome}"
+                                 Foreground="{DynamicResource ColorText}"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 VerticalScrollBarVisibility="Visible" />
+    </Grid>
+</UserControl>

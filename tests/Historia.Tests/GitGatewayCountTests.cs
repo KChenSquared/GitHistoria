@@ -2,8 +2,7 @@ namespace Historia.Tests;
 
 /// <summary>#21: <c>IGitGateway.CountCommitsLeavingAsync</c> — how many commits would leave the
 /// current branch if it were reset to a given target, via <c>git rev-list --count
-/// &lt;target&gt;..HEAD</c> (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c>, which
-/// finding #15 measured at ~22 s on far-apart commits).</summary>
+/// &lt;target&gt;..HEAD</c> (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c>).</summary>
 public sealed class GitGatewayCountTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

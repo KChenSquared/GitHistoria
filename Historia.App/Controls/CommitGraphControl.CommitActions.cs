@@ -188,7 +188,7 @@ public sealed partial class CommitGraphControl
         {
             var menu = new ContextMenu { ItemsSource = items };
 
-            // v8.4: long branch/tag names get ellipsis-trimmed in the menu items above (so the
+            // Long branch/tag names get ellipsis-trimmed in the menu items above (so the
             // popup never overflows the screen) — show the untrimmed name as a tooltip anchored
             // above the menu itself so it's still readable. Opened/Closed keep the tooltip's
             // lifetime tied to the menu's.

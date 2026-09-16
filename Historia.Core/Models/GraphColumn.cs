@@ -48,7 +48,7 @@ public static class GraphColumnDefaults
     {
         GraphColumnKind.Refs => RefsStaticFloor,
         GraphColumnKind.Sha  => 80,
-        // v8.4: the Date cell now carries a full "MM/DD/YYYY - HH:MM AM/PM (ago)" string.
+        // The Date cell carries a full "MM/DD/YYYY - HH:MM AM/PM (ago)" string.
         GraphColumnKind.Date => 200,
         _                    => 150,
     };

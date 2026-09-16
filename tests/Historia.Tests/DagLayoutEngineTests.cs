@@ -428,7 +428,7 @@ public class DagLayoutEngineTests
             [Sha(30)] = [new(DecorationType.LocalBranch, "main", IsLocal: true, IsHead: true)],
         };
 
-        // §10.1.3 finding #15 (decision C): the whole graph sits well inside the 200-row scan
+        // The whole graph sits well inside the 200-row scan
         // window, so the exact in-window check (isAncestor: null, every real caller's shape since
         // the libgit2 CalculateHistoryDivergence oracle was retired) must reach the same
         // conclusion as the brute-force oracle tests used to inject.
@@ -495,7 +495,7 @@ public class DagLayoutEngineTests
     [Fact]
     public void Without_an_explicit_oracle_the_in_window_check_still_applies_the_exception()
     {
-        // §10.1.3 finding #15 (decision C): the old behavior — isAncestor: null skipped the
+        // Legacy behavior: isAncestor: null skipped the
         // checked-out-branch exception entirely, deferring to the verified recompute — is gone.
         // Every real caller now passes null and gets the exact in-window check for free; with no
         // oracle argument at all, this graph (identical to the "ancestor of no newer tip" case
@@ -515,7 +515,7 @@ public class DagLayoutEngineTests
         Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(40)]].LaneIndex);  // feat-x → lane 2
     }
 
-    /// <summary>§10.1.3 finding #15's acceptance test: DagLayoutEngine's private
+    /// <summary>DagLayoutEngine's private
     /// <c>IsAncestorInWindow</c> helper (invoked here by reflection — it's an internal algorithm
     /// detail, not part of the engine's public surface) must agree EXACTLY with a brute-force
     /// parent-link reachability oracle, for every (H, T) pair, across many randomized topo-ordered
@@ -965,7 +965,7 @@ public class DagLayoutEngineTests
         return forward;
     }
 
-    // ── Phase 5(a) (v10 graph memory footprint plan): canonicalized commit ids ──
+    // ── Canonicalized commit ids ──
 
     /// <summary>A commit reachable from two children (a merge convergence, or here just two
     /// independent tips landing on the same ancestor) is referenced by a SEPARATELY-parsed
@@ -1018,7 +1018,7 @@ public class DagLayoutEngineTests
             Assert.Equal(a.Layout.Rows[i].LaneIndex, b.Layout.Rows[i].LaneIndex);
     }
 
-    // ── finding #9: Build/Extend must not copy the whole accumulator every time ──
+    // ── Build/Extend must not copy the whole accumulator every time ──
 
     private static List<RawCommit> LinearChain(int count) =>
         Enumerable.Range(0, count).Select(i => i + 1 < count ? C(i, i + 1) : C(i)).ToList();
@@ -1030,7 +1030,7 @@ public class DagLayoutEngineTests
     /// with the TOTAL rows accumulated so far — quadratic overall. <c>retainCommits: false</c>
     /// isolates this to the rows/edges allocation this fix targets: <c>Layout.Commits</c>'s own
     /// per-extend copy (<c>s.Commits.ToArray()</c>) is a separate, disk-spill-mode-only concern
-    /// finding #9 didn't cover (disk mode never retains commits at all).</summary>
+    /// is not covered (disk mode never retains commits at all).</summary>
     [Fact]
     public void Extending_a_large_history_does_not_allocate_more_per_extend_as_it_grows()
     {

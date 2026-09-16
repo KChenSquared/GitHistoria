@@ -25,7 +25,7 @@ public sealed class GraphLayoutState
     /// <summary>parent id → the child reservations expecting it.</summary>
     internal readonly Dictionary<ObjectId, List<Reservation>> Reservations = [];
 
-    /// <summary>Phase 5(a) (v10 graph memory footprint plan): canonicalizes <see cref="ObjectId"/>
+    /// <summary>Canonicalizes <see cref="ObjectId"/>
     /// instances across <see cref="Reservations"/> and <see cref="RowByCommitId"/> — a commit is
     /// first seen as a reservation key (via its child's own, separately-parsed
     /// <c>ParentIds</c> entry) rows before it is ever seen as a row itself (in a topo walk, a
@@ -62,7 +62,7 @@ public sealed class GraphLayoutState
     internal readonly Dictionary<int, string> LaneKey = [];
 
     // Accumulators — real edges only append; OffWindow edges are regenerated each build.
-    // Finding #9: Rows is chunked (ChunkedAppendList), not a plain List<T> — see its own doc
+    // Rows is chunked (ChunkedAppendList), not a plain List<T> — see its own doc
     // comment. This is what lets GraphLayout.Rows become a RowCount-bounded VIEW over this same
     // instance instead of a fresh array copy on every Build/Extend.
     internal readonly ChunkedAppendList<GraphRow> Rows = new();

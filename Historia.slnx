@@ -5,4 +5,5 @@
   </Folder>
   <Project Path="Historia.App/Historia.App.csproj" />
   <Project Path="Historia.Core/Historia.Core.csproj" />
+  <Project Path="Historia.ScenarioLab/Historia.ScenarioLab.csproj" />
 </Solution>

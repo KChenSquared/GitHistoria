@@ -3,7 +3,7 @@ using System.Reflection;
 namespace Historia.Tests;
 
 /// <summary>
-/// Phase 0.5 of the v10 graph memory footprint plan: a fresh CLI-engine prime that starts with
+/// A fresh CLI-engine prime that starts with
 /// <c>cache.Commits</c> already partially seeded (a warm relaunch from a non-exhausted on-disk
 /// walk cache) must re-skip those already-cached rows, exactly like the libgit2 <c>StartWalk</c>
 /// path already does with <c>skip: have</c>. Before the fix, <c>PrimeCliWalkAsync</c> always
@@ -57,11 +57,11 @@ public sealed class GraphWalkResumeAfterPartialCacheTests : IAsyncDisposable
         if (!locator.Current.Found)
             return; // git.exe not discoverable — the CLI engine never engages (see class doc elsewhere)
 
-        // Phase 3a (v10 graph memory footprint plan): with disk-backed metadata on (the
+        // With disk-backed metadata on (the
         // default), a background spill trims confirmed-durable rows out of cache.Commits, so
         // "cache.Commits.Count == every row ever walked" no longer holds — that's covered by its
         // own tests (GraphSpoolTests). This test is specifically about the CLI prime's resume
-        // skip logic (Phase 0.5), which is orthogonal to disk spilling — keep it in memory mode
+        // skip logic, which is orthogonal to disk spilling — keep it in memory mode
         // so cache.Commits still means "the whole walked history", as the assertions below assume.
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
         var svc = new GraphLayoutService(_host.Settings, locator);
@@ -105,7 +105,7 @@ public sealed class GraphWalkResumeAfterPartialCacheTests : IAsyncDisposable
         Assert.Equal(rowIds.Count, rowIds.Distinct().Count());
     }
 
-    /// <summary>Phase 0.5: <c>ResolveTipShas</c> (the CLI engine's tip resolver) must hand back an
+    /// <summary><c>ResolveTipShas</c> (the CLI engine's tip resolver) must hand back an
     /// ordinally sorted array — git's own topological sort depends on the order tips are fed to
     /// it (measured), and the walk fingerprint already sorts refs by name, so an unsorted,
     /// enumeration-order tip list would let a `git gc`/`pack-refs` that only reorders how refs

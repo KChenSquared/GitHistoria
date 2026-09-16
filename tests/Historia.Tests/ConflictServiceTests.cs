@@ -90,7 +90,7 @@ public class ConflictServiceTests
         Assert.Contains("OURS", await File.ReadAllTextAsync(Path.Combine(repoDir.Path, "f.txt")));
     }
 
-    // Regression test for security review 2026-09-07, finding 1: a conflicted path containing
+    // A conflicted path containing
     // shell metacharacters must reach the external merge tool as one literal argument, never as
     // something a shell re-parses into extra commands.
     [Fact]

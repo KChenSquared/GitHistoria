@@ -75,7 +75,7 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
         Assert.Equal(expected, fallbackKey);
     }
 
-    // ── finding #24: the CLI path must ignore `git replace` grafts, same as the libgit2 fallback ──
+    // ── The CLI path must ignore `git replace` grafts, same as the libgit2 fallback ──
 
     [Fact(Timeout = 20000)]
     public async Task CLI_path_ignores_git_replace_grafts_same_as_the_libgit2_fallback()
@@ -89,7 +89,7 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
         // graft's content for the real root, so the root no longer looks parentless and drops out
         // of the walk's root-candidate set, changing the reported "smallest root" to the other
         // one. The libgit2 fallback never resolves replace refs at all, so it always sees the real
-        // (still parentless) root — the exact mismatch finding #24 describes.
+        // (still parentless) root.
         var smallest = ExpectedSmallestRoot();
         var other = smallest == _rootA ? _rootB : _rootA;
         var smallTree = _repo.Git("rev-parse", $"{smallest}^{{tree}}").Trim();

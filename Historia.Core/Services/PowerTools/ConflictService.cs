@@ -131,7 +131,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             // executable lets the runtime's own Win32 escaping do its job once, correctly, and
             // needs no OS check either (no shell-specific syntax is involved).
             //
-            // Security review 2026-09-07, finding 1: filePath (and therefore mergedPath) comes
+            // filePath (and therefore mergedPath) comes
             // from the repository's own index and is attacker-controlled; a shell metacharacter in it
             // (e.g. "pwn&calc") must never be interpreted as a command separator. Each substituted
             // value becomes its own ArgumentList entry, so no quoting or escaping is needed

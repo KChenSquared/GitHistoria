@@ -28,7 +28,7 @@ internal sealed class FakeWorkspace : IWorkspaceService
     public Task RestoreSessionAsync(CancellationToken ct = default) => throw new NotSupportedException();
 }
 
-/// <summary>v10 graph memory footprint plan, Phase 1: the background-write gate. No commit-graph
+/// <summary>The background-write gate. No commit-graph
 /// or graph disk-cache write may start until the focused tab is "done loading" — first graph
 /// paint reported for the current focus AND <see cref="RepositoryContext.FirstFullLoad"/>.</summary>
 public sealed class BackgroundWorkGateTests : IAsyncDisposable

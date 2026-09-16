@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Graph;
+namespace Historia.Services.Graph;
 
 /// <summary>
 /// Shared naming for the machine-local graph cache files. A repo maps to one stem
@@ -22,7 +22,7 @@ internal static class GraphCachePaths
 }
 
 /// <summary>
-/// 2026-09-12 memoryshrink review, finding #1: one lock object per repo cache stem, shared by
+/// One lock object per repo cache stem, shared by
 /// every <see cref="GraphMetaWriter"/> for that repo (the active tab's own spill, an inactive
 /// tab's headless spool/reorder). Every <c>.meta.*</c> mutation — <see cref="GraphMetaWriter.Reset"/>,
 /// an append + <see cref="GraphMetaWriter.Commit"/>, <see cref="GraphMetaWriter.WriteOrder"/>,
@@ -51,16 +51,16 @@ internal static class GraphCacheLocks
 /// <item><c>.meta.hdr</c> — JSON: version, walk key, remote-branch flag, row count, record
 /// count, order version, exhausted.</item>
 /// <item><c>.meta.dat</c> — one binary RECORD per distinct commit (sha, three strings, two
-/// timestamps, parent count) — append-only, never rewritten by a ref change (Phase 3c).</item>
+/// timestamps, parent count) — append-only, never rewritten by a ref change.</item>
 /// <item><c>.meta.idx</c> — one <see cref="long"/> per RECORD: its start offset in
 /// <c>.meta.dat</c>.</item>
 /// <item><c>.meta.search</c> — one lowercased line per RECORD (<c>sha ␟ message ␟ author</c>)
 /// for Ctrl+F.</item>
-/// <item><c>.meta.order.&lt;n&gt;</c> (Phase 3c, only once a ref change has actually reordered
+/// <item><c>.meta.order.&lt;n&gt;</c> (only once a ref change has actually reordered
 /// history) — one <see cref="int"/> per ROW: which record occupies that row. Absent
 /// (<c>OrderVersion == 0</c>) means the identity order — row <c>i</c> IS record <c>i</c>, exactly
-/// as before Phase 3c; the common case, and the only one before any reorder has ever run.</item>
-/// <item><c>.meta.tips</c> (Phase 3c) — the sorted tip SHAs (20 bytes each) the current order was
+/// the common case, and the only one before any reorder has ever run.</item>
+/// <item><c>.meta.tips</c> — the sorted tip SHAs (20 bytes each) the current order was
 /// built from; not versioned, always describes the CURRENT order.</item>
 /// </list>
 /// All writes are append-only and best-effort; any read fault downgrades the caller to the
@@ -68,22 +68,14 @@ internal static class GraphCacheLocks
 /// </summary>
 internal sealed class GraphMetaStore
 {
-    // v10.1.2: bumped 1 -> 2. Each .dat record now also carries its ParentCount parent SHAs (20
-    // bytes each) so the store can seed TryOptimisticSnapshot's first paint on its own, without
-    // depending on the bounded, less-reliable .gz walk cache. A v1 file has no parent bytes and
-    // is rejected outright (TryOpen/Probe/ProbeAny all gate on Version) rather than misread.
-    // v10.1.3: bumped 2 -> 3 to add WalkEngine to the header — the CLI streaming walk and the
-    // libgit2 revwalk can order the same ref set's history differently, so a store the background
-    // spill keeps appending to must never mix rows from both. A mismatch (or a pre-marker v2 file)
-    // is rejected outright, forcing a one-time full re-spill per repo.
-    // Phase 0.5 (v10 graph memory footprint plan): bumped 3 -> 4, in lockstep with
-    // GraphWalkCache.Version — the CLI prime resume-skip fix and the canonical sorted tip order
-    // both change a repo's walk output for an unchanged fingerprint, so a v3 store is rejected
-    // outright and re-spills once.
-    // Phase 3c (v10 graph memory footprint plan): bumped 4 -> 5 to add RecordCount and
-    // OrderVersion to the header — a v4 file has no order indirection (every row IS its record)
-    // and no RecordCount field; rejected outright, one more one-time re-spill per repo.
-    internal const int Version = 5;
+    // Format version history:
+    // 2: Each .dat record carries ParentCount parent SHAs so the store can seed
+    //    TryOptimisticSnapshot's first paint on its own, without depending on the walk cache.
+    // 3: WalkEngine in header — CLI streaming and libgit2 can order rows differently.
+    // 4: Keyed on canonical sorted tip order in lockstep with GraphWalkCache.Version.
+    // 5: Added RecordCount and OrderVersion to the header for order indirection.
+    // 6: rows in commit-date order (`git log --date-order`); v5 stores were topo-ordered.
+    internal const int Version = 6;
     internal const string HdrExt = ".meta.hdr";
     internal const string DatExt = ".meta.dat";
     internal const string IdxExt = ".meta.idx";
@@ -95,7 +87,7 @@ internal sealed class GraphMetaStore
 
     internal static readonly JsonSerializerOptions Json = new() { IncludeFields = false };
 
-    /// <summary>Phase 3c: the versioned order file for this repo — <c>version == 0</c> never
+    /// <summary>The versioned order file for this repo — <c>version == 0</c> never
     /// exists on disk (0 means "identity order", encoded by the header alone).</summary>
     internal static string OrderFile(string repoPath, int version) =>
         GraphCachePaths.File(repoPath, $".meta.order.{version}");
@@ -109,17 +101,17 @@ internal sealed class GraphMetaStore
         public bool Exhausted { get; set; }
         public int WalkEngine { get; set; }
 
-        /// <summary>Phase 3c: total distinct commit records ever appended to <c>.meta.dat</c> —
+        /// <summary>Total distinct commit records ever appended to <c>.meta.dat</c> —
         /// equals <see cref="RowCount"/> until the first reorder, after which it can exceed it
         /// (new commits get new records; unreachable ones' old records just aren't referenced by
         /// the current order any more, until compaction).</summary>
         public int RecordCount { get; set; }
 
-        /// <summary>Phase 3c: which <c>.meta.order.&lt;n&gt;</c> file maps rows to records.
+        /// <summary>Which <c>.meta.order.&lt;n&gt;</c> file maps rows to records.
         /// <c>0</c> means identity — row <c>i</c> is record <c>i</c>, no order file exists.</summary>
         public int OrderVersion { get; set; }
 
-        /// <summary>Phase 5 (M5.1, finding #16): how long the most recent walk-from-row-0 to
+        /// <summary>How long the most recent walk-from-row-0 to
         /// exhaustion took, in milliseconds — <see cref="GraphMetaSplice.Evaluate"/>'s guard 4
         /// budget. <c>0</c> (the default for every store written before this field existed, or one
         /// whose disk cache was wiped) means "unknown", which guard 4 FAILS CLOSED on rather than
@@ -144,7 +136,7 @@ internal sealed class GraphMetaStore
             if (!File.Exists(hdrPath))
                 return null;
 
-            var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
+            var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null
                 || hdr.Version != Version
                 || hdr.Fingerprint != fingerprint
@@ -173,7 +165,7 @@ internal sealed class GraphMetaStore
             var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
             if (!File.Exists(hdrPath))
                 return (false, 0, false);
-            var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
+            var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.Fingerprint != fingerprint
                 || hdr.IncludeRemoteBranches != includeRemoteBranches || (WalkEngine)hdr.WalkEngine != engine)
                 return (false, 0, false);
@@ -186,11 +178,11 @@ internal sealed class GraphMetaStore
     }
 
     /// <summary>
-    /// v10.1.2: like <see cref="Probe"/> but WITHOUT a fingerprint check — for
+    /// Like <see cref="Probe"/> but WITHOUT a fingerprint check — for
     /// <c>TryOptimisticSnapshot</c>'s stale-tolerant first paint, which runs before the fresh
     /// ref-fingerprint check (a full <c>repo.Refs.ToList()</c>) even starts. The caller must
     /// treat the result as provisional, exactly like <see cref="GraphWalkCache.TryLoadStale"/>.
-    /// v10.1.3: still gated on <paramref name="engine"/> — the engine that WOULD run right now is
+    /// Still gated on <paramref name="engine"/> — the engine that WOULD run right now is
     /// known cheaply (locator + query, no repo access), so an optimistic frame is never seeded
     /// from a store the other engine wrote.
     /// </summary>
@@ -201,7 +193,7 @@ internal sealed class GraphMetaStore
             var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
             if (!File.Exists(hdrPath))
                 return (false, 0);
-            var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
+            var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
                 || (WalkEngine)hdr.WalkEngine != engine || hdr.RowCount <= 0)
                 return (false, 0);
@@ -214,9 +206,9 @@ internal sealed class GraphMetaStore
     }
 
     /// <summary>
-    /// Phase 4: like <see cref="ProbeAny"/> but returns the full header, including the WALK KEY
+    /// Like <see cref="ProbeAny"/> but returns the full header, including the WALK KEY
     /// it was written under — used by the headless per-tab pipeline to tell "no store at all"
-    /// apart from "a store exists, but its walk key has moved" (a reorder opportunity, Phase 3c)
+    /// apart from "a store exists, but its walk key has moved" (a reorder opportunity)
     /// without needing to know the current walk key up front.
     /// </summary>
     public static (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) ProbeExisting(
@@ -227,7 +219,7 @@ internal sealed class GraphMetaStore
             var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
             if (!File.Exists(hdrPath))
                 return (false, 0, 0, 0, 0, false, 0);
-            var hdr = JsonSerializer.Deserialize<Header>(File.ReadAllBytes(hdrPath), Json);
+            var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
                 || (WalkEngine)hdr.WalkEngine != engine)
                 return (false, 0, 0, 0, 0, false, 0);
@@ -239,10 +231,10 @@ internal sealed class GraphMetaStore
         }
     }
 
-    /// <summary>Phase 5 (M5.1): reads the sorted tip SHAs the CURRENT order was built from —
+    /// <summary>Reads the sorted tip SHAs the CURRENT order was built from —
     /// <c>.meta.tips</c>, written by <see cref="GraphMetaWriter.WriteTips"/>. Returns null if the
     /// file is missing (a store that has never had its order committed with a known tip set — a
-    /// never-reordered store, or one from before Phase 3c) or unreadable; <see
+    /// never-reordered store) or unreadable; <see
     /// cref="GraphMetaSplice.Evaluate"/>'s guard 1 treats that as "tips don't match" (reject).</summary>
     public static IReadOnlyList<ObjectId>? ReadTips(string repoPath)
     {
@@ -251,7 +243,7 @@ internal sealed class GraphMetaStore
             var path = GraphCachePaths.File(repoPath, TipsExt);
             if (!File.Exists(path))
                 return null;
-            var bytes = File.ReadAllBytes(path);
+            var bytes = ReadAllBytesShared(path);
             if (bytes.Length % 20 != 0)
                 return null;
             var tips = new ObjectId[bytes.Length / 20];
@@ -283,7 +275,7 @@ internal sealed class GraphMetaStore
         return n;
     }
 
-    /// <summary>Finding #6: deletes every <c>.meta.order.&lt;n&gt;</c> file for this repo strictly
+    /// <summary>Deletes every <c>.meta.order.&lt;n&gt;</c> file for this repo strictly
     /// older than <paramref name="currentVersion"/> — call right after a successful
     /// <see cref="GraphMetaWriter.TryCommitReorder"/>. A reader loads the whole order file once,
     /// at <see cref="DiskCommitStore.Open"/>, and never re-reads it later, so once the header has
@@ -307,13 +299,79 @@ internal sealed class GraphMetaStore
         }
         catch { }
     }
+
+    /// <summary>
+    /// Reads all bytes from <paramref name="path"/> sharing both ReadWrite and Delete (R7).
+    /// Every reader of a <c>.meta.*</c> file must share Delete, or <see cref="GraphMetaWriter.Reset"/>
+    /// cannot retire open files away before starting a fresh from-row-0 spill.
+    /// </summary>
+    internal static byte[] ReadAllBytesShared(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var bytes = new byte[fs.Length];
+        var read = 0;
+        while (read < bytes.Length)
+        {
+            var n = fs.Read(bytes, read, bytes.Length - read);
+            if (n <= 0) break;
+            read += n;
+        }
+        return read == bytes.Length ? bytes : bytes[..read];
+    }
+
+    /// <summary>
+    /// Measures the unreachable dead prefix at the front of <c>.meta.dat</c> (R7, R8).
+    /// Record 0's offset (the first 8 bytes of <c>.meta.idx</c>) indicates how many dead bytes
+    /// precede record 0. Returns <c>(0, 0)</c> on any miss, unreadable file, or empty file.
+    /// </summary>
+    internal static (long DeadBytes, long DatLength) ProbeDeadPrefix(string repoPath)
+    {
+        try
+        {
+            var idxPath = GraphCachePaths.File(repoPath, IdxExt);
+            var datPath = GraphCachePaths.File(repoPath, DatExt);
+            if (!File.Exists(idxPath) || !File.Exists(datPath))
+                return (0, 0);
+
+            var buf = new byte[8];
+            using (var fs = new FileStream(idxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                var read = 0;
+                while (read < 8)
+                {
+                    var n = fs.Read(buf, read, 8 - read);
+                    if (n <= 0) break;
+                    read += n;
+                }
+                if (read < 8)
+                    return (0, 0);
+            }
+
+            var deadBytes = BitConverter.ToInt64(buf, 0);
+            if (deadBytes < 0)
+                return (0, 0);
+
+            long datLen;
+            using (var datFs = new FileStream(datPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                datLen = datFs.Length;
+            }
+
+            return (deadBytes, datLen);
+        }
+        catch
+        {
+            return (0, 0);
+        }
+    }
 }
 
 /// <summary>
-/// Append-only writer for a repo's <c>.meta.*</c> set. <see cref="Reset"/> truncates for a
-/// fresh walk; <see cref="Append"/> adds laid-out rows; <see cref="Commit"/> rewrites the
-/// header. All operations swallow IO errors — the cache is an optimisation, never a
-/// correctness dependency.
+/// Append-only writer for a repo's <c>.meta.*</c> set. <see cref="Reset"/> retires existing
+/// sibling files for a fresh walk without leaving a dead prefix; <see cref="Append"/> adds
+/// laid-out rows; <see cref="Commit"/> rewrites the header. Every reader of a <c>.meta.*</c>
+/// file must share <see cref="FileShare.Delete"/>, or <see cref="Reset"/> cannot retire it.
+/// All operations swallow IO errors — the cache is an optimisation, never a correctness dependency.
 /// </summary>
 internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool includeRemoteBranches, WalkEngine engine)
 {
@@ -323,30 +381,143 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     private readonly string _search = GraphCachePaths.File(repoPath, GraphMetaStore.SearchExt);
     private readonly string _tips = GraphCachePaths.File(repoPath, GraphMetaStore.TipsExt);
 
-    /// <summary>Truncates every sibling file, including any Phase 3c order files (a from-row-0
-    /// re-spill starts the order over at identity too). Call before appending row 0 of a fresh
-    /// walk.</summary>
-    public void Reset()
+    /// <summary>
+    /// Retires every sibling file for this repository so a from-row-0 re-spill starts the store
+    /// over at byte 0 without dead-prefix bloat (R7). Every reader shares
+    /// <see cref="FileShare.Delete"/>, so renaming each file to a <c>.retired</c> name and then
+    /// deleting it frees the original path immediately while active readers (such as the painted
+    /// graph) keep reading their open handles until they close.
+    /// <para>
+    /// Returns <c>true</c> only if <c>.hdr</c>, <c>.dat</c>, <c>.idx</c>, <c>.search</c>, and
+    /// <c>.tips</c> no longer exist. If any primary file remains (e.g. a foreign process or
+    /// non-sharing handle blocked retirement), any moved files are rolled back and <c>false</c>
+    /// is returned so <see cref="AppendSpillBatch"/> can abort rather than appending after stale
+    /// bytes, leaving the old store intact.
+    /// </para>
+    /// <para>
+    /// Note: on Linux and macOS, renaming an open file always succeeds and <see cref="FileShare.Delete"/>
+    /// is a no-op, so the same code path holds across all platforms.
+    /// </para>
+    /// </summary>
+    public bool Reset()
     {
         try
         {
-            Directory.CreateDirectory(AppPaths.CacheDirectory);
-            foreach (var p in new[] { _hdr, _dat, _idx, _search, _tips })
-                try { File.Delete(p); } catch { }
-            DeleteOrderFiles(repoPath);
+            var cacheDir = AppPaths.CacheDirectory;
+            if (!Directory.Exists(cacheDir))
+            {
+                Directory.CreateDirectory(cacheDir);
+                return true;
+            }
+
+            var stem = GraphCachePaths.Stem(repoPath);
+
+            // Sweep leftover retired files for this stem from prior incomplete runs.
+            SweepRetiredFiles(cacheDir, stem);
+
+            // Retire primary files. If any primary file fails to move (e.g. foreign handle),
+            // roll back any files moved so far so the old store remains intact.
+            var primaryFiles = new[] { _dat, _idx, _search, _tips, _hdr };
+            var moved = new List<(string Original, string Retired)>();
+            var allMoved = true;
+
+            foreach (var p in primaryFiles)
+            {
+                if (!File.Exists(p))
+                    continue;
+
+                var retiredPath = $"{p}.{Guid.NewGuid():N}.retired";
+                try
+                {
+                    File.Move(p, retiredPath);
+                    moved.Add((p, retiredPath));
+                }
+                catch
+                {
+                    allMoved = false;
+                    break;
+                }
+            }
+
+            if (!allMoved)
+            {
+                foreach (var (orig, ret) in moved)
+                {
+                    try { File.Move(ret, orig); } catch { }
+                }
+                return false;
+            }
+
+            foreach (var (_, ret) in moved)
+            {
+                try { File.Delete(ret); } catch { /* OS removes on handle close or sweep cleans up */ }
+            }
+
+            RetireOrderFiles(cacheDir, stem);
+
+            return !File.Exists(_hdr)
+                && !File.Exists(_dat)
+                && !File.Exists(_idx)
+                && !File.Exists(_search)
+                && !File.Exists(_tips);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void SweepRetiredFiles(string cacheDir, string stem)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(cacheDir);
+            if (!dir.Exists)
+                return;
+            foreach (var f in dir.GetFiles($"{stem}.meta.*.retired"))
+            {
+                try { f.Delete(); }
+                catch { /* best effort sweep; skip locked */ }
+            }
         }
         catch { }
     }
 
-    private static void DeleteOrderFiles(string repoPath)
+    private static void RetireFile(string path)
     {
         try
         {
-            var dir = new DirectoryInfo(AppPaths.CacheDirectory);
+            if (!File.Exists(path))
+                return;
+
+            var retiredPath = $"{path}.{Guid.NewGuid():N}.retired";
+            try
+            {
+                File.Move(path, retiredPath);
+                try { File.Delete(retiredPath); } catch { /* OS removes on handle close or sweep cleans up */ }
+            }
+            catch
+            {
+                // Move failed (e.g. non-sharing lock or foreign handle): fall back to direct delete.
+                try { File.Delete(path); } catch { }
+            }
+        }
+        catch { }
+    }
+
+    private static void RetireOrderFiles(string cacheDir, string stem)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(cacheDir);
             if (!dir.Exists)
                 return;
-            foreach (var f in dir.GetFiles($"{GraphCachePaths.Stem(repoPath)}.meta.order.*"))
-                try { f.Delete(); } catch { }
+            foreach (var f in dir.GetFiles($"{stem}.meta.order.*"))
+            {
+                if (f.Name.EndsWith(".retired", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                RetireFile(f.FullName);
+            }
         }
         catch { }
     }
@@ -417,15 +588,15 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
 
     /// <summary>Rewrites the header for the IDENTITY order — row <c>i</c> is record <c>i</c>,
     /// <c>RecordCount == rowCount</c>, no order file. Call after the matching
-    /// <see cref="Append"/>(s). This is every writer before Phase 3c's reorder ever runs.
-    /// <paramref name="fullWalkElapsed"/> (Phase 5, M5.1): pass the wall time of a walk that
+    /// <see cref="Append"/>(s).
+    /// <paramref name="fullWalkElapsed"/>: pass the wall time of a walk that
     /// started at row 0 and just reached <paramref name="exhausted"/> — recorded as the header's
     /// <c>LastFullWalkMs</c>. <c>null</c> (every other call — a mid-walk batch, or a resumed
     /// partial walk) leaves whatever value is already on disk untouched.</summary>
     public void Commit(int rowCount, bool exhausted, TimeSpan? fullWalkElapsed = null) =>
         WriteHeader(rowCount, recordCount: rowCount, orderVersion: 0, exhausted, fullWalkElapsed);
 
-    /// <summary>Phase 3c: rewrites the header to point at a new order version, after
+    /// <summary>Rewrites the header to point at a new order version, after
     /// <see cref="WriteOrder"/> has written it and any genuinely-new commits have already been
     /// appended via <see cref="Append(IReadOnlyList{RawCommit},int,int)"/>. <paramref
     /// name="recordCount"/> is the TOTAL distinct records now in <c>.meta.dat</c> (can exceed
@@ -433,7 +604,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// <see cref="WriteOrder"/> and <see cref="WriteTips"/> — this is the atomic switch-over: a
     /// reader that opened the store under the old header keeps reading the old order until it
     /// reopens.</summary>
-    /// <summary>Phase 5 (M5.1): never re-times a reorder's own re-walk here — carries whatever
+    /// <summary>Never re-times a reorder's own re-walk here — carries whatever
     /// <c>LastFullWalkMs</c> the OLD header already had forward unchanged (via
     /// <see cref="WriteHeader"/>'s <c>fullWalkElapsed: null</c>), so a store's guard-4 baseline
     /// survives every reorder until a fresh from-row-0 spool times a real one.</summary>
@@ -478,7 +649,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         {
             if (!File.Exists(_hdr))
                 return 0;
-            var existing = JsonSerializer.Deserialize<GraphMetaStore.Header>(File.ReadAllBytes(_hdr), GraphMetaStore.Json);
+            var existing = JsonSerializer.Deserialize<GraphMetaStore.Header>(GraphMetaStore.ReadAllBytesShared(_hdr), GraphMetaStore.Json);
             return existing is not null && existing.Fingerprint == fingerprint ? existing.LastFullWalkMs : 0;
         }
         catch
@@ -487,7 +658,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         }
     }
 
-    /// <summary>Phase 3c: writes a new, versioned row -&gt; record order file. Doesn't touch the
+    /// <summary>Writes a new, versioned row -&gt; record order file. Doesn't touch the
     /// header — call <see cref="CommitReorder"/> after this (and after <see cref="WriteTips"/>)
     /// to switch over. Versioned so a reader mid-read of the current order is never affected;
     /// stale versions are removed by <see cref="Reset"/> or (compaction) explicit cleanup.</summary>
@@ -510,7 +681,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         }
     }
 
-    /// <summary>Phase 3c: writes the sorted tip SHAs the CURRENT order was built from — read back
+    /// <summary>Writes the sorted tip SHAs the CURRENT order was built from — read back
     /// by a future reorder/splice to decide whether it can trust the existing order as a
     /// starting point. Not versioned; always describes whatever order the header currently
     /// points at.</summary>
@@ -540,7 +711,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     private static string Clean(string s)
         => s.Replace('\n', ' ').Replace('\r', ' ').Replace(GraphMetaStore.Sep, ' ');
 
-    /// <summary>Finding #1: appends a spill batch under this repo's <see cref="GraphCacheLocks"/>
+    /// <summary>Appends a spill batch under this repo's <see cref="GraphCacheLocks"/>
     /// lock, re-checking the on-disk header first rather than trusting the caller's own idea of
     /// <paramref name="from"/> — another writer for this same repo (the inactive-tab headless
     /// spool/reorder, or another cache instance) may have moved the store underneath it.
@@ -571,7 +742,11 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             {
                 if (from != 0)
                     return (SpillOutcome.Conflict, existing.RowCount);
-                Reset();
+                if (!Reset())
+                {
+                    Diagnostics.PerfLog.Mark($"graph cache reset blocked ({repoPath})");
+                    return (SpillOutcome.Conflict, existing.RowCount);
+                }
             }
             else if (existing.RowCount >= to)
             {
@@ -584,7 +759,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
 
             Append(rows, 0, to - from);
             Commit(to, exhausted, fullWalkElapsed);
-            // Phase 5 (M5.1, finding #16): without this, a store's tips are only ever written by
+            // Without this, a store's tips are only ever written by
             // a REORDER (TryCommitReorder) — a never-reordered store (the common case for a repo
             // opened once and never re-walked since) would have no `.meta.tips` at all, so guard 1
             // could never pass for it. Writing tips here too, the first time a plain spill reaches
@@ -595,7 +770,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         }
     }
 
-    /// <summary>Finding #5 (streaming reorder): appends one batch of brand-new records a reorder
+    /// <summary>Streaming reorder: appends one batch of brand-new records a reorder
     /// discovered mid-walk, under this repo's <see cref="GraphCacheLocks"/> lock, re-checking that
     /// the on-disk header's walk key is still <paramref name="expectedWalkKey"/> — the key the
     /// reorder is building on top of. These records are not yet referenced by any RowCount/
@@ -617,7 +792,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         }
     }
 
-    /// <summary>Finding #1 + #5: the reorder's atomic switch-over, under this repo's
+    /// <summary>The reorder's atomic switch-over, under this repo's
     /// <see cref="GraphCacheLocks"/> lock. Re-reads the header and requires it to still match
     /// exactly what the reorder started from (<paramref name="expectedOldWalkKey"/>, <paramref
     /// name="expectedOldExhausted"/>, <paramref name="expectedOldOrderVersion"/>, <paramref
@@ -653,7 +828,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     }
 }
 
-/// <summary>Outcome of <see cref="GraphMetaWriter.AppendSpillBatch"/> — finding #1.</summary>
+/// <summary>Outcome of <see cref="GraphMetaWriter.AppendSpillBatch"/>.</summary>
 internal enum SpillOutcome
 {
     /// <summary>The batch was appended and the header committed normally.</summary>
@@ -684,7 +859,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     private long _datLength;
     private int _count;                 // row count (== record count until the first reorder)
 
-    /// <summary>Phase 3c: [row] -&gt; record index, or null for the identity order (row IS
+    /// <summary>[row] -&gt; record index, or null for the identity order (row IS
     /// record — every store before its first reorder, and the overwhelming majority always).
     /// Loaded once at <see cref="Open"/> and never mutated in place — a reorder always produces a
     /// freshly-opened store (see <c>GraphLayoutService</c>'s reorder job), so a reader never needs
@@ -728,11 +903,11 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     }
 
     /// <summary>Opens a store at the IDENTITY order — row <c>i</c> IS record <c>i</c>. Every
-    /// caller before Phase 3c's reorder ever runs, and the only shape <see cref="SetCount"/>
+    /// caller, and the only shape <see cref="SetCount"/>
     /// supports growing in place.</summary>
     public static DiskCommitStore Open(string repoPath, int rowCount) => Open(repoPath, rowCount, rowCount, orderVersion: 0);
 
-    /// <summary>Phase 3c: opens a store whose current header names an explicit order version.
+    /// <summary>Opens a store whose current header names an explicit order version.
     /// <paramref name="recordCount"/> sizes the <c>.idx</c>/offset table (records, not rows);
     /// <paramref name="orderVersion"/> 0 means identity (no order file to load).</summary>
     public static DiskCommitStore Open(string repoPath, int rowCount, int recordCount, int orderVersion)
@@ -740,7 +915,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         var datPath = GraphCachePaths.File(repoPath, GraphMetaStore.DatExt);
         var idxPath = GraphCachePaths.File(repoPath, GraphMetaStore.IdxExt);
         var offsets = ReadOffsets(idxPath, recordCount);
-        var dat = File.OpenHandle(datPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var dat = File.OpenHandle(datPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var len = RandomAccess.GetLength(dat);
         int[]? order = null;
         if (orderVersion > 0)
@@ -754,7 +929,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 
     private static int[] ReadOrder(string orderPath, int rowCount)
     {
-        var bytes = File.ReadAllBytes(orderPath);
+        var bytes = GraphMetaStore.ReadAllBytesShared(orderPath);
         var n = Math.Min(rowCount, bytes.Length / 4);
         var order = new int[n];
         Buffer.BlockCopy(bytes, 0, order, 0, n * 4);
@@ -762,10 +937,9 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     }
 
     /// <summary>Adopt rows appended since <see cref="Open"/> (called after an Extend spill).
-    /// Phase 3a: reads only the <c>.idx</c> bytes appended since the last call instead of
-    /// re-reading the whole file (11.8 MB on linux, previously re-read on every spill batch and
-    /// every Extend) — the existing offsets are kept and only the new tail is appended.
-    /// Phase 3c: only valid for an identity-order store (<see cref="_order"/> null) — a store
+    /// Reads only the <c>.idx</c> bytes appended since the last call instead of
+    /// re-reading the whole file — the existing offsets are kept and only the new tail is appended.
+    /// Only valid for an identity-order store (<see cref="_order"/> null) — a store
     /// opened at an explicit order version never grows in place; the layout service reopens a
     /// fresh store after a reorder instead.</summary>
     public void SetCount(int rowCount)
@@ -789,7 +963,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 
     public int Count => Volatile.Read(ref _count);
 
-    /// <summary>Phase 3c: total distinct commit records in <c>.meta.dat</c> right now (can exceed
+    /// <summary>Total distinct commit records in <c>.meta.dat</c> right now (can exceed
     /// <see cref="Count"/> once history has been reordered — old records superseded by a reorder
     /// stay in the file, unreferenced, until compaction).</summary>
     public int RecordCount => _offsets.Length;
@@ -798,14 +972,14 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     /// loaded.</summary>
     private int RecordOf(int row) => _order is null ? row : _order[row];
 
-    /// <summary>Phase 5 (M5.1): the full row -&gt; record order this store was opened with, as a
+    /// <summary>The full row -&gt; record order this store was opened with, as a
     /// fresh array (safe for a caller to hand to <see cref="GraphMetaSplice.Build"/>, which never
     /// mutates <see cref="_order"/> in place — see that field's own doc comment on why a reorder
     /// always opens a freshly-loaded store instead). Identity (<c>row == record</c>) when this
     /// store has no order file (<c>OrderVersion</c> 0).</summary>
     public int[] ToOrderArray() => _order is not null ? [.. _order] : [.. Enumerable.Range(0, _count)];
 
-    /// <summary>Phase 3c: builds a SHA -&gt; record-index table by reading just the leading
+    /// <summary>Builds a SHA -&gt; record-index table by reading just the leading
     /// 20-byte SHA of every existing record (skips message/author/parent bytes entirely) — used
     /// by the reorder job to find which commits in a freshly walked history already have a
     /// durable record, so it only appends genuinely new ones. One small read per record; this is
@@ -813,7 +987,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     /// count for simplicity rather than batching — the plan's own repo-scale numbers (measured on
     /// linux/vscode) are for the reorder as a whole, not this specific pass.
     /// <para>
-    /// Finding #5: keyed by <see cref="CompactShaIndex"/> (an 8-byte prefix per entry, verified
+    /// Keyed by <see cref="CompactShaIndex"/> (an 8-byte prefix per entry, verified
     /// against the full id on any hit) instead of the 40-char hex string this used to key by — at
     /// 1.5M records on linux the old table held ~150-180 MB of hex strings; this holds meaningfully
     /// less while staying exactly as correct (every lookup still verifies the full id).
@@ -865,7 +1039,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         }
     }
 
-    /// <summary>Phase 3a: reads rows [<paramref name="first"/>, <paramref name="first"/> +
+    /// <summary>Reads rows [<paramref name="first"/>, <paramref name="first"/> +
     /// <paramref name="count"/>) with full parent SHAs and timestamps — the batch form of
     /// <see cref="ReadRaw"/>, used to serve a whole already-spilled range straight from disk
     /// instead of keeping it resident in <c>RepoCache.Commits</c> (see
@@ -887,7 +1061,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                 return [];
             try
             {
-                // Phase 3c: an explicit order means consecutive ROWS need not be consecutive
+                // An explicit order means consecutive ROWS need not be consecutive
                 // RECORDS (or even increasing ones) — the one-big-read trick below only holds for
                 // the identity order. Reordered stores fall back to one read per row; simpler and
                 // correct, at the cost of the batching this method exists for. A reorder is rare
@@ -930,7 +1104,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         }
     }
 
-    /// <summary>v10.1.2: decodes row <paramref name="index"/> WITH its parent SHAs (persisted
+    /// <summary>Decodes row <paramref name="index"/> WITH its parent SHAs (persisted
     /// since <see cref="GraphMetaStore.Version"/> 2) — used by <c>TryOptimisticSnapshot</c> to
     /// seed a first paint straight from this store. Same fault handling as the indexer: a
     /// concurrent spill rewrite serves a childless stub rather than throwing off the render
@@ -967,7 +1141,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                 return;
             try
             {
-                // Phase 3c: same "identity order only" restriction as ReadRawRange — a reordered
+                // Same "identity order only" restriction as ReadRawRange — a reordered
                 // store falls back to one decode per row via the indexer's own path.
                 if (_order is not null)
                 {
@@ -1014,7 +1188,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 
     /// <summary>
-    /// Ctrl+F backing scan (§7.5): streams <c>.meta.search</c>, one line per RECORD (Phase 3c —
+    /// Ctrl+F backing scan (§7.5): streams <c>.meta.search</c>, one line per RECORD (
     /// the file is record-indexed, like <c>.dat</c>/<c>.idx</c>, so it is never rewritten by a
     /// reorder). Matches the in-memory find exactly — substring on message or author, prefix on
     /// the SHA. For an identity-order store a record index IS the row; otherwise the hits are
@@ -1040,7 +1214,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         try
         {
             var path = GraphCachePaths.File(_repoPath, GraphMetaStore.SearchExt);
-            using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite), Encoding.UTF8);
+            using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete), Encoding.UTF8);
             var record = -1;
             string? line;
             while ((line = reader.ReadLine()) is not null)
@@ -1085,7 +1259,9 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 
     /// <summary>Releases one lease; closes the file handle when the last one goes. Idempotent and
     /// tolerant of an over-release (a consumer disposing twice) — the handle is never closed
-    /// more than once, and never while a lease is still outstanding.</summary>
+    /// more than once, and never while a lease is still outstanding. Readers keep reading through
+    /// their open handles even if <see cref="GraphMetaWriter.Reset"/> has retired and deleted the
+    /// file on disk; the OS frees the disk allocation once the last handle closes.</summary>
     public void Dispose()
     {
         bool close;
@@ -1105,7 +1281,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 
     private static long[] ReadOffsets(string idxPath, int rowCount)
     {
-        var bytes = File.ReadAllBytes(idxPath);
+        var bytes = GraphMetaStore.ReadAllBytesShared(idxPath);
         var n = Math.Min(rowCount, bytes.Length / 8);
         var offsets = new long[n];
         for (var i = 0; i < n; i++)
@@ -1113,12 +1289,12 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         return offsets;
     }
 
-    /// <summary>Phase 3a: reads only the offsets for rows [<paramref name="fromRow"/>,
+    /// <summary>Reads only the offsets for rows [<paramref name="fromRow"/>,
     /// <paramref name="rowCount"/>) — the tail appended since the caller last read this file —
     /// instead of <see cref="ReadOffsets"/>'s whole-file read.</summary>
     private static long[] ReadOffsetsFrom(string idxPath, int fromRow, int rowCount)
     {
-        using var fs = new FileStream(idxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var fs = new FileStream(idxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var startByte = (long)fromRow * 8;
         if (startByte >= fs.Length)
             return [];
@@ -1214,7 +1390,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 }
 
 /// <summary>
-/// Phase 3c (v10 graph memory footprint plan): the pure, storage-agnostic half of "reorder
+/// The pure, storage-agnostic half of "reorder
 /// instead of re-spill" — given the existing store's SHA -&gt; record-index table and a freshly
 /// walked history in the new order, decides which rows can reuse an existing record and which
 /// commits genuinely need a new one. Deliberately has no file or git access: the caller
@@ -1233,7 +1409,7 @@ internal static class GraphMetaReorder
     /// One-shot convenience for callers (and tests) that already have the whole new walk
     /// resident — equivalent to a single <see cref="GraphMetaReorderBuilder.MapBatch"/> call.
     /// <see cref="GraphLayoutService.RunHeadlessReorderAsync"/> uses the streaming builder
-    /// directly instead (finding #5), so it never has to materialize the whole new history at
+    /// directly instead, so it never has to materialize the whole new history at
     /// once. <paramref name="existingRecords"/>: every commit sha already durable in the store,
     /// mapped to its record index (<see cref="DiskCommitStore.RecordCount"/> is the count BEFORE
     /// this call — new records are numbered starting there). <paramref name="newWalkCommits"/>:
@@ -1253,7 +1429,7 @@ internal static class GraphMetaReorder
 }
 
 /// <summary>
-/// Finding #5: a SHA -&gt; record-index table keyed on the first 8 bytes of the commit id (a
+/// A SHA -&gt; record-index table keyed on the first 8 bytes of the commit id (a
 /// <c>long</c>) rather than its 40-char hex string — at scale the hex-string table was the actual
 /// memory cost the review flagged (~150-180 MB at 1.5M records on linux), not the record indices
 /// themselves. Every lookup still verifies the full id, so a prefix collision (two different
@@ -1304,10 +1480,10 @@ internal sealed class CompactShaIndex(int capacity = 0)
 }
 
 /// <summary>
-/// Finding #5: the streaming half of "reorder instead of re-spill" — maps successive BATCHES of a
+/// The streaming half of "reorder instead of re-spill" — maps successive BATCHES of a
 /// freshly walked history to records, so a caller never has to hold the whole new walk resident
 /// (the old, non-streaming shape held ~490 MB of <see cref="RawCommit"/>s on linux plus the SHA
-/// table finding #5 also fixes). Deliberately has no file or git access, like the one-shot
+/// table). Deliberately has no file or git access, like the one-shot
 /// <see cref="GraphMetaReorder.Build"/> it generalizes — the caller
 /// (<see cref="GraphLayoutService.RunHeadlessReorderAsync"/>) is responsible for calling
 /// <see cref="MapBatch"/> once per walked batch, durably appending each batch's returned new

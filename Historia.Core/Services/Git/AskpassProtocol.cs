@@ -10,8 +10,7 @@ namespace Historia.Services.Git;
 /// <c>"Password for 'https://user@host/path': "</c> — so the helper must extract that host and
 /// compare it against the one the credentials were resolved for, rather than trusting that Git
 /// ends up contacting the same host the caller looked up (a redirected <c>pushurl</c>, an
-/// <c>insteadOf</c> rewrite, or a submodule URL can all differ). See security review
-/// 2026-09-07, finding 2.
+/// <c>insteadOf</c> rewrite, or a submodule URL can all differ).
 /// </para>
 /// </summary>
 public static class AskpassProtocol

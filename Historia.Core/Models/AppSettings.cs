@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>
 /// Application-wide settings (§10.1). Persisted as <c>settings.json</c> in
@@ -12,7 +12,7 @@ public sealed record AppSettings
     /// (§V3-13); v5: multi-line tab strip (§V3-B); v6: persistent graph cache toggle; v7: graph
     /// row hard cap; v8: local repo-state cache toggle; v9: terminal (V5); v10: tab-width mode
     /// (V5.5); v11: custom-theme id (§V6-G9); v12: splash-screen toggle.</summary>
-    public int SchemaVersion { get; init; } = 16;
+    public int SchemaVersion { get; init; } = 18;
 
     // ── Profile &amp; Identity ──
     /// <summary>§14.2: the default profile — the clone-dialog pre-selection and what an opened
@@ -50,6 +50,12 @@ public sealed record AppSettings
     public DiffViewMode DefaultDiffView { get; init; } = DiffViewMode.SideBySide;
     public bool ShowAvatars { get; init; } = true;
 
+    /// <summary>
+    /// Off (default): every displayed commit date is the commit (committer) date — the date the
+    /// graph is sorted by. On: show the author date instead. Display-only; never changes row order.
+    /// </summary>
+    public bool ShowAuthorDate { get; init; }
+
     /// <summary>v8 M9: how the graph and the tab strip interpret mouse-wheel / trackpad scroll.
     /// <c>Auto</c> matches the OS "natural / inverted" setting (macOS &amp; Linux; Windows is
     /// always standard); <c>Standard</c> / <c>Inverted</c> force it.</summary>
@@ -68,11 +74,11 @@ public sealed record AppSettings
     /// arrows appear on the bottom row. Ignored unless <see cref="EnableMultiLineTabs"/>.</summary>
     public int MaxTabRows { get; init; } = 3;
 
-    /// <summary>V5.5: <see cref="TabWidthMode.Dynamic"/> (default) sizes each repo tab to its
+    /// <summary><see cref="TabWidthMode.Dynamic"/> (default) sizes each repo tab to its
     /// label; <see cref="TabWidthMode.Fixed"/> gives every tab <see cref="FixedTabWidth"/> px.</summary>
     public TabWidthMode TabWidthMode { get; init; } = TabWidthMode.Dynamic;
 
-    /// <summary>V5.5: per-tab width in pixels when <see cref="TabWidthMode"/> is
+    /// <summary>Per-tab width in pixels when <see cref="TabWidthMode"/> is
     /// <see cref="TabWidthMode.Fixed"/>. Clamped
     /// <see cref="MinFixedTabWidth"/>…<see cref="MaxFixedTabWidth"/>.</summary>
     public int FixedTabWidth { get; init; } = DefaultFixedTabWidth;
@@ -109,7 +115,7 @@ public sealed record AppSettings
     public bool PruneOnFetch { get; init; } = true;
     public bool PullWithRebase { get; init; }
 
-    /// <summary>v8.4: when on, the "Stash all" buttons (staging panel + shortcuts bar) prompt
+    /// <summary>When on, the "Stash all" buttons (staging panel + shortcuts bar) prompt
     /// for a stash message instead of using the default <c>Stash of &lt;branch&gt;</c>.</summary>
     public bool UseCustomStashNames { get; init; }
     public int MaxRecentRepositories { get; init; } = 30;
@@ -129,16 +135,16 @@ public sealed record AppSettings
     public bool GraphMetadataFromDisk { get; init; } = true;
 
     /// <summary>
-    /// v10.1.3: when on (default), a large repository (≥ 30,000 commits walked, checked as the
+    /// When on (default), a large repository (≥ 30,000 commits walked, checked as the
     /// §7.6 background spill proceeds in 25k-row chunks) that has no commit-graph file yet gets
     /// one written in the background (<c>git commit-graph write --reachable</c>). A commit-graph
-    /// is what lets Git's own <c>--topo-order</c> walk (the CLI graph engine) expand lazily by
+    /// is what lets Git's own <c>--date-order</c> walk (the CLI graph engine) expand lazily by
     /// generation number instead of touching the whole history up front.
     /// </summary>
     public bool WriteCommitGraphForLargeRepos { get; init; } = true;
 
     /// <summary>
-    /// 2026-09-12 memoryshrink review, finding #16: when on, a large (200,000+ row), exhausted
+    /// When on, a large (200,000+ row), exhausted
     /// on-disk graph store whose walk key has moved (a fetch, a new branch) is brought up to date
     /// by splicing in just the added/removed commits (<see cref="Historia.Services.Graph.GraphMetaSplice"/>)
     /// instead of a full re-walk, when every guard passes — falling back to the ordinary reorder
@@ -149,14 +155,14 @@ public sealed record AppSettings
     public bool EnableGraphSplice { get; init; }
 
     /// <summary>
-    /// v10.1.3: how many rows the graph's silent background crawler (§V10.1.2) pre-loads into
-    /// the resident layout before stopping, so scrolling stays responsive without loading the
-    /// full history's worth of rows up front. Deeper history still loads on scroll and reaches
-    /// disk in full via the §7.6 background spill regardless of this cap. <c>0</c> means
-    /// uncapped — the crawler runs all the way to the resident-row ceiling
-    /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 300,000.
+    /// How many rows the graph's silent background crawler (§V10.1.2) pre-loads into the
+    /// resident layout after first paint, before stopping until the viewport scrolls past the
+    /// loaded threshold (R3/R4), advancing another this many rows each step. Deeper history
+    /// reaches disk in full via the §7.6 background spill regardless of this cap (R2).
+    /// <c>0</c> means uncapped — the crawler runs all the way to the resident-row ceiling
+    /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 100,000.
     /// </summary>
-    public int SilentCrawlRowCap { get; init; } = 300_000;
+    public int SilentCrawlRowCap { get; init; } = 100_000;
 
     public const int MinSilentCrawlRowCap = 0;
 
@@ -172,7 +178,7 @@ public sealed record AppSettings
     public static int ClampSilentCrawlRowCap(int value) => Math.Clamp(value, MinSilentCrawlRowCap, MaxSilentCrawlRowCap);
 
     /// <summary>
-    /// v10.1.3: the resident-row hardcap (§7.3, §7.6) applied when
+    /// The resident-row hardcap (§7.3, §7.6) applied when
     /// <see cref="GraphMetadataFromDisk"/> is on — the absolute ceiling on how many rows the
     /// graph layout will ever keep resident for one repository, regardless of scrolling or the
     /// background crawler/spill. Raising it lets a very large repository's full history become
