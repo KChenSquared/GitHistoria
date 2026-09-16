@@ -152,7 +152,13 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        LabSettingsStore.Save(candidate);
+        if (!LabSettingsStore.Save(candidate))
+        {
+            RemotesErrorText.Text = "Could not save settings. Please verify file permissions.";
+            RemotesErrorText.IsVisible = true;
+            return;
+        }
+
         Settings = candidate;
         Close(true);
     }

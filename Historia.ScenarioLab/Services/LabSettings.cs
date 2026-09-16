@@ -102,14 +102,22 @@ public static class LabSettingsStore
         return new LabSettings();
     }
 
-    public static void Save(LabSettings settings)
+    public static bool Save(LabSettings settings)
     {
-        Directory.CreateDirectory(SettingsDirectory);
+        try
+        {
+            Directory.CreateDirectory(SettingsDirectory);
 
-        var tempFile = Path.Combine(SettingsDirectory, $"settings.{Guid.NewGuid():N}.tmp");
-        var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+            var tempFile = Path.Combine(SettingsDirectory, $"settings.{Guid.NewGuid():N}.tmp");
+            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
 
-        File.WriteAllText(tempFile, json, Encoding.UTF8);
-        File.Move(tempFile, SettingsFile, overwrite: true);
+            File.WriteAllText(tempFile, json, Encoding.UTF8);
+            File.Move(tempFile, SettingsFile, overwrite: true);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 }
