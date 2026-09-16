@@ -127,7 +127,7 @@ We adhere to [Conventional Commits](https://www.conventionalcommits.org/):
 
 ## 8. License
 
-By contributing to Historia, you agree that your contributions will be licensed under the project's existing open-source license.
+By contributing to Historia, you agree that your contributions will be licensed under the project's existing open-source license, the [GNU General Public License v3.0](../LICENSE).
 
 Bundled third-party material is tracked in [`docs/third-party-licenses.md`](third-party-licenses.md).
 The utility icon set is [Lucide](https://lucide.dev/) (ISC), vendored under `assets/lucide/`
