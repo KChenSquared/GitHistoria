@@ -423,6 +423,7 @@ public sealed partial class CommitGraphControl : Control
         _silentCrawlRowCap = _settings.Current.SilentCrawlRowCap;
         _crawl = new GraphCrawlThreshold(_silentCrawlRowCap, ResidentRowCap);
         _crawlTarget = _crawl.Target;
+        Volatile.Write(ref _crawlRunning, 0);
         _repoLayout = services.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
 
         _repoLayout.Changed += OnRepoLayoutChanged;
@@ -840,6 +841,7 @@ public sealed partial class CommitGraphControl : Control
         InitializeExtendPump(context, ct);
         _crawl = new GraphCrawlThreshold(_silentCrawlRowCap, ResidentRowCap);
         _crawlTarget = _crawl.Target;
+        Volatile.Write(ref _crawlRunning, 0);
 
         if (_firstPaintStartTimestamp == 0)
         {
