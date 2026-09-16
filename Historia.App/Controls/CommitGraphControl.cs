@@ -102,6 +102,22 @@ public sealed partial class CommitGraphControl : Control
 
     private RepositoryContext? _context;
     private IRepositoryStateService? _state;
+    private bool _refsRecomputeInFlight;
+    private bool _refsPendingRecompute;
+    internal int RefsRecomputeCount => _refsRecomputeCount;
+    private int _refsRecomputeCount;
+    internal Task? ActiveRefsRecomputeTask { get; private set; }
+    internal RepositoryContext? ContextForTesting
+    {
+        get => _context;
+        set => _context = value;
+    }
+    internal Func<RepositoryContext, Task>? RecomputeOverrideForTesting
+    {
+        get => _recomputeOverrideForTesting;
+        set => _recomputeOverrideForTesting = value;
+    }
+    private Func<RepositoryContext, Task>? _recomputeOverrideForTesting;
     private GraphLayoutResult? _layout;
     // The commit store behind _layout. A disk-backed store holds an open file handle that
     // GraphLayoutService will close as soon as a RefsChanged re-walk drops its own reference —
@@ -527,6 +543,8 @@ public sealed partial class CommitGraphControl : Control
         _selectedRow = -1;
         _hoverRow = -1;
         _scrollOffset = 0;
+        _refsRecomputeInFlight = false;
+        _refsPendingRecompute = false;
         _context = context;
         _state = context?.State;
 
@@ -645,10 +663,37 @@ public sealed partial class CommitGraphControl : Control
             InvalidateVisual();
         });
 
-    private void OnRefsChanged(object? sender, RefsChangedEventArgs e)
+    internal void OnRefsChanged(object? sender, RefsChangedEventArgs e)
     {
-        if (_context is { } ctx)
-            _ = RecomputeAsync(ctx);
+        if (_context is not { } ctx)
+            return;
+
+        if (_refsRecomputeInFlight)
+        {
+            _refsPendingRecompute = true;
+            return;
+        }
+
+        ActiveRefsRecomputeTask = RunCoalescedRefsRecomputeAsync(ctx);
+    }
+
+    private async Task RunCoalescedRefsRecomputeAsync(RepositoryContext context)
+    {
+        _refsRecomputeInFlight = true;
+        try
+        {
+            while (ReferenceEquals(context, _context))
+            {
+                _refsPendingRecompute = false;
+                await RecomputeAsync(context).ConfigureAwait(true);
+                if (!_refsPendingRecompute || !ReferenceEquals(context, _context))
+                    break;
+            }
+        }
+        finally
+        {
+            _refsRecomputeInFlight = false;
+        }
     }
 
     private void OnSelectedCommitChanged(object? sender, SelectionChangedEventArgs e)
@@ -1004,6 +1049,13 @@ public sealed partial class CommitGraphControl : Control
 
     private async Task RecomputeAsync(RepositoryContext context)
     {
+        _refsRecomputeCount++;
+        if (_recomputeOverrideForTesting is not null)
+        {
+            await _recomputeOverrideForTesting(context).ConfigureAwait(true);
+            return;
+        }
+
         if (_layout is not { } previous)
         {
             await ComputeLayoutAsync(context).ConfigureAwait(true);
@@ -1166,6 +1218,24 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
+    /// <summary>
+    /// Stuck-guard for the headless/no-signal path, not a pacing timeout — the intended exit is
+    /// <see cref="RepositoryContext.FirstFullLoad"/> completing. Mirrors GraphFirstPaintCeiling.
+    /// </summary>
+    private static readonly TimeSpan CrawlStuckGuardCeiling = TimeSpan.FromSeconds(120);
+
+    internal static TimeSpan StuckGuardCeiling => CrawlStuckGuardCeiling;
+
+    internal static async Task<bool> WaitForCrawlGuardAsync(RepositoryContext context, TimeSpan ceiling, CancellationToken ct)
+    {
+        var ceilingTask = Task.Delay(ceiling, ct);
+        var completed = await Task.WhenAny(context.FirstFullLoad, ceilingTask).ConfigureAwait(false);
+        var firedCeiling = completed == ceilingTask && !context.FirstFullLoad.IsCompleted;
+        if (firedCeiling && Historia.Diagnostics.PerfLog.Enabled)
+            Historia.Diagnostics.PerfLog.Mark($"crawl stuck-guard ceiling fired after {ceiling.TotalSeconds:F0}s without FirstFullLoad ({context.DisplayName})");
+        return !firedCeiling;
+    }
+
     private async Task StartBackgroundSilentLoadAsync(RepositoryContext context, CancellationToken ct)
     {
         if (Interlocked.CompareExchange(ref _crawlRunning, 1, 0) != 0)
@@ -1180,7 +1250,7 @@ public sealed partial class CommitGraphControl : Control
             // the foreground repo gate with ~1 request/second and the tab's own status/branch
             // work is starved (observed: a 47 s footer freeze mid-crawl on linux). Bounded
             // guard for a headless/no-signal path. Mirrors MaybeStartBackgroundSpill.
-            await Task.WhenAny(context.FirstFullLoad, Task.Delay(TimeSpan.FromSeconds(30), ct)).ConfigureAwait(false);
+            await WaitForCrawlGuardAsync(context, CrawlStuckGuardCeiling, ct).ConfigureAwait(false);
             if (ct.IsCancellationRequested || !ReferenceEquals(context, _context))
                 return;
 
