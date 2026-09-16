@@ -246,13 +246,23 @@ public sealed class HomeView : UserControl, IDisposable
         var r = await Historia.Platform.CloneDialog.ShowAsync(_dialogs, DefaultCloneRoot(), GuessRepoName, _profiles.GetAllProfiles());
         if (r is null) return;
 
+        if (_cloneService.IsRunning)
+            return;
+
         var options = new CloneOptions
         {
             Depth = r.Shallow ? 1 : null,
             Sparse = r.Sparse,
         };
 
-        _ = _cloneService.StartAsync(new CloneRequest(r.Url, r.TargetDirectory, options, r.ProfileId));
+        try
+        {
+            await _cloneService.StartAsync(new CloneRequest(r.Url, r.TargetDirectory, options, r.ProfileId));
+        }
+        catch (InvalidOperationException ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, ex.Message);
+        }
     }
 
     private static string GuessRepoName(string url)
