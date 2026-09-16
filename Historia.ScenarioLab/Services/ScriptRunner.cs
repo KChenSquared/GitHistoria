@@ -176,7 +176,7 @@ public sealed class ScriptRunner
                 {
                     _currentProcess.Kill(entireProcessTree: true);
                 }
-                catch { }
+                catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or NotSupportedException) { }
             }
         }
     }
