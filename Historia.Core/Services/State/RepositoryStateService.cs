@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.State;
+namespace Historia.Services.State;
 
 /// <inheritdoc cref="IRepositoryStateService"/>
 public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisposable
@@ -30,9 +30,18 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public event EventHandler<OperationStateChangedEventArgs>? OperationStateChanged;
     public event EventHandler<OpenDiffChangedEventArgs>? OpenDiffChanged;
 
-    public RepositoryStateService(RepositoryContext context, IUiDispatcher? ui = null, IRepoStateCache? repoCache = null)
+    private readonly IGitGateway _gateway;
+    private readonly SingleFlightCoalescer _refsCoalescer = new();
+    private readonly SingleFlightCoalescer _statusCoalescer = new();
+
+    public RepositoryStateService(
+        RepositoryContext context,
+        IUiDispatcher? ui = null,
+        IRepoStateCache? repoCache = null,
+        IGitGateway? gateway = null)
     {
         _context = context;
+        _gateway = gateway ?? context.Gateway;
         _ui = ui;
         _repoCache = repoCache;
         _repository = new RepositoryInfo
@@ -119,12 +128,15 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         Raise(() => ActiveProfileChanged?.Invoke(this, new ProfileChangedEventArgs(profile)));
     }
 
-    public async Task RefreshStatusAsync(CancellationToken ct = default)
+    public Task RefreshStatusAsync(CancellationToken ct = default)
+        => _statusCoalescer.RunAsync(DoRefreshStatusAsync, ct);
+
+    private async Task DoRefreshStatusAsync(Action markDataRead)
     {
         using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshStatusAsync({_context.DisplayName})");
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _context.Lifetime);
-        var status = await _context.Gateway.GetStatusAsync(linked.Token).ConfigureAwait(false);
-        var info = await _context.Gateway.GetRepositoryInfoAsync(linked.Token).ConfigureAwait(false);
+        var status = await _gateway.GetStatusAsync(_context.Lifetime).ConfigureAwait(false);
+        var info = await _gateway.GetRepositoryInfoAsync(_context.Lifetime).ConfigureAwait(false);
+        markDataRead();
         var operation = DetectOperationState(_context.GitDirectory);
 
         bool operationChanged;
@@ -184,32 +196,49 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             || (f.OldPath is not null && f.OldPath == request.Path));
     }
 
-    public async Task RefreshRefsAsync(CancellationToken ct = default)
+    public Task RefreshRefsAsync(CancellationToken ct = default)
+        => _refsCoalescer.RunAsync(DoRefreshRefsAsync, ct);
+
+    private async Task DoRefreshRefsAsync(Action markDataRead)
     {
         using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshRefsAsync({_context.DisplayName})");
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _context.Lifetime);
-        var branches = await _context.Gateway.GetBranchesAsync(linked.Token).ConfigureAwait(false);
-        var tags = await _context.Gateway.GetTagsAsync(linked.Token).ConfigureAwait(false);
-        var remotes = await _context.Gateway.GetRemotesAsync(linked.Token).ConfigureAwait(false);
+        var branches = await _gateway.GetBranchesAsync(_context.Lifetime).ConfigureAwait(false);
+        var remotes = await _gateway.GetRemotesAsync(_context.Lifetime).ConfigureAwait(false);
 
-        bool changed;
+        markDataRead();
+
+        bool branchesOrRemotesChanged;
+        IReadOnlyList<TagInfo> existingTags;
         lock (_sync)
         {
-            // BranchInfo / TagInfo / RemoteInfo are records — structural comparison.
-            changed = !branches.SequenceEqual(_branches)
-                      || !tags.SequenceEqual(_tags)
-                      || !remotes.SequenceEqual(_remotes);
+            // BranchInfo / RemoteInfo are records — structural comparison.
+            branchesOrRemotesChanged = !branches.SequenceEqual(_branches)
+                                      || !remotes.SequenceEqual(_remotes);
             _branches = branches;
-            _tags = tags;
             _remotes = remotes;
+            existingTags = _tags;
         }
 
+        // §F1: publish branches and remotes first so the sidebar populates in ~57ms rather than waiting
+        // seconds on thousands of tags to project.
+        if (branchesOrRemotesChanged)
+            Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, existingTags, remotes)));
+
+        var tags = await _gateway.GetTagsAsync(_context.Lifetime).ConfigureAwait(false);
+
+        bool tagsChanged;
+        lock (_sync)
+        {
+            // TagInfo is a record — structural comparison.
+            tagsChanged = !tags.SequenceEqual(_tags);
+            _tags = tags;
+        }
+
+        // Keep _repoCache.SaveRefs a single write after tags complete — do not write a half-populated ref snapshot.
         _repoCache?.SaveRefs(_context.RepositoryPath, branches, tags, remotes);
 
-        // An unchanged ref set raises nothing: a spurious watcher-driven refs refresh would
-        // otherwise push consumers (the graph control especially) into a full re-walk for no
-        // reason. StatusChanged has its own coalescing; this is the RefsChanged equivalent.
-        if (changed)
+        // Raise second time if tags changed.
+        if (tagsChanged)
             Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, tags, remotes)));
     }
 
@@ -287,5 +316,126 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     {
         _statusCoalesceTimer?.Dispose();
         return ValueTask.CompletedTask;
+    }
+
+    private sealed class SingleFlightCoalescer
+    {
+        private readonly object _gate = new();
+        private Task? _inFlightPump;
+        private TaskCompletionSource _currentTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource? _trailingTcs;
+        private bool _hasReadData;
+
+        public Task RunAsync(Func<Action, Task> work, CancellationToken ct)
+        {
+            Task taskToAwait;
+            lock (_gate)
+            {
+                if (_inFlightPump == null || _currentTcs.Task.IsCompleted)
+                {
+                    if (_inFlightPump != null && _trailingTcs != null)
+                    {
+                        taskToAwait = _trailingTcs.Task;
+                    }
+                    else
+                    {
+                        _currentTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                        _trailingTcs = null;
+                        _hasReadData = false;
+                        taskToAwait = _currentTcs.Task;
+                        _inFlightPump = RunPumpAsync(work);
+                    }
+                }
+                else if (!_hasReadData)
+                {
+                    // Caller arriving before data is read joins the in-flight run.
+                    taskToAwait = _currentTcs.Task;
+                }
+                else
+                {
+                    // Caller arriving after data is read queues a trailing run.
+                    _trailingTcs ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    taskToAwait = _trailingTcs.Task;
+                }
+            }
+
+            return WaitWithCancellationAsync(taskToAwait, ct);
+        }
+
+        private void MarkDataRead()
+        {
+            lock (_gate)
+            {
+                _hasReadData = true;
+            }
+        }
+
+        private async Task RunPumpAsync(Func<Action, Task> work)
+        {
+            try
+            {
+                while (true)
+                {
+                    TaskCompletionSource current;
+                    lock (_gate)
+                    {
+                        current = _currentTcs;
+                    }
+
+                    Exception? fault = null;
+                    bool canceled = false;
+                    try
+                    {
+                        await work(MarkDataRead).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        canceled = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        fault = ex;
+                    }
+
+                    lock (_gate)
+                    {
+                        if (canceled)
+                            current.TrySetCanceled();
+                        else if (fault != null)
+                            current.TrySetException(fault);
+                        else
+                            current.TrySetResult();
+
+                        if (_trailingTcs is null)
+                        {
+                            _inFlightPump = null;
+                            return;
+                        }
+
+                        _currentTcs = _trailingTcs;
+                        _trailingTcs = null;
+                        _hasReadData = false;
+                    }
+                }
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    _inFlightPump = null;
+                }
+            }
+        }
+
+        private static async Task WaitWithCancellationAsync(Task task, CancellationToken ct)
+        {
+            if (!ct.CanBeCanceled)
+            {
+                await task.ConfigureAwait(false);
+                return;
+            }
+
+            await task.WaitAsync(ct).ConfigureAwait(false);
+        }
     }
 }
