@@ -95,6 +95,44 @@ public class WorkspaceServiceTests : IAsyncDisposable
         }
     }
 
+    [Fact]
+    public async Task CloneAsync_focuses_an_existing_tab_instead_of_opening_a_duplicate()
+    {
+        var ws = NewWorkspace();
+        using var source = Repo("a.txt");
+        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-dedup-{Guid.NewGuid():N}");
+
+        try
+        {
+            var first = await ws.CloneAsync(source.Path, target, new Historia.Services.Workspace.CloneOptions(), progress: null);
+            Assert.Single(ws.OpenRepositories);
+            Assert.Same(first, ws.Focused);
+
+            foreach (var f in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories))
+                File.SetAttributes(f, FileAttributes.Normal);
+            Directory.Delete(target, recursive: true);
+
+            var second = await ws.CloneAsync(source.Path, target, new Historia.Services.Workspace.CloneOptions(), progress: null);
+            Assert.Same(first, second);
+            Assert.Single(ws.OpenRepositories);
+            Assert.Same(first, ws.Focused);
+        }
+        finally
+        {
+            await ws.DisposeAsync();
+            try
+            {
+                if (Directory.Exists(target))
+                {
+                    foreach (var f in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories))
+                        File.SetAttributes(f, FileAttributes.Normal);
+                    Directory.Delete(target, recursive: true);
+                }
+            }
+            catch { /* best effort */ }
+        }
+    }
+
     // ── §V3-B/19.21: tab drag-and-drop reorder ──
 
     [Fact(Timeout = 30000)]

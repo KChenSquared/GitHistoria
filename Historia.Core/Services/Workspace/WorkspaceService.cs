@@ -410,6 +410,20 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             }
         }
 
+        var normalizedGitDir = NormalizeDir(context.GitDirectory);
+        RepositoryContext? existing;
+        lock (_sync)
+        {
+            existing = _open.FirstOrDefault(c =>
+                string.Equals(NormalizeDir(c.GitDirectory), normalizedGitDir, StringComparison.OrdinalIgnoreCase));
+        }
+        if (existing is not null)
+        {
+            await context.DisposeAsync().ConfigureAwait(false);
+            FocusInternal(existing);
+            return existing;
+        }
+
         return await OpenCoreAsync(
             targetDirectory, focus: true, initialize: true, CancellationToken.None, prefetched: Task.FromResult(context)).ConfigureAwait(false);
     }
