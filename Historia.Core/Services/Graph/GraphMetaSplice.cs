@@ -16,6 +16,14 @@ namespace Historia.Services.Graph;
 /// &lt;old tips&gt;</c> and the reverse) and times its own queries; this class only decides
 /// whether to trust the result and, if so, computes the resulting order.
 /// </para>
+/// <para>
+/// <see cref="Evaluate"/>'s guards are individually-justified sufficient conditions standing
+/// in for a true positive invariant (&quot;output equals a fresh <c>--date-order</c> walk&quot;) that
+/// is not cheaply checkable without a full re-walk, defeating the point of splicing. A future
+/// correctness gap found in this function should be fixed the way guard 6 was: add a new guard
+/// with its own regression test, documented the same way as the existing guards, rather than
+/// restructuring the whole function.
+/// </para>
 /// </summary>
 internal static class GraphMetaSplice
 {
