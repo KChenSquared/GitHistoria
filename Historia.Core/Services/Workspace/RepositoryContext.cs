@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Workspace;
+namespace Historia.Services.Workspace;
 
 /// <summary>
 /// Per-repository-tab handle (§6.3, §6.6.3). Owns exactly one <see cref="Repository"/> and
@@ -72,6 +72,7 @@ public sealed class RepositoryContext : IAsyncDisposable
     public IGitGateway Gateway { get; }
     public IRepositoryStateService State { get; }
     internal FileWatcherService Watcher { get; }
+    internal IWorkspaceService? Workspace { get; set; }
 
     /// <summary>
     /// Stable repo identity (§9.3.1), resolved once per open by <c>IRepoIdentityService</c>
@@ -105,6 +106,8 @@ public sealed class RepositoryContext : IAsyncDisposable
             services.GetService<IRepoStateCache>());
         State.SeedFromCache(); // paint the sidebar from last-known state before the first refresh
 
+        Workspace = services.GetService<IWorkspaceService>();
+
         Watcher = new FileWatcherService(
             this,
             State,
@@ -137,13 +140,37 @@ public sealed class RepositoryContext : IAsyncDisposable
         }
     }
 
+    private const double GateLogThresholdMs = 5.0;
+
+    private volatile string? _activeGateHolder;
+    private volatile string? _lastGateHolder;
+
+    internal static long FormattedGateMarksCount;
+
+    private static string ResolveCallerLabel(string? label, string callerMember, string callerFile)
+    {
+        if (!string.IsNullOrEmpty(label))
+            return label;
+        var fileName = string.IsNullOrEmpty(callerFile) ? "" : Path.GetFileNameWithoutExtension(callerFile);
+        if (!string.IsNullOrEmpty(fileName) && !string.IsNullOrEmpty(callerMember))
+            return $"{fileName}.{callerMember}";
+        if (!string.IsNullOrEmpty(callerMember))
+            return callerMember;
+        return "unknown";
+    }
+
     /// <summary>
     /// Serializes access to the owned <see cref="Repository"/> and marshals the work to the
     /// thread pool (§6.3.1). Handlers must project into Historia's own records <b>inside</b> the
     /// callback and return only those — no <see cref="Commit"/>, <see cref="Tree"/>,
     /// <see cref="Blob"/>, <see cref="Patch"/>, or <see cref="Branch"/> may escape.
     /// </summary>
-    public async Task<T> WithRepositoryAsync<T>(Func<Repository, T> work, CancellationToken ct = default)
+    public async Task<T> WithRepositoryAsync<T>(
+        Func<Repository, T> work,
+        CancellationToken ct = default,
+        string? label = null,
+        [CallerMemberName] string callerMember = "",
+        [CallerFilePath] string callerFile = "")
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
         var waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -157,20 +184,47 @@ public sealed class RepositoryContext : IAsyncDisposable
             Interlocked.Decrement(ref _foregroundGateWaiters);
         }
         var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds;
-        if (waitMs > 5)
-            Historia.Diagnostics.PerfLog.Mark($"repo gate wait {waitMs:F1}ms ({DisplayName})");
+        var waitedBehind = _lastGateHolder ?? _activeGateHolder ?? "unknown";
+        if (waitMs > GateLogThresholdMs && PerfLog.Enabled)
+        {
+            Interlocked.Increment(ref FormattedGateMarksCount);
+            PerfLog.Mark($"repo gate wait {waitMs:F1}ms ({DisplayName}) behind {waitedBehind}");
+        }
+
+        var resolvedLabel = ResolveCallerLabel(label, callerMember, callerFile);
+        var holderDesc = PerfLog.Enabled ? $"[foreground] {resolvedLabel}" : null;
+        if (holderDesc is not null)
+            _activeGateHolder = holderDesc;
+
+        var holdStart = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             return await Task.Run(() => work(_repository), linked.Token).ConfigureAwait(false);
         }
         finally
         {
+            var holdMs = System.Diagnostics.Stopwatch.GetElapsedTime(holdStart).TotalMilliseconds;
+            if (holdMs > GateLogThresholdMs && PerfLog.Enabled)
+            {
+                Interlocked.Increment(ref FormattedGateMarksCount);
+                PerfLog.Mark($"repo gate hold [foreground] {resolvedLabel} {holdMs:F1}ms ({DisplayName})");
+            }
+            if (holderDesc is not null)
+            {
+                _lastGateHolder = holderDesc;
+                _activeGateHolder = null;
+            }
             _repoGate.Release();
         }
     }
 
-    public Task WithRepositoryAsync(Action<Repository> work, CancellationToken ct = default)
-        => WithRepositoryAsync(repo => { work(repo); return true; }, ct);
+    public Task WithRepositoryAsync(
+        Action<Repository> work,
+        CancellationToken ct = default,
+        string? label = null,
+        [CallerMemberName] string callerMember = "",
+        [CallerFilePath] string callerFile = "")
+        => WithRepositoryAsync(repo => { work(repo); return true; }, ct, label, callerMember, callerFile);
 
     /// <summary>
     /// Like <see cref="WithRepositoryAsync{T}"/> but low priority: yields the gate to any
@@ -180,7 +234,12 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// status refresh, or diff on the same repo. Callers should still slice their work so one
     /// acquisition is short — this only reorders the queue, it cannot preempt a turn in flight.
     /// </summary>
-    public async Task<T> WithRepositoryBackgroundAsync<T>(Func<Repository, T> work, CancellationToken ct = default)
+    public async Task<T> WithRepositoryBackgroundAsync<T>(
+        Func<Repository, T> work,
+        CancellationToken ct = default,
+        string? label = null,
+        [CallerMemberName] string callerMember = "",
+        [CallerFilePath] string callerFile = "")
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
         var yieldStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -211,18 +270,49 @@ public sealed class RepositoryContext : IAsyncDisposable
         {
             Interlocked.Decrement(ref _backgroundGateWaiters);
         }
+
+        var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart).TotalMilliseconds;
+        var waitedBehind = _lastGateHolder ?? _activeGateHolder ?? "unknown";
+        if (waitMs > GateLogThresholdMs && PerfLog.Enabled)
+        {
+            Interlocked.Increment(ref FormattedGateMarksCount);
+            PerfLog.Mark($"repo gate wait {waitMs:F1}ms ({DisplayName}) behind {waitedBehind}");
+        }
+
+        var resolvedLabel = ResolveCallerLabel(label, callerMember, callerFile);
+        var holderDesc = PerfLog.Enabled ? $"[background] {resolvedLabel}" : null;
+        if (holderDesc is not null)
+            _activeGateHolder = holderDesc;
+
+        var holdStart = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             return await Task.Run(() => work(_repository), linked.Token).ConfigureAwait(false);
         }
         finally
         {
+            var holdMs = System.Diagnostics.Stopwatch.GetElapsedTime(holdStart).TotalMilliseconds;
+            if (holdMs > GateLogThresholdMs && PerfLog.Enabled)
+            {
+                Interlocked.Increment(ref FormattedGateMarksCount);
+                PerfLog.Mark($"repo gate hold [background] {resolvedLabel} {holdMs:F1}ms ({DisplayName})");
+            }
+            if (holderDesc is not null)
+            {
+                _lastGateHolder = holderDesc;
+                _activeGateHolder = null;
+            }
             _repoGate.Release();
         }
     }
 
-    public Task WithRepositoryBackgroundAsync(Action<Repository> work, CancellationToken ct = default)
-        => WithRepositoryBackgroundAsync(repo => { work(repo); return true; }, ct);
+    public Task WithRepositoryBackgroundAsync(
+        Action<Repository> work,
+        CancellationToken ct = default,
+        string? label = null,
+        [CallerMemberName] string callerMember = "",
+        [CallerFilePath] string callerFile = "")
+        => WithRepositoryBackgroundAsync(repo => { work(repo); return true; }, ct, label, callerMember, callerFile);
 
     /// <summary>
     /// Like <see cref="WithRepositoryBackgroundAsync{T}"/> but lower priority still: yields to a
@@ -234,7 +324,12 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// user-visible urgency of its own and the crawl does (it is what grows the scrollbar while
     /// the graph loads in the background), so the spill is the one that must stand aside here.
     /// </summary>
-    public async Task<T> WithRepositorySpillAsync<T>(Func<Repository, T> work, CancellationToken ct = default)
+    public async Task<T> WithRepositorySpillAsync<T>(
+        Func<Repository, T> work,
+        CancellationToken ct = default,
+        string? label = null,
+        [CallerMemberName] string callerMember = "",
+        [CallerFilePath] string callerFile = "")
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
         var yieldStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -255,18 +350,49 @@ public sealed class RepositoryContext : IAsyncDisposable
             }
             break;
         }
+
+        var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart).TotalMilliseconds;
+        var waitedBehind = _lastGateHolder ?? _activeGateHolder ?? "unknown";
+        if (waitMs > GateLogThresholdMs && PerfLog.Enabled)
+        {
+            Interlocked.Increment(ref FormattedGateMarksCount);
+            PerfLog.Mark($"repo gate wait {waitMs:F1}ms ({DisplayName}) behind {waitedBehind}");
+        }
+
+        var resolvedLabel = ResolveCallerLabel(label, callerMember, callerFile);
+        var holderDesc = PerfLog.Enabled ? $"[spill] {resolvedLabel}" : null;
+        if (holderDesc is not null)
+            _activeGateHolder = holderDesc;
+
+        var holdStart = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             return await Task.Run(() => work(_repository), linked.Token).ConfigureAwait(false);
         }
         finally
         {
+            var holdMs = System.Diagnostics.Stopwatch.GetElapsedTime(holdStart).TotalMilliseconds;
+            if (holdMs > GateLogThresholdMs && PerfLog.Enabled)
+            {
+                Interlocked.Increment(ref FormattedGateMarksCount);
+                PerfLog.Mark($"repo gate hold [spill] {resolvedLabel} {holdMs:F1}ms ({DisplayName})");
+            }
+            if (holderDesc is not null)
+            {
+                _lastGateHolder = holderDesc;
+                _activeGateHolder = null;
+            }
             _repoGate.Release();
         }
     }
 
-    public Task WithRepositorySpillAsync(Action<Repository> work, CancellationToken ct = default)
-        => WithRepositorySpillAsync(repo => { work(repo); return true; }, ct);
+    public Task WithRepositorySpillAsync(
+        Action<Repository> work,
+        CancellationToken ct = default,
+        string? label = null,
+        [CallerMemberName] string callerMember = "",
+        [CallerFilePath] string callerFile = "")
+        => WithRepositorySpillAsync(repo => { work(repo); return true; }, ct, label, callerMember, callerFile);
 
     /// <summary>
     /// Marks a scope as one of Historia's own Git operations so the watcher suppresses the

@@ -64,5 +64,103 @@ public sealed class RepositoryContextGateTests : IAsyncDisposable
             $"background-tier caller waited {sw.Elapsed} behind the spill-tier loop ({spillIterations} spill iterations) — the spill did not yield.");
     }
 
+    [Fact]
+    public async Task Gate_records_holder_and_tier_for_each_entry_point()
+    {
+        var prevEnabled = Historia.Diagnostics.PerfLog.Enabled;
+        Historia.Diagnostics.PerfLog.Enabled = true;
+        try
+        {
+            using var repo = TestRepositoryBuilder.Create();
+            repo.WriteFile("a.txt", "x\n").Stage();
+            repo.Commit("c");
+            var ctx = _host.Open(repo.Path);
+
+            var startLineCount = File.Exists(Historia.Diagnostics.PerfLog.LogPath)
+                ? File.ReadAllLines(Historia.Diagnostics.PerfLog.LogPath).Length
+                : 0;
+
+            await ctx.WithRepositoryAsync(r => { Thread.Sleep(15); return 0; });
+            await ctx.WithRepositoryBackgroundAsync(r => { Thread.Sleep(15); return 0; });
+            await ctx.WithRepositorySpillAsync(r => { Thread.Sleep(15); return 0; });
+
+            var lines = File.ReadAllLines(Historia.Diagnostics.PerfLog.LogPath).Skip(startLineCount).ToList();
+
+            Assert.Contains(lines, l => l.Contains("repo gate hold [foreground]") && l.Contains(nameof(Gate_records_holder_and_tier_for_each_entry_point)));
+            Assert.Contains(lines, l => l.Contains("repo gate hold [background]") && l.Contains(nameof(Gate_records_holder_and_tier_for_each_entry_point)));
+            Assert.Contains(lines, l => l.Contains("repo gate hold [spill]") && l.Contains(nameof(Gate_records_holder_and_tier_for_each_entry_point)));
+        }
+        finally
+        {
+            Historia.Diagnostics.PerfLog.Enabled = prevEnabled;
+        }
+    }
+
+    [Fact]
+    public async Task Gate_records_waited_behind_holder()
+    {
+        var prevEnabled = Historia.Diagnostics.PerfLog.Enabled;
+        Historia.Diagnostics.PerfLog.Enabled = true;
+        try
+        {
+            using var repo = TestRepositoryBuilder.Create();
+            repo.WriteFile("a.txt", "x\n").Stage();
+            repo.Commit("c");
+            var ctx = _host.Open(repo.Path);
+
+            var startLineCount = File.Exists(Historia.Diagnostics.PerfLog.LogPath)
+                ? File.ReadAllLines(Historia.Diagnostics.PerfLog.LogPath).Length
+                : 0;
+
+            var holderTask = ctx.WithRepositoryAsync(r => { Thread.Sleep(30); return 1; });
+            await Task.Delay(5);
+
+            var waiterTask = ctx.WithRepositoryAsync(r => 2);
+            await Task.WhenAll(holderTask, waiterTask);
+
+            var lines = File.ReadAllLines(Historia.Diagnostics.PerfLog.LogPath).Skip(startLineCount).ToList();
+            Assert.Contains(lines, l => l.Contains("repo gate wait") && l.Contains("behind [foreground]"));
+        }
+        finally
+        {
+            Historia.Diagnostics.PerfLog.Enabled = prevEnabled;
+        }
+    }
+
+    [Fact]
+    public async Task Gate_marks_are_not_formatted_when_perf_logging_is_disabled()
+    {
+        var prevEnabled = Historia.Diagnostics.PerfLog.Enabled;
+        Historia.Diagnostics.PerfLog.Enabled = false;
+        try
+        {
+            using var repo = TestRepositoryBuilder.Create();
+            repo.WriteFile("a.txt", "x\n").Stage();
+            repo.Commit("c");
+            var ctx = _host.Open(repo.Path);
+
+            var startCount = Volatile.Read(ref RepositoryContext.FormattedGateMarksCount);
+            var startLogSize = File.Exists(Historia.Diagnostics.PerfLog.LogPath)
+                ? new FileInfo(Historia.Diagnostics.PerfLog.LogPath).Length
+                : 0;
+
+            await ctx.WithRepositoryAsync(r => { Thread.Sleep(15); return 0; });
+            await ctx.WithRepositoryBackgroundAsync(r => { Thread.Sleep(15); return 0; });
+            await ctx.WithRepositorySpillAsync(r => { Thread.Sleep(15); return 0; });
+
+            var endCount = Volatile.Read(ref RepositoryContext.FormattedGateMarksCount);
+            var endLogSize = File.Exists(Historia.Diagnostics.PerfLog.LogPath)
+                ? new FileInfo(Historia.Diagnostics.PerfLog.LogPath).Length
+                : 0;
+
+            Assert.Equal(startCount, endCount);
+            Assert.Equal(startLogSize, endLogSize);
+        }
+        finally
+        {
+            Historia.Diagnostics.PerfLog.Enabled = prevEnabled;
+        }
+    }
+
     public async ValueTask DisposeAsync() => await _host.DisposeAsync();
 }
