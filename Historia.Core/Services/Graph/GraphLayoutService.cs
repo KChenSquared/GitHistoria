@@ -799,22 +799,33 @@ public sealed class GraphLayoutService : IGraphLayoutService
         RepositoryContext context, GraphQuery query, IProgress<GitProgress>? progress, CancellationToken ct)
     {
         progress?.Report(new GitProgress { Phase = CloneStatus.CommitGraphPhase });
-        if (_backgroundWriter is not null)
-            await _backgroundWriter.WriteForCloneAsync(context, ct).ConfigureAwait(false);
+        var writeTask = _backgroundWriter is not null
+            ? _backgroundWriter.WriteForCloneAsync(context, ct)
+            : Task.CompletedTask;
 
         if (!SpillEnabled(query))
+        {
+            await writeTask.ConfigureAwait(false);
             return;
+        }
 
         progress?.Report(new GitProgress { Phase = CloneStatus.CachingPhase, ObjectsDone = 0 });
-        var probe = await ProbeStoreAsync(context, query, ct).ConfigureAwait(false);
 
-        var rowsProgress = progress is null
-            ? null
-            : new SynchronousProgress<int>(rows =>
-                progress.Report(new GitProgress { Phase = CloneStatus.CachingPhase, ObjectsDone = rows }));
+        var spoolTask = Task.Run(async () =>
+        {
+            var probe = await ProbeStoreAsync(context, query, ct).ConfigureAwait(false);
 
-        var rows = await RunHeadlessSpoolAsync(context, query, probe.Tips, ct, ignoreGate: true, rowsSpilled: rowsProgress)
-            .ConfigureAwait(false);
+            var rowsProgress = progress is null
+                ? null
+                : new SynchronousProgress<int>(rows =>
+                    progress.Report(new GitProgress { Phase = CloneStatus.CachingPhase, ObjectsDone = rows }));
+
+            return await RunHeadlessSpoolAsync(context, query, probe.Tips, ct, ignoreGate: true, rowsSpilled: rowsProgress)
+                .ConfigureAwait(false);
+        }, ct);
+
+        await Task.WhenAll(writeTask, spoolTask).ConfigureAwait(false);
+        var rows = await spoolTask.ConfigureAwait(false);
 
         _backgroundWriter?.RecordWrite(context.GitDirectory, rows);
     }
