@@ -665,50 +665,55 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     /// <inheritdoc/>
     public Task RequestBackgroundRefreshAsync(RepositoryContext context, bool full = false, CancellationToken ct = default)
     {
-        Task taskToAwait;
+        Task? taskToAwait = null;
         bool startPump = false;
+        bool isFocused;
         lock (_sync)
         {
             // The focused tab must keep refreshing immediately; this queue is for background tabs only.
-            if (ReferenceEquals(_focused, context))
+            isFocused = ReferenceEquals(_focused, context);
+            if (!isFocused && !_open.Contains(context))
             {
-                return full
-                    ? context.State.RefreshAllAsync(ct)
-                    : context.State.RefreshStatusAsync(ct);
+                taskToAwait = Task.CompletedTask;
             }
-
-            if (!_open.Contains(context))
-                return Task.CompletedTask;
-
-            var existing = _bgQueue.FirstOrDefault(x => ReferenceEquals(x.Context, context));
-            if (existing is not null)
+            else if (!isFocused)
             {
-                if (full) existing.Full = true;
-                var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                existing.Awaiters.Add(tcs);
-                taskToAwait = tcs.Task;
-            }
-            else
-            {
-                _deferredInit.Remove(context);
-                var item = new BackgroundQueueItem(context, isInit: !context.FirstFullLoad.IsCompleted, full: full);
-                var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                item.Awaiters.Add(tcs);
-                _bgQueue.Add(item);
-                taskToAwait = tcs.Task;
-            }
+                var existing = _bgQueue.FirstOrDefault(x => ReferenceEquals(x.Context, context));
+                if (existing is not null)
+                {
+                    if (full) existing.Full = true;
+                    var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    existing.Awaiters.Add(tcs);
+                    taskToAwait = tcs.Task;
+                }
+                else
+                {
+                    _deferredInit.Remove(context);
+                    var item = new BackgroundQueueItem(context, isInit: !context.FirstFullLoad.IsCompleted, full: full);
+                    var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    item.Awaiters.Add(tcs);
+                    _bgQueue.Add(item);
+                    taskToAwait = tcs.Task;
+                }
 
-            if (_bgInitPumpIdle)
-            {
-                _bgInitPumpIdle = false;
-                startPump = true;
+                if (_bgInitPumpIdle)
+                {
+                    _bgInitPumpIdle = false;
+                    startPump = true;
+                }
             }
         }
 
         if (startPump)
             _ = Task.Run(DrainBackgroundInitQueueAsync);
 
-        return WaitWithCancellationAsync(taskToAwait, ct);
+        // Start the focused tab's refresh outside the lock — RefreshAllAsync/RefreshStatusAsync
+        // run synchronously up to their first await, and _sync must be held only across queue
+        // mutation (Rule 18).
+        if (isFocused)
+            return full ? context.State.RefreshAllAsync(ct) : context.State.RefreshStatusAsync(ct);
+
+        return WaitWithCancellationAsync(taskToAwait!, ct);
     }
 
     /// <summary>Initialises and refreshes the queued background tabs one at a time in app-band tab order,

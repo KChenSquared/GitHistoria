@@ -341,6 +341,11 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             {
                 if (_inFlightPump == null || _currentTcs.Task.IsCompleted)
                 {
+                    // _currentTcs.Task.IsCompleted can be true even with _inFlightPump non-null:
+                    // if `work` faults or completes synchronously, RunPumpAsync runs to
+                    // completion (via lock reentrancy) inside the RunPumpAsync(work) call below,
+                    // finishing and nulling _inFlightPump before that call returns — only for the
+                    // assignment to then overwrite it with the now-already-completed task.
                     if (_inFlightPump != null && _trailingTcs != null)
                     {
                         taskToAwait = _trailingTcs.Task;
