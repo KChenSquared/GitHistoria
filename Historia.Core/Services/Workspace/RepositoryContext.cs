@@ -67,7 +67,7 @@ public sealed class RepositoryContext : IAsyncDisposable
     public string DisplayName { get; }
 
     /// <summary>Cancelled when the tab closes; every in-flight operation observes it.</summary>
-    public CancellationToken Lifetime => _lifetimeCts.Token;
+    public CancellationToken Lifetime { get; }
 
     public IGitGateway Gateway { get; }
     public IRepositoryStateService State { get; }
@@ -85,6 +85,7 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     private RepositoryContext(Repository repository, IServiceProvider services)
     {
+        Lifetime = _lifetimeCts.Token;
         _repository = repository;
         IsBare = repository.Info.IsBare;
         GitDirectory = repository.Info.Path;
@@ -172,7 +173,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         [CallerMemberName] string callerMember = "",
         [CallerFilePath] string callerFile = "")
     {
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, Lifetime);
         var waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
         Interlocked.Increment(ref _foregroundGateWaiters);
         try
@@ -241,7 +242,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         [CallerMemberName] string callerMember = "",
         [CallerFilePath] string callerFile = "")
     {
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, Lifetime);
         var yieldStart = System.Diagnostics.Stopwatch.GetTimestamp();
         Interlocked.Increment(ref _backgroundGateWaiters);
         try
@@ -331,7 +332,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         [CallerMemberName] string callerMember = "",
         [CallerFilePath] string callerFile = "")
     {
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetimeCts.Token);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, Lifetime);
         var yieldStart = System.Diagnostics.Stopwatch.GetTimestamp();
         while (true)
         {
@@ -457,10 +458,15 @@ public sealed class RepositoryContext : IAsyncDisposable
         // libgit2 call already running can't be interrupted, so bound the wait: if it does not
         // finish, return without hanging the tab close — but still reclaim the gate, the CTS,
         // and the native handle once that operation eventually does finish, via
-        // DisposeWhenGateFreesAsync below, rather than leaking all three for the rest of the
-        // process (§findings: the "still-running operation releases them itself" premise this
-        // comment used to state is false — WithRepositoryAsync's finally only releases the
-        // semaphore; nothing here ever disposed it, the CTS, or the Repository on this path).
+        // DisposeWhenGateFreesAsync below, rather than leaking both for the rest of the
+        // process (§findings: WithRepositoryAsync's finally only releases the semaphore;
+        // nothing here ever disposed it or the Repository on this path).
+        //
+        // Note: _lifetimeCts is intentionally NOT disposed here. A parameterless
+        // CancellationTokenSource holds no unmanaged resources or timers. Calling Cancel()
+        // above gracefully signals all in-flight and trailing operations to cancel; calling
+        // Dispose() would cause concurrent operations still referencing or linking against
+        // Lifetime to throw ObjectDisposedException instead of observing cancellation.
         var gateWaitStart = System.Diagnostics.Stopwatch.GetTimestamp();
         var gotGate = await _repoGate.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
         Historia.Diagnostics.PerfLog.Mark(
@@ -477,14 +483,9 @@ public sealed class RepositoryContext : IAsyncDisposable
             }
 
             _repoGate.Dispose();
-            _lifetimeCts.Dispose();
         }
         else
         {
-            // Cancel() above already ran every callback registered against _lifetimeCts.Token
-            // (including the still-running operation's linked source's registration) — disposing
-            // the source itself afterwards is safe regardless of what else is still in flight.
-            try { _lifetimeCts.Dispose(); } catch { /* ignore */ }
             _ = DisposeWhenGateFreesAsync();
         }
     }

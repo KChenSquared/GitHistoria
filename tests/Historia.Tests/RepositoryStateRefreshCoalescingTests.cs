@@ -203,6 +203,123 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         Assert.Equal("v1.0", state.Tags[0].Name);
     }
 
+    [Fact(Timeout = 10000)]
+    public async Task Joiner_cancellation_with_subsequent_fault_does_not_leak_unobserved_task_exception()
+    {
+        var gateway = new FakeGitGateway();
+        var branchesEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var branchesProceed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        gateway.OnGetBranches = async ct =>
+        {
+            branchesEntered.TrySetResult();
+            await branchesProceed.Task;
+            throw new InvalidOperationException("simulated gateway failure after joiner canceled");
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        using var joinerCts = new CancellationTokenSource();
+        var task = state.RefreshRefsAsync(joinerCts.Token);
+        await branchesEntered.Task;
+
+        // Joiner cancels early:
+        joinerCts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
+
+        // Underlying shared task completes with fault:
+        branchesProceed.TrySetResult(true);
+
+        // Wait brief tick for coalescer pump to finish:
+        await Task.Delay(50);
+
+        // Verify unobserved task exception is not raised on GC finalizer thread:
+        var unobservedSeen = false;
+        void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs e)
+        {
+            unobservedSeen = true;
+            e.SetObserved();
+        }
+
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+        try
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+
+            Assert.False(unobservedSeen, "Shared coalesced faulted task leaked an unobserved exception to the finalizer thread.");
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Disposing_repository_context_during_status_refresh_completes_cleanly_without_ObjectDisposedException()
+    {
+        var gateway = new FakeGitGateway();
+        var statusEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var statusProceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        gateway.OnGetStatus = async ct =>
+        {
+            statusEntered.TrySetResult();
+            await statusProceed.Task.WaitAsync(ct);
+            return Historia.Models.RepositoryStatus.Empty;
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        var refreshTask = state.RefreshStatusAsync(ctx.Lifetime);
+        await statusEntered.Task;
+
+        // Dispose context while refresh is mid-flight:
+        var disposeTask = ctx.DisposeAsync().AsTask();
+
+        // Release status gateway (which will observe cancellation from ctx.Lifetime):
+        statusProceed.TrySetResult();
+
+        // Refresh task should complete as canceled (or succeed gracefully), never fault with ObjectDisposedException
+        try
+        {
+            await refreshTask;
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected cancellation
+        }
+
+        await disposeTask;
+
+        // Verify ctx.Lifetime remains accessible without throwing ObjectDisposedException
+        var token = ctx.Lifetime;
+        Assert.True(token.IsCancellationRequested);
+
+        // Finalizer check
+        var unobservedSeen = false;
+        void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs e)
+        {
+            unobservedSeen = true;
+            e.SetObserved();
+        }
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+        try
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            Assert.False(unobservedSeen);
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
+    }
+
     private sealed class FakeGitGateway : IGitGateway
     {
         public string RepositoryPath => "C:\\fake\\repo";

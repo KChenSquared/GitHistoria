@@ -31,8 +31,8 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public event EventHandler<OpenDiffChangedEventArgs>? OpenDiffChanged;
 
     private readonly IGitGateway _gateway;
-    private readonly SingleFlightCoalescer _refsCoalescer = new();
-    private readonly SingleFlightCoalescer _statusCoalescer = new();
+    private readonly SingleFlightCoalescer _refsCoalescer;
+    private readonly SingleFlightCoalescer _statusCoalescer;
 
     public RepositoryStateService(
         RepositoryContext context,
@@ -42,6 +42,8 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     {
         _context = context;
         _gateway = gateway ?? context.Gateway;
+        _refsCoalescer = new(() => _context.Lifetime.IsCancellationRequested);
+        _statusCoalescer = new(() => _context.Lifetime.IsCancellationRequested);
         _ui = ui;
         _repoCache = repoCache;
         _repository = new RepositoryInfo
@@ -320,11 +322,17 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
 
     private sealed class SingleFlightCoalescer
     {
+        private readonly Func<bool>? _isCancellationRequested;
         private readonly object _gate = new();
         private Task? _inFlightPump;
         private TaskCompletionSource _currentTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private TaskCompletionSource? _trailingTcs;
         private bool _hasReadData;
+
+        public SingleFlightCoalescer(Func<bool>? isCancellationRequested = null)
+        {
+            _isCancellationRequested = isCancellationRequested;
+        }
 
         public Task RunAsync(Func<Action, Task> work, CancellationToken ct)
         {
@@ -392,6 +400,10 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                     {
                         canceled = true;
                     }
+                    catch (ObjectDisposedException) when (_isCancellationRequested?.Invoke() == true)
+                    {
+                        canceled = true;
+                    }
                     catch (Exception ex)
                     {
                         fault = ex;
@@ -435,7 +447,22 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                 return;
             }
 
-            await task.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await task.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // If this caller was cancelled before the shared coalesced task completed,
+                // ensure any later fault on the shared task is observed so it does not trigger
+                // an UnobservedTaskException if no other caller is awaiting it.
+                _ = task.ContinueWith(
+                    static t => _ = t.Exception,
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                throw;
+            }
         }
     }
 }
