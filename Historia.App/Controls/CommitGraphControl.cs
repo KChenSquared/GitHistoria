@@ -17,7 +17,6 @@ public sealed partial class CommitGraphControl : Control
     private const double HeaderTextSize = 12;
     private const double BadgeLabelSize = 14;
     internal const double HeaderHeight = 30;
-    private const double CogSize = 15;
     private const double QueryBarHeight = 32;
     private const double BoundaryGrab = 4;
     private const double TickWidth = 4;
@@ -290,10 +289,6 @@ public sealed partial class CommitGraphControl : Control
     private SolidColorBrush _selectionBar = new(Colors.SlateBlue);
     private SolidColorBrush _hoverFill = new(Colors.DimGray);
     private Pen _hoverPen = new(new SolidColorBrush(Colors.White), 1);
-    // The repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
-    private IBrush _cogBrush = new SolidColorBrush(Colors.DimGray);
-    private static readonly Geometry _cogGeo = Geometry.Parse(Historia.Components.IconPaths.Get("settings"));
-    private Rect _refsCogRect;
     private SolidColorBrush _matchFill = new(Colors.Transparent);
     private Typeface _typeface = new(FontFamily.Default);
 
@@ -1337,7 +1332,6 @@ public sealed partial class CommitGraphControl : Control
         _hoverFill = new SolidColorBrush(ToColor(palette["list-hover"]));
         _selectionBar = new SolidColorBrush(primary);
         _hoverPen = new Pen(new SolidColorBrush(primary), 2.0);
-        _cogBrush = new SolidColorBrush(muted);
         var warn = palette["warning"];
         _matchFill = new SolidColorBrush(AvColor.FromArgb(0x30, warn.R, warn.G, warn.B));
 
@@ -1635,8 +1629,7 @@ public sealed partial class CommitGraphControl : Control
         if (pos.Y < HeaderHeight)
         {
             Cursor = new Cursor(
-                _refsCogRect.Contains(pos) ? StandardCursorType.Hand
-                : BoundaryAt(pos.X) >= 0 ? StandardCursorType.SizeWestEast
+                BoundaryAt(pos.X) >= 0 ? StandardCursorType.SizeWestEast
                 : StandardCursorType.Arrow);
             return;
         }
@@ -1901,15 +1894,6 @@ public sealed partial class CommitGraphControl : Control
 
         if (pos.Y < HeaderHeight)
         {
-            // The cog at the right of the BRANCH / TAGS header opens this repo's settings.
-            if (_context is { } cogCtx && _refsCogRect.Contains(pos))
-            {
-                _workspace.Focus(cogCtx);
-                _nav.RequestNavigate("repo-settings");
-                e.Handled = true;
-                return;
-            }
-
             var b = BoundaryAt(pos.X);
             if (b >= 0)
             {
@@ -2767,8 +2751,6 @@ public sealed partial class CommitGraphControl : Control
         dc.DrawRectangle(_chrome, null, new Rect(0, 0, width, HeaderHeight));
         dc.DrawLine(_borderPen, new Point(0, HeaderHeight - 0.5), new Point(width, HeaderHeight - 0.5));
 
-        _refsCogRect = default;
-
         foreach (var col in _resolvedColumns)
         {
             var x = col.Left - _hScrollOffset;
@@ -2785,20 +2767,8 @@ public sealed partial class CommitGraphControl : Control
                 GraphColumnKind.Sha => "SHA",
                 _ => "",
             };
-            // The repo-settings cog lives at the right edge of the BRANCH / TAGS header.
-            // Reserve room so the label ellipsises before it.
-            var cogRoom = col.Kind == GraphColumnKind.Refs && _context is not null ? CogSize + 12 : 0;
-            var ft = Text(label, _headerText, Math.Max(10, col.Width - 12 - cogRoom), HeaderTextSize);
+            var ft = Text(label, _headerText, Math.Max(10, col.Width - 12), HeaderTextSize);
             dc.DrawText(ft, new Point(x + 8, (HeaderHeight - ft.Height) / 2));
-
-            if (cogRoom > 0)
-            {
-                var cx = x + col.Width - CogSize - 8;
-                var cy = (HeaderHeight - CogSize) / 2;
-                _refsCogRect = new Rect(cx - 3, cy - 3, CogSize + 6, CogSize + 6);
-                using (dc.PushTransform(Matrix.CreateTranslation(0, 960) * Matrix.CreateScale(CogSize / 960.0, CogSize / 960.0) * Matrix.CreateTranslation(cx, cy)))
-                    dc.DrawGeometry(_cogBrush, null, _cogGeo);
-            }
 
             if (col.Left > 0.5)
                 dc.DrawLine(_borderPen, new Point(x, 4), new Point(x, HeaderHeight - 4));
