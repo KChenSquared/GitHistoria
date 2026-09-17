@@ -526,23 +526,11 @@ public sealed class AppBandControl : UserControl, IDisposable
             return b;
         }
 
-        // The terminal entry point is a wide "> _" prompt drawn in a rectangle (stretched
-        // to fill, so it reads as a terminal window) and vertically centred in the tab row.
         static Button TerminalButton()
         {
-            var glyph = new Path
-            {
-                Data = Geometry.Parse(Historia.Components.IconPaths.Get("terminal")),
-                Stretch = Stretch.Fill,
-                Width = 16,
-                Height = 11,
-                StrokeThickness = 1.5,
-                StrokeLineCap = PenLineCap.Round,
-                StrokeJoin = PenLineJoin.Round,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            Dyn(glyph, Path.StrokeProperty, "ColorTextMuted");
+            var glyph = Historia.Views.ViewKit.IconGlyphPath("terminal", 15, "ColorTextMuted");
+            glyph.HorizontalAlignment = HorizontalAlignment.Center;
+            glyph.VerticalAlignment = VerticalAlignment.Center;
             var b = new Button
             {
                 Width = 24,

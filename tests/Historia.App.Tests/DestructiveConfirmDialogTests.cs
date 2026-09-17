@@ -11,7 +11,7 @@ namespace HistoriaApp.Tests;
 /// <summary>
 /// Constitution Rule 00, half 2: the hand-rolled dialog builder must give <b>Cancel</b> the
 /// primary (blue) class and the Enter default while keeping it the rightmost button, and a
-/// <see cref="DialogIcon.Warning"/> dialog must actually carry the red <c>triangle-alert</c>.
+/// <see cref="DialogIcon.Warning"/> dialog must actually carry the red <c>warning</c>.
 /// The call-site half (every destructive action routes through the one entry point) is guarded
 /// by <c>Historia.Tests.DestructiveConfirmationTests</c>.
 /// </summary>
@@ -44,7 +44,7 @@ public class DestructiveConfirmDialogTests
     }
 
     [AvaloniaFact]
-    public void Warning_icon_puts_a_triangle_alert_glyph_beside_the_message()
+    public void Warning_icon_puts_a_warning_glyph_beside_the_message()
     {
         var warned = SimpleDialog.MessageBlock("Delete 3 files?", maxWidth: 380, DialogIcon.Warning);
         Assert.IsType<StackPanel>(warned);

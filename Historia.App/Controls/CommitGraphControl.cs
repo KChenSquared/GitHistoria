@@ -16,7 +16,7 @@ public sealed partial class CommitGraphControl : Control
     private const double RowTextSize = 14;
     private const double HeaderTextSize = 12;
     private const double BadgeLabelSize = 14;
-    private const double HeaderHeight = 30;
+    internal const double HeaderHeight = 30;
     private const double CogSize = 15;
     private const double QueryBarHeight = 32;
     private const double BoundaryGrab = 4;
@@ -291,7 +291,7 @@ public sealed partial class CommitGraphControl : Control
     private SolidColorBrush _hoverFill = new(Colors.DimGray);
     private Pen _hoverPen = new(new SolidColorBrush(Colors.White), 1);
     // The repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
-    private Pen _cogPen = new(new SolidColorBrush(Colors.DimGray), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
+    private IBrush _cogBrush = new SolidColorBrush(Colors.DimGray);
     private static readonly Geometry _cogGeo = Geometry.Parse(Historia.Components.IconPaths.Get("settings"));
     private Rect _refsCogRect;
     private SolidColorBrush _matchFill = new(Colors.Transparent);
@@ -402,9 +402,9 @@ public sealed partial class CommitGraphControl : Control
         LogicalChildren.Add(_queryBar);
         LogicalChildren.Add(_refList);
 
-        _icoLocal = ParseBadgeIcon(IconPaths.Get("save"));
-        _icoRemote = ParseBadgeIcon(IconPaths.Get("remote"));
-        _icoTag = ParseBadgeIcon(IconPaths.Get("tag"));
+        _icoLocal = ParseBadgeIcon(IconPaths.Get("hard_drive"));
+        _icoRemote = ParseBadgeIcon(IconPaths.Get("cloud"));
+        _icoTag = ParseBadgeIcon(IconPaths.Get("sell"));
     }
 
     private static void Dyn(Control c, AvaloniaProperty p, string key)
@@ -415,7 +415,8 @@ public sealed partial class CommitGraphControl : Control
     private static Geometry ParseBadgeIcon(string pathData)
     {
         var g = Geometry.Parse(pathData);
-        g.Transform = new ScaleTransform(12.0 / 16.0, 12.0 / 16.0);
+        g.Transform = new MatrixTransform(
+            Matrix.CreateTranslation(0, 960) * Matrix.CreateScale(12.0 / 960.0, 12.0 / 960.0));
         return g;
     }
 
@@ -1336,7 +1337,7 @@ public sealed partial class CommitGraphControl : Control
         _hoverFill = new SolidColorBrush(ToColor(palette["list-hover"]));
         _selectionBar = new SolidColorBrush(primary);
         _hoverPen = new Pen(new SolidColorBrush(primary), 2.0);
-        _cogPen = new Pen(new SolidColorBrush(muted), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
+        _cogBrush = new SolidColorBrush(muted);
         var warn = palette["warning"];
         _matchFill = new SolidColorBrush(AvColor.FromArgb(0x30, warn.R, warn.G, warn.B));
 
@@ -2446,9 +2447,9 @@ public sealed partial class CommitGraphControl : Control
         if (type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
         {
             if (isLocal)
-                icons.Children.Add(Historia.Views.ViewKit.Icon("save", 12, "ColorTextMuted"));
+                icons.Children.Add(Historia.Views.ViewKit.Icon("hard_drive", 12, "ColorTextMuted"));
             if (remotes is { Length: > 0 })
-                icons.Children.Add(Historia.Views.ViewKit.Icon("remote", 12, "ColorTextMuted"));
+                icons.Children.Add(Historia.Views.ViewKit.Icon("cloud", 12, "ColorTextMuted"));
         }
 
         var content = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
@@ -2795,9 +2796,8 @@ public sealed partial class CommitGraphControl : Control
                 var cx = x + col.Width - CogSize - 8;
                 var cy = (HeaderHeight - CogSize) / 2;
                 _refsCogRect = new Rect(cx - 3, cy - 3, CogSize + 6, CogSize + 6);
-                var s = CogSize / 24.0;
-                using (dc.PushTransform(Matrix.CreateScale(s, s) * Matrix.CreateTranslation(cx, cy)))
-                    dc.DrawGeometry(null, _cogPen, _cogGeo);
+                using (dc.PushTransform(Matrix.CreateTranslation(0, 960) * Matrix.CreateScale(CogSize / 960.0, CogSize / 960.0) * Matrix.CreateTranslation(cx, cy)))
+                    dc.DrawGeometry(_cogBrush, null, _cogGeo);
             }
 
             if (col.Left > 0.5)

@@ -1,27 +1,14 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §V2-15.1: every name referenced by an <c>&lt;Icon Name="…"&gt;</c> in any <c>.razor</c>
-/// resolves in <see cref="IconPaths"/>, and no <see cref="IconPaths"/> entry is dead — except
-/// the handful reserved for later V2 milestones (§V2-9.2 enumerates the full needed set).
+/// §V2-15.1: every name referenced in native .cs resolves in <see cref="IconPaths"/>,
+/// and no <see cref="IconPaths"/> entry is dead. Glyphs are Google Material Symbols on a 960-unit grid.
 /// </summary>
 public class IconPathTests
 {
     // Glyphs reserved until remaining views or affordances consume them.
     private static readonly HashSet<string> ReservedForLaterMilestones =
-        new(StringComparer.Ordinal)
-        {
-            "chevron-right", "chevron-down", "stash", "pencil", "folder", "package", "lock", "unlock",
-            "folder-open", "folder-search", "folder-tree", "git-branch", "git-merge",
-            "git-pull-request", "git-commit-horizontal", "plus", "download", "arrow-down",
-            "arrow-up", "arrow-down-to-line", "arrow-up-from-line", "check", "square",
-            "square-check", "list", "key", "key-round", "copy", "github", "refresh-cw",
-            // The "stash all" save-check glyph — consumed by the staging panel and the
-            // shortcuts bar.
-            "save-check",
-            // Glyph kept for network affordance.
-            "globe",
-        };
+        new(StringComparer.Ordinal);
 
     [Fact]
     public void EveryReferencedIconResolves()
@@ -59,33 +46,234 @@ public class IconPathTests
     }
 
     [Fact]
-    public void LucideGlyphsAreVendoredAndStroked()
+    public void GlyphsSitOnTheMaterialGrid()
     {
-        // The generated partial must have populated the Lucide set, and those glyphs
-        // render stroke-based (Rule 29 — monochrome in currentColor either way).
-        Assert.True(IconPaths.IsStroke("git-branch"));
-        Assert.True(IconPaths.IsStroke("folder"));      // aliased onto a Lucide glyph
-        Assert.False(IconPaths.IsStroke("save"));       // Historia-authored badge fill silhouette
-        Assert.True(IconPaths.Has("copy") && IconPaths.Has("github") && IconPaths.Has("plus"));
+        foreach (var name in IconPaths.Names)
+        {
+            var d = IconPaths.Get(name);
+            var (minX, maxX, minY, maxY) = GetPathBounds(d);
+            Assert.True(minX >= 0, $"'{name}' minX {minX} is < 0");
+            Assert.True(maxX <= 960, $"'{name}' maxX {maxX} is > 960");
+            Assert.True(minY >= -960, $"'{name}' minY {minY} is < -960");
+            Assert.True(maxY <= 0, $"'{name}' maxY {maxY} is > 0");
+        }
+    }
+
+    [Fact]
+    public void VendoredSvgsMatchGeneratedFile()
+    {
+        var root = RepoRoot();
+        var svgDir = Path.Combine(root, "assets", "material-symbols");
+        Assert.True(Directory.Exists(svgDir), "assets/material-symbols directory does not exist.");
+        var fileNames = Directory.EnumerateFiles(svgDir, "*.svg")
+            .Select(f => Path.GetFileNameWithoutExtension(f)!)
+            .ToHashSet(StringComparer.Ordinal);
+        var iconNames = IconPaths.Names.ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(fileNames, iconNames);
+    }
+
+    [Fact]
+    public void NoLucideReferencesRemain()
+    {
+        var root = RepoRoot();
+        var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".cs", ".axaml", ".ps1", ".md" };
+        var violations = new List<string>();
+
+        foreach (var file in Directory.EnumerateFiles(root, "*.*", SearchOption.AllDirectories))
+        {
+            var ext = Path.GetExtension(file);
+            if (!extensions.Contains(ext))
+                continue;
+
+            var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
+            if (rel.StartsWith("Historia-DevDocs/", StringComparison.OrdinalIgnoreCase) ||
+                rel.StartsWith(".claude/", StringComparison.OrdinalIgnoreCase) ||
+                rel.Equals("tests/Historia.Tests/IconPathTests.cs", StringComparison.OrdinalIgnoreCase) ||
+                rel.Contains("/bin/") || rel.Contains("/obj/") ||
+                rel.StartsWith("bin/", StringComparison.OrdinalIgnoreCase) ||
+                rel.StartsWith("obj/", StringComparison.OrdinalIgnoreCase) ||
+                rel.Contains("/.git/") || rel.StartsWith(".git/", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var text = File.ReadAllText(file);
+            if (text.Contains("lucide", StringComparison.OrdinalIgnoreCase))
+            {
+                violations.Add(rel);
+            }
+        }
+
+        Assert.True(violations.Count == 0,
+            "Lucide references found in: " + string.Join(", ", violations));
+    }
+
+    private static (double MinX, double MaxX, double MinY, double MaxY) GetPathBounds(string d)
+    {
+        var tokens = Regex.Matches(d, @"([a-zA-Z])|([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)");
+        double curX = 0, curY = 0;
+        double startX = 0, startY = 0;
+        double minX = double.MaxValue, maxX = double.MinValue;
+        double minY = double.MaxValue, maxY = double.MinValue;
+
+        void Track(double x, double y)
+        {
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+        }
+
+        char cmd = ' ';
+        int i = 0;
+        bool isFirst = true;
+
+        bool HasNum() => i < tokens.Count && !char.IsLetter(tokens[i].Value[0]);
+
+        double NextNum()
+        {
+            if (HasNum())
+                return double.Parse(tokens[i++].Value, System.Globalization.CultureInfo.InvariantCulture);
+            return 0;
+        }
+
+        while (i < tokens.Count)
+        {
+            var tok = tokens[i].Value;
+            if (char.IsLetter(tok[0]))
+            {
+                cmd = tok[0];
+                i++;
+            }
+
+            switch (cmd)
+            {
+                case 'M':
+                    while (HasNum())
+                    {
+                        curX = NextNum();
+                        curY = NextNum();
+                        startX = curX; startY = curY;
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'm':
+                    if (isFirst)
+                    {
+                        curX = NextNum();
+                        curY = NextNum();
+                        startX = curX; startY = curY;
+                        Track(curX, curY);
+                        isFirst = false;
+                    }
+                    while (HasNum())
+                    {
+                        curX += NextNum();
+                        curY += NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'L':
+                    while (HasNum())
+                    {
+                        curX = NextNum();
+                        curY = NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'l':
+                    while (HasNum())
+                    {
+                        curX += NextNum();
+                        curY += NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'H':
+                    while (HasNum())
+                    {
+                        curX = NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'h':
+                    while (HasNum())
+                    {
+                        curX += NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'V':
+                    while (HasNum())
+                    {
+                        curY = NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'v':
+                    while (HasNum())
+                    {
+                        curY += NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'Q':
+                    while (HasNum())
+                    {
+                        double cx = NextNum(), cy = NextNum();
+                        Track(cx, cy);
+                        curX = NextNum(); curY = NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'q':
+                    while (HasNum())
+                    {
+                        double cx = curX + NextNum(), cy = curY + NextNum();
+                        Track(cx, cy);
+                        curX += NextNum(); curY += NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'T':
+                    while (HasNum())
+                    {
+                        curX = NextNum(); curY = NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 't':
+                    while (HasNum())
+                    {
+                        curX += NextNum(); curY += NextNum();
+                        Track(curX, curY);
+                    }
+                    break;
+                case 'Z':
+                case 'z':
+                    curX = startX; curY = startY;
+                    break;
+            }
+            isFirst = false;
+        }
+
+        return (minX, maxX, minY, maxY);
     }
 
     private static HashSet<string> ReferencedIconNames()
     {
         var root = RepoRoot();
         var names = new HashSet<string>(StringComparer.Ordinal);
-        // Icon element name attributes in .razor; IconPaths lookups in native .cs
-        // (§V3-18.2 Q8, rule 0.6 / 36).
-        var rxRazor = new Regex("<Icon\\s+[^>]*?Name=\"([a-z-]+)\"", RegexOptions.IgnoreCase);
-        // .cs call sites are IconPaths.Get("x") (native controls) and the ViewKit helpers
-        // Icon("x") / IconButton("x", ...) / IconGlyphPath("x", ...).
-        var rxCs = new Regex("(?:IconPaths\\.Get|\\bIcon(?:Button|GlyphPath)?)\\(\"([a-z-]+)\"");
+        var rxRazor = new Regex("<Icon\\s+[^>]*?Name=\"([a-z0-9_]+)\"", RegexOptions.IgnoreCase);
+        var rxCs = new Regex("(?:IconPaths\\.Get|\\bIcon(?:Button|GlyphPath|TextButton)?|\\bArrowButton)\\(\"([a-z0-9_]+)\"");
 
         foreach (var pattern in new[] { "*.razor", "*.cs" })
         foreach (var file in Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories))
         {
             var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
             if (rel.Contains("/bin/") || rel.Contains("/obj/")
-                || rel.Contains("/tests/") || rel.StartsWith("tests/", StringComparison.Ordinal))
+                || rel.Contains("/tests/") || rel.StartsWith("tests/", StringComparison.Ordinal)
+                || rel.StartsWith(".claude/", StringComparison.OrdinalIgnoreCase))
                 continue;
             var text = File.ReadAllText(file);
             var rx = file.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ? rxRazor : rxCs;

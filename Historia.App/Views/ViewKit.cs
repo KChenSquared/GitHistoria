@@ -86,30 +86,26 @@ internal static class ViewKit
         return img;
     }
 
-    /// <summary>An icon glyph in <c>currentColor</c> (the V3 &lt;Icon&gt;). Lucide glyphs render
-    /// stroked on a 24-unit grid; the Historia fill silhouettes render filled on a 16-unit grid.</summary>
+    /// <summary>An icon glyph in <c>currentColor</c> (the V3 &lt;Icon&gt;). Material Symbols render
+    /// filled on a 960-unit grid, scaled to <paramref name="size"/>.</summary>
     public static Control Icon(string name, double size = 16, string fgKey = "ColorText")
         => IconGlyphPath(name, size, fgKey);
 
-    /// <summary>Shared <see cref="Path"/> builder for <see cref="IconPaths"/> glyphs — honours the
-    /// per-glyph stroke/fill contract so stroke icons keep round caps and a proportional weight.</summary>
+    /// <summary>Shared <see cref="Path"/> builder for <see cref="IconPaths"/> glyphs — renders
+    /// Material Symbols monochrome fill geometry on a 960-unit grid with optical padding preserved.</summary>
     public static Path IconGlyphPath(string name, double size, string fgKey)
     {
-        var glyph = IconPaths.Resolve(name);
+        var data = IconPaths.Get(name);
+        var geometry = Geometry.Parse(data);
+        geometry.Transform = new MatrixTransform(
+            Matrix.CreateTranslation(0, 960) * Matrix.CreateScale(size / 960.0, size / 960.0));
         var path = new Path
         {
-            Data = Geometry.Parse(glyph.Data),
-            Stretch = Stretch.Uniform,
+            Data = geometry,
+            Stretch = Stretch.None,
             Width = size,
             Height = size,
         };
-        if (glyph.Stroke)
-        {
-            path.StrokeThickness = size * 2.0 / 24.0;   // 2 px on Lucide's 24-unit grid
-            path.StrokeLineCap = PenLineCap.Round;
-            path.StrokeJoin = PenLineJoin.Round;
-            return path.Dyn(Path.StrokeProperty, fgKey);
-        }
         return path.Dyn(Path.FillProperty, fgKey);
     }
 

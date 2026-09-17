@@ -49,11 +49,11 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
 
         // v8 M5 (follow-up): icon + label per shortcut so the bar reads at a glance and the
         // labels don't crowd the 26 px band. Terminal matches for consistency.
-        _fetch = IconTextButton("refresh-cw", "Fetch", "Fetch from the remote",
+        _fetch = IconTextButton("pet_supplies", "Fetch", "Fetch from the remote",
             () => _actions.RequestNetworkAction(RepoNetworkAction.Fetch));
-        _pull = IconTextButton("arrow-down-to-line", "Pull", "Pull from the remote",
+        _pull = IconTextButton("cloud_download", "Pull", "Pull from the remote",
             () => _actions.RequestNetworkAction(RepoNetworkAction.Pull));
-        _push = IconTextButton("arrow-up-from-line", "Push", "Push to the remote",
+        _push = IconTextButton("cloud_upload", "Push", "Push to the remote",
             () => _actions.RequestNetworkAction(RepoNetworkAction.Push));
         _terminal = IconTextButton("terminal", "Terminal", "Open terminal in this repository", () =>
         {
@@ -65,9 +65,9 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
         // Branch — create a branch at the currently selected commit (HEAD when nothing is
         // selected). Stash — "stash all", named "Stash of <branch>" or a prompted name. Both use
         // the same chrome as Fetch / Pull / Push.
-        _branchBtn = IconTextButton("git-branch", "Branch", "Create a branch at the selected commit",
+        _branchBtn = IconTextButton("graph_8", "Branch", "Create a branch at the selected commit",
             () => _ = CreateBranchAsync());
-        _stashBtn = IconTextButton("save-check", "Stash", "Stash all changes",
+        _stashBtn = IconTextButton("save", "Stash", "Stash all changes",
             () => _ = StashAllAsync());
 
         var centre = new StackPanel

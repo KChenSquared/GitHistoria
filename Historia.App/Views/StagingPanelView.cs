@@ -101,15 +101,15 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _selectAllChanges.Click += (_, _) => ToggleSelectAll(staged: false);
         _selectAllStaged.Click += (_, _) => ToggleSelectAll(staged: true);
 
-        _stageArrow = ArrowButton("arrow-down", "ColorSuccess", "Stage", () => _ = MoveCheckedAsync(stage: true));
-        _unstageArrow = ArrowButton("arrow-up", "ColorDanger", "Unstage", () => _ = MoveCheckedAsync(stage: false));
+        _stageArrow = ArrowButton("arrow_downward", "ColorSuccess", "Stage", () => _ = MoveCheckedAsync(stage: true));
+        _unstageArrow = ArrowButton("arrow_upward", "ColorDanger", "Unstage", () => _ = MoveCheckedAsync(stage: false));
 
-        // Glyph sized just above the 13 px header-row text so the bordered trash pill matches
+        // Glyph sized just above the 13 px header-row text so the bordered delete pill matches
         // the Stage-all / Unstage-all pill height.
-        var trashGlyph = IconGlyphPath("trash", 14, "ColorDanger");
+        var deleteGlyph = IconGlyphPath("delete", 14, "ColorDanger");
         _discardAllChanges = new Button
         {
-            Content = trashGlyph,
+            Content = deleteGlyph,
             Padding = new Thickness(6, 2),
             Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
             VerticalAlignment = VerticalAlignment.Center,

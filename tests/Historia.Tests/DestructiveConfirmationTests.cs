@@ -4,7 +4,7 @@ namespace Historia.Tests;
 /// Constitution <b>Rule 00</b> guard, half 1 (call sites). Every destructive action must go
 /// through the single entry point <c>IDialogService.ConfirmDestructiveAsync</c> (or
 /// <c>ChooseAsync</c> with <c>DialogIcon.Warning</c>), which hard-wires the red
-/// <c>triangle-alert</c>, Cancel-as-primary/Enter, and the plain confirm button. No call site
+/// <c>warning</c>, Cancel-as-primary/Enter, and the plain confirm button. No call site
 /// may hand-roll that treatment on the plain <c>ConfirmAsync</c> overload — if it does, the
 /// contract can silently drift at that one dialog. The dialog-builder half of the rule is
 /// guarded by <c>HistoriaApp.Tests.DestructiveConfirmDialogTests</c>.
