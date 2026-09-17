@@ -155,7 +155,7 @@ public sealed class SettingsView : UserControl, IDisposable
 
         // ── Privacy & Network ──
         _root.Children.Add(Section("Privacy & Network"));
-        _root.Children.Add(Muted("Network routing is per repository — pick an identity, and toggle \"SSH only\", in the shortcuts bar."));
+        _root.Children.Add(Muted("Network routing is per repository — pick an identity, and toggle \"SSH only\", in that repository's settings (the Settings button above the sidebar)."));
         _root.Children.Add(Check("Allow background API polling", c.EnableBackgroundPolling,
             v => _ = _cfg.UpdateAsync(s => s with { EnableBackgroundPolling = v })));
         _root.Children.Add(Muted("Effective only while a repository's selected profile has a connected token."));
@@ -541,12 +541,18 @@ public sealed class SettingsView : UserControl, IDisposable
 /// <summary>Per-repository settings (V4 port of RepoSettings.razor + GraphColumnSettings.razor).</summary>
 public sealed class RepoSettingsView : UserControl, IDisposable
 {
+    private readonly IServiceProvider _sp;
     private readonly IWorkspaceService _workspace;
     private readonly Historia.Services.Settings.IRepoLayoutService _repoLayout;
+    private readonly IProfileService _profiles;
+    private readonly INavigationBus? _nav;
+    private readonly INotificationService? _notifications;
     private readonly StackPanel _root = new() { Spacing = 12, Margin = new Thickness(32), MaxWidth = 560 };
     private readonly Panel _overlay = new() { IsHitTestVisible = false };
 
     private readonly EventHandler<Historia.Services.Settings.RepoLayoutChangedEventArgs> _onLayout;
+    private readonly EventHandler _onProfilesChanged;
+    private bool _syncingSshOnly;
 
     // ── column-row drag reorder (mirrors the app-band tab reorder: live preview + ghost) ──
     private const double DragThreshold = 4;
@@ -561,9 +567,18 @@ public sealed class RepoSettingsView : UserControl, IDisposable
 
     public RepoSettingsView(IServiceProvider sp)
     {
+        _sp = sp;
         _workspace = sp.GetRequiredService<IWorkspaceService>();
         _repoLayout = sp.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
-        _onLayout = (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(Rebuild);
+        _profiles = sp.GetRequiredService<IProfileService>();
+        _nav = sp.GetService<INavigationBus>();
+        _notifications = sp.GetService<INotificationService>();
+        _onLayout = (_, _) =>
+        {
+            if (!_syncingSshOnly)
+                Avalonia.Threading.Dispatcher.UIThread.Post(Rebuild);
+        };
+        _onProfilesChanged = (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(Rebuild);
         Content = new Panel { Children = { new ScrollViewer { Content = _root }, _overlay } };
         this.Dyn(BackgroundProperty, "ColorChrome");
         _root.AddHandler(PointerMovedEvent, OnRowsPointerMoved, RoutingStrategies.Bubble);
@@ -571,6 +586,7 @@ public sealed class RepoSettingsView : UserControl, IDisposable
         _root.PointerCaptureLost += OnRowsCaptureLost;
         _workspace.FocusedRepositoryChanged += OnFocusChanged;
         _repoLayout.Changed += _onLayout;
+        _profiles.ProfilesChanged += _onProfilesChanged;
         Rebuild();
     }
 
@@ -585,6 +601,56 @@ public sealed class RepoSettingsView : UserControl, IDisposable
         _root.Children.Add(Text(ctx?.DisplayName ?? "Repository settings", "ColorText", 22, FontWeight.SemiBold));
         if (ctx is not null)
             _root.Children.Add(Text(ctx.RepositoryPath, "ColorTextMuted", 12));
+
+        if (ctx is not null)
+        {
+            // ── Identity ──
+            _root.Children.Add(Text("Identity", "ColorTextMuted", 13, FontWeight.SemiBold));
+            _root.Children.Add(Text("Git author and signing identity used for commits in this repository.", "ColorTextMuted", 11));
+
+            var key = ctx.IdentityKey;
+            string label;
+            if (key is { } k && _profiles.IsLocalConfigSelected(k))
+            {
+                label = "Local config";
+            }
+            else if (ctx.State.ActiveProfile is { } p)
+            {
+                // §14.3 stale rendering: a row that names a missing profile shows "<name> (unavailable)".
+                label = _profiles.GetProfileById(p.Id) is null
+                    ? $"{p.DisplayName} (unavailable)"
+                    : p.IsGlobal ? "Local config" : p.DisplayName;
+            }
+            else
+            {
+                label = "Local config";
+            }
+
+            var profileBtn = new Button
+            {
+                Content = label + "  ▾",
+                Padding = new Thickness(10, 4),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Cursor = new Cursor(StandardCursorType.Hand),
+            };
+            profileBtn.Click += (_, _) => OpenProfileMenu(profileBtn, ctx);
+            _root.Children.Add(profileBtn);
+
+            // ── Network ──
+            _root.Children.Add(Text("Network", "ColorTextMuted", 13, FontWeight.SemiBold));
+            var sshOnly = new ToggleSwitch
+            {
+                Content = "SSH only",
+                IsChecked = _repoLayout.Get(ctx.RepositoryPath).SshOnly,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Cursor = new Cursor(StandardCursorType.Hand),
+            };
+            sshOnly.IsCheckedChanged += (_, _) => _ = OnSshOnlyToggledAsync(sshOnly.IsChecked == true, ctx);
+            _root.Children.Add(sshOnly);
+            var sshDesc = Text("Force SSH for fetch / push / pull; never fall back to HTTPS.", "ColorTextMuted", 11);
+            sshDesc.TextWrapping = TextWrapping.Wrap;
+            _root.Children.Add(sshDesc);
+        }
 
         _root.Children.Add(Text("Graph columns", "ColorTextMuted", 13, FontWeight.SemiBold));
         var hint = Text("Order and visibility apply to every repository. Widths are per repository — drag the column headers — and reset on every launch.", "ColorTextMuted", 11);
@@ -759,9 +825,99 @@ public sealed class RepoSettingsView : UserControl, IDisposable
         _ghost = null;
     }
 
+    private async Task OnSshOnlyToggledAsync(bool on, RepositoryContext ctx)
+    {
+        _syncingSshOnly = true;
+        try
+        {
+            await _repoLayout.UpdateAsync(ctx.RepositoryPath, l => l with { SshOnly = on });
+        }
+        finally
+        {
+            _syncingSshOnly = false;
+        }
+    }
+
+    private void OpenProfileMenu(Button anchor, RepositoryContext ctx)
+    {
+        var key = ctx.IdentityKey;
+        var localSelected = key is { } k && _profiles.IsLocalConfigSelected(k);
+        var active = ctx.State.ActiveProfile;
+
+        var menu = new MenuFlyout();
+        var menuItems = new List<Control>();
+
+        var local = new MenuItem
+        {
+            Header = "Local config",
+            Icon = localSelected ? new TextBlock { Text = "✓" } : null,
+        };
+        local.Click += (_, _) => _ = SelectLocalConfigAsync(ctx);
+        menuItems.Add(local);
+        menuItems.Add(new Separator());
+
+        foreach (var p in _profiles.GetAllProfiles())
+        {
+            var pp = p;
+            var mi = new MenuItem
+            {
+                Header = p.IsGlobal ? "Global (~/.gitconfig)" : p.DisplayName,
+                Icon = !localSelected && active is not null && active.Id == p.Id ? new TextBlock { Text = "✓" } : null,
+            };
+            mi.Click += (_, _) => _ = BindProfileAsync(ctx, pp);
+            menuItems.Add(mi);
+        }
+        menuItems.Add(new Separator());
+        var add = new MenuItem { Header = "Add profile…" };
+        add.Click += (_, _) => _nav?.RequestNavigate("profiles?intent=add");
+        menuItems.Add(add);
+        var manage = new MenuItem { Header = "Manage profiles…" };
+        manage.Click += (_, _) => _nav?.RequestNavigate("profiles");
+        menuItems.Add(manage);
+
+        menu.ItemsSource = menuItems;
+        menu.ShowAt(anchor);
+    }
+
+    private async Task<RepoIdentityKey> KeyForAsync(RepositoryContext ctx)
+        => ctx.IdentityKey ?? await (_sp.GetService<IRepoIdentityService>()?.ResolveAsync(ctx, ctx.Lifetime) ?? Task.FromResult(new RepoIdentityKey("")));
+
+    private async Task BindProfileAsync(RepositoryContext ctx, GitProfile profile)
+    {
+        try
+        {
+            var key = await KeyForAsync(ctx);
+            await _profiles.BindProfileToRepositoryAsync(key, ctx.RepositoryPath, profile.Id, ctx.Lifetime);
+            ctx.State.SetActiveProfile(profile);
+            Rebuild();
+        }
+        catch (Exception ex)
+        {
+            _notifications?.Publish(NotificationSeverity.Error,
+                $"Could not set profile: {ex.Message}", ex.NotificationDetails());
+        }
+    }
+
+    private async Task SelectLocalConfigAsync(RepositoryContext ctx)
+    {
+        try
+        {
+            var key = await KeyForAsync(ctx);
+            await _profiles.SetLocalConfigForRepositoryAsync(key, ctx.RepositoryPath, ctx.Lifetime);
+            ctx.State.SetActiveProfile(null);
+            Rebuild();
+        }
+        catch (Exception ex)
+        {
+            _notifications?.Publish(NotificationSeverity.Error,
+                $"Could not set profile: {ex.Message}", ex.NotificationDetails());
+        }
+    }
+
     public void Dispose()
     {
         _workspace.FocusedRepositoryChanged -= OnFocusChanged;
         _repoLayout.Changed -= _onLayout;
+        _profiles.ProfilesChanged -= _onProfilesChanged;
     }
 }
