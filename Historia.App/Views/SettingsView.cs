@@ -346,6 +346,10 @@ public sealed class SettingsView : UserControl, IDisposable
         advBody.Margin = new Thickness(0, 10, 0, 0);
 
         AddCollapsibleSection("Advanced settings", advBody, () => _advExpanded, v => _advExpanded = v);
+
+        // ── About ──
+        _root.Children.Add(Section("About"));
+        _root.Children.Add(Muted("Icons: Material Symbols by Google (Apache License 2.0)"));
     }
 
     /// <summary>

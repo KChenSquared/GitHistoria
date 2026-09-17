@@ -57,4 +57,10 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="..\docs\third-party-licenses.md" Link="third-party-licenses.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

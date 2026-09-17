@@ -16,7 +16,7 @@ deliberately, say so in the PR and say why.
 
 > **Every action that destroys the user's work or irreversibly rewrites their history must be
 > gated behind an explicit confirmation the user actively accepts — a modal alert with a red
-> `triangle-alert`, naming the exact effect. No exceptions, no "just this once", no silent
+> `warning`, naming the exact effect. No exceptions, no "just this once", no silent
 > path.**
 
 This is the number-one rule and it outranks every other rule in this document, **including Rule
@@ -43,7 +43,7 @@ When it is arguable whether an action belongs here, it does. *(§I-6.9.1, §I-6.
 It routes through `IDialogService.ConfirmDestructiveAsync` (or `ChooseAsync` with
 `DialogIcon.Warning`, when there are several remedies) — never the plain `ConfirmAsync`
 overload hand-rolled to look the same. The one entry point hard-wires:
-- the large red `triangle-alert` glyph;
+- the large red `warning` glyph;
 - naming the exact effect (the files, the branch, the commit count), never a bare "Are you
   sure?";
 - **Cancel** as the primary (blue / accent) button *and* the keyboard default, so a reflexive
@@ -154,7 +154,7 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
 13. **Never auto-accept an unknown SSH host key.** *(§I-6.13)*
 14. **Destructive actions confirm, naming the exact files.** Discard, delete-untracked, hard
     reset. The data is unrecoverable through Git. This is the Git-specific instance of **Rule
-    00** — the general requirement and the dialog contract (red `triangle-alert`, Cancel
+    00** — the general requirement and the dialog contract (red `warning`, Cancel
     primary and rightmost, "Don't ask again this session" the only suppression) live there.
     *(§I-6.9.1)*
 15. **Route commits through the CLI when hooks or signing are present.** LibGit2Sharp runs

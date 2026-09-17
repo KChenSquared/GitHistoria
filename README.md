@@ -109,5 +109,5 @@ the [GNU General Public License](LICENSE) for more details.
 
 Copyright (C) 2026 The Historia Contributors.
 
-Bundled third-party material (the [Lucide](https://lucide.dev/) icon set) is credited
+Bundled third-party material (the [Material Symbols](https://github.com/google/material-design-icons) icon set, Apache-2.0) is credited
 in [`docs/third-party-licenses.md`](docs/third-party-licenses.md).
