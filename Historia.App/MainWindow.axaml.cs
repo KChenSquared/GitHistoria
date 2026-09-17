@@ -1,4 +1,4 @@
-﻿namespace Historia;
+namespace Historia;
 
 /// <summary>
 /// The Avalonia shell window (§6.2.1, §7.4): app band on top, the three body regions
@@ -13,7 +13,8 @@ public partial class MainWindow : Window
     private readonly IScrollDirectionProbe? _scrollProbe;
     private readonly AtomicFileWriter? _placementWriter;
     private readonly AppBandControl? _appBand;
-    private readonly ShortcutsBarControl? _shortcutsBar;
+    private readonly ShortcutsBarControl? _leftShortcuts;
+    private readonly ShortcutsBarControl? _rightShortcuts;
     private readonly CommitGraphControl? _graph;
     private readonly TerminalDockControl? _terminalDock;
     private IRepoNetworkActionRunner? _networkRunner;
@@ -45,8 +46,13 @@ public partial class MainWindow : Window
             AppBandHost.Content = _appBand;
             _appBand.Initialize(services);
 
-            _shortcutsBar = new ShortcutsBarControl(services);
-            ShortcutsBarHost.Content = _shortcutsBar;
+            _leftShortcuts = new ShortcutsBarControl(services, ShortcutsBarSide.Left);
+            LeftShortcutsHost.Content = _leftShortcuts;
+            _leftShortcuts.NaturalWidthChanged += (_, _) => OnShortcutsNaturalWidthChanged();
+
+            _rightShortcuts = new ShortcutsBarControl(services, ShortcutsBarSide.Right);
+            RightShortcutsHost.Content = _rightShortcuts;
+            _rightShortcuts.NaturalWidthChanged += (_, _) => OnShortcutsNaturalWidthChanged();
 
             // Eagerly resolve so its constructor subscribes to IRepoActionBus.NetworkActionRequested
             // right away — Fetch/Pull/Push from the shortcuts bar must keep working regardless of
@@ -79,6 +85,7 @@ public partial class MainWindow : Window
 
         RestorePlacement();
         InitBodyLayout();
+        OnShortcutsNaturalWidthChanged();
 
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         PositionChanged += (_, _) => QueuePlacementSave();
@@ -97,7 +104,8 @@ public partial class MainWindow : Window
         if (_theme is not null)
             _theme.ThemeChanged -= OnThemeChanged;
         _appBand?.Dispose();
-        _shortcutsBar?.Dispose();
+        _leftShortcuts?.Dispose();
+        _rightShortcuts?.Dispose();
         _terminalDock?.Dispose();
         _ = _placementWriter?.DisposeAsync();
         base.OnClosed(e);
@@ -133,22 +141,28 @@ public partial class MainWindow : Window
     private void WindowChromeFor(EffectiveTheme theme)
         => Historia.Platform.WindowChrome.Apply(TryGetPlatformHandle()?.Handle ?? IntPtr.Zero, theme);
 
-    // ── Body panel layout (§V3-B/19.24) ──
+    // ── Body panel layout (§V3-B/19.24, §3) ──
     //
     // Each divider resizes only the two panels it sits between: the left divider trades width
     // between Left and Centre, the right divider between Centre and Right. The panel on the far
     // side never moves during a drag, so the adjacent panel responds 1:1 with the pointer and
     // the drag simply stops when the shrinking panel reaches its minimum (CentreMin for the
-    // centre). When the window is too narrow to honour the stored intents, panels give way
-    // centre-first, then right, then left, with no minimum floor (ResolveColumns).
+    // centre). Pane minimums are derived dynamically from the shortcut bars' natural width via
+    // BodyColumnLayout.EffectiveMin, and ResolveColumns delegates to BodyColumnLayout.Resolve.
 
     private const double DividerPx = 4;
-    private const double LeftMin = 250;
+    private const double BaseLeftMin = 250;
     // §V3.1: floor the centre panel at the default columns' combined minimum plus padding
     // (Refs 140 + Graph 150 + Message 150 + 40), so a sidebar-divider drag can't squeeze
     // Message past the right edge. Both dividers clamp against it (§4.2.9).
     private const double CentreMin = 480;
-    private const double RightMin = 250;
+    private const double BaseRightMin = 250;
+
+    private double _leftMin = BaseLeftMin;
+    private double _rightMin = BaseRightMin;
+
+    public double LeftMin => _leftMin;
+    public double RightMin => _rightMin;
 
     private double _leftW = 264;
     private double _rightW = 430;
@@ -162,6 +176,20 @@ public partial class MainWindow : Window
     private double _dragPointerStartX;
     private double _dragStartLeft, _dragStartRight;
 
+    private void OnShortcutsNaturalWidthChanged()
+    {
+        var leftBarWidth = _leftShortcuts?.NaturalWidth ?? 0;
+        var rightBarWidth = _rightShortcuts?.NaturalWidth ?? 0;
+        _leftMin = BodyColumnLayout.EffectiveMin(BaseLeftMin, leftBarWidth);
+        _rightMin = BodyColumnLayout.EffectiveMin(BaseRightMin, rightBarWidth);
+
+        _leftW = Math.Max(_leftW, _leftMin);
+        _rightW = Math.Max(_rightW, _rightMin);
+
+        MinWidth = _leftMin + _rightMin + 2 * DividerPx;
+        ApplyBodyLayout();
+    }
+
     private void InitBodyLayout()
     {
         BodyGrid.PropertyChanged += (_, ev) =>
@@ -174,16 +202,16 @@ public partial class MainWindow : Window
     private double BodyContentWidth => Math.Max(0, BodyGrid.Bounds.Width - 2 * DividerPx);
 
     private (double Left, double Centre, double Right) ResolveColumns(double total)
+        => BodyColumnLayout.Resolve(total, _leftW, _rightW, _leftMin, _rightMin);
+
+    internal void SetIntents(double left, double right)
     {
-        var maxLeft = Math.Max(0, total);
-        var left = Math.Clamp(_leftW, Math.Min(LeftMin, maxLeft), maxLeft);
-        var avail = Math.Max(0, total - left);
-        var right = Math.Clamp(_rightW, 0, avail);
-        var centre = Math.Max(0, avail - right);
-        return (left, centre, right);
+        _leftW = left;
+        _rightW = right;
+        ApplyBodyLayout();
     }
 
-    private void ApplyBodyLayout()
+    internal void ApplyBodyLayout()
     {
         var total = BodyContentWidth;
         if (total <= 0)
@@ -218,8 +246,8 @@ public partial class MainWindow : Window
         if (!_dividerDragging)
             return;
         var dx = e.GetPosition(BodyGrid).X - _dragPointerStartX;
-        var maxLeft = Math.Max(LeftMin, BodyContentWidth - _dragStartRight - CentreMin);
-        _leftW = Math.Clamp(_dragStartLeft + dx, LeftMin, maxLeft);
+        var maxLeft = Math.Max(_leftMin, BodyContentWidth - _dragStartRight - CentreMin);
+        _leftW = Math.Clamp(_dragStartLeft + dx, _leftMin, maxLeft);
         _rightW = _dragStartRight;
         ApplyBodyLayout();
         e.Handled = true;
@@ -231,8 +259,8 @@ public partial class MainWindow : Window
         if (!_dividerDragging)
             return;
         var dx = e.GetPosition(BodyGrid).X - _dragPointerStartX;
-        var maxRight = Math.Max(RightMin, BodyContentWidth - _dragStartLeft - CentreMin);
-        _rightW = Math.Clamp(_dragStartRight - dx, RightMin, maxRight);
+        var maxRight = Math.Max(_rightMin, BodyContentWidth - _dragStartLeft - CentreMin);
+        _rightW = Math.Clamp(_dragStartRight - dx, _rightMin, maxRight);
         _leftW = _dragStartLeft;
         ApplyBodyLayout();
         e.Handled = true;
