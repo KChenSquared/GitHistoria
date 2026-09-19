@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>§7.6: with "Read commit details from disk" on, the layout service spills per-commit
 /// metadata and points <see cref="GraphLayout.Commits"/> at the paged <c>DiskCommitStore</c>,
@@ -12,12 +12,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
 
     public GraphDiskMetaIntegrationTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        for (var i = 0; i < CommitCount; i++)
-        {
-            _repo.WriteFile("f.txt", $"{i}\n").Stage();
-            _repo.Commit($"commit {i:D2}");
-        }
+        _repo = TestRepositoryBuilder.FromTemplate("linear-40", b => b.LinearHistory(CommitCount));
     }
 
     public async ValueTask DisposeAsync()
