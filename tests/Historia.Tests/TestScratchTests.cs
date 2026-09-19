@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 [Trait("tier", "unit")]
-
+[Collection("serial")]
 public sealed class TestScratchTests
 {
     [Fact]

@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 [Trait("tier", "git")]
-
+[Collection("serial")]
 public class WorkspaceServiceTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

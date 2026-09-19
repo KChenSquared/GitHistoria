@@ -119,9 +119,14 @@ public sealed class FileWatcherService : IAsyncDisposable
 
     private void OnWatcherError(object sender, ErrorEventArgs e)
     {
+        if (_disposed)
+            return;
+
         // Buffer overflow: discard pending state and force one full refresh — never ignored (§6.8.2).
         lock (_sync)
         {
+            if (_disposed)
+                return;
             _pendingPaths.Clear();
             _forceFull = true;
             _refsTouched = true;
@@ -181,7 +186,8 @@ public sealed class FileWatcherService : IAsyncDisposable
 
     private void ScheduleLocked()
     {
-        if (_debounceTimer is null)
+        var timer = _debounceTimer;
+        if (timer is null || _disposed)
             return;
 
         var now = DateTimeOffset.UtcNow;
@@ -192,7 +198,11 @@ public sealed class FileWatcherService : IAsyncDisposable
 
         var elapsed = (now - _firstPendingAt).TotalMilliseconds;
         var dueIn = elapsed >= MaxWaitMs ? 0 : Math.Min(DebounceMs, MaxWaitMs - (int)elapsed);
-        _debounceTimer.Change(Math.Max(0, dueIn), Timeout.Infinite);
+        try
+        {
+            timer.Change(Math.Max(0, dueIn), Timeout.Infinite);
+        }
+        catch (ObjectDisposedException) { }
     }
 
     private void OnDebounceElapsed(object? _)
@@ -350,8 +360,11 @@ public sealed class FileWatcherService : IAsyncDisposable
         }
 
         _watchers.Clear();
-        _debounceTimer?.Dispose();
-        _debounceTimer = null;
+        lock (_sync)
+        {
+            _debounceTimer?.Dispose();
+            _debounceTimer = null;
+        }
         return ValueTask.CompletedTask;
     }
 }

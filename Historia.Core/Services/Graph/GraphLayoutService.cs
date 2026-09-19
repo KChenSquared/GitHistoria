@@ -537,6 +537,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 cache.MetaStore?.Dispose();
                 cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount, cache.Engine);
                 AdoptDurableStore(cache, rowCount);
+                var probe = GraphMetaStore.Probe(repoPath, cache.WalkKey, includeRemotes, cache.Engine);
+                if (probe is { Ok: true, Exhausted: true })
+                {
+                    cache.MetaComplete = true;
+                    cache.Exhausted = true;
+                }
+                cache.DisposeLiveWalk();
                 return outcome;
 
             default:
@@ -767,7 +774,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     // writer entirely (another writer reset or reordered it) — stop this whole
                     // background spill attempt rather than keep hammering a store it no longer
                     // safely understands. The next ComputeLayoutAsync/ExtendLayoutAsync resyncs.
-                    if (walkDone || ct.IsCancellationRequested || conflicted)
+                    if (walkDone || cache.Exhausted || cache.MetaComplete || ct.IsCancellationRequested || conflicted)
                         break;
                     await Task.Delay(150, ct).ConfigureAwait(false); // let foreground + crawl gate work in
                 }
@@ -1147,7 +1154,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // RunHeadlessCacheAsync call re-probes and resyncs.
                 if (conflicted)
                     break;
-                if (walkDone)
+                if (walkDone || cache.Exhausted || cache.MetaComplete)
                 {
                     _backgroundWriter?.MaybeSchedule(context, TotalWalked(cache));
                     break;
