@@ -13,9 +13,11 @@ public class GraphDecorationMergeTests : IAsyncDisposable
 
     public GraphDecorationMergeTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        _repo.WriteFile("a.txt", "1\n").Stage();
-        _repo.Commit("c1");
+        _repo = TestRepositoryBuilder.FromTemplate("seed-decoration", b =>
+        {
+            b.WriteFile("a.txt", "1\n").Stage();
+            b.Commit("c1");
+        });
     }
 
     private async Task<GraphDecoration[]> DecorationsForTipAsync()

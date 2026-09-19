@@ -14,8 +14,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
 
     public GraphBackgroundWriterTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        _repo.WriteFile("f.txt", "1\n").Stage().Commit("c1");
+        _repo = TestRepositoryBuilder.FromTemplate("seed-1", b => b.WriteFile("f.txt", "1\n").Stage().Commit("c1"));
     }
 
     public async ValueTask DisposeAsync()

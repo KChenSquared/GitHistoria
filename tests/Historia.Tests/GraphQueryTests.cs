@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>
 /// §V2-17.3: the graph query controls. Path filter restricts the walk (a coherent, valid
@@ -12,17 +12,19 @@ public class GraphQueryTests : IAsyncDisposable
 
     public GraphQueryTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        _repo.WriteFile("main.txt", "1\n").Stage();
-        _repo.Commit("c1 on main");
-        _repo.WriteFile("main.txt", "2\n").Stage();
-        _repo.Commit("c2 on main");
+        _repo = TestRepositoryBuilder.FromTemplate("graph-query-fixture", b =>
+        {
+            b.WriteFile("main.txt", "1\n").Stage();
+            b.Commit("c1 on main");
+            b.WriteFile("main.txt", "2\n").Stage();
+            b.Commit("c2 on main");
 
-        _repo.Checkout("feature", create: true);
-        _repo.WriteFile("feature.txt", "f\n").Stage();
-        _repo.Commit("c3 on feature");
+            b.Checkout("feature", create: true);
+            b.WriteFile("feature.txt", "f\n").Stage();
+            b.Commit("c3 on feature");
 
-        _repo.Checkout("main");
+            b.Checkout("main");
+        });
     }
 
     [Fact]

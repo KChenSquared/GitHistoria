@@ -160,8 +160,7 @@ public sealed class GraphReadWindowTests : IDisposable
     public async Task Extend_with_a_disposed_backing_store_returns_the_existing_layout_unchanged()
     {
         await using var host = new MiniHost();
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("f.txt", "x\n").Stage().Commit("initial");
+        using var repo = TestRepositoryBuilder.FromTemplate("seed-initial", b => b.WriteFile("f.txt", "x\n").Stage().Commit("initial"));
         await using var ctx = host.Open(repo.Path);
 
         // 5 rows already laid out; 15 more confirmed "on disk" behind a store we then dispose —
