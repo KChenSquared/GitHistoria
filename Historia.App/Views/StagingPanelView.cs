@@ -200,7 +200,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         var arrowStrip = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 8,
+            Spacing = 4,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -327,7 +327,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private Button ArrowButton(string icon, string tintKey, string tip, Action onClick)
     {
-        var glyph = IconGlyphPath(icon, 16, tintKey);
+        var glyph = IconGlyphPath(icon, 15, tintKey);
         var b = new Button
         {
             Content = glyph,

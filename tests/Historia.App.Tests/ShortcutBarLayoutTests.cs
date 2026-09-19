@@ -79,6 +79,22 @@ public class ShortcutBarLayoutTests
     }
 
     [AvaloniaFact]
+    public async Task Shortcut_bar_buttons_match_appband_typography_and_icon_size()
+    {
+        await using var sp = CreateServices();
+        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
+        var panel = (StackPanel)((Border)bar.Content!).Child!;
+        var btn = panel.Children.OfType<Button>().First();
+        var stack = (StackPanel)btn.Content!;
+        var path = stack.Children.OfType<Avalonia.Controls.Shapes.Path>().First();
+        var tb = stack.Children.OfType<TextBlock>().First();
+
+        Assert.Equal(15.0, path.Width);
+        Assert.Equal(15.0, path.Height);
+        Assert.Equal(12.0, tb.FontSize);
+    }
+
+    [AvaloniaFact]
     public async Task Bars_match_the_graph_header_row()
     {
         Assert.Equal(CommitGraphControl.HeaderHeight, ShortcutsBarControl.BarHeight);
