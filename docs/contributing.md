@@ -54,6 +54,19 @@ dotnet build
 dotnet run
 ```
 
+### Run Tests
+```powershell
+# Inner loop: fast pure unit tests (< 15 s)
+.\dev\test.ps1 -Tier fast
+
+# Pre-push: UI and integration tiers
+.\dev\test.ps1 -Tier git
+.\dev\test.ps1 -Tier ui
+
+# Full suite verification (~3 min)
+.\dev\test.ps1 -Tier all
+```
+
 ---
 
 ## 4. Codebase Organization
@@ -112,7 +125,7 @@ We adhere to [Conventional Commits](https://www.conventionalcommits.org/):
 
 ### 3. Pull Request Guidelines
 1. Ensure your changes build cleanly without warnings (`dotnet build`).
-2. Run any existing unit and integration tests (`dotnet test`).
+2. Run unit and integration tests (`dev/test.ps1 -Tier fast` during development, `dev/test.ps1 -Tier all` before pushing).
 3. For performance-sensitive code, include benchmark results or profiling notes in the PR description.
 4. Keep PRs focused on a single logical change for ease of review.
 
