@@ -30,7 +30,7 @@ public sealed class FileWatcherService : IAsyncDisposable
     private DateTimeOffset _firstPendingAt;
     private bool _refsTouched;
     private bool _forceFull;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public bool IsDegraded { get; private set; }
     public string? DegradedReason { get; private set; }
@@ -207,10 +207,16 @@ public sealed class FileWatcherService : IAsyncDisposable
 
     private void OnDebounceElapsed(object? _)
     {
+        if (_disposed)
+            return;
+
         bool refs;
         bool full;
         lock (_sync)
         {
+            if (_disposed)
+                return;
+
             if (_pendingPaths.Count == 0 && !_forceFull)
                 return;
             refs = _refsTouched;
