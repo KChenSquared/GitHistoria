@@ -89,9 +89,9 @@ public class ShortcutBarLayoutTests
         var path = stack.Children.OfType<Avalonia.Controls.Shapes.Path>().First();
         var tb = stack.Children.OfType<TextBlock>().First();
 
-        Assert.Equal(15.0, path.Width);
-        Assert.Equal(15.0, path.Height);
-        Assert.Equal(12.0, tb.FontSize);
+        Assert.Equal(18.0, path.Width);
+        Assert.Equal(18.0, path.Height);
+        Assert.Equal(14.0, tb.FontSize);
     }
 
     [AvaloniaFact]
