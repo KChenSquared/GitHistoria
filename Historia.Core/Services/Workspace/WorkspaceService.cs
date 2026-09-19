@@ -17,12 +17,26 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // They get the ordinary open path on first focus, exactly once.
     private readonly HashSet<RepositoryContext> _deferredInit = [];
 
-    // §V10.1.2: serial background-init pump. Auto-fetch (§12.1) force-initialises every restored
-    // tab; doing that concurrently fanned out ~11 identity history-walks + status refreshes at
-    // once and starved the tab the user is actually staring at (observed: linux first paint ~86s
-    // on an 11-tab restore). These now drain one at a time, and not until the focused tab has
-    // fully loaded. A newly focused deferred tab jumps the queue (FocusInternal).
-    private readonly List<RepositoryContext> _bgInitQueue = [];
+    private sealed class BackgroundQueueItem
+    {
+        public RepositoryContext Context { get; }
+        public bool IsInit { get; }
+        public bool Full { get; set; }
+        public bool IsInterruptedPriority { get; set; }
+        public List<TaskCompletionSource> Awaiters { get; } = [];
+
+        public BackgroundQueueItem(RepositoryContext context, bool isInit, bool full = false, bool isInterruptedPriority = false)
+        {
+            Context = context;
+            IsInit = isInit;
+            Full = full;
+            IsInterruptedPriority = isInterruptedPriority;
+        }
+    }
+
+    // §V10.1.2 / M3.1: serial background-init/refresh pump. Drains in app-band tab order,
+    // one repo at a time, behind the focused tab's FirstFullLoad (§F4, §F5).
+    private readonly List<BackgroundQueueItem> _bgQueue = [];
     private bool _bgInitPumpIdle = true;
     private RepositoryContext? _foregroundInit; // the focused/opened tab currently initialising
 
@@ -144,6 +158,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     {
         var context = await (prefetched ?? Task.Run(() => RepositoryContext.Open(path, _services), ct))
             .ConfigureAwait(false);
+        context.Workspace = this;
 
         lock (_sync)
         {
@@ -393,6 +408,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         }
 
         var context = await Task.Run(() => RepositoryContext.Open(targetDirectory, _services)).ConfigureAwait(false);
+        context.Workspace = this;
         if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
             is Historia.Services.Graph.IGraphLayoutService graphSvc)
         {
@@ -436,7 +452,12 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         {
             _open.Remove(context);
             _deferredInit.Remove(context);
-            _bgInitQueue.Remove(context); // Don't leave a closed tab queued for retry.
+            foreach (var item in _bgQueue.Where(x => ReferenceEquals(x.Context, context)))
+            {
+                foreach (var a in item.Awaiters)
+                    a.TrySetCanceled();
+            }
+            _bgQueue.RemoveAll(x => ReferenceEquals(x.Context, context));
             wasFocused = ReferenceEquals(_focused, context);
             if (wasFocused)
             {
@@ -621,32 +642,94 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     /// status refresh out at once. No-op for a tab that is already initialising.</summary>
     public void EnsureInitialized(RepositoryContext context)
     {
+        bool startPump = false;
         lock (_sync)
         {
             if (!_deferredInit.Remove(context))
                 return;
-            _bgInitQueue.Add(context);
+            var existing = _bgQueue.FirstOrDefault(x => ReferenceEquals(x.Context, context));
+            if (existing is null)
+            {
+                _bgQueue.Add(new BackgroundQueueItem(context, isInit: true));
+            }
             if (_bgInitPumpIdle)
             {
                 _bgInitPumpIdle = false;
-                _ = Task.Run(DrainBackgroundInitQueueAsync);
+                startPump = true;
             }
         }
+        if (startPump)
+            _ = Task.Run(DrainBackgroundInitQueueAsync);
     }
 
-    /// <summary>Initialises the queued background tabs one at a time, and never before the
-    /// focused tab has fully loaded — that tab is what the user is waiting on.</summary>
+    /// <inheritdoc/>
+    public Task RequestBackgroundRefreshAsync(RepositoryContext context, bool full = false, CancellationToken ct = default)
+    {
+        Task? taskToAwait = null;
+        bool startPump = false;
+        bool isFocused;
+        lock (_sync)
+        {
+            // The focused tab must keep refreshing immediately; this queue is for background tabs only.
+            isFocused = ReferenceEquals(_focused, context);
+            if (!isFocused && !_open.Contains(context))
+            {
+                taskToAwait = Task.CompletedTask;
+            }
+            else if (!isFocused)
+            {
+                var existing = _bgQueue.FirstOrDefault(x => ReferenceEquals(x.Context, context));
+                if (existing is not null)
+                {
+                    if (full) existing.Full = true;
+                    var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    existing.Awaiters.Add(tcs);
+                    taskToAwait = tcs.Task;
+                }
+                else
+                {
+                    _deferredInit.Remove(context);
+                    var item = new BackgroundQueueItem(context, isInit: !context.FirstFullLoad.IsCompleted, full: full);
+                    var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    item.Awaiters.Add(tcs);
+                    _bgQueue.Add(item);
+                    taskToAwait = tcs.Task;
+                }
+
+                if (_bgInitPumpIdle)
+                {
+                    _bgInitPumpIdle = false;
+                    startPump = true;
+                }
+            }
+        }
+
+        if (startPump)
+            _ = Task.Run(DrainBackgroundInitQueueAsync);
+
+        // Start the focused tab's refresh outside the lock — RefreshAllAsync/RefreshStatusAsync
+        // run synchronously up to their first await, and _sync must be held only across queue
+        // mutation (Rule 18).
+        if (isFocused)
+            return full ? context.State.RefreshAllAsync(ct) : context.State.RefreshStatusAsync(ct);
+
+        return WaitWithCancellationAsync(taskToAwait!, ct);
+    }
+
+    /// <summary>Initialises and refreshes the queued background tabs one at a time in app-band tab order,
+    /// and never before the focused tab has fully loaded — that tab is what the user is waiting on (§F4, §F5).</summary>
     private async Task DrainBackgroundInitQueueAsync()
     {
         while (true)
         {
-            RepositoryContext? foreground, next;
+            RepositoryContext? foreground;
+            BackgroundQueueItem? next;
             Task foregroundChanged;
             lock (_sync)
             {
-                if (_bgInitQueue.Count == 0) { _bgInitPumpIdle = true; return; }
+                if (_bgQueue.Count == 0) { _bgInitPumpIdle = true; return; }
                 foreground = _foregroundInit;
-                next = _bgInitQueue[0];
+                next = SelectNextBackgroundItemLocked();
                 foregroundChanged = _foregroundChanged.Task;
             }
 
@@ -655,7 +738,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             // Also race against _foregroundChanged — if `foreground` gets interrupted
             // (FocusInternal), its FirstFullLoad will never complete on its own anymore, so
             // without this the pump would wait forever on exactly the tab it just displaced.
-            if (foreground is not null && !ReferenceEquals(foreground, next))
+            if (foreground is not null && next is not null && !ReferenceEquals(foreground, next.Context))
             {
                 try { await Task.WhenAny(foreground.FirstFullLoad.WaitAsync(foreground.Lifetime), foregroundChanged).ConfigureAwait(false); }
                 catch { /* focused tab closed before it finished — carry on */ }
@@ -664,16 +747,69 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
             lock (_sync)
             {
-                if (_bgInitQueue.Count == 0) { _bgInitPumpIdle = true; return; }
-                next = _bgInitQueue[0];
-                _bgInitQueue.RemoveAt(0);
-                if (!_open.Contains(next))
+                if (_bgQueue.Count == 0) { _bgInitPumpIdle = true; return; }
+                next = SelectNextBackgroundItemLocked();
+                if (next is null) { _bgInitPumpIdle = true; return; }
+                _bgQueue.Remove(next);
+                if (!_open.Contains(next.Context))
+                {
+                    foreach (var a in next.Awaiters) a.TrySetCanceled();
                     continue; // closed while queued
+                }
             }
 
-            try { await InitializeContextAsync(next, foreground: false).ConfigureAwait(false); }
-            catch { /* one tab's init failing must not stall the rest */ }
+            try
+            {
+                if (next.IsInit)
+                {
+                    await InitializeContextAsync(next.Context, foreground: false).ConfigureAwait(false);
+                }
+                else if (next.Full)
+                {
+                    await next.Context.State.RefreshAllAsync(next.Context.Lifetime).ConfigureAwait(false);
+                }
+                else
+                {
+                    await next.Context.State.RefreshStatusAsync(next.Context.Lifetime).ConfigureAwait(false);
+                }
+
+                foreach (var a in next.Awaiters) a.TrySetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                foreach (var a in next.Awaiters) a.TrySetCanceled();
+            }
+            catch (Exception ex)
+            {
+                foreach (var a in next.Awaiters) a.TrySetException(ex);
+            }
         }
+    }
+
+    private BackgroundQueueItem? SelectNextBackgroundItemLocked()
+    {
+        if (_bgQueue.Count == 0)
+            return null;
+
+        // 1. Interrupted tab has priority ahead of tab-order selection (§F4, §F5).
+        var interrupted = _bgQueue.FirstOrDefault(x => x.IsInterruptedPriority);
+        if (interrupted is not null)
+            return interrupted;
+
+        // 2. Tab with the lowest index in _open (app-band tab order).
+        BackgroundQueueItem? best = null;
+        int bestIdx = int.MaxValue;
+        foreach (var item in _bgQueue)
+        {
+            var idx = _open.IndexOf(item.Context);
+            if (idx >= 0 && idx < bestIdx)
+            {
+                bestIdx = idx;
+                best = item;
+            }
+        }
+
+        return best ?? _bgQueue[0];
     }
 
     private void FocusInternal(RepositoryContext context)
@@ -681,6 +817,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         RepositoryContext? old;
         bool needsInit;
         CancellationTokenSource? toCancel = null;
+        bool startPump = false;
         lock (_sync)
         {
             if (ReferenceEquals(_focused, context))
@@ -699,23 +836,30 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             if (old is not null && !old.FirstFullLoad.IsCompleted && _attemptCts.TryGetValue(old, out var oldCts))
             {
                 toCancel = oldCts;
-                if (!_bgInitQueue.Contains(old))
-                    _bgInitQueue.Insert(0, old);
+                var existing = _bgQueue.FirstOrDefault(x => ReferenceEquals(x.Context, old));
+                if (existing is null)
+                {
+                    _bgQueue.Insert(0, new BackgroundQueueItem(old, isInit: true, isInterruptedPriority: true));
+                }
+                else
+                {
+                    existing.IsInterruptedPriority = true;
+                }
                 if (_bgInitPumpIdle)
                 {
                     _bgInitPumpIdle = false;
-                    _ = Task.Run(DrainBackgroundInitQueueAsync);
+                    startPump = true;
                 }
             }
 
             // Promote the newly focused context to immediate init if it still needs one — a
             // never-started deferred placeholder, a previously interrupted tab sitting in
-            // _bgInitQueue, or one the pump is already actively running (relabel it as the
+            // _bgQueue, or one the pump is already actively running (relabel it as the
             // foreground target rather than starting a second concurrent attempt against it).
             needsInit = false;
             if (!context.FirstFullLoad.IsCompleted)
             {
-                var wasQueued = _deferredInit.Remove(context) | _bgInitQueue.Remove(context);
+                var wasQueued = _deferredInit.Remove(context) | (_bgQueue.RemoveAll(x => ReferenceEquals(x.Context, context)) > 0);
                 if (wasQueued)
                 {
                     needsInit = true;
@@ -730,6 +874,8 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
         // §I-6.7 / rule 18: never run cancellation callbacks while holding _sync.
         toCancel?.Cancel();
+        if (startPump)
+            _ = Task.Run(DrainBackgroundInitQueueAsync);
 
         // Stop the newly focused context's own inactive-tab headless job (queued or
         // running) before its foreground graph work can start — that job and this tab's own
@@ -1011,5 +1157,31 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         foreach (var context in toDispose)
             await context.DisposeAsync().ConfigureAwait(false);
         Historia.Diagnostics.PerfLog.Mark($"WorkspaceService.DisposeAsync done ({toDispose.Count} repos)");
+    }
+
+    private static async Task WaitWithCancellationAsync(Task task, CancellationToken ct)
+    {
+        if (!ct.CanBeCanceled)
+        {
+            await task.ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            await task.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // If this caller was cancelled before the shared coalesced task completed,
+            // ensure any later fault on the shared task is observed so it does not trigger
+            // an UnobservedTaskException if no other caller is awaiting it.
+            _ = task.ContinueWith(
+                static t => _ = t.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            throw;
+        }
     }
 }

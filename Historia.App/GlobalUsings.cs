@@ -1,4 +1,4 @@
-﻿global using Avalonia;
+global using Avalonia;
 global using Avalonia.Controls;
 global using Avalonia.Controls.ApplicationLifetimes;
 global using Avalonia.Controls.Documents;
@@ -21,6 +21,7 @@ global using Avalonia.VisualTree;
 global using Historia.Components;
 global using Historia.Controls;
 global using Historia.Diagnostics;
+global using Historia.Layout;
 global using Historia.Models;
 global using Historia.Platform;
 global using Historia.Rendering;

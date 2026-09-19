@@ -65,7 +65,7 @@ public sealed class AvaloniaDialogService : IDialogService
             Owner, title, message, prompt: false, confirmLabel, "Cancel", defaultToCancel: defaultToCancel, icon: icon)).Confirmed);
 
     // Constitution Rule 00: the destructive-confirm contract is hard-wired here — the red
-    // triangle-alert, Cancel as the primary + Enter button (still rightmost), the confirm
+    // warning, Cancel as the primary + Enter button (still rightmost), the confirm
     // button left plain. A call site cannot opt out of any of it.
     public Task<bool> ConfirmDestructiveAsync(string title, string effect, string confirmLabel) =>
         OnUi(async () => (await SimpleDialog.ShowAsync(
@@ -154,7 +154,7 @@ internal static class SimpleDialog
         return (row, confirm, cancel);
     }
 
-    /// <summary>The message line, optionally led by the large red <c>triangle-alert</c>
+    /// <summary>The message line, optionally led by the large red <c>warning</c>
     /// (<see cref="DialogIcon.Warning"/> — constitution Rule 00). Shared by every hand-rolled
     /// dialog so the warning treatment is identical everywhere.</summary>
     internal static Control MessageBlock(string message, double maxWidth, DialogIcon icon)
@@ -163,7 +163,7 @@ internal static class SimpleDialog
         if (icon != DialogIcon.Warning)
             return text;
 
-        var glyph = Historia.Views.ViewKit.IconGlyphPath("triangle-alert", 30, "ColorDanger");
+        var glyph = Historia.Views.ViewKit.IconGlyphPath("warning", 30, "ColorDanger");
         glyph.VerticalAlignment = VerticalAlignment.Top;
         glyph.Margin = new Thickness(0, 2, 12, 0);
         var row = new StackPanel { Orientation = Orientation.Horizontal };
@@ -214,7 +214,7 @@ internal static class SimpleDialog
     /// Labels stay on one line (the window widens to fit rather than trimming);
     /// <paramref name="destructiveIndex"/> gets the red outlined "danger" styling.
     /// <para>Constitution Rule 00: when <paramref name="icon"/> is
-    /// <see cref="DialogIcon.Warning"/> the red <c>triangle-alert</c> leads the message,
+    /// <see cref="DialogIcon.Warning"/> the red <c>warning</c> leads the message,
     /// <c>Cancel</c> becomes the primary / Enter button, and the <paramref name="defaultIndex"/>
     /// option is left plain (a destructive chooser has no blue "go" button).</para></summary>
     public static async Task<int> ShowChoiceAsync(

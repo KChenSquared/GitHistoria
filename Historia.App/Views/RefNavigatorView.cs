@@ -221,7 +221,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 var tag = t;
                 tagBody.Children.Add(Leaf(t.Name, 0, "ColorText",
                     select: () => Select(tag.TargetCommitId),
-                    action: IconButton("trash", "Delete tag", () => _ = DeleteTagAsync(tag))));
+                    action: IconButton("delete", "Delete tag", () => _ = DeleteTagAsync(tag))));
             }
         }
 

@@ -14,7 +14,7 @@ public sealed class HomeView : UserControl, IDisposable
     private readonly IRepoLayoutService _repoLayout;
     private readonly Historia.Services.AutoFetch.IAutoFetchService _autoFetch;
 
-    private readonly StackPanel _recentList = new() { Spacing = 4 };
+    private readonly UniformWidthStackPanel _recentList = new() { Spacing = 4 };
     private readonly TextBlock _cloneStatus = Text("", "ColorSuccess", 12);
     private readonly Button _cloneCancel;
     private readonly Border _cloneBox = new();
@@ -72,13 +72,14 @@ public sealed class HomeView : UserControl, IDisposable
         root.Children.Add(_cloneBox);
 
         root.Children.Add(Text("Recent", "ColorTextMuted", 12, FontWeight.SemiBold));
-        // Right padding so the auto-hiding scrollbar never sits on top of the remove ✕.
+        // 4 px right padding so the minimized scrollbar sits 4 px to the right of the
+        // recent folder boxes; the expanded scrollbar overlaps the boxes on hover.
         root.Children.Add(new ScrollViewer
         {
             Content = _recentList,
             MaxHeight = 380,
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            Padding = new Thickness(0, 0, 14, 0),
+            Padding = new Thickness(0, 0, 4, 0),
         });
 
         Content = ClosablePane(new ScrollViewer { Content = root }, sp, requireFocusedRepo: true);
@@ -277,5 +278,20 @@ public sealed class HomeView : UserControl, IDisposable
     {
         _recents.Changed -= OnRecentsChanged;
         _cloneService.Changed -= OnCloneServiceChanged;
+    }
+
+    private sealed class UniformWidthStackPanel : StackPanel
+    {
+        protected override Size ArrangeOverride(Size finalSize)
+        {
+            var maxW = 0.0;
+            foreach (var child in Children)
+            {
+                if (child.IsVisible && child.DesiredSize.Width > maxW)
+                    maxW = child.DesiredSize.Width;
+            }
+            var width = Math.Max(maxW, finalSize.Width);
+            return base.ArrangeOverride(new Size(width, finalSize.Height));
+        }
     }
 }

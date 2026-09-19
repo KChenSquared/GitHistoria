@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Watching;
+namespace Historia.Services.Watching;
 
 /// <summary>
 /// Debounced, gitignore-aware working-directory + <c>.git</c> watcher (§6.8.2). Filters
@@ -16,6 +16,7 @@ public sealed class FileWatcherService : IAsyncDisposable
     private readonly RepositoryContext _context;
     private readonly IRepositoryStateService _state;
     private readonly ISettingsService _settings;
+    private readonly IWorkspaceService? _workspace;
     private readonly List<FileSystemWatcher> _watchers = [];
     private readonly object _sync = new();
     private readonly HashSet<string> _pendingPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -34,11 +35,16 @@ public sealed class FileWatcherService : IAsyncDisposable
     public bool IsDegraded { get; private set; }
     public string? DegradedReason { get; private set; }
 
-    public FileWatcherService(RepositoryContext context, IRepositoryStateService state, ISettingsService settings)
+    public FileWatcherService(
+        RepositoryContext context,
+        IRepositoryStateService state,
+        ISettingsService settings,
+        IWorkspaceService? workspace = null)
     {
         _context = context;
         _state = state;
         _settings = settings;
+        _workspace = workspace ?? context.Workspace;
 
         try
         {
@@ -212,10 +218,19 @@ public sealed class FileWatcherService : IAsyncDisposable
     {
         try
         {
-            if (full || refsTouched)
-                await _state.RefreshAllAsync(_context.Lifetime).ConfigureAwait(false);
+            var isFull = full || refsTouched;
+            var ws = _workspace ?? _context.Workspace;
+            if (ws is not null)
+            {
+                await ws.RequestBackgroundRefreshAsync(_context, isFull, _context.Lifetime).ConfigureAwait(false);
+            }
             else
-                await _state.RefreshStatusAsync(_context.Lifetime).ConfigureAwait(false);
+            {
+                if (isFull)
+                    await _state.RefreshAllAsync(_context.Lifetime).ConfigureAwait(false);
+                else
+                    await _state.RefreshStatusAsync(_context.Lifetime).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException)
         {

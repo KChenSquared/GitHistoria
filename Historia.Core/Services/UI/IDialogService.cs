@@ -1,11 +1,11 @@
-﻿namespace Historia.Services.UI;
+namespace Historia.Services.UI;
 
 /// <summary>Optional leading glyph for a confirmation dialog.</summary>
 public enum DialogIcon
 {
     None,
 
-    /// <summary>A large red <c>triangle-alert</c> — for a machine-wide or otherwise weighty change.</summary>
+    /// <summary>A large red <c>warning</c> — for a machine-wide or otherwise weighty change.</summary>
     Warning,
 }
 
@@ -23,12 +23,12 @@ public interface IDialogService
     /// rewrites history, use <see cref="ConfirmDestructiveAsync"/> instead (constitution Rule
     /// 00). <paramref name="defaultToCancel"/> makes <c>Cancel</c> the highlighted (primary /
     /// Enter) button and leaves the confirm button plain. <paramref name="icon"/> puts a
-    /// leading glyph (e.g. a red <c>triangle-alert</c>) beside the message.</summary>
+    /// leading glyph (e.g. a red <c>warning</c>) beside the message.</summary>
     Task<bool> ConfirmAsync(string title, string message, bool destructive = false,
         string confirmLabel = "OK", bool defaultToCancel = false, DialogIcon icon = DialogIcon.None);
 
     /// <summary>Constitution Rule 00 — the one entry point for a destructive-action
-    /// confirmation. Always shows the large red <c>triangle-alert</c>, makes <c>Cancel</c> the
+    /// confirmation. Always shows the large red <c>warning</c>, makes <c>Cancel</c> the
     /// primary (blue) button and the Enter default while keeping it rightmost, and styles the
     /// confirm button plain/danger — never primary. <paramref name="effect"/> must name the
     /// exact thing being destroyed (the files, the branch, the commit count), never a bare
@@ -45,7 +45,7 @@ public interface IDialogService
     /// cancelled / closed.
     /// <para>When <paramref name="destructiveIndex"/> is set, pass
     /// <paramref name="icon"/> = <see cref="DialogIcon.Warning"/> (constitution Rule 00): the
-    /// dialog then shows the red <c>triangle-alert</c>, <c>Cancel</c> becomes the primary /
+    /// dialog then shows the red <c>warning</c>, <c>Cancel</c> becomes the primary /
     /// Enter button, and no option carries the primary styling. <b>Exemption:</b> when the
     /// destructive option itself opens <see cref="ConfirmDestructiveAsync"/> before acting (the
     /// chooser only offers the destructive path, it doesn't take it), the chooser may keep its

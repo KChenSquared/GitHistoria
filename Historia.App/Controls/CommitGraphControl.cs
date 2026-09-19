@@ -16,8 +16,7 @@ public sealed partial class CommitGraphControl : Control
     private const double RowTextSize = 14;
     private const double HeaderTextSize = 12;
     private const double BadgeLabelSize = 14;
-    private const double HeaderHeight = 30;
-    private const double CogSize = 15;
+    internal const double HeaderHeight = 30;
     private const double QueryBarHeight = 32;
     private const double BoundaryGrab = 4;
     private const double TickWidth = 4;
@@ -102,6 +101,22 @@ public sealed partial class CommitGraphControl : Control
 
     private RepositoryContext? _context;
     private IRepositoryStateService? _state;
+    private bool _refsRecomputeInFlight;
+    private bool _refsPendingRecompute;
+    internal int RefsRecomputeCount => _refsRecomputeCount;
+    private int _refsRecomputeCount;
+    internal Task? ActiveRefsRecomputeTask { get; private set; }
+    internal RepositoryContext? ContextForTesting
+    {
+        get => _context;
+        set => _context = value;
+    }
+    internal Func<RepositoryContext, Task>? RecomputeOverrideForTesting
+    {
+        get => _recomputeOverrideForTesting;
+        set => _recomputeOverrideForTesting = value;
+    }
+    private Func<RepositoryContext, Task>? _recomputeOverrideForTesting;
     private GraphLayoutResult? _layout;
     // The commit store behind _layout. A disk-backed store holds an open file handle that
     // GraphLayoutService will close as soon as a RefsChanged re-walk drops its own reference —
@@ -274,10 +289,6 @@ public sealed partial class CommitGraphControl : Control
     private SolidColorBrush _selectionBar = new(Colors.SlateBlue);
     private SolidColorBrush _hoverFill = new(Colors.DimGray);
     private Pen _hoverPen = new(new SolidColorBrush(Colors.White), 1);
-    // The repo-settings cog drawn at the right edge of the BRANCH / TAGS header.
-    private Pen _cogPen = new(new SolidColorBrush(Colors.DimGray), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
-    private static readonly Geometry _cogGeo = Geometry.Parse(Historia.Components.IconPaths.Get("settings"));
-    private Rect _refsCogRect;
     private SolidColorBrush _matchFill = new(Colors.Transparent);
     private Typeface _typeface = new(FontFamily.Default);
 
@@ -386,9 +397,9 @@ public sealed partial class CommitGraphControl : Control
         LogicalChildren.Add(_queryBar);
         LogicalChildren.Add(_refList);
 
-        _icoLocal = ParseBadgeIcon(IconPaths.Get("save"));
-        _icoRemote = ParseBadgeIcon(IconPaths.Get("remote"));
-        _icoTag = ParseBadgeIcon(IconPaths.Get("tag"));
+        _icoLocal = ParseBadgeIcon(IconPaths.Get("hard_drive"));
+        _icoRemote = ParseBadgeIcon(IconPaths.Get("cloud"));
+        _icoTag = ParseBadgeIcon(IconPaths.Get("sell"));
     }
 
     private static void Dyn(Control c, AvaloniaProperty p, string key)
@@ -399,7 +410,8 @@ public sealed partial class CommitGraphControl : Control
     private static Geometry ParseBadgeIcon(string pathData)
     {
         var g = Geometry.Parse(pathData);
-        g.Transform = new ScaleTransform(12.0 / 16.0, 12.0 / 16.0);
+        g.Transform = new MatrixTransform(
+            Matrix.CreateTranslation(0, 960) * Matrix.CreateScale(12.0 / 960.0, 12.0 / 960.0));
         return g;
     }
 
@@ -527,6 +539,8 @@ public sealed partial class CommitGraphControl : Control
         _selectedRow = -1;
         _hoverRow = -1;
         _scrollOffset = 0;
+        _refsRecomputeInFlight = false;
+        _refsPendingRecompute = false;
         _context = context;
         _state = context?.State;
 
@@ -645,10 +659,37 @@ public sealed partial class CommitGraphControl : Control
             InvalidateVisual();
         });
 
-    private void OnRefsChanged(object? sender, RefsChangedEventArgs e)
+    internal void OnRefsChanged(object? sender, RefsChangedEventArgs e)
     {
-        if (_context is { } ctx)
-            _ = RecomputeAsync(ctx);
+        if (_context is not { } ctx)
+            return;
+
+        if (_refsRecomputeInFlight)
+        {
+            _refsPendingRecompute = true;
+            return;
+        }
+
+        ActiveRefsRecomputeTask = RunCoalescedRefsRecomputeAsync(ctx);
+    }
+
+    private async Task RunCoalescedRefsRecomputeAsync(RepositoryContext context)
+    {
+        _refsRecomputeInFlight = true;
+        try
+        {
+            while (ReferenceEquals(context, _context))
+            {
+                _refsPendingRecompute = false;
+                await RecomputeAsync(context).ConfigureAwait(true);
+                if (!_refsPendingRecompute || !ReferenceEquals(context, _context))
+                    break;
+            }
+        }
+        finally
+        {
+            _refsRecomputeInFlight = false;
+        }
     }
 
     private void OnSelectedCommitChanged(object? sender, SelectionChangedEventArgs e)
@@ -1004,6 +1045,13 @@ public sealed partial class CommitGraphControl : Control
 
     private async Task RecomputeAsync(RepositoryContext context)
     {
+        _refsRecomputeCount++;
+        if (_recomputeOverrideForTesting is not null)
+        {
+            await _recomputeOverrideForTesting(context).ConfigureAwait(true);
+            return;
+        }
+
         if (_layout is not { } previous)
         {
             await ComputeLayoutAsync(context).ConfigureAwait(true);
@@ -1166,6 +1214,24 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
+    /// <summary>
+    /// Stuck-guard for the headless/no-signal path, not a pacing timeout — the intended exit is
+    /// <see cref="RepositoryContext.FirstFullLoad"/> completing. Mirrors GraphFirstPaintCeiling.
+    /// </summary>
+    private static readonly TimeSpan CrawlStuckGuardCeiling = TimeSpan.FromSeconds(120);
+
+    internal static TimeSpan StuckGuardCeiling => CrawlStuckGuardCeiling;
+
+    internal static async Task<bool> WaitForCrawlGuardAsync(RepositoryContext context, TimeSpan ceiling, CancellationToken ct)
+    {
+        var ceilingTask = Task.Delay(ceiling, ct);
+        var completed = await Task.WhenAny(context.FirstFullLoad, ceilingTask).ConfigureAwait(false);
+        var firedCeiling = completed == ceilingTask && !context.FirstFullLoad.IsCompleted;
+        if (firedCeiling && Historia.Diagnostics.PerfLog.Enabled)
+            Historia.Diagnostics.PerfLog.Mark($"crawl stuck-guard ceiling fired after {ceiling.TotalSeconds:F0}s without FirstFullLoad ({context.DisplayName})");
+        return !firedCeiling;
+    }
+
     private async Task StartBackgroundSilentLoadAsync(RepositoryContext context, CancellationToken ct)
     {
         if (Interlocked.CompareExchange(ref _crawlRunning, 1, 0) != 0)
@@ -1180,7 +1246,7 @@ public sealed partial class CommitGraphControl : Control
             // the foreground repo gate with ~1 request/second and the tab's own status/branch
             // work is starved (observed: a 47 s footer freeze mid-crawl on linux). Bounded
             // guard for a headless/no-signal path. Mirrors MaybeStartBackgroundSpill.
-            await Task.WhenAny(context.FirstFullLoad, Task.Delay(TimeSpan.FromSeconds(30), ct)).ConfigureAwait(false);
+            await WaitForCrawlGuardAsync(context, CrawlStuckGuardCeiling, ct).ConfigureAwait(false);
             if (ct.IsCancellationRequested || !ReferenceEquals(context, _context))
                 return;
 
@@ -1266,7 +1332,6 @@ public sealed partial class CommitGraphControl : Control
         _hoverFill = new SolidColorBrush(ToColor(palette["list-hover"]));
         _selectionBar = new SolidColorBrush(primary);
         _hoverPen = new Pen(new SolidColorBrush(primary), 2.0);
-        _cogPen = new Pen(new SolidColorBrush(muted), 1.4) { LineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
         var warn = palette["warning"];
         _matchFill = new SolidColorBrush(AvColor.FromArgb(0x30, warn.R, warn.G, warn.B));
 
@@ -1564,8 +1629,7 @@ public sealed partial class CommitGraphControl : Control
         if (pos.Y < HeaderHeight)
         {
             Cursor = new Cursor(
-                _refsCogRect.Contains(pos) ? StandardCursorType.Hand
-                : BoundaryAt(pos.X) >= 0 ? StandardCursorType.SizeWestEast
+                BoundaryAt(pos.X) >= 0 ? StandardCursorType.SizeWestEast
                 : StandardCursorType.Arrow);
             return;
         }
@@ -1830,15 +1894,6 @@ public sealed partial class CommitGraphControl : Control
 
         if (pos.Y < HeaderHeight)
         {
-            // The cog at the right of the BRANCH / TAGS header opens this repo's settings.
-            if (_context is { } cogCtx && _refsCogRect.Contains(pos))
-            {
-                _workspace.Focus(cogCtx);
-                _nav.RequestNavigate("repo-settings");
-                e.Handled = true;
-                return;
-            }
-
             var b = BoundaryAt(pos.X);
             if (b >= 0)
             {
@@ -2376,9 +2431,9 @@ public sealed partial class CommitGraphControl : Control
         if (type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
         {
             if (isLocal)
-                icons.Children.Add(Historia.Views.ViewKit.Icon("save", 12, "ColorTextMuted"));
+                icons.Children.Add(Historia.Views.ViewKit.Icon("hard_drive", 12, "ColorTextMuted"));
             if (remotes is { Length: > 0 })
-                icons.Children.Add(Historia.Views.ViewKit.Icon("remote", 12, "ColorTextMuted"));
+                icons.Children.Add(Historia.Views.ViewKit.Icon("cloud", 12, "ColorTextMuted"));
         }
 
         var content = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
@@ -2696,8 +2751,6 @@ public sealed partial class CommitGraphControl : Control
         dc.DrawRectangle(_chrome, null, new Rect(0, 0, width, HeaderHeight));
         dc.DrawLine(_borderPen, new Point(0, HeaderHeight - 0.5), new Point(width, HeaderHeight - 0.5));
 
-        _refsCogRect = default;
-
         foreach (var col in _resolvedColumns)
         {
             var x = col.Left - _hScrollOffset;
@@ -2714,21 +2767,8 @@ public sealed partial class CommitGraphControl : Control
                 GraphColumnKind.Sha => "SHA",
                 _ => "",
             };
-            // The repo-settings cog lives at the right edge of the BRANCH / TAGS header.
-            // Reserve room so the label ellipsises before it.
-            var cogRoom = col.Kind == GraphColumnKind.Refs && _context is not null ? CogSize + 12 : 0;
-            var ft = Text(label, _headerText, Math.Max(10, col.Width - 12 - cogRoom), HeaderTextSize);
+            var ft = Text(label, _headerText, Math.Max(10, col.Width - 12), HeaderTextSize);
             dc.DrawText(ft, new Point(x + 8, (HeaderHeight - ft.Height) / 2));
-
-            if (cogRoom > 0)
-            {
-                var cx = x + col.Width - CogSize - 8;
-                var cy = (HeaderHeight - CogSize) / 2;
-                _refsCogRect = new Rect(cx - 3, cy - 3, CogSize + 6, CogSize + 6);
-                var s = CogSize / 24.0;
-                using (dc.PushTransform(Matrix.CreateScale(s, s) * Matrix.CreateTranslation(cx, cy)))
-                    dc.DrawGeometry(null, _cogPen, _cogGeo);
-            }
 
             if (col.Left > 0.5)
                 dc.DrawLine(_borderPen, new Point(x, 4), new Point(x, HeaderHeight - 4));
