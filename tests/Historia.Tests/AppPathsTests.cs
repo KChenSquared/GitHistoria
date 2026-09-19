@@ -92,6 +92,63 @@ public sealed class AppPathsTests : IDisposable
         Assert.Empty(Directory.GetFileSystemEntries(dir));
     }
 
+    [Fact]
+    public async Task Override_is_isolated_between_concurrent_flows()
+    {
+        using var barrier = new Barrier(2);
+        string? flow1Observed = null;
+        string? flow2Observed = null;
+
+        var t1 = Task.Run(() =>
+        {
+            var dir1 = Path.Combine(_root, "flow1");
+            AppPaths.OverrideForTesting(dir1);
+            barrier.SignalAndWait();
+            flow1Observed = AppPaths.DataDirectory;
+            Assert.Equal(dir1, AppPaths.MachineDirectory);
+        });
+
+        var t2 = Task.Run(() =>
+        {
+            var dir2 = Path.Combine(_root, "flow2");
+            AppPaths.OverrideForTesting(dir2);
+            barrier.SignalAndWait();
+            flow2Observed = AppPaths.DataDirectory;
+            Assert.Equal(dir2, AppPaths.MachineDirectory);
+        });
+
+        await Task.WhenAll(t1, t2);
+
+        Assert.Equal(Path.Combine(_root, "flow1"), flow1Observed);
+        Assert.Equal(Path.Combine(_root, "flow2"), flow2Observed);
+        Assert.NotEqual(flow1Observed, flow2Observed);
+    }
+
+    [Fact]
+    public async Task Override_survives_into_async_disposal()
+    {
+        var overrideDir = Path.Combine(_root, "async-disposal");
+        string? disposedObserved = null;
+
+        var holder = new AsyncDisposableStateHolder(dir => disposedObserved = dir);
+        await using (holder)
+        {
+            AppPaths.OverrideForTesting(overrideDir);
+            Assert.Equal(overrideDir, AppPaths.DataDirectory);
+        }
+
+        Assert.Equal(overrideDir, disposedObserved);
+    }
+
+    private sealed class AsyncDisposableStateHolder(Action<string?> onDispose) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync()
+        {
+            onDispose(AppPaths.DataDirectory);
+            return ValueTask.CompletedTask;
+        }
+    }
+
     public void Dispose()
     {
         AppPaths.OverrideForTesting(null);
