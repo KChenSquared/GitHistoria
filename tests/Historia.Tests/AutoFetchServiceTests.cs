@@ -20,9 +20,11 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
 
     private TestRepositoryBuilder Repo(string file)
     {
-        var b = TestRepositoryBuilder.Create();
-        b.WriteFile(file, "x\n").Stage();
-        b.Commit("c");
+        var b = TestRepositoryBuilder.FromTemplate($"autofetch-repo-{file}", tpl =>
+        {
+            tpl.WriteFile(file, "x\n").Stage();
+            tpl.Commit("c");
+        });
         _repos.Add(b);
         return b;
     }

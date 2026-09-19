@@ -14,9 +14,11 @@ public sealed class RepositoryContextGateTests : IAsyncDisposable
     [Fact(Timeout = 20000)]
     public async Task Spill_tier_yields_to_a_background_tier_caller_even_under_a_tight_reacquire_loop()
     {
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("a.txt", "x\n").Stage();
-        repo.Commit("c");
+        using var repo = TestRepositoryBuilder.FromTemplate("gate-seed", b =>
+        {
+            b.WriteFile("a.txt", "x\n").Stage();
+            b.Commit("c");
+        });
         var ctx = _host.Open(repo.Path);
 
         using var stopCts = new CancellationTokenSource();
@@ -71,9 +73,11 @@ public sealed class RepositoryContextGateTests : IAsyncDisposable
         Historia.Diagnostics.PerfLog.Enabled = true;
         try
         {
-            using var repo = TestRepositoryBuilder.Create();
-            repo.WriteFile("a.txt", "x\n").Stage();
-            repo.Commit("c");
+            using var repo = TestRepositoryBuilder.FromTemplate("gate-seed", b =>
+            {
+                b.WriteFile("a.txt", "x\n").Stage();
+                b.Commit("c");
+            });
             var ctx = _host.Open(repo.Path);
 
             var startLineCount = File.Exists(Historia.Diagnostics.PerfLog.LogPath)
@@ -103,9 +107,11 @@ public sealed class RepositoryContextGateTests : IAsyncDisposable
         Historia.Diagnostics.PerfLog.Enabled = true;
         try
         {
-            using var repo = TestRepositoryBuilder.Create();
-            repo.WriteFile("a.txt", "x\n").Stage();
-            repo.Commit("c");
+            using var repo = TestRepositoryBuilder.FromTemplate("gate-seed", b =>
+            {
+                b.WriteFile("a.txt", "x\n").Stage();
+                b.Commit("c");
+            });
             var ctx = _host.Open(repo.Path);
 
             var startLineCount = File.Exists(Historia.Diagnostics.PerfLog.LogPath)
@@ -134,9 +140,11 @@ public sealed class RepositoryContextGateTests : IAsyncDisposable
         Historia.Diagnostics.PerfLog.Enabled = false;
         try
         {
-            using var repo = TestRepositoryBuilder.Create();
-            repo.WriteFile("a.txt", "x\n").Stage();
-            repo.Commit("c");
+            using var repo = TestRepositoryBuilder.FromTemplate("gate-seed", b =>
+            {
+                b.WriteFile("a.txt", "x\n").Stage();
+                b.Commit("c");
+            });
             var ctx = _host.Open(repo.Path);
 
             var startCount = Volatile.Read(ref RepositoryContext.FormattedGateMarksCount);

@@ -17,13 +17,12 @@ public class WorkspaceServiceTests : IAsyncDisposable
     private static string Norm(string p) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(p)).ToLowerInvariant();
 
-    private static TestRepositoryBuilder Repo(string file)
-    {
-        var b = TestRepositoryBuilder.Create();
-        b.WriteFile(file, "x\n").Stage();
-        b.Commit("c");
-        return b;
-    }
+    private static TestRepositoryBuilder Repo(string file) =>
+        TestRepositoryBuilder.FromTemplate($"ws-repo-{file}", b =>
+        {
+            b.WriteFile(file, "x\n").Stage();
+            b.Commit("c");
+        });
 
     /// <summary>
     /// Re-opening an already-open repo raises <see cref="IWorkspaceService.FocusedRepositoryChanged"/>

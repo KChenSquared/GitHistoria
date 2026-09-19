@@ -24,9 +24,11 @@ public sealed class BackgroundRefreshQueueTests : IAsyncDisposable
 
     private TestRepositoryBuilder CreateRepo(string name)
     {
-        var r = TestRepositoryBuilder.Create();
-        r.WriteFile("a.txt", $"{name}\n").Stage();
-        r.Commit("init");
+        var r = TestRepositoryBuilder.FromTemplate($"brq-{name}", b =>
+        {
+            b.WriteFile("a.txt", $"{name}\n").Stage();
+            b.Commit("init");
+        });
         _repos.Add(r);
         return r;
     }

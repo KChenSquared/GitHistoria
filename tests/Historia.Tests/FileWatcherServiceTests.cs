@@ -10,8 +10,10 @@ public sealed class FileWatcherServiceTests : IAsyncDisposable
 
     public FileWatcherServiceTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        _repo.WriteFile("seed.txt", "x").Stage().Commit("seed");
+        _repo = TestRepositoryBuilder.FromTemplate("file-watcher-seed", b =>
+        {
+            b.WriteFile("seed.txt", "x").Stage().Commit("seed");
+        });
     }
 
     public async ValueTask DisposeAsync()

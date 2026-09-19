@@ -8,8 +8,11 @@ public class RepositoryStateServiceTests : IAsyncDisposable
 
     public RepositoryStateServiceTests()
     {
-        _repo = TestRepositoryBuilder.Create().WriteFile("a.txt", "one\n").Stage();
-        _repo.Commit("init");
+        _repo = TestRepositoryBuilder.FromTemplate("repo-state-seed", b =>
+        {
+            b.WriteFile("a.txt", "one\n").Stage();
+            b.Commit("init");
+        });
     }
 
     private IRepositoryStateService NewState() => _host.Open(_repo.Path).State;

@@ -34,7 +34,7 @@ internal sealed class FakeWorkspace : IWorkspaceService
 public sealed class BackgroundWorkGateTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
-    private readonly TestRepositoryBuilder _repo = TestRepositoryBuilder.Create();
+    private readonly TestRepositoryBuilder _repo = TestRepositoryBuilder.FromTemplate("empty-repo", _ => { });
 
     public async ValueTask DisposeAsync()
     {

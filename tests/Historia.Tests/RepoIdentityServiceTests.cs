@@ -9,6 +9,8 @@ namespace Historia.Tests;
 /// </summary>
 public sealed class RepoIdentityServiceTests : IAsyncDisposable
 {
+    private static string? _cachedRootA;
+    private static string? _cachedRootB;
     private readonly MiniHost _host = new();
     private readonly TestRepositoryBuilder _repo;
     private readonly string _rootA;
@@ -16,20 +18,23 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
 
     public RepoIdentityServiceTests()
     {
-        _repo = TestRepositoryBuilder.Create();
+        _repo = TestRepositoryBuilder.FromTemplate("repo-identity-fixture", b =>
+        {
+            // Root A: the repo's very first commit, on main.
+            _cachedRootA = b.WriteFile("a.txt", "1\n").Stage().Commit("root A");
+            for (var i = 0; i < 3; i++)
+                b.WriteFile("a.txt", $"{i}\n").Stage().Commit($"main {i}");
 
-        // Root A: the repo's very first commit, on main.
-        _rootA = _repo.WriteFile("a.txt", "1\n").Stage().Commit("root A");
-        for (var i = 0; i < 3; i++)
-            _repo.WriteFile("a.txt", $"{i}\n").Stage().Commit($"main {i}");
-
-        // Root B: a second, wholly unrelated root reachable only via its own branch — like a
-        // grafted-in or merged-in unrelated history.
-        _repo.Git("checkout", "--orphan", "other-root");
-        _repo.Git("rm", "-rf", ".");
-        _rootB = _repo.WriteFile("b.txt", "1\n").Stage().Commit("root B");
-        _repo.Git("checkout", "main");
-        _repo.Git("tag", "v1"); // a tag tip, so tag-inclusion in the rev-list args is exercised too
+            // Root B: a second, wholly unrelated root reachable only via its own branch — like a
+            // grafted-in or merged-in unrelated history.
+            b.Git("checkout", "--orphan", "other-root");
+            b.Git("rm", "-rf", ".");
+            _cachedRootB = b.WriteFile("b.txt", "1\n").Stage().Commit("root B");
+            b.Git("checkout", "main");
+            b.Git("tag", "v1"); // a tag tip, so tag-inclusion in the rev-list args is exercised too
+        });
+        _rootA = _cachedRootA!;
+        _rootB = _cachedRootB!;
     }
 
     public async ValueTask DisposeAsync()
