@@ -75,13 +75,8 @@ public class GraphQueryTests : IAsyncDisposable
     {
         // The control opens a repo with a tiny phase-1 batch, then ExtendLayoutAsync's to the
         // configured "Initial rows loaded" (§7.3). The result must equal one full layout.
-        for (var i = 0; i < 30; i++)
-        {
-            _repo.WriteFile("main.txt", $"{i}\n").Stage();
-            _repo.Commit($"bulk {i}");
-        }
-
-        await using var ctx = _host.Open(_repo.Path);
+        using var repo = RepoTemplates.Linear(30);
+        await using var ctx = _host.Open(repo.Path);
         var svc = new GraphLayoutService();
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
 

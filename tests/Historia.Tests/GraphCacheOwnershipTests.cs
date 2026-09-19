@@ -301,10 +301,8 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact(Timeout = 60_000)]
     public async Task Concurrent_headless_spool_and_foreground_spill_never_duplicate_or_misorder_the_store()
     {
-        using var repo = TestRepositoryBuilder.Create();
         const int commitCount = 60;
-        for (var i = 0; i < commitCount; i++)
-            repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"commit {i:D2}");
+        using var repo = TestRepositoryBuilder.FromTemplate("linear-60", b => b.LinearHistory(commitCount));
 
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
 
