@@ -1,8 +1,10 @@
 namespace Historia.Tests;
 [Trait("tier", "git")]
 
-public sealed class TestRepositoryBuilderTests
+public sealed class TestRepositoryBuilderTests(ITestOutputHelper output)
 {
+    private readonly ITestOutputHelper _output = output;
+
     [Fact]
     public void FromTemplate_returns_an_independent_copy()
     {
@@ -78,28 +80,38 @@ public sealed class TestRepositoryBuilderTests
     }
 
     [Fact]
-    public void FromTemplate_is_at_least_five_times_faster_than_cli_creation()
+    public void FromTemplate_copy_and_cli_creation_timings_are_recorded()
     {
         const int count = 20;
         // Warm up template
         using (TestRepositoryBuilder.FromTemplate("bench-20", b => b.LinearHistory(count))) { }
 
         // Measure FromTemplate copy
+        int templateCommitCount;
         var sw = Stopwatch.StartNew();
-        using (var copy = TestRepositoryBuilder.FromTemplate("bench-20", b => b.LinearHistory(count))) { }
+        using (var copy = TestRepositoryBuilder.FromTemplate("bench-20", b => b.LinearHistory(count)))
+        {
+            templateCommitCount = int.TryParse(copy.Git("rev-list", "--count", "HEAD").Trim(), out var n) ? n : 0;
+        }
         sw.Stop();
         var templateMs = sw.ElapsedMilliseconds;
 
         // Measure CLI creation
+        int cliCommitCount;
         sw.Restart();
         using (var cli = TestRepositoryBuilder.Create())
         {
             for (var i = 0; i < count; i++)
                 cli.WriteFile("f.txt", $"{i}\n").Stage().Commit($"commit {i:D2}");
+            cliCommitCount = int.TryParse(cli.Git("rev-list", "--count", "HEAD").Trim(), out var n) ? n : 0;
         }
         sw.Stop();
         var cliMs = sw.ElapsedMilliseconds;
 
-        Assert.True(templateMs * 5 <= cliMs, $"Template copy ({templateMs} ms) was not 5x faster than CLI ({cliMs} ms)");
+        // Performance ratio is recorded for visibility rather than gating builds (Constitution Rule 25).
+        _output.WriteLine($"Template copy: {templateMs} ms, CLI creation: {cliMs} ms (ratio: {(double)cliMs / Math.Max(1, templateMs):F1}x)");
+
+        Assert.Equal(count, templateCommitCount);
+        Assert.Equal(count, cliCommitCount);
     }
 }
