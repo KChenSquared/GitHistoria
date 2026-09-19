@@ -29,10 +29,8 @@ public sealed class GraphSpillExhaustionTests : IAsyncDisposable
     [Fact(Timeout = 30_000)]
     public async Task Background_spill_writes_the_whole_history_past_the_painted_rows()
     {
-        using var repo = TestRepositoryBuilder.Create();
         const int commitCount = 60;
-        for (var i = 0; i < commitCount; i++)
-            repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"commit {i:D2}");
+        using var repo = TestRepositoryBuilder.FromTemplate("linear-60", b => b.LinearHistory(commitCount));
 
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
 
@@ -67,10 +65,8 @@ public sealed class GraphSpillExhaustionTests : IAsyncDisposable
     [Fact(Timeout = 30_000)]
     public async Task Extend_after_an_exhausted_spill_reads_rows_from_disk()
     {
-        using var repo = TestRepositoryBuilder.Create();
         const int commitCount = 60;
-        for (var i = 0; i < commitCount; i++)
-            repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"commit {i:D2}");
+        using var repo = TestRepositoryBuilder.FromTemplate("linear-60", b => b.LinearHistory(commitCount));
 
         // Expected ground truth from memory walk
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });

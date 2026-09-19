@@ -9,9 +9,7 @@ public sealed class GraphClonePrecacheTests : IAsyncDisposable
 
     public GraphClonePrecacheTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        for (var i = 0; i < CommitCount; i++)
-            _repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"commit {i:D2}");
+        _repo = TestRepositoryBuilder.FromTemplate("linear-20", b => b.LinearHistory(CommitCount));
     }
 
     public async ValueTask DisposeAsync()

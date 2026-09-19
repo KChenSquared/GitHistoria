@@ -13,20 +13,19 @@ namespace Historia.Tests;
 public sealed class GraphSpoolTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
-    private readonly TestRepositoryBuilder _repo;
+    private TestRepositoryBuilder _repo = null!;
 
-    public GraphSpoolTests() => _repo = TestRepositoryBuilder.Create();
+    public GraphSpoolTests() { }
 
     public async ValueTask DisposeAsync()
     {
-        _repo.Dispose();
+        _repo?.Dispose();
         await _host.DisposeAsync();
     }
 
     private void SeedCommits(int n)
     {
-        for (var i = 0; i < n; i++)
-            _repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"commit {i:D3}");
+        _repo = TestRepositoryBuilder.FromTemplate($"linear-{n}-d3", b => b.LinearHistory(n, messageFactory: i => $"commit {i:D3}"));
     }
 
     private static object GetCache(GraphLayoutService svc, RepositoryContext ctx)
