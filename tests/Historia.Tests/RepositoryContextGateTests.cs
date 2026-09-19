@@ -7,6 +7,7 @@ namespace Historia.Tests;
 /// §7.6 full-history disk spill). Ensures the spill tier yields to background-tier callers so the background
 /// spill does not starve the visible-row crawl.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class RepositoryContextGateTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

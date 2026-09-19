@@ -1,6 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>The shared wheel-direction sign used by the custom graph / tab-strip handlers.</summary>
+[Trait("tier", "unit")]
 public class WheelInputTests
 {
     [Theory]

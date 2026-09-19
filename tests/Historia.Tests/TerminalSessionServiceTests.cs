@@ -1,4 +1,5 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
+[Trait("tier", "unit")]
 
 public class TerminalSessionServiceTests
 {

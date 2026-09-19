@@ -4,6 +4,7 @@ namespace Historia.Tests;
 /// each remote individually — a single untargeted "git fetch --all" can only be routed as
 /// <see cref="RouteTransport.AsIs"/> (no remote name means no URL to classify), which silently
 /// skips the active profile's credential injection and makes the SSH-Only setting a no-op.</summary>
+[Trait("tier", "git")]
 public sealed class GitGatewayFetchAllTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

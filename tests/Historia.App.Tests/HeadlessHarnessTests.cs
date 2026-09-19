@@ -8,6 +8,7 @@ namespace HistoriaApp.Tests;
 /// <summary>Proves the headless Avalonia harness itself works — a UI-thread test can construct
 /// a themed control and run a layout pass. If this fails, nothing else in the suite is
 /// meaningful.</summary>
+[Trait("tier", "ui")]
 public class HeadlessHarnessTests
 {
     [AvaloniaFact]

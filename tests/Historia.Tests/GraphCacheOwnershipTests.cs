@@ -15,6 +15,7 @@ namespace Historia.Tests;
 /// the first place.</item>
 /// </list>
 /// </summary>
+[Trait("tier", "git")]
 public sealed class GraphCacheOwnershipTests : IAsyncDisposable
 {
     private readonly StateDir _state = new();

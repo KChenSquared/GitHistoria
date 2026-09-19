@@ -4,6 +4,7 @@ namespace Historia.Tests;
 /// per-commit metadata and stubs the resident copy. That stub must keep <c>CommitWhen</c> — the
 /// tip-priority pre-pass sorts candidate tips by it, and zeroing it would make re-layouts after
 /// the first spill sort tips by SHA and pin the trunk to a random lane.</summary>
+[Trait("tier", "git")]
 public sealed class GraphSpillTrunkStabilityTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

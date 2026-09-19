@@ -3,6 +3,7 @@ namespace Historia.Tests;
 /// <summary>§6.8.2: the watcher's cheap pre-filter must not blanket-drop a tracked <c>bin</c>/
 /// <c>obj</c> path — only skip it when it actually looks like build output (a project file sits
 /// beside it). See <see cref="FileWatcherService.IsLikelyIgnored"/>.</summary>
+[Trait("tier", "git")]
 public sealed class FileWatcherServiceTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

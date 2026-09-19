@@ -5,6 +5,7 @@ namespace Historia.Tests;
 /// topology); ref scope narrows the tips. Search is find-not-filter and lives in the control,
 /// so it is not exercised here — this covers the layout-service side.
 /// </summary>
+[Trait("tier", "git")]
 public class GraphQueryTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

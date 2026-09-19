@@ -3,6 +3,7 @@ namespace Historia.Tests;
 /// <summary>§7.6: with "Read commit details from disk" on, the layout service spills per-commit
 /// metadata and points <see cref="GraphLayout.Commits"/> at the paged <c>DiskCommitStore</c>,
 /// while the rows still read back correctly across a re-layout.</summary>
+[Trait("tier", "git")]
 public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

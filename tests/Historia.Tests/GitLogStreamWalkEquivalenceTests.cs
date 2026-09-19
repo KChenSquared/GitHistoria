@@ -6,6 +6,7 @@ namespace Historia.Tests;
 /// (in commit-date order) for the same ref set when timestamps are distinct. Skipped when git.exe
 /// isn't discoverable by <see cref="IGitExecutableLocator"/> (the CLI engine never engages).
 /// </summary>
+[Trait("tier", "git")]
 public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

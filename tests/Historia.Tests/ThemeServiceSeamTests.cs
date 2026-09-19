@@ -1,9 +1,10 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>§V6-G9 M7.3: with no custom theme selected the resolution seam
 /// (<see cref="IThemeService.Palette"/> / <see cref="IThemeService.LaneColors"/>) is
 /// byte-identical to the built-in tables; selecting one overlays it and refreshes even when
 /// the effective base is unchanged.</summary>
+[Trait("tier", "unit")]
 public sealed class ThemeServiceSeamTests : IDisposable
 {
     private sealed class FixedProbe : ISystemThemeProbe

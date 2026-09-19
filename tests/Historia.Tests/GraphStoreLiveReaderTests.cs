@@ -6,6 +6,7 @@ namespace Historia.Tests;
 /// it — either by a from-row-0 re-spill at a new walk key (which calls <c>Reset</c>) or by an
 /// append-only reorder commit.
 /// </summary>
+[Trait("tier", "unit")]
 public sealed class GraphStoreLiveReaderTests : IDisposable
 {
     private readonly StateDir _state = new();

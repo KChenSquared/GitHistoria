@@ -1,7 +1,8 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>Behaviour of a single <see cref="TerminalSession"/> against a fake pty — OSC
 /// hardening (V5 §9.3), the UTF-8 decoder (D1), the damage layer (D2), exit handling.</summary>
+[Trait("tier", "unit")]
 public class TerminalSessionTests
 {
     private static TerminalSession NewSession(out FakePtyConnection pty, int scrollback = 1000)

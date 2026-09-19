@@ -1,4 +1,5 @@
 namespace HistoriaApp.Tests;
+[Trait("tier", "ui")]
 
 public class ShortcutBarLayoutTests
 {

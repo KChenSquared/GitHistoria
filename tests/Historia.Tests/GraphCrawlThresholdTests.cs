@@ -1,6 +1,7 @@
 using Historia.Services.Graph;
 
 namespace Historia.Tests;
+[Trait("tier", "unit")]
 
 public class GraphCrawlThresholdTests
 {

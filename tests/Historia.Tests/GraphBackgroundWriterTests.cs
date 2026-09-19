@@ -7,6 +7,7 @@ namespace Historia.Tests;
 /// — only that the RIGHT arguments would have been sent, in the right order, without ever
 /// touching <c>git maintenance</c> or git config.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class GraphBackgroundWriterTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

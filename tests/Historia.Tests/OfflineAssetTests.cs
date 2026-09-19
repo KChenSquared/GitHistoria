@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>
 /// Rule 0 guard (constitution §0.6, §V2-10.4, §V3-18.2 Q8): Historia must start and render from
@@ -8,6 +8,7 @@
 /// non-dereferenced XML namespace identifiers (XAML and SVG) and an explicit allowlist of
 /// consented URLs — the WebView2 bootstrapper fwlink approved in §V2-10.3.
 /// </summary>
+[Trait("tier", "unit")]
 public class OfflineAssetTests
 {
     private static readonly string[] AllowedNamespacePrefixes =

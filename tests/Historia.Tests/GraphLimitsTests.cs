@@ -9,6 +9,7 @@ namespace Historia.Tests;
 /// <see cref="AppSettings.ClampResidentRowCap"/> centrally, so every caller is protected without
 /// re-clamping itself.
 /// </summary>
+[Trait("tier", "unit")]
 public class GraphLimitsTests
 {
     [Fact]

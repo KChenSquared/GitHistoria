@@ -10,6 +10,7 @@ namespace Historia.Tests;
 /// implementation details of <see cref="GraphLayoutService"/>, not part of its public surface, so
 /// this drives them directly via reflection rather than through the full async orchestration.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class GraphReadWindowTests : IDisposable
 {
     private readonly StateDir _state = new();

@@ -1,7 +1,8 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>§V6-G9: per-file custom themes — round-trip, validation, base inheritance, delete,
 /// and the pure <see cref="CustomThemeService.Compose"/> overlay.</summary>
+[Trait("tier", "unit")]
 public sealed class CustomThemeServiceTests : IDisposable
 {
     private readonly StateDir _dir = new();

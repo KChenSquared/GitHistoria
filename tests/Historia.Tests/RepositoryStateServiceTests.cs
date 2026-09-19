@@ -1,6 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>§V2-8.2 / §V2-15.1: the additive OpenDiff contract on the state service.</summary>
+[Trait("tier", "git")]
 public class RepositoryStateServiceTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

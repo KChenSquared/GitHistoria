@@ -1,6 +1,7 @@
 using Historia.Diagnostics;
 
 namespace Historia.Tests;
+[Trait("tier", "unit")]
 
 public sealed class AppLogTests : IDisposable
 {

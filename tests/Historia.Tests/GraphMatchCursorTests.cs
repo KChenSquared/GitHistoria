@@ -2,6 +2,7 @@ namespace Historia.Tests;
 
 /// <summary>T3.2 of the debloat audit: the graph find cursor lifted out of
 /// <c>CommitGraphControl</c>.</summary>
+[Trait("tier", "unit")]
 public class GraphMatchCursorTests
 {
     [Fact]

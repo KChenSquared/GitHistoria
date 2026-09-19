@@ -6,6 +6,7 @@ namespace Historia.Tests;
 /// contains a slash; a tag and a branch of the same name stay separate; HEAD folds into its
 /// branch and only stands alone when detached.
 /// </summary>
+[Trait("tier", "git")]
 public class GraphDecorationMergeTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

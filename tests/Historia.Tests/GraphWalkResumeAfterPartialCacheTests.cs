@@ -14,6 +14,7 @@ namespace Historia.Tests;
 /// that a genuinely large repo's on-disk cache would produce — reproducing that with real files
 /// would need a repo far larger than a unit test should build.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class GraphWalkResumeAfterPartialCacheTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

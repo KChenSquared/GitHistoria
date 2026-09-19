@@ -1,9 +1,10 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>
 /// The byte table is load-bearing (V5 §6.5). Expected sequences are cross-checked against
 /// XTerm.NET's own generator, captured in <c>docs/memory/2026-08-31-v5-m1-spike.md</c> §5.
 /// </summary>
+[Trait("tier", "unit")]
 public class KeyEncoderTests
 {
     private static readonly TerminalModes Normal = new(ApplicationCursor: false, ApplicationKeypad: false);

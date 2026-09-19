@@ -10,6 +10,7 @@ namespace Historia.Tests;
 /// peek at the private <c>RepoCache</c>'s bookkeeping fields (<c>SpilledRows</c>, <c>Commits</c>)
 /// — the same pattern <see cref="GraphWalkResumeAfterPartialCacheTests"/> uses.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class GraphSpoolTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

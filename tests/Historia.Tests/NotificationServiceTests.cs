@@ -2,6 +2,7 @@ namespace Historia.Tests;
 
 /// <summary>§18: identical error notifications published in quick succession coalesce
 /// into one card with an occurrence count instead of stacking.</summary>
+[Trait("tier", "unit")]
 public class NotificationServiceTests
 {
     private static NotificationService WithClock(out Action<TimeSpan> advance)

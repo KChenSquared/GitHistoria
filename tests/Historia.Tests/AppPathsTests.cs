@@ -2,6 +2,7 @@ namespace Historia.Tests;
 
 /// <summary>§V3-9.1: the two-location portable resolution, the write probe, the machine
 /// directory, and the one-time copy migration from a prior %APPDATA% install.</summary>
+[Trait("tier", "unit")]
 public sealed class AppPathsTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "historia-apppaths-" + Guid.NewGuid().ToString("N"));

@@ -2,6 +2,7 @@ using System.Reflection;
 using Historia.Services.Graph;
 
 namespace Historia.Tests;
+[Trait("tier", "git")]
 
 public sealed class GraphSpillExhaustionTests : IAsyncDisposable
 {

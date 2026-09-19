@@ -7,6 +7,7 @@ namespace Historia.Tests;
 /// background refreshes wait for the focused tab's initial load, and focused tab
 /// refreshes run immediately.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class BackgroundRefreshQueueTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

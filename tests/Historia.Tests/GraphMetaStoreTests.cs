@@ -2,6 +2,7 @@ namespace Historia.Tests;
 
 /// <summary>§7.6: the disk-backed <see cref="ICommitStore"/> — round-trip, append/grow,
 /// graceful misses, and Ctrl+F search parity with the in-memory store.</summary>
+[Trait("tier", "unit")]
 public sealed class GraphMetaStoreTests : IDisposable
 {
     private readonly StateDir _state = new();

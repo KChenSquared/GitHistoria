@@ -9,6 +9,7 @@ namespace Historia.Tests;
 /// EXHAUSTED save carries the whole history already, so there is nothing left to resume and it
 /// stays reusable regardless of which engine produced it.
 /// </summary>
+[Trait("tier", "unit")]
 public sealed class GraphWalkCacheEngineMismatchTests : IDisposable
 {
     private readonly StateDir _state = new();

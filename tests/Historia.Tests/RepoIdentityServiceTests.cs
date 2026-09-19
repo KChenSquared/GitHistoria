@@ -7,6 +7,7 @@ namespace Historia.Tests;
 /// forced-fallback (no git) libgit2 path must agree on the same repo, since either can run
 /// depending on whether git.exe is discoverable.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class RepoIdentityServiceTests : IAsyncDisposable
 {
     private static string? _cachedRootA;

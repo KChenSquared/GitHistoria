@@ -9,6 +9,7 @@ namespace Historia.Tests;
 /// contract can silently drift at that one dialog. The dialog-builder half of the rule is
 /// guarded by <c>HistoriaApp.Tests.DestructiveConfirmDialogTests</c>.
 /// </summary>
+[Trait("tier", "unit")]
 public class DestructiveConfirmationTests
 {
     // The only files allowed to name the opt-in knobs: the interface that declares them and the

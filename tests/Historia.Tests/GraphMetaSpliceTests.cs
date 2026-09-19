@@ -9,6 +9,7 @@ namespace Historia.Tests;
 /// reproducible from this environment, so the guard THRESHOLDS are exercised with explicit
 /// parameters rather than an actual 200k-row fixture.
 /// </summary>
+[Trait("tier", "unit")]
 public sealed class GraphMetaSpliceTests
 {
     private static ObjectId Oid(int i) => new(i.ToString("x40"));

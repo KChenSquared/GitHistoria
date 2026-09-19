@@ -1,6 +1,7 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>§V3-11.2: the pure sidebar ref-tree builder.</summary>
+[Trait("tier", "unit")]
 public class RefTreeTests
 {
     private static BranchInfo B(string name) => new()
