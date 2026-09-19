@@ -1,5 +1,3 @@
-using Historia.Diagnostics;
-
 namespace Historia.Tests;
 [Trait("tier", "unit")]
 
@@ -156,5 +154,49 @@ public sealed class AppLogTests : IDisposable
 
         Assert.Null(AppLog.CurrentLogPath);
         Assert.DoesNotContain("after disable", File.ReadAllText(file));
+    }
+
+    [Fact]
+    public async Task Sessions_are_isolated_between_concurrent_flows()
+    {
+        using var barrier = new Barrier(2);
+        string? session1File = null;
+        string? session2File = null;
+
+        using var dir1 = new StateDir();
+        using var dir2 = new StateDir();
+
+        var t1 = Task.Run(() =>
+        {
+            AppPaths.OverrideForTesting(dir1.Path);
+            using var session1 = AppLog.StartSessionForTesting();
+            session1File = session1.SessionPath;
+            barrier.SignalAndWait();
+            AppLog.Write(AppLogLevel.Info, "flow1", "message from flow 1");
+        });
+
+        var t2 = Task.Run(() =>
+        {
+            AppPaths.OverrideForTesting(dir2.Path);
+            using var session2 = AppLog.StartSessionForTesting();
+            session2File = session2.SessionPath;
+            barrier.SignalAndWait();
+            AppLog.Write(AppLogLevel.Info, "flow2", "message from flow 2");
+        });
+
+        await Task.WhenAll(t1, t2);
+
+        Assert.NotNull(session1File);
+        Assert.NotNull(session2File);
+        Assert.NotEqual(session1File, session2File);
+
+        var text1 = File.ReadAllText(session1File);
+        var text2 = File.ReadAllText(session2File);
+
+        Assert.Contains("message from flow 1", text1);
+        Assert.DoesNotContain("message from flow 2", text1);
+
+        Assert.Contains("message from flow 2", text2);
+        Assert.DoesNotContain("message from flow 1", text2);
     }
 }

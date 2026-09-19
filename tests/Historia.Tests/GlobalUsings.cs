@@ -1,4 +1,5 @@
-﻿global using Historia.Components;
+global using Historia.Components;
+global using Historia.Diagnostics;
 global using Historia.Models;
 global using Historia.Rendering;
 global using Historia.Services.AutoFetch;

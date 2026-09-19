@@ -1,6 +1,3 @@
-using Historia.Diagnostics;
-using Historia.Services.Git;
-
 namespace Historia.Tests;
 [Trait("tier", "unit")]
 
