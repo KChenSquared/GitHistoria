@@ -27,7 +27,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// only a few hundred commits can still exercise multi-batch write races that would otherwise
     /// need a 25,000-row history to trigger. Left at 0 (production default) outside tests; a test
     /// that sets it must reset it to 0 when done, since it's process-wide state.</summary>
-    internal static int TestSpillBatchRowsOverride;
+    private static readonly AsyncLocal<int> _testSpillBatchRowsOverride = new();
+    internal static int TestSpillBatchRowsOverride
+    {
+        get => _testSpillBatchRowsOverride.Value;
+        set => _testSpillBatchRowsOverride.Value = value;
+    }
 
     /// <summary>Test seam: invoked once per streamed batch during
     /// <see cref="RunHeadlessReorderAsync"/> with that batch's own row count (never a running
@@ -41,7 +46,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// these to drive the live splice trigger at small scale. <c>null</c> (production default)
     /// outside tests; a test that sets either must reset it to <c>null</c> when done, since both
     /// are process-wide state.</summary>
-    internal static int? TestSpliceMinRowsOverride;
+    private static readonly AsyncLocal<int?> _testSpliceMinRowsOverride = new();
+    internal static int? TestSpliceMinRowsOverride
+    {
+        get => _testSpliceMinRowsOverride.Value;
+        set => _testSpliceMinRowsOverride.Value = value;
+    }
     internal static int? TestSpliceMaxOldParentRowOverride;
 
     /// <summary>Test seam: substitutes for the header's real <c>LastFullWalkMs</c>
@@ -49,7 +59,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// walk-from-row-0 time is itself only milliseconds, so the 25%-of-it budget guard 4 computes
     /// from it is too tight to reliably clear real process-spawn variance on a test machine — this
     /// lets a wiring test supply a realistic (large) baseline instead. <c>null</c> outside tests.</summary>
-    internal static TimeSpan? TestSpliceFullWalkElapsedOverride;
+    private static readonly AsyncLocal<TimeSpan?> _testSpliceFullWalkElapsedOverride = new();
+    internal static TimeSpan? TestSpliceFullWalkElapsedOverride
+    {
+        get => _testSpliceFullWalkElapsedOverride.Value;
+        set => _testSpliceFullWalkElapsedOverride.Value = value;
+    }
 
     /// <summary>Test seam: invoked with <c>(addedRecords, removedRecords)</c> right
     /// after a splice actually commits — since a spliced header looks identical to a reorder's
