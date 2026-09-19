@@ -214,6 +214,40 @@ public class ShortcutBarLayoutTests
         window.Close();
     }
 
+    [AvaloniaFact]
+    public async Task Natural_width_is_stable_and_does_not_loop_on_layout()
+    {
+        await using var sp = CreateServices();
+        var window = new MainWindow(sp);
+        window.Width = 1280;
+        window.Height = 760;
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var leftHost = window.FindControl<ContentControl>("LeftShortcutsHost")!;
+        var leftBar = (ShortcutsBarControl)leftHost.Content!;
+        var rightHost = window.FindControl<ContentControl>("RightShortcutsHost")!;
+        var rightBar = (ShortcutsBarControl)rightHost.Content!;
+
+        var leftW = leftBar.NaturalWidth;
+        var rightW = rightBar.NaturalWidth;
+
+        Assert.True(leftW >= 150, $"Left natural width was {leftW}");
+        Assert.True(rightW >= 150, $"Right natural width was {rightW}");
+
+        // Drive multiple layout / render cycles to ensure no infinite layout loop
+        for (var i = 0; i < 10; i++)
+        {
+            window.InvalidateMeasure();
+            Dispatcher.UIThread.RunJobs();
+        }
+
+        Assert.Equal(leftW, leftBar.NaturalWidth, 1);
+        Assert.Equal(rightW, rightBar.NaturalWidth, 1);
+
+        window.Close();
+    }
+
     private sealed class FakeThemeProbe : ISystemThemeProbe
     {
         public bool IsLightTheme => false;

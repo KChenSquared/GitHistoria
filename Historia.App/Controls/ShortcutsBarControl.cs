@@ -35,6 +35,7 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
     private readonly Button? _pushBtn;
     private readonly Button? _stashBtn;
 
+    private bool _disposed;
     private double _lastReportedNaturalWidth = -1;
 
     public ShortcutsBarSide Side => _side;
@@ -43,8 +44,14 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
     {
         get
         {
-            _panel.Measure(new Size(double.PositiveInfinity, BarHeight));
-            return _panel.DesiredSize.Width + _border.Padding.Left + _border.Padding.Right;
+            if (!_panel.IsMeasureValid && VisualRoot == null)
+                _panel.Measure(new Size(double.PositiveInfinity, BarHeight));
+
+            var width = _panel.DesiredSize.Width;
+            if (width <= 0 && _lastReportedNaturalWidth > 0)
+                return _lastReportedNaturalWidth;
+
+            return width + _border.Padding.Left + _border.Padding.Right;
         }
     }
 
@@ -126,6 +133,7 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
         if (_workspace is not null)
             _workspace.FocusedRepositoryChanged += OnFocusChanged;
 
+        _lastReportedNaturalWidth = NaturalWidth;
         Sync();
     }
 
@@ -134,11 +142,17 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
 
     private void OnPanelLayoutUpdated(object? sender, EventArgs e)
     {
+        if (_disposed)
+            return;
         var current = NaturalWidth;
         if (Math.Abs(current - _lastReportedNaturalWidth) > 0.5)
         {
             _lastReportedNaturalWidth = current;
-            NaturalWidthChanged?.Invoke(this, EventArgs.Empty);
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!_disposed)
+                    NaturalWidthChanged?.Invoke(this, EventArgs.Empty);
+            });
         }
     }
 
@@ -224,6 +238,7 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _panel.LayoutUpdated -= OnPanelLayoutUpdated;
         if (_workspace is not null)
             _workspace.FocusedRepositoryChanged -= OnFocusChanged;

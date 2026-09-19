@@ -186,7 +186,9 @@ public partial class MainWindow : Window
         _leftW = Math.Max(_leftW, _leftMin);
         _rightW = Math.Max(_rightW, _rightMin);
 
-        MinWidth = _leftMin + _rightMin + 2 * DividerPx;
+        var newMinWidth = _leftMin + _rightMin + 2 * DividerPx;
+        if (Math.Abs(MinWidth - newMinWidth) > 0.5)
+            MinWidth = newMinWidth;
         ApplyBodyLayout();
     }
 
@@ -218,9 +220,12 @@ public partial class MainWindow : Window
             return;
 
         var (left, centre, right) = ResolveColumns(total);
-        LeftCol.Width = new GridLength(left);
-        CenterCol.Width = new GridLength(centre);
-        RightCol.Width = new GridLength(right);
+        if (!LeftCol.Width.IsAbsolute || Math.Abs(LeftCol.Width.Value - left) > 0.5)
+            LeftCol.Width = new GridLength(left);
+        if (!CenterCol.Width.IsAbsolute || Math.Abs(CenterCol.Width.Value - centre) > 0.5)
+            CenterCol.Width = new GridLength(centre);
+        if (!RightCol.Width.IsAbsolute || Math.Abs(RightCol.Width.Value - right) > 0.5)
+            RightCol.Width = new GridLength(right);
     }
 
     // Divider drags are driven off the raw pointer position in BodyGrid's (stationary)
