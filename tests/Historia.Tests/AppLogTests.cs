@@ -199,4 +199,50 @@ public sealed class AppLogTests : IDisposable
         Assert.Contains("message from flow 2", text2);
         Assert.DoesNotContain("message from flow 1", text2);
     }
+
+    [Fact]
+    public void A_disposed_session_hands_the_logger_back_to_the_global_writer()
+    {
+        string sessionPath;
+        using (var session = AppLog.StartSessionForTesting(_dir.Path))
+        {
+            sessionPath = session.SessionPath;
+        }
+
+        AppLog.Enabled = true;
+        try
+        {
+            AppLog.Write(AppLogLevel.Info, "global", "after session disposal");
+
+            var globalPath = AppLog.CurrentLogPath;
+            Assert.NotNull(globalPath);
+            Assert.NotEqual(sessionPath, globalPath);
+
+            AppLog.Enabled = false;
+            var text = File.ReadAllText(globalPath);
+            Assert.Contains("after session disposal", text);
+        }
+        finally
+        {
+            AppLog.Enabled = false;
+        }
+    }
+
+    [Fact]
+    public void Enabling_after_a_disposed_session_opens_a_real_session_file()
+    {
+        using (AppLog.StartSessionForTesting(_dir.Path)) { }
+
+        AppLog.Enabled = true;
+        try
+        {
+            var path = AppLog.CurrentLogPath;
+            Assert.NotNull(path);
+            Assert.True(File.Exists(path));
+        }
+        finally
+        {
+            AppLog.Enabled = false;
+        }
+    }
 }

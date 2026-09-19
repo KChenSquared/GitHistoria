@@ -51,7 +51,9 @@ public static partial class AppLog
 
     /// <summary>
     /// Flow-local test session for running tests in parallel without shared log writer state.
-    /// Outside tests this is null.
+    /// Outside tests this is null. Disposal releases the flow's interception in the flow that
+    /// disposes it; a session disposed from a deeper async frame still needs <see cref="ResetForTesting"/>
+    /// because an <see cref="AsyncLocal{T}"/> write does not propagate back up the async call tree.
     /// </summary>
     internal sealed class AppLogSession : IDisposable
     {
@@ -94,6 +96,9 @@ public static partial class AppLog
                 try { _writer?.Dispose(); } catch { }
                 _writer = null;
             }
+
+            if (ReferenceEquals(_testSession.Value, this))
+                _testSession.Value = null;
         }
     }
 
