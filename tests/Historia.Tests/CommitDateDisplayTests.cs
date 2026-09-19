@@ -43,18 +43,19 @@ public sealed class CommitDateDisplayTests : IAsyncDisposable
         if (!locator.Current.Found)
             return;
 
-        using var repo = TestRepositoryBuilder.Create();
+        using var repo = TestRepositoryBuilder.FromTemplate("commit-date-display-seed", r =>
+        {
+            // git commit --date=<past> sets only the author date, so commit dates stay in commit
+            // creation order while author dates run opposite to commit dates.
+            r.WriteFile("1.txt", "1").Stage();
+            r.Git("commit", "-m", "C1", "--date=2026-09-15T12:30:00Z", "--no-gpg-sign");
 
-        // git commit --date=<past> sets only the author date, so commit dates stay in commit
-        // creation order while author dates run opposite to commit dates.
-        repo.WriteFile("1.txt", "1").Stage();
-        repo.Git("commit", "-m", "C1", "--date=2026-09-15T12:30:00Z", "--no-gpg-sign");
+            r.WriteFile("2.txt", "2").Stage();
+            r.Git("commit", "-m", "C2", "--date=2026-09-15T12:20:00Z", "--no-gpg-sign");
 
-        repo.WriteFile("2.txt", "2").Stage();
-        repo.Git("commit", "-m", "C2", "--date=2026-09-15T12:20:00Z", "--no-gpg-sign");
-
-        repo.WriteFile("3.txt", "3").Stage();
-        repo.Git("commit", "-m", "C3", "--date=2026-09-15T12:10:00Z", "--no-gpg-sign");
+            r.WriteFile("3.txt", "3").Stage();
+            r.Git("commit", "-m", "C3", "--date=2026-09-15T12:10:00Z", "--no-gpg-sign");
+        });
 
         // Compute with setting off
         await _host.Settings.UpdateAsync(s => s with { ShowAuthorDate = false });

@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 public class PatchServiceTests
 {
@@ -15,13 +15,15 @@ public class PatchServiceTests
     public async Task Staging_one_hunk_stages_exactly_that_hunk()
     {
         await using var host = new MiniHost();
-        using var b = TestRepositoryBuilder.Create();
-        // 12 numbered lines; change line 2 (hunk A) and line 11 (hunk B).
-        b.WriteFile("f.txt", string.Join("\n", Enumerable.Range(1, 12).Select(i => $"line {i}")) + "\n").Stage().Commit("base");
-        var lines = Enumerable.Range(1, 12).Select(i => $"line {i}").ToArray();
-        lines[1] = "line 2 CHANGED";
-        lines[10] = "line 11 CHANGED";
-        b.WriteFile("f.txt", string.Join("\n", lines) + "\n");
+        using var b = TestRepositoryBuilder.FromTemplate("patch-12-lines-seed", r =>
+        {
+            // 12 numbered lines; change line 2 (hunk A) and line 11 (hunk B).
+            r.WriteFile("f.txt", string.Join("\n", Enumerable.Range(1, 12).Select(i => $"line {i}")) + "\n").Stage().Commit("base");
+            var lines = Enumerable.Range(1, 12).Select(i => $"line {i}").ToArray();
+            lines[1] = "line 2 CHANGED";
+            lines[10] = "line 11 CHANGED";
+            r.WriteFile("f.txt", string.Join("\n", lines) + "\n");
+        });
         await using var ctx = host.Open(b.Path);
         var svc = Make(host);
 
@@ -43,9 +45,11 @@ public class PatchServiceTests
     public async Task Staging_a_single_added_line_produces_a_correct_index_state()
     {
         await using var host = new MiniHost();
-        using var b = TestRepositoryBuilder.Create();
-        b.WriteFile("f.txt", "a\nb\nc\n").Stage().Commit("base");
-        b.WriteFile("f.txt", "a\nADD1\nb\nADD2\nc\n"); // two separate additions in one hunk
+        using var b = TestRepositoryBuilder.FromTemplate("patch-added-lines-seed", r =>
+        {
+            r.WriteFile("f.txt", "a\nb\nc\n").Stage().Commit("base");
+            r.WriteFile("f.txt", "a\nADD1\nb\nADD2\nc\n"); // two separate additions in one hunk
+        });
         await using var ctx = host.Open(b.Path);
         var svc = Make(host);
 
@@ -67,12 +71,14 @@ public class PatchServiceTests
     public async Task Discard_hunk_reverts_only_that_region_of_the_working_tree()
     {
         await using var host = new MiniHost();
-        using var b = TestRepositoryBuilder.Create();
-        b.WriteFile("f.txt", string.Join("\n", Enumerable.Range(1, 12).Select(i => $"L{i}")) + "\n").Stage().Commit("base");
-        var lines = Enumerable.Range(1, 12).Select(i => $"L{i}").ToArray();
-        lines[1] = "L2 X";
-        lines[10] = "L11 Y";
-        b.WriteFile("f.txt", string.Join("\n", lines) + "\n");
+        using var b = TestRepositoryBuilder.FromTemplate("patch-discard-hunk-seed", r =>
+        {
+            r.WriteFile("f.txt", string.Join("\n", Enumerable.Range(1, 12).Select(i => $"L{i}")) + "\n").Stage().Commit("base");
+            var lines = Enumerable.Range(1, 12).Select(i => $"L{i}").ToArray();
+            lines[1] = "L2 X";
+            lines[10] = "L11 Y";
+            r.WriteFile("f.txt", string.Join("\n", lines) + "\n");
+        });
         await using var ctx = host.Open(b.Path);
         var svc = Make(host);
 
@@ -98,9 +104,11 @@ public class PatchServiceTests
     public async Task Partial_staging_is_correct_for_a_file_with_no_trailing_newline()
     {
         await using var host = new MiniHost();
-        using var b = TestRepositoryBuilder.Create();
-        b.WriteFile("f.txt", "one\ntwo\nthree").Stage().Commit("base"); // no trailing newline
-        b.WriteFile("f.txt", "one\ntwoX\nthree");
+        using var b = TestRepositoryBuilder.FromTemplate("patch-no-trailing-nl-seed", r =>
+        {
+            r.WriteFile("f.txt", "one\ntwo\nthree").Stage().Commit("base"); // no trailing newline
+            r.WriteFile("f.txt", "one\ntwoX\nthree");
+        });
         await using var ctx = host.Open(b.Path);
         var svc = Make(host);
 

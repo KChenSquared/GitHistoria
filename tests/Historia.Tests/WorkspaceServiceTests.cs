@@ -594,8 +594,8 @@ public class WorkspaceServiceTests : IAsyncDisposable
         public Task<string?> GetTokenAsync(Guid profileId, RemoteHost host, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task ExportProfilesAsync(string exportFilePath, bool includeTokens, string? password, CancellationToken ct = default) => Task.CompletedTask;
         public Task ImportProfilesAsync(string importFilePath, string? password, CancellationToken ct = default) => Task.CompletedTask;
-        public event EventHandler? ProfilesChanged;
-        public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged;
+        public event EventHandler? ProfilesChanged { add { } remove { } }
+        public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged { add { } remove { } }
     }
 
     private static TestRepositoryBuilder RepoWithoutLocalIdentity()

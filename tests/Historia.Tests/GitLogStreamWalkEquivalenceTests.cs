@@ -13,26 +13,27 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
 
     public GitLogStreamWalkEquivalenceTests()
     {
-        _repo = TestRepositoryBuilder.Create();
+        _repo = TestRepositoryBuilder.FromTemplate("git-log-walk-equiv", b =>
+        {
+            b.WriteFile("root.txt", "unrelated\n").Stage().Commit("unrelated root");
 
-        _repo.WriteFile("root.txt", "unrelated\n").Stage().Commit("unrelated root");
+            // A second, wholly unrelated root — only reachable via its own orphan branch, like a
+            // grafted-in history. Exercises the tip peeling / multi-root walk on both engines.
+            b.Git("checkout", "--orphan", "unrelated");
+            b.Git("rm", "-rf", ".");
+            b.WriteFile("other.txt", "x\n").Stage().Commit("second root");
+            b.Git("checkout", "main");
 
-        // A second, wholly unrelated root — only reachable via its own orphan branch, like a
-        // grafted-in history. Exercises the tip peeling / multi-root walk on both engines.
-        _repo.Git("checkout", "--orphan", "unrelated");
-        _repo.Git("rm", "-rf", ".");
-        _repo.WriteFile("other.txt", "x\n").Stage().Commit("second root");
-        _repo.Git("checkout", "main");
+            for (var i = 0; i < 5; i++)
+                b.WriteFile("f.txt", $"{i}\n").Stage().Commit($"main {i}");
 
-        for (var i = 0; i < 5; i++)
-            _repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"main {i}");
-
-        _repo.Git("checkout", "-b", "feature");
-        _repo.WriteFile("feature.txt", "x\n").Stage().Commit("feature work");
-        _repo.Git("checkout", "main");
-        _repo.WriteFile("f2.txt", "y\n").Stage().Commit("main after fork");
-        _repo.Git("merge", "--no-ff", "-m", "merge feature", "feature");
-        _repo.Git("tag", "v1.0");
+            b.Git("checkout", "-b", "feature");
+            b.WriteFile("feature.txt", "x\n").Stage().Commit("feature work");
+            b.Git("checkout", "main");
+            b.WriteFile("f2.txt", "y\n").Stage().Commit("main after fork");
+            b.Git("merge", "--no-ff", "-m", "merge feature", "feature");
+            b.Git("tag", "v1.0");
+        });
     }
 
     public async ValueTask DisposeAsync()
@@ -177,19 +178,20 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
         if (!locator.Current.Found)
             return;
 
-        using var repo = TestRepositoryBuilder.Create();
-        var t0 = DateTimeOffset.Parse("2026-09-15T12:00:00Z");
+        using var repo = TestRepositoryBuilder.FromTemplate("graph-interleaved-branches", b =>
+        {
+            var t0 = DateTimeOffset.Parse("2026-09-15T12:00:00Z");
+            b.WriteFile("a.txt", "a").Stage().CommitAt("A", t0.AddMinutes(1));
+            b.WriteFile("m1.txt", "m1").Stage().CommitAt("M1", t0.AddMinutes(2));
 
-        repo.WriteFile("a.txt", "a").Stage().CommitAt("A", t0.AddMinutes(1));
-        repo.WriteFile("m1.txt", "m1").Stage().CommitAt("M1", t0.AddMinutes(2));
+            b.Checkout("feature", create: true);
+            b.WriteFile("f1.txt", "f1").Stage().CommitAt("F1", t0.AddMinutes(3));
+            b.WriteFile("f2.txt", "f2").Stage().CommitAt("F2", t0.AddMinutes(5));
 
-        repo.Checkout("feature", create: true);
-        repo.WriteFile("f1.txt", "f1").Stage().CommitAt("F1", t0.AddMinutes(3));
-        repo.WriteFile("f2.txt", "f2").Stage().CommitAt("F2", t0.AddMinutes(5));
-
-        repo.Checkout("main");
-        repo.WriteFile("m2.txt", "m2").Stage().CommitAt("M2", t0.AddMinutes(4));
-        repo.WriteFile("m3.txt", "m3").Stage().CommitAt("M3", t0.AddMinutes(6));
+            b.Checkout("main");
+            b.WriteFile("m2.txt", "m2").Stage().CommitAt("M2", t0.AddMinutes(4));
+            b.WriteFile("m3.txt", "m3").Stage().CommitAt("M3", t0.AddMinutes(6));
+        });
 
         await using var ctxCli = _host.Open(repo.Path);
         ctxCli.MarkFirstGraphPaintDone(); ctxCli.MarkFirstFullLoadDone();

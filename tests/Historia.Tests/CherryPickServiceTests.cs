@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 public class CherryPickServiceTests
 {
@@ -8,13 +8,18 @@ public class CherryPickServiceTests
     /// <summary>main has c1; feature branches from c1 with a,b,c. Returns (repo, shas of a,b,c).</summary>
     private static (TestRepositoryBuilder Repo, string A, string B, string C) Fixture()
     {
-        var b = TestRepositoryBuilder.Create();
-        b.WriteFile("base.txt", "base\n").Stage().Commit("c1");
-        b.Checkout("feature", create: true);
-        var a = b.WriteFile("a.txt", "a\n").Stage().Commit("add a");
-        var bb = b.WriteFile("b.txt", "b\n").Stage().Commit("add b");
-        var c = b.WriteFile("c.txt", "c\n").Stage().Commit("add c");
-        b.Checkout("main");
+        var b = TestRepositoryBuilder.FromTemplate("cherry-pick-fixture", r =>
+        {
+            r.WriteFile("base.txt", "base\n").Stage().Commit("c1");
+            r.Checkout("feature", create: true);
+            r.WriteFile("a.txt", "a\n").Stage().Commit("add a");
+            r.WriteFile("b.txt", "b\n").Stage().Commit("add b");
+            r.WriteFile("c.txt", "c\n").Stage().Commit("add c");
+            r.Checkout("main");
+        });
+        var a = b.Git("rev-parse", "feature~2").Trim();
+        var bb = b.Git("rev-parse", "feature~1").Trim();
+        var c = b.Git("rev-parse", "feature").Trim();
         return (b, a, bb, c);
     }
 
@@ -51,9 +56,12 @@ public class CherryPickServiceTests
     public async Task Revert_undoes_a_commit()
     {
         await using var host = new MiniHost();
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("f.txt", "keep\nremove-me\n").Stage().Commit("c1");
-        var bad = repo.WriteFile("f.txt", "keep\n").Stage().Commit("delete a line");
+        using var repo = TestRepositoryBuilder.FromTemplate("revert-seed", r =>
+        {
+            r.WriteFile("f.txt", "keep\nremove-me\n").Stage().Commit("c1");
+            r.WriteFile("f.txt", "keep\n").Stage().Commit("delete a line");
+        });
+        var bad = repo.HeadSha;
         await using var ctx = host.Open(repo.Path);
 
         await Make(host).RevertAsync(ctx, [new LibGit2Sharp.ObjectId(bad)]);

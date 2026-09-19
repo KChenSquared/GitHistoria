@@ -1,16 +1,12 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 public class WorktreeServiceTests
 {
     private static WorktreeService Make(MiniHost host)
         => new((IGitCliService)host.Provider.GetService(typeof(IGitCliService))!);
 
-    private static TestRepositoryBuilder Seeded()
-    {
-        var b = TestRepositoryBuilder.Create();
-        b.WriteFile("f.txt", "x\n").Stage().Commit("c1");
-        return b;
-    }
+    private static TestRepositoryBuilder Seeded() =>
+        TestRepositoryBuilder.FromTemplate("worktree-seed", b => b.WriteFile("f.txt", "x\n").Stage().Commit("c1"));
 
     [Fact]
     public async Task List_returns_the_main_worktree()

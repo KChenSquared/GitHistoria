@@ -160,6 +160,8 @@ public sealed class TestRepositoryBuilder : IDisposable
         return ResolveHeadSha();
     }
 
+    public string HeadSha => ResolveHeadSha();
+
     private string ResolveHeadSha()
     {
         try

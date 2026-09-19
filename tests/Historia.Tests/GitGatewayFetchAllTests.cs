@@ -11,10 +11,12 @@ public sealed class GitGatewayFetchAllTests : IAsyncDisposable
 
     public GitGatewayFetchAllTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        _repo.WriteFile("f.txt", "x").Stage().Commit("seed");
-        _repo.Git("remote", "add", "origin", "https://example.invalid/origin.git");
-        _repo.Git("remote", "add", "upstream", "https://example.invalid/upstream.git");
+        _repo = TestRepositoryBuilder.FromTemplate("gateway-fetch-all", r =>
+        {
+            r.WriteFile("f.txt", "x").Stage().Commit("seed");
+            r.Git("remote", "add", "origin", "https://example.invalid/origin.git");
+            r.Git("remote", "add", "upstream", "https://example.invalid/upstream.git");
+        });
     }
 
     public async ValueTask DisposeAsync()
