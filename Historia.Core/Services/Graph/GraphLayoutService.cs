@@ -294,6 +294,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         if (!spill)
             return result;
         var swapped = SpillAndSwap(context, cache, query.IncludeRemoteBranches, result);
+        if (cache.Exhausted && cache.MetaComplete)
+            await RetireLiveWalkAsync(context, cache).ConfigureAwait(false);
         MaybeStartBackgroundSpill(context, cache, query);
         return swapped with { Fingerprint = cache.Fingerprint };
     }
@@ -407,6 +409,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         if (!SpillEnabled(extQuery))
             return result with { Fingerprint = cache.Fingerprint };
         var swapped = SpillAndSwap(context, cache, cache.IncludeRemotes, result);
+        if (cache.Exhausted && cache.MetaComplete)
+            await RetireLiveWalkAsync(context, cache).ConfigureAwait(false);
         MaybeStartBackgroundSpill(context, cache, extQuery); // resume if it stalled/hadn't started
         return swapped with { Fingerprint = cache.Fingerprint };
     }
@@ -496,6 +500,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// errors and <c>cache.SpilledRows</c> must never advance on faith alone — "the disk cache is
     /// never a correctness dependency") does it also drop those rows from the resident pending
     /// buffer via <see cref="TrimConfirmedSpilled"/>. Caller holds <c>cache.SpillSync</c>.
+    /// Never touches the live walk.
     /// <para>
     /// The actual append goes through <see cref="GraphMetaWriter.AppendSpillBatch"/>,
     /// which re-checks the on-disk header under this repo's cache-wide writer lock before writing
@@ -543,7 +548,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     cache.MetaComplete = true;
                     cache.Exhausted = true;
                 }
-                cache.DisposeLiveWalk();
                 return outcome;
 
             default:
@@ -788,7 +792,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // external cancel Forget/reset already DropLiveWalk'd it. This is just a
                 // belt-and-braces no-op for those paths.
                 if (ct.IsCancellationRequested || cache.Exhausted || cache.MetaComplete)
-                    cache.DisposeLiveWalk();
+                    await RetireLiveWalkAsync(context, cache).ConfigureAwait(false);
 
                 // Safety net: the per-chunk call above already schedules commit-graph maintenance
                 // as soon as the repo crosses the size threshold, so this normally no-ops (already
@@ -1760,6 +1764,50 @@ public sealed class GraphLayoutService : IGraphLayoutService
         finally
         {
             cache.WalkLock.Release();
+        }
+    }
+
+    private const int RetireWalkLockTimeoutMs = 5_000;
+
+    /// <summary>
+    /// Safely retires and disposes the cache's live walk enumerator off the spill lock.
+    /// Safe contexts: under <see cref="RepoCache.WalkLock"/> for <see cref="WalkEngine.Cli"/>,
+    /// and inside the repo gate (<see cref="RepositoryContext.WithRepositoryAsync{T}"/>) for
+    /// <see cref="WalkEngine.LibGit2"/>.
+    /// </summary>
+    private static async Task RetireLiveWalkAsync(RepositoryContext context, RepoCache cache)
+    {
+        if (cache.LiveWalk is null)
+            return;
+
+        try
+        {
+            if (cache.Engine == WalkEngine.Cli)
+            {
+                if (await cache.WalkLock.WaitAsync(RetireWalkLockTimeoutMs).ConfigureAwait(false))
+                {
+                    try
+                    {
+                        cache.DisposeLiveWalk();
+                    }
+                    finally
+                    {
+                        cache.WalkLock.Release();
+                    }
+                }
+            }
+            else
+            {
+                await context.WithRepositoryAsync(_ =>
+                {
+                    cache.DisposeLiveWalk();
+                    return 0;
+                }, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // Retirement is best-effort; a failed retirement must never fail a layout.
         }
     }
 
