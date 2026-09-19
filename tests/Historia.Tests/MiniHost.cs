@@ -1,8 +1,15 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>Minimal DI provider + a real <see cref="RepositoryContext"/> for integration tests.</summary>
 public sealed class MiniHost : IAsyncDisposable
 {
+    private static readonly Lazy<IGitExecutableLocator> SharedLocator = new(() =>
+    {
+        var locator = new GitExecutableLocator();
+        locator.ResolveAsync(null).GetAwaiter().GetResult();
+        return locator;
+    });
+
     private readonly StateDir _state = new();
     public ServiceProvider Provider { get; }
     public SettingsService Settings { get; }
@@ -14,9 +21,7 @@ public sealed class MiniHost : IAsyncDisposable
         sc.AddSingleton<ISettingsService>(Settings);
         sc.AddSingleton<IRepoLayoutService, RepoLayoutService>();
         sc.AddSingleton<LibGit2Service>();
-        var locator = new GitExecutableLocator();
-        locator.ResolveAsync(null).GetAwaiter().GetResult();
-        sc.AddSingleton<IGitExecutableLocator>(locator);
+        sc.AddSingleton<IGitExecutableLocator>(SharedLocator.Value);
         sc.AddSingleton<IGitCliService, GitCliService>();
         sc.AddSingleton<ICredentialVaultService, FakeVault>();
         Provider = sc.BuildServiceProvider();
