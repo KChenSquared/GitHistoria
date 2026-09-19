@@ -1,6 +1,7 @@
 namespace Historia.Tests;
 [Trait("tier", "git")]
-
+// Serialized: sets process-wide GIT_CONFIG_* variables that every concurrently spawned git child inherits.
+[Collection("serial")]
 public class SubmoduleServiceTests : IDisposable
 {
     private static SubmoduleService Make(MiniHost host)

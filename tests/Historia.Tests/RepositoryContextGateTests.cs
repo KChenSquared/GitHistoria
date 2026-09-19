@@ -8,6 +8,8 @@ namespace Historia.Tests;
 /// spill does not starve the visible-row crawl.
 /// </summary>
 [Trait("tier", "git")]
+// Serialized: assigns process-global PerfLog.Enabled and asserts on process-global RepositoryContext.FormattedGateMarksCount.
+[Collection("serial")]
 public sealed class RepositoryContextGateTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
