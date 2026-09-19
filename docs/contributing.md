@@ -63,9 +63,23 @@ dotnet run
 .\dev\test.ps1 -Tier git
 .\dev\test.ps1 -Tier ui
 
-# Full suite verification (~3 min)
+# Full suite verification (~80 s)
 .\dev\test.ps1 -Tier all
 ```
+
+#### Test Suite Architecture & Parallelism
+- **Parallel Collections:** Test collections run in parallel by default on up to 8 threads.
+- **Serial Collection:** Tests that mutate process-global state, configure ambient environment variables, or contend on global locks must be annotated with `[Collection("serial")]`. The serial collection includes 8 test classes:
+  1. `AppPathsTests`
+  2. `AppLogTests`
+  3. `GitProcessExecutorTests`
+  4. `GlobalGitConfigTests`
+  5. `GitCredentialServiceTests`
+  6. `TerminalTests`
+  7. `RepositoryContextGateTests`
+  8. `SubmoduleServiceTests`
+- **Scratch Root & Fixture Lifecycle:** Disk fixtures are created under `%LOCALAPPDATA%/Historia/TestScratch` via `TestScratch.NewDirectory()`. Directories older than 24 hours are automatically pruned on initialization (`TestScratch.PruneStale()`). Shared repository templates created by `TestRepositoryBuilder.FromTemplate` are tracked in-process and deleted upon process shutdown.
+- **Performance & Timing Assertions:** Per Rule 25, performance tests record timing diagnostics to test output (`ITestOutputHelper`) rather than asserting hard wall-clock ratios (e.g. "must be 5x faster") that can flake under parallel I/O contention.
 
 ---
 
