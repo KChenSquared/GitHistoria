@@ -39,4 +39,12 @@ public static class AppBandDragReorder
         => viewportX < zone ? -1
          : viewportX > viewportWidth - zone ? 1
          : 0;
+
+    /// <summary>§F9: clamps a linked child tab's live drag target into its own group's legal
+    /// sibling range — <c>[groupStart + 1, groupStart + groupCount - 1]</c> — so a linked tab's
+    /// preview can never cross into another group or ahead of its own owner. Returns
+    /// <paramref name="groupStart"/> itself (a "no legal move" sentinel) when the group has one
+    /// member or fewer (nothing to reorder among).</summary>
+    public static int ClampChildTarget(int rawTarget, int groupStart, int groupCount)
+        => groupCount <= 1 ? groupStart : Math.Clamp(rawTarget, groupStart + 1, groupStart + groupCount - 1);
 }

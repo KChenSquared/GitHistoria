@@ -64,6 +64,15 @@ public sealed class AppBandControl : UserControl, IDisposable
     private AppBandDragGhost? _dragGhost;
     // Reused across the per-pointer-move ReorderTo calls so the hot drag path stays allocation-free.
     private readonly List<double> _reorderWidths = new();
+    // §F9: the dragged tab's group span in _tabViews index terms, captured on press. For an
+    // owner/standalone drag this is its own group (itself plus its linked children, if any); for
+    // a linked-child drag this is its OWNER's group, since ReorderTo clamps the child's live
+    // target into that span. -1/0 when the pressed tab isn't a group member (no clamping needed).
+    private int _dragGroupStart = -1;
+    private int _dragGroupCount;
+    // Reused per-group width/start buffers for an owner/standalone drag's block-move preview.
+    private readonly List<double> _reorderGroupWidths = new();
+    private readonly List<int> _reorderGroupStarts = new();
 
     public AppBandControl()
     {
@@ -440,11 +449,19 @@ public sealed class AppBandControl : UserControl, IDisposable
 
     private Border MakeTab(RepositoryContext ctx, bool active, bool first)
     {
+        // §F9: a submodule-linked tab renders 3px shorter, flush with the strip's bottom edge,
+        // and suppresses its own leading separator so the group reads as one continuous unit
+        // with only the owner's separator showing. Avalonia's Layoutable.Arrange applies
+        // Height/VerticalAlignment generically for any element within whatever rect its parent
+        // panel hands it — this holds for WrapPanel exactly as for any other panel, so a
+        // shorter linked shell still sits bottom-aligned within its row.
+        var linked = ctx.LinkOwner is not null;
         var shell = new Border
         {
             Tag = ctx,
-            BorderThickness = new Thickness(first ? 0 : 1, 0, 0, 0),
-            Height = RowHeight,
+            BorderThickness = new Thickness((first || linked) ? 0 : 1, 0, 0, 0),
+            Height = linked ? RowHeight - 3 : RowHeight,
+            VerticalAlignment = linked ? VerticalAlignment.Bottom : VerticalAlignment.Stretch,
         };
         shell.Dyn(Border.BorderBrushProperty, "ColorBorder");
 
@@ -625,6 +642,33 @@ public sealed class AppBandControl : UserControl, IDisposable
         _pressPanelPos = e.GetPosition(_tabPanel);
         _grabOffset = e.GetPosition(_dragView);
         _dragFromIndex = _tabViews.IndexOf(_dragView);
+
+        // §F9: record the pressed tab's group span up front — a linked-child drag clamps its
+        // live target into this span (its owner's group); an owner/standalone drag moves this
+        // span as one block.
+        (_dragGroupStart, _dragGroupCount) = ComputeGroupSpan(_dragView.Tag as RepositoryContext);
+    }
+
+    /// <summary>§F9: the contiguous <c>_tabViews</c> index range occupied by <paramref name="member"/>'s
+    /// group (the owner itself, or <paramref name="member"/> when it has no
+    /// <see cref="RepositoryContext.LinkOwner"/>, plus every tab whose <c>LinkOwner</c> is that
+    /// owner) — the App-layer mirror of <c>WorkspaceService.GroupSpan</c>, computed from
+    /// <c>_tabViews</c> since <c>_workspace.OpenRepositories</c> and <c>_tabViews</c> share the
+    /// same order (<see cref="RebuildTabs"/>).</summary>
+    private (int Start, int Count) ComputeGroupSpan(RepositoryContext? member)
+    {
+        if (member is null)
+            return (-1, 0);
+        var owner = member.LinkOwner ?? member;
+        var start = _tabViews.FindIndex(v => ReferenceEquals(v.Tag, owner));
+        if (start < 0)
+            return (-1, 0);
+        var count = 1;
+        while (start + count < _tabViews.Count
+               && _tabViews[start + count].Tag is RepositoryContext sibling
+               && ReferenceEquals(sibling.LinkOwner, owner))
+            count++;
+        return (start, count);
     }
 
     private void OnStripPointerMoved(object? sender, PointerEventArgs e)
@@ -693,7 +737,11 @@ public sealed class AppBandControl : UserControl, IDisposable
             RebuildTabs();              // returned to its own slot — restore separators / opacity
     }
 
-    /// <summary>Live shuffle: moves the dragged shell so its slot matches the cursor's X (panel space).</summary>
+    /// <summary>Live shuffle: moves the dragged shell (or, for a group, the dragged shell's
+    /// whole contiguous group — §F9) so its slot matches the cursor's X (panel space). This is
+    /// only the live preview; <c>WorkspaceService.Move</c> (called from
+    /// <see cref="OnStripPointerReleased"/>) is the authority on the final order, and a
+    /// subsequent <see cref="RebuildTabs"/> repaints it.</summary>
     private void ReorderTo(double panelX)
     {
         var view = _dragView;
@@ -703,22 +751,83 @@ public sealed class AppBandControl : UserControl, IDisposable
         if (current < 0)
             return;
 
-        _reorderWidths.Clear();
-        foreach (var t in _tabViews)
-            _reorderWidths.Add(t.Bounds.Width);
-        var target = AppBandDragReorder.TargetIndex(panelX, _reorderWidths, TabWidth);
-        if (target == current)
-            return;
+        var isLinkedChild = view.Tag is RepositoryContext ctx && ctx.LinkOwner is not null;
 
-        _tabViews.RemoveAt(current);
-        _tabPanel.Children.Remove(view);
-        _tabViews.Insert(target, view);
-        // _add (when present) is always appended after the shells, so the model index maps
-        // straight onto the visual index.
-        _tabPanel.Children.Insert(Math.Min(target, _tabPanel.Children.Count), view);
+        if (isLinkedChild)
+        {
+            _reorderWidths.Clear();
+            foreach (var t in _tabViews)
+                _reorderWidths.Add(t.Bounds.Width);
+            var raw = AppBandDragReorder.TargetIndex(panelX, _reorderWidths, TabWidth);
+            var target = AppBandDragReorder.ClampChildTarget(raw, _dragGroupStart, _dragGroupCount);
+            if (target == current || target == _dragGroupStart)
+                return; // already there, or the group has no legal sibling slot
 
-        for (var i = 0; i < _tabViews.Count; i++)
-            _tabViews[i].BorderThickness = new Thickness(i == 0 ? 0 : 1, 0, 0, 0);
+            _tabViews.RemoveAt(current);
+            _tabPanel.Children.Remove(view);
+            var insertAt = Math.Clamp(target, 0, _tabViews.Count);
+            _tabViews.Insert(insertAt, view);
+            _tabPanel.Children.Insert(Math.Min(insertAt, _tabPanel.Children.Count), view);
+        }
+        else
+        {
+            // Owner/standalone: the whole contiguous group moves as one block. Sum each group's
+            // member widths into one per-group width, run the same TargetIndex math against
+            // that per-group list, then map the returned group slot back onto a _tabViews index.
+            var (groupStart, groupCount) = ComputeGroupSpan(view.Tag as RepositoryContext);
+            if (groupStart < 0)
+                return;
+
+            _reorderGroupWidths.Clear();
+            _reorderGroupStarts.Clear();
+            var i = 0;
+            while (i < _tabViews.Count)
+            {
+                var start = i;
+                var owner = _tabViews[i].Tag as RepositoryContext;
+                var w = _tabViews[i].Bounds.Width;
+                w = w <= 0 ? TabWidth : w;
+                i++;
+                while (i < _tabViews.Count
+                       && _tabViews[i].Tag is RepositoryContext sibling
+                       && ReferenceEquals(sibling.LinkOwner, owner))
+                {
+                    var sw = _tabViews[i].Bounds.Width;
+                    w += sw <= 0 ? TabWidth : sw;
+                    i++;
+                }
+                _reorderGroupWidths.Add(w);
+                _reorderGroupStarts.Add(start);
+            }
+
+            var currentGroupIndex = _reorderGroupStarts.IndexOf(groupStart);
+            if (currentGroupIndex < 0)
+                return;
+
+            var targetGroupIndex = AppBandDragReorder.TargetIndex(panelX, _reorderGroupWidths, TabWidth);
+            if (targetGroupIndex == currentGroupIndex)
+                return;
+
+            var insertAt = 0;
+            for (var g = 0; g < targetGroupIndex; g++)
+            {
+                var memberCount = (g + 1 < _reorderGroupStarts.Count ? _reorderGroupStarts[g + 1] : _tabViews.Count) - _reorderGroupStarts[g];
+                insertAt += memberCount;
+            }
+
+            var block = _tabViews.GetRange(groupStart, groupCount);
+            _tabViews.RemoveRange(groupStart, groupCount);
+            foreach (var b in block)
+                _tabPanel.Children.Remove(b);
+            insertAt = Math.Clamp(insertAt, 0, _tabViews.Count);
+            _tabViews.InsertRange(insertAt, block);
+            var childInsertBase = Math.Min(insertAt, _tabPanel.Children.Count);
+            for (var k = 0; k < block.Count; k++)
+                _tabPanel.Children.Insert(childInsertBase + k, block[k]);
+        }
+
+        for (var idx = 0; idx < _tabViews.Count; idx++)
+            _tabViews[idx].BorderThickness = new Thickness(idx == 0 ? 0 : 1, 0, 0, 0);
     }
 
     private void StartEdgeTimer()
