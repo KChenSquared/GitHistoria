@@ -103,4 +103,73 @@ public class GraphColumnInteractionTests
         var r = GraphColumnInteraction.Reorder(Defaults(), GraphColumnKind.Refs, caret: 99);
         Assert.Equal("Graph,Message,Refs,Author,Date,Sha", Order(r));
     }
+
+    [Fact]
+    public void HeaderIconRectIsRightAligned()
+    {
+        var rect = GraphColumnInteraction.HeaderIconRectFor(Cols, GraphColumnKind.Refs, hScrollOffset: 0, headerHeight: 24, iconSize: 14, inset: 6);
+        Assert.NotNull(rect);
+        Assert.Equal(94, rect.Value.Right);
+        Assert.Equal(80, rect.Value.X);
+    }
+
+    [Fact]
+    public void HeaderIconRectFollowsHorizontalScroll()
+    {
+        var unshifted = GraphColumnInteraction.HeaderIconRectFor(Cols, GraphColumnKind.Refs, hScrollOffset: 0, headerHeight: 24, iconSize: 14, inset: 6);
+        var shifted = GraphColumnInteraction.HeaderIconRectFor(Cols, GraphColumnKind.Refs, hScrollOffset: 30, headerHeight: 24, iconSize: 14, inset: 6);
+
+        Assert.NotNull(unshifted);
+        Assert.NotNull(shifted);
+        Assert.Equal(unshifted.Value.X - 30, shifted.Value.X);
+    }
+
+    [Fact]
+    public void HeaderIconRectIsNullWhenColumnTooNarrow()
+    {
+        var narrowCols = new ResolvedColumn[] { new(GraphColumnKind.Refs, 0, 40) };
+        var rect = GraphColumnInteraction.HeaderIconRectFor(narrowCols, GraphColumnKind.Refs, hScrollOffset: 0, headerHeight: 24, iconSize: 14, inset: 6);
+        Assert.Null(rect);
+
+        var largeIconRect = GraphColumnInteraction.HeaderIconRectFor(Cols, GraphColumnKind.Refs, hScrollOffset: 0, headerHeight: 24, iconSize: 80, inset: 6);
+        Assert.Null(largeIconRect);
+    }
+
+    [Fact]
+    public void HeaderIconAtIgnoresNonSearchColumns()
+    {
+        var colsWithAuthor = new ResolvedColumn[]
+        {
+            new(GraphColumnKind.Refs, 0, 100),
+            new(GraphColumnKind.Author, 100, 200),
+            new(GraphColumnKind.Message, 300, 400),
+        };
+
+        var hit = GraphColumnInteraction.HeaderIconAt(colsWithAuthor, x: 290, y: 10, hScrollOffset: 0, headerHeight: 24, iconSize: 14, inset: 6);
+        Assert.Null(hit);
+    }
+
+    [Fact]
+    public void HeaderIconAtIgnoresPointsBelowHeader()
+    {
+        var hit = GraphColumnInteraction.HeaderIconAt(Cols, x: 685, y: 25, hScrollOffset: 0, headerHeight: 24, iconSize: 14, inset: 6);
+        Assert.Null(hit);
+    }
+
+    [Fact]
+    public void HeaderIconRectDoesNotOverlapResizeBoundary()
+    {
+        const double inset = 6;
+        const double iconSize = 14;
+        const double boundaryGrab = 4;
+
+        var rect = GraphColumnInteraction.HeaderIconRectFor(Cols, GraphColumnKind.Refs, hScrollOffset: 0, headerHeight: 24, iconSize: iconSize, inset: inset);
+        Assert.NotNull(rect);
+
+        double columnBoundary = Cols[0].Left + Cols[0].Width;
+        double grabZoneStart = columnBoundary - boundaryGrab;
+        double clearance = grabZoneStart - rect.Value.Right;
+
+        Assert.True(clearance >= 2);
+    }
 }

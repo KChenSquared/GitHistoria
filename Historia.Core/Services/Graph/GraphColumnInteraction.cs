@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Graph;
+namespace Historia.Services.Graph;
 
 /// <summary>
 /// Pure geometry for the commit-graph column header's pointer interactions (§V3-8.4): which
@@ -70,4 +70,71 @@ public static class GraphColumnInteraction
 
         return [.. visible, .. hidden];
     }
+
+    private const double MinLabelRoom = 24;
+
+    /// <summary>Returns the right-aligned bounding rect for the header icon of <paramref name="kind"/>,
+    /// or <c>null</c> when the column is not visible or too narrow to fit the icon without colliding with its label.</summary>
+    public static HeaderIconRect? HeaderIconRectFor(
+        IReadOnlyList<ResolvedColumn> resolved,
+        GraphColumnKind kind,
+        double hScrollOffset,
+        double headerHeight,
+        double iconSize,
+        double inset)
+    {
+        for (var i = 0; i < resolved.Count; i++)
+        {
+            var col = resolved[i];
+            if (col.Kind == kind)
+            {
+                if (col.Width < iconSize + inset + MinLabelRoom)
+                    return null;
+
+                var right = col.Left + col.Width - hScrollOffset;
+                var x = right - inset - iconSize;
+                var y = (headerHeight - iconSize) / 2;
+                return new HeaderIconRect(x, y, iconSize, iconSize);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Returns the column whose header icon contains (<paramref name="x"/>, <paramref name="y"/>),
+    /// restricted to <see cref="GraphColumnKind.Refs"/> and <see cref="GraphColumnKind.Message"/>, or <c>null</c>.</summary>
+    public static GraphColumnKind? HeaderIconAt(
+        IReadOnlyList<ResolvedColumn> resolved,
+        double x,
+        double y,
+        double hScrollOffset,
+        double headerHeight,
+        double iconSize,
+        double inset)
+    {
+        if (y < 0 || y > headerHeight)
+            return null;
+
+        Span<GraphColumnKind> searchColumns = [GraphColumnKind.Refs, GraphColumnKind.Message];
+        foreach (var kind in searchColumns)
+        {
+            var rect = HeaderIconRectFor(resolved, kind, hScrollOffset, headerHeight, iconSize, inset);
+            if (rect != null && rect.Value.Contains(x, y))
+                return kind;
+        }
+
+        return null;
+    }
 }
+
+/// <summary>
+/// A bounding rectangle for a column header icon in viewport pixels.
+/// </summary>
+public readonly record struct HeaderIconRect(double X, double Y, double Width, double Height)
+{
+    public double Right => X + Width;
+    public double Bottom => Y + Height;
+
+    public bool Contains(double px, double py) =>
+        px >= X && px <= X + Width && py >= Y && py <= Y + Height;
+}
+
