@@ -154,7 +154,10 @@ public partial class MainWindow : Window
     // (Refs 140 + Graph 150 + Message 150 + 40), so a sidebar-divider drag can't squeeze
     // Message past the right edge. Both dividers clamp against it (§4.2.9).
     private const double CentreMin = 480;
-    private const double BaseRightMin = 250;
+    // The detail pane's declared floor, set marginally above the width the right shortcut bar's
+    // four labelled buttons render at, keeping the pane minimum a deliberate design constraint
+    // rather than a consequence of label metrics.
+    private const double BaseRightMin = 360;
 
     private double _leftMin = BaseLeftMin;
     private double _rightMin = BaseRightMin;

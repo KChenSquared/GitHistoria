@@ -340,6 +340,37 @@ public class ShortcutBarLayoutTests
         window.Close();
     }
 
+    [AvaloniaFact]
+    public async Task Right_pane_minimum_is_the_declared_floor()
+    {
+        await using var sp = CreateServices();
+        var window = new MainWindow(sp);
+        window.Width = 1280;
+        window.Height = 760;
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(360.0, window.RightMin);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task Window_min_width_matches_the_two_pane_floors()
+    {
+        await using var sp = CreateServices();
+        var window = new MainWindow(sp);
+        window.Width = 1280;
+        window.Height = 760;
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(window.LeftMin + window.RightMin + 8, window.MinWidth);
+        Assert.Equal(618.0, window.MinWidth);
+
+        window.Close();
+    }
+
     private sealed class FakeThemeProbe : ISystemThemeProbe
     {
         public bool IsLightTheme => false;
