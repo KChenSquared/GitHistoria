@@ -8,9 +8,8 @@ namespace Historia.Tests;
 public class IconPathTests
 {
     // Glyphs reserved until remaining views or affordances consume them.
-    // Reserved for M2.1 (RefNavigatorView) and M2.2 (CommitGraphControl).
     private static readonly HashSet<string> ReservedForLaterMilestones =
-        new(StringComparer.Ordinal) { "filter_alt", "search" };
+        new(StringComparer.Ordinal);
 
     [Fact]
     public void EveryReferencedIconResolves()
