@@ -26,6 +26,7 @@ public sealed class AppBandControl : UserControl, IDisposable
     private ISettingsService _settings = default!;
     private Historia.Services.UI.IExternalLauncher _launcher = default!;
     private Historia.Services.UI.IScrollDirectionProbe _scrollProbe = default!;
+    private ICloneService _cloneService = default!;
 
     private EventHandler<OpenRepositoriesChangedEventArgs>? _onOpenChanged;
     private EventHandler<FocusedRepositoryChangedEventArgs>? _onFocusChanged;
@@ -33,6 +34,10 @@ public sealed class AppBandControl : UserControl, IDisposable
     private EventHandler<SettingsChangedEventArgs>? _onSettingsChanged;
     private EventHandler? _onAutoFetchStates;
     private Action? _onAutoFetchDebug;
+    private EventHandler? _onCloneChanged;
+    private bool _cloneTabWasPresent;
+    private TextBlock? _pendingCloneStatusText;
+    private Button? _pendingCloneCloseButton;
     private bool _disposed;
 
     // §21 dev visuals: per-open-repo left-edge colour bar + its last-applied token (skip re-binds).
@@ -51,6 +56,7 @@ public sealed class AppBandControl : UserControl, IDisposable
     private readonly ContextMenu _addMenu;
 
     private readonly List<Border> _tabViews = [];
+    internal IReadOnlyList<Border> TabViewsForTesting => _tabViews;
     private const double EdgeScrollZone = 28;
     private const double EdgeScrollStep = 14;
     private Border? _dragView;
@@ -264,6 +270,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         _settings = services.GetRequiredService<ISettingsService>();
         _launcher = services.GetRequiredService<Historia.Services.UI.IExternalLauncher>();
         _scrollProbe = services.GetRequiredService<Historia.Services.UI.IScrollDirectionProbe>();
+        _cloneService = services.GetRequiredService<ICloneService>();
 
         Historia.Views.ViewKit.BindThemedMark(_brandMark, services.GetRequiredService<Historia.Services.Theming.IThemeService>());
 
@@ -278,6 +285,7 @@ public sealed class AppBandControl : UserControl, IDisposable
 
         _onAutoFetchStates = (_, _) => Dispatcher.UIThread.Post(RecolorAutoFetchBars);
         _onAutoFetchDebug = () => Dispatcher.UIThread.Post(ApplyAutoFetchBarVisibility);
+        _onCloneChanged = (_, _) => Dispatcher.UIThread.Post(OnCloneStatusChanged);
 
         _workspace.OpenRepositoriesChanged += _onOpenChanged;
         _workspace.FocusedRepositoryChanged += _onFocusChanged;
@@ -285,9 +293,11 @@ public sealed class AppBandControl : UserControl, IDisposable
         _settings.Changed += _onSettingsChanged;
         _autoFetch.TabStatesChanged += _onAutoFetchStates;
         AutoFetchDebug.Changed += _onAutoFetchDebug;
+        _cloneService.Changed += _onCloneChanged;
 
         BuildAppMenu();
         ApplyTabStripMode();
+        _cloneTabWasPresent = _cloneService.Current is not null;
         RebuildTabs();
     }
 
@@ -311,6 +321,31 @@ public sealed class AppBandControl : UserControl, IDisposable
             _autoFetch.TabStatesChanged -= _onAutoFetchStates;
         if (_onAutoFetchDebug is not null)
             AutoFetchDebug.Changed -= _onAutoFetchDebug;
+        if (_cloneService is not null && _onCloneChanged is not null)
+            _cloneService.Changed -= _onCloneChanged;
+    }
+
+    /// <summary>M4.2: <see cref="ICloneService.Changed"/> fires on every progress tick — a full
+    /// <see cref="RebuildTabs"/> per tick would rebuild every real tab dozens of times a second.
+    /// Only rebuild the strip when a clone starts or ends (<c>Current</c> transitioning to or
+    /// from <see langword="null"/>); otherwise update the pending tab's status text and its
+    /// close button's enabled state in place.</summary>
+    private void OnCloneStatusChanged()
+    {
+        var status = _cloneService.Current;
+        var isRunningNow = status is not null;
+        if (isRunningNow != _cloneTabWasPresent)
+        {
+            _cloneTabWasPresent = isRunningNow;
+            RebuildTabs();
+            return;
+        }
+        if (status is null)
+            return;
+        if (_pendingCloneStatusText is not null)
+            _pendingCloneStatusText.Text = status.Describe();
+        if (_pendingCloneCloseButton is not null)
+            _pendingCloneCloseButton.IsEnabled = !status.CancelRequested;
     }
 
     // ── §21 dev visuals: per-tab auto-fetch colour bar ──
@@ -424,6 +459,8 @@ public sealed class AppBandControl : UserControl, IDisposable
         _tabPanel.Children.Clear();
         _tabViews.Clear();
         _autoFetchBars.Clear();
+        _pendingCloneStatusText = null;
+        _pendingCloneCloseButton = null;
         var open = _workspace.OpenRepositories;
         Control? focusedView = null;
         for (var i = 0; i < open.Count; i++)
@@ -434,6 +471,25 @@ public sealed class AppBandControl : UserControl, IDisposable
             _tabPanel.Children.Add(view);
             if (isFocused)
                 focusedView = view;
+        }
+
+        // M4.2: a pending tab for a clone in progress — not backed by a RepositoryContext, so it
+        // gets its own builder. Added to _tabViews (not just _tabPanel) so UpdateOverflow's width
+        // sum, the overflow arrows and the "+" button placement all still account for it; its
+        // untagged Border is excluded from drag-reorder automatically (OnTabPressed / ReorderTo
+        // key off Tag is RepositoryContext).
+        //
+        // workspace.CloneAsync adds the real repo (raising OpenRepositoriesChanged -> this same
+        // RebuildTabs) before CloneService's own finally block nulls Current — so for one
+        // in-between rebuild both the pending status and the real, already-open repo exist at
+        // once. Suppress the pending tab once its target directory is already open, so that
+        // window never shows a flickering duplicate.
+        if (_cloneService.Current is { } cloneStatus
+            && !open.Any(ctx => PathsEqual(ctx.RepositoryPath, cloneStatus.TargetDirectory)))
+        {
+            var pending = MakePendingCloneTab(cloneStatus, first: _tabViews.Count == 0);
+            _tabViews.Add(pending);
+            _tabPanel.Children.Add(pending);
         }
         UpdateOverflow();
 
@@ -446,6 +502,10 @@ public sealed class AppBandControl : UserControl, IDisposable
             focusedView?.BringIntoView();
         }, DispatcherPriority.Loaded);
     }
+
+    private static bool PathsEqual(string a, string b) =>
+        string.Equals(a.TrimEnd('/', '\\'), b.TrimEnd('/', '\\'),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     private Border MakeTab(RepositoryContext ctx, bool active, bool first)
     {
@@ -625,6 +685,75 @@ public sealed class AppBandControl : UserControl, IDisposable
 
         shell.Child = layout;
         shell.AddHandler(PointerPressedEvent, OnTabPressed, RoutingStrategies.Tunnel);
+        return shell;
+    }
+
+    /// <summary>M4.2: the tab shown for the duration of a clone (R13) — not backed by a
+    /// <see cref="RepositoryContext"/>, so it is not focusable, carries no terminal glyph or
+    /// context menu, and its <c>Tag</c> is left unset so the drag-reorder path (which keys off
+    /// <c>Tag is RepositoryContext</c>) ignores it entirely. Its close button cancels the clone.</summary>
+    private Border MakePendingCloneTab(CloneStatus status, bool first)
+    {
+        var shell = new Border
+        {
+            BorderThickness = new Thickness(first ? 0 : 1, 0, 0, 0),
+            Height = RowHeight,
+        };
+        shell.Dyn(Border.BorderBrushProperty, "ColorBorder");
+
+        var body = new Border
+        {
+            Padding = new Thickness(12, 0, 5, 0),
+            BorderThickness = new Thickness(0, 2, 0, 0),
+            BorderBrush = Brushes.Transparent,
+        };
+        body.Dyn(Border.BackgroundProperty, "ColorChrome");
+
+        var leaf = System.IO.Path.GetFileName(status.TargetDirectory.TrimEnd('/', '\\'));
+        if (string.IsNullOrEmpty(leaf))
+            leaf = status.TargetDirectory;
+
+        var labels = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 1 };
+        var name = new TextBlock { Text = leaf, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = TabNameMaxChars * ApproxCharPx };
+        ToolTip.SetTip(name, status.TargetDirectory);
+        ToolTip.SetShowDelay(name, 75);
+        name.Dyn(TextBlock.ForegroundProperty, "ColorTextMuted");
+        var statusText = new TextBlock { Text = status.Describe(), FontSize = 10, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = TabNameMaxChars * ApproxCharPx };
+        statusText.Dyn(TextBlock.ForegroundProperty, "ColorTextMuted");
+        labels.Children.Add(name);
+        labels.Children.Add(statusText);
+        _pendingCloneStatusText = statusText;
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto") };
+        Grid.SetColumn(labels, 0);
+        grid.Children.Add(labels);
+
+        var closeGlyph = Historia.Views.ViewKit.IconGlyphPath("close", 10, "ColorTextMuted");
+        closeGlyph.HorizontalAlignment = HorizontalAlignment.Center;
+        closeGlyph.VerticalAlignment = VerticalAlignment.Center;
+        var close = new Button
+        {
+            Width = 18,
+            Height = 18,
+            Padding = new Thickness(0),
+            BorderThickness = new Thickness(0),
+            Background = Brushes.Transparent,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Content = closeGlyph,
+            IsEnabled = !status.CancelRequested,
+            Margin = new Thickness(5, 0, 0, 0),
+        };
+        ToolTip.SetTip(close, "Cancel clone");
+        close.Click += (_, e) => { e.Handled = true; _cloneService.Cancel(); };
+        Grid.SetColumn(close, 1);
+        grid.Children.Add(close);
+        _pendingCloneCloseButton = close;
+
+        body.Child = grid;
+        shell.Child = body;
         return shell;
     }
 
