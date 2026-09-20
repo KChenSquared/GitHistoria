@@ -14,8 +14,6 @@ public interface IConflictService
     /// <summary>Loads base/ours/theirs from index stages 1/2/3 for one path. A null stage is meaningful.</summary>
     Task<ConflictFile> LoadConflictContentAsync(RepositoryContext context, string filePath, CancellationToken ct = default);
 
-    /// <summary>Maps conflict-marker regions in working-tree content for Result-pane navigation only (§8.4.2).</summary>
-    IReadOnlyList<ConflictRegion> ParseMarkerRegions(string workingTreeContent);
 
     /// <summary>Writes resolved content and stages it, collapsing stages 1/2/3 into stage 0.</summary>
     Task MarkResolvedAsync(RepositoryContext context, string filePath, string resolvedContent, CancellationToken ct = default);

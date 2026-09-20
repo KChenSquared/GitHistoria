@@ -35,26 +35,6 @@ public class ConflictServiceTests
     }
 
     [Fact]
-    public void ParseMarkerRegions_finds_the_conflict_region()
-    {
-        var svc = new ConflictService(new NoGitCli(), null!);
-        var wt = "a\n<<<<<<< HEAD\nours line\n=======\ntheirs line\n>>>>>>> feature\nb\n";
-        var region = Assert.Single(svc.ParseMarkerRegions(wt));
-        Assert.Equal("ours line", region.OursText);
-        Assert.Equal("theirs line", region.TheirsText);
-        Assert.Null(region.BaseText);
-    }
-
-    [Fact]
-    public void ParseMarkerRegions_reads_diff3_base_section()
-    {
-        var svc = new ConflictService(new NoGitCli(), null!);
-        var wt = "<<<<<<< HEAD\nours\n||||||| base\nancestor\n=======\ntheirs\n>>>>>>> x\n";
-        var region = Assert.Single(svc.ParseMarkerRegions(wt));
-        Assert.Equal("ancestor", region.BaseText);
-    }
-
-    [Fact]
     public async Task Resolve_with_ours_then_continue_completes_the_merge()
     {
         await using var host = new MiniHost();

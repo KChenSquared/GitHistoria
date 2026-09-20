@@ -9,56 +9,6 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
     public Task<ConflictFile> LoadConflictContentAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
         => context.WithRepositoryAsync(repo => LoadContent(repo, filePath), ct);
 
-    public IReadOnlyList<ConflictRegion> ParseMarkerRegions(string workingTreeContent)
-    {
-        var regions = new List<ConflictRegion>();
-        if (string.IsNullOrEmpty(workingTreeContent))
-            return regions;
-
-        var lines = workingTreeContent.Replace("\r\n", "\n").Split('\n');
-        var i = 0;
-        while (i < lines.Length)
-        {
-            if (!lines[i].StartsWith("<<<<<<<", StringComparison.Ordinal))
-            {
-                i++;
-                continue;
-            }
-
-            var start = i;
-            var ours = new List<string>();
-            var theirs = new List<string>();
-            List<string>? baseText = null;
-            var section = 0; // 0 = ours, 1 = base (diff3), 2 = theirs
-            i++;
-
-            while (i < lines.Length && !lines[i].StartsWith(">>>>>>>", StringComparison.Ordinal))
-            {
-                if (lines[i].StartsWith("|||||||", StringComparison.Ordinal)) { section = 1; baseText = []; }
-                else if (lines[i].StartsWith("=======", StringComparison.Ordinal)) section = 2;
-                else switch (section)
-                {
-                    case 0: ours.Add(lines[i]); break;
-                    case 1: baseText!.Add(lines[i]); break;
-                    default: theirs.Add(lines[i]); break;
-                }
-
-                i++;
-            }
-
-            regions.Add(new ConflictRegion
-            {
-                StartLine = start + 1,
-                EndLine = i + 1,
-                BaseText = baseText is null ? null : string.Join('\n', baseText),
-                OursText = string.Join('\n', ours),
-                TheirsText = string.Join('\n', theirs),
-            });
-            i++;
-        }
-
-        return regions;
-    }
 
     public async Task MarkResolvedAsync(RepositoryContext context, string filePath, string resolvedContent, CancellationToken ct = default)
     {

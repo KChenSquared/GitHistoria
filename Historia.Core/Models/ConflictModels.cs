@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>
 /// A single unmerged path (§8.4.2). The three versions come from index stages 1/2/3 — never
@@ -18,20 +18,6 @@ public sealed record ConflictFile
     public required string? TheirsContent { get; init; }   // Stage 3
 
     public string MergedContent { get; set; } = "";        // Editable result
-    public IReadOnlyList<ConflictRegion> Regions { get; init; } = [];
-    public bool IsResolved { get; set; }
-}
-
-/// <summary>A conflict-marker region in the <b>working-tree</b> file, used only for Result-pane navigation (§8.4.2).</summary>
-public sealed record ConflictRegion
-{
-    public required int StartLine { get; init; }
-    public required int EndLine { get; init; }
-    public required string? BaseText { get; init; }        // null when diff3 markers are absent
-    public required string OursText { get; init; }
-    public required string TheirsText { get; init; }
-    public ConflictResolution Resolution { get; set; } = ConflictResolution.Unresolved;
-    public string? ManualText { get; set; }
 }
 
 public enum ConflictStatus
@@ -44,7 +30,5 @@ public enum ConflictStatus
     AddedByThem,
     BothDeletedRenamed, // rename/rename and rename/delete
 }
-
-public enum ConflictResolution { Unresolved, AcceptOurs, AcceptTheirs, AcceptBoth, Manual }
 
 public enum ConflictSide { Ours, Theirs }
