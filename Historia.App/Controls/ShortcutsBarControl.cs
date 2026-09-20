@@ -15,6 +15,8 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
 {
     public const double BarHeight = CommitGraphControl.HeaderHeight;
 
+    private const double GroupGap = 12;
+
     private readonly IServiceProvider _sp;
     private readonly IWorkspaceService? _workspace;
     private readonly IRepoActionBus? _actions;
@@ -24,7 +26,8 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
     private readonly IStashService? _stash;
     private readonly IDialogService? _dialogs;
     private readonly ShortcutsBarSide _side;
-    private readonly StackPanel _panel;
+    private readonly Control _container;
+    private readonly StackPanel[] _groups;
     private readonly Border _border;
 
     private readonly Button? _branchBtn;
@@ -44,14 +47,22 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
     {
         get
         {
-            if (!_panel.IsMeasureValid && VisualRoot == null)
-                _panel.Measure(new Size(double.PositiveInfinity, BarHeight));
+            double sum = 0;
+            foreach (var group in _groups)
+            {
+                if (!group.IsMeasureValid && VisualRoot == null)
+                    group.Measure(new Size(double.PositiveInfinity, BarHeight));
 
-            var width = _panel.DesiredSize.Width;
-            if (width <= 0 && _lastReportedNaturalWidth > 0)
+                sum += group.DesiredSize.Width;
+            }
+
+            if (sum <= 0 && _lastReportedNaturalWidth > 0)
                 return _lastReportedNaturalWidth;
 
-            return width + _border.Padding.Left + _border.Padding.Right;
+            if (_groups.Length > 1)
+                sum += GroupGap;
+
+            return sum + _border.Padding.Left + _border.Padding.Right;
         }
     }
 
@@ -69,19 +80,11 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
         _stash = sp?.GetService<IStashService>();
         _dialogs = sp?.GetService<IDialogService>();
 
-        _panel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 6,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-
         if (side == ShortcutsBarSide.Left)
         {
             _branchBtn = IconTextButton("graph_8", "Branch", "Create a branch at the selected commit",
                 () => _ = CreateBranchAsync());
-            _settingsBtn = IconTextButton("settings", "Settings", "Repository settings", () =>
+            _settingsBtn = IconTextButton("settings", null, "Repository settings", () =>
             {
                 if (_workspace?.Focused is { } ctx)
                 {
@@ -89,16 +92,43 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
                     _nav?.RequestNavigate("repo-settings");
                 }
             });
-            _terminalBtn = IconTextButton("terminal", "Terminal", "Open terminal in this repository", () =>
+            _terminalBtn = IconTextButton("terminal", null, "Open terminal in this repository", () =>
             {
                 if (_workspace?.Focused is { } ctx)
                     _ = _sp?.GetService<ITerminalSessionService>()
                            ?.OpenOrFocusAsync(AppBandControl.RepoOrigin(ctx));
             });
 
-            _panel.Children.Add(_branchBtn);
-            _panel.Children.Add(_settingsBtn);
-            _panel.Children.Add(_terminalBtn);
+            var leadGroup = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            leadGroup.Children.Add(_branchBtn);
+
+            var trailGroup = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            trailGroup.Children.Add(_settingsBtn);
+            trailGroup.Children.Add(_terminalBtn);
+
+            var grid = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+            };
+            Grid.SetColumn(leadGroup, 0);
+            Grid.SetColumn(trailGroup, 2);
+            grid.Children.Add(leadGroup);
+            grid.Children.Add(trailGroup);
+
+            _container = grid;
+            _groups = [leadGroup, trailGroup];
         }
         else
         {
@@ -111,10 +141,20 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
             _stashBtn = IconTextButton("save", "Stash", "Stash all changes",
                 () => _ = StashAllAsync());
 
-            _panel.Children.Add(_fetchBtn);
-            _panel.Children.Add(_pullBtn);
-            _panel.Children.Add(_pushBtn);
-            _panel.Children.Add(_stashBtn);
+            var panel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            panel.Children.Add(_fetchBtn);
+            panel.Children.Add(_pullBtn);
+            panel.Children.Add(_pushBtn);
+            panel.Children.Add(_stashBtn);
+
+            _container = panel;
+            _groups = [panel];
         }
 
         _border = new Border
@@ -122,13 +162,13 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
             Height = BarHeight,
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(6, 0),
-            Child = _panel,
+            Child = _container,
         }.Dyn(Border.BackgroundProperty, "ColorChrome").Dyn(Border.BorderBrushProperty, "ColorBorder");
 
         Content = _border;
         Height = BarHeight;
 
-        _panel.LayoutUpdated += OnPanelLayoutUpdated;
+        _container.LayoutUpdated += OnPanelLayoutUpdated;
 
         if (_workspace is not null)
             _workspace.FocusedRepositoryChanged += OnFocusChanged;
@@ -174,11 +214,12 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
         }
     }
 
-    private static Button IconTextButton(string icon, string label, string tip, Action onClick)
+    private static Button IconTextButton(string icon, string? label, string tip, Action onClick)
     {
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
         content.Children.Add(IconGlyphPath(icon, 18, "ColorTextMuted"));
-        content.Children.Add(new TextBlock { Text = label, FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
+        if (!string.IsNullOrEmpty(label))
+            content.Children.Add(new TextBlock { Text = label, FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
         var b = new Button
         {
             Content = content,
@@ -239,7 +280,7 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
     public void Dispose()
     {
         _disposed = true;
-        _panel.LayoutUpdated -= OnPanelLayoutUpdated;
+        _container.LayoutUpdated -= OnPanelLayoutUpdated;
         if (_workspace is not null)
             _workspace.FocusedRepositoryChanged -= OnFocusChanged;
     }

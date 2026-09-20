@@ -52,17 +52,45 @@ public class ShortcutBarLayoutTests
     }
 
     [AvaloniaFact]
-    public async Task Left_bar_has_branch_settings_terminal_in_order()
+    public async Task Left_bar_has_branch_then_settings_then_terminal()
     {
         await using var sp = CreateServices();
         var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
-        var panel = (StackPanel)((Border)bar.Content!).Child!;
-        var labels = panel.Children
-            .OfType<Button>()
-            .Select(b => ((StackPanel)b.Content!).Children.OfType<TextBlock>().First().Text)
-            .ToList();
+        var grid = (Grid)((Border)bar.Content!).Child!;
+        var leadGroup = (StackPanel)grid.Children[0];
+        var trailGroup = (StackPanel)grid.Children[1];
 
-        Assert.Equal(["Branch", "Settings", "Terminal"], labels);
+        var buttons = leadGroup.Children.OfType<Button>().Concat(trailGroup.Children.OfType<Button>()).ToList();
+        var tips = buttons.Select(b => ToolTip.GetTip(b)?.ToString()).ToList();
+
+        Assert.Equal(
+            ["Create a branch at the selected commit", "Repository settings", "Open terminal in this repository"],
+            tips);
+    }
+
+    [AvaloniaFact]
+    public async Task Left_bar_utilities_are_icon_only()
+    {
+        await using var sp = CreateServices();
+        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
+        var grid = (Grid)((Border)bar.Content!).Child!;
+        var leadGroup = (StackPanel)grid.Children[0];
+        var trailGroup = (StackPanel)grid.Children[1];
+
+        var branchBtn = leadGroup.Children.OfType<Button>().Single();
+        var branchStack = (StackPanel)branchBtn.Content!;
+        Assert.NotEmpty(branchStack.Children.OfType<Avalonia.Controls.Shapes.Path>());
+        Assert.Equal("Branch", branchStack.Children.OfType<TextBlock>().Single().Text);
+
+        var utilityBtns = trailGroup.Children.OfType<Button>().ToList();
+        Assert.Equal(2, utilityBtns.Count);
+        foreach (var btn in utilityBtns)
+        {
+            var stack = (StackPanel)btn.Content!;
+            Assert.NotEmpty(stack.Children.OfType<Avalonia.Controls.Shapes.Path>());
+            Assert.Empty(stack.Children.OfType<TextBlock>());
+            Assert.False(string.IsNullOrEmpty(ToolTip.GetTip(btn)?.ToString()));
+        }
     }
 
     [AvaloniaFact]
@@ -80,12 +108,59 @@ public class ShortcutBarLayoutTests
     }
 
     [AvaloniaFact]
+    public async Task Left_bar_puts_branch_left_and_utilities_right()
+    {
+        await using var sp = CreateServices();
+        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
+        var grid = (Grid)((Border)bar.Content!).Child!;
+        var leadGroup = (StackPanel)grid.Children[0];
+        var trailGroup = (StackPanel)grid.Children[1];
+
+        Assert.Equal(0, Grid.GetColumn(leadGroup));
+        Assert.Equal(Avalonia.Layout.HorizontalAlignment.Left, leadGroup.HorizontalAlignment);
+        Assert.Single(leadGroup.Children.OfType<Button>());
+
+        Assert.Equal(2, Grid.GetColumn(trailGroup));
+        Assert.Equal(Avalonia.Layout.HorizontalAlignment.Right, trailGroup.HorizontalAlignment);
+        Assert.Equal(2, trailGroup.Children.OfType<Button>().Count());
+    }
+
+    [AvaloniaFact]
+    public async Task Left_bar_natural_width_stays_under_base_left_min()
+    {
+        await using var sp = CreateServices();
+        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
+        var window = new Window { Width = 800, Height = 600, Content = bar };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(bar.NaturalWidth < 250, $"Left natural width was {bar.NaturalWidth}, expected < 250");
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task Right_bar_natural_width_is_unchanged()
+    {
+        await using var sp = CreateServices();
+        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Right);
+        var window = new Window { Width = 800, Height = 600, Content = bar };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.InRange(bar.NaturalWidth, 356.0, 360.0);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public async Task Shortcut_bar_buttons_match_appband_typography_and_icon_size()
     {
         await using var sp = CreateServices();
         var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
-        var panel = (StackPanel)((Border)bar.Content!).Child!;
-        var btn = panel.Children.OfType<Button>().First();
+        var grid = (Grid)((Border)bar.Content!).Child!;
+        var leadGroup = (StackPanel)grid.Children[0];
+        var btn = leadGroup.Children.OfType<Button>().First();
         var stack = (StackPanel)btn.Content!;
         var path = stack.Children.OfType<Avalonia.Controls.Shapes.Path>().First();
         var tb = stack.Children.OfType<TextBlock>().First();
