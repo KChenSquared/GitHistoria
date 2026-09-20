@@ -19,13 +19,11 @@ public sealed record AppSettings
     /// repo adopts when it has no per-repo selection and the default is non-global. Null = the
     /// reserved global profile is the default (the automatic case).</summary>
     public Guid? DefaultProfileId { get; init; }
-    public bool ConfirmGlobalConfigChanges { get; init; } = true;
 
     // ── Network &amp; Privacy (§13) ──
     /// <summary>Gates background polling / hosting-API calls; effective only while a
     /// token-bearing profile is the active per-repo selection.</summary>
     public bool EnableBackgroundPolling { get; init; } = true;
-    public TimeSpan PollingInterval { get; init; } = TimeSpan.FromMinutes(5);
 
     /// <summary>§12.1: drives <c>IAutoFetchService</c>'s <c>[InitialFetch]</c> + <c>[AutoFetch]</c>
     /// loop, which periodically <c>git fetch</c>es every open repository. Unlike
@@ -48,7 +46,6 @@ public sealed record AppSettings
     public string? CustomThemeId { get; init; }
 
     public DiffViewMode DefaultDiffView { get; init; } = DiffViewMode.SideBySide;
-    public bool ShowAvatars { get; init; } = true;
 
     /// <summary>
     /// Off (default): every displayed commit date is the commit (committer) date — the date the
@@ -102,7 +99,6 @@ public sealed record AppSettings
 
     // ── Diff &amp; editor ──
     public int DiffContextLines { get; init; } = 3;
-    public WhitespaceMode DiffWhitespace { get; init; } = WhitespaceMode.Show;
     public int TabWidth { get; init; } = 4;
 
     // ── Git &amp; repository ──
@@ -201,9 +197,7 @@ public sealed record AppSettings
     public bool DiffWordWrap { get; init; }
 
     // ── External tools ──
-    public string? ExternalDiffTool { get; init; }
     public string? ExternalMergeTool { get; init; }
-    public string? ExternalTerminal { get; init; }
 
     // ── Terminal (V5 §13) ──
     /// <summary>Explicit shell override. Null → resolve per platform (V5 §4.1). A set-but-missing
