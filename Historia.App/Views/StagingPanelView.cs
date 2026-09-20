@@ -200,7 +200,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         var arrowStrip = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 4,
+            Spacing = 0, // R3: was 4, -4 so the two buttons sit flush against each other
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -307,11 +307,16 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
         // Rule between the header row and the list (or its "No changes." / "Nothing staged."
         // placeholder), so the header reads as a distinct band.
-        var divider = new Border { Height = 1, Margin = new Thickness(0, 0, 0, 6) }
+        const double dividerBottomGap = 6;
+        var divider = new Border { Height = 1, Margin = new Thickness(0, 0, 0, dividerBottomGap) }
             .Dyn(Border.BackgroundProperty, "ColorBorder");
         DockPanel.SetDock(divider, Dock.Top);
 
-        var inner = new DockPanel { LastChildFill = true, Margin = new Thickness(8) };
+        // R2: the gap above the header text must match the gap below the divider — the top
+        // margin was 8 (the same as the other three sides) while the divider's bottom margin is
+        // 6, so the header sat visibly lower than the rule below it than the rule sits above the
+        // rows. Only the top margin changes; left/right/bottom stay at 8.
+        var inner = new DockPanel { LastChildFill = true, Margin = new Thickness(8, dividerBottomGap, 8, 8) };
         DockPanel.SetDock(head, Dock.Top);
         inner.Children.Add(head);
         inner.Children.Add(divider);
@@ -327,7 +332,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private Button ArrowButton(string icon, string tintKey, string tip, Action onClick)
     {
-        var glyph = IconGlyphPath(icon, 15, tintKey);
+        var glyph = IconGlyphPath(icon, 21, tintKey); // R3: was 15, +6
         var b = new Button
         {
             Content = glyph,
@@ -557,9 +562,19 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private async Task MoveCheckedAsync(bool stage)
     {
-        var paths = (stage ? _checkedChanges : _checkedStaged).ToList();
-        if (paths.Count == 0) return;
+        var checkedPaths = (stage ? _checkedChanges : _checkedStaged).ToList();
+        if (checkedPaths.Count == 0) return;
         (stage ? _checkedChanges : _checkedStaged).Clear();
+
+        // R8: a checked rename must move both halves together — staging (or unstaging) only the
+        // new path leaves the old path's deletion behind as a separate, unstaged entry instead of
+        // one Renamed entry. Expand at send time only: the checked sets themselves stay keyed on
+        // visible-row paths (see RefreshSelectionState's tri-state maths).
+        var pool = stage
+            ? (IReadOnlyList<FileStatusEntry>)[.. _status.Unstaged, .. _status.Untracked]
+            : _status.Staged;
+        var paths = StagePathExpansion.ForStaging(pool, checkedPaths);
+
         await Run(() => stage
             ? _ctx.Gateway.StageAsync(paths, _ctx.Lifetime)
             : _ctx.Gateway.UnstageAsync(paths, _ctx.Lifetime));
@@ -603,8 +618,10 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private async Task BulkAsync(IReadOnlyList<FileStatusEntry> files, bool staged)
     {
-        var paths = files.Select(f => f.Path).ToList();
-        if (paths.Count == 0) return;
+        if (files.Count == 0) return;
+        // R8: same expansion as MoveCheckedAsync — a bulk stage/unstage must move both halves of
+        // any rename in the list, not just the new path.
+        var paths = StagePathExpansion.ForStaging(files, files.Select(f => f.Path));
         await Run(() => staged ? _ctx.Gateway.UnstageAsync(paths, _ctx.Lifetime) : _ctx.Gateway.StageAsync(paths, _ctx.Lifetime));
     }
 
