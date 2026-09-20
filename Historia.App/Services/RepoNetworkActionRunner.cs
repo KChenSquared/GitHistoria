@@ -60,7 +60,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         _graph = graph;
         _settings = settings;
 
-        actionBus.NetworkActionRequested += (_, action) => _ = RunAsync(action);
+        actionBus.NetworkActionRequested += (_, request) => _ = RunAsync(request);
     }
 
     /// <summary>§14.5: a tab whose selection went stale (profile deleted / default changed)
@@ -104,17 +104,44 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                 break;
             case RepoNetworkAction.Pull when branch is not null:
                 await repo.Gateway.PullAsync(remote, branch, GitPullOptions.From(_settings.Current), progress, ct);
+                await FollowUpFetchAsync(repo, "Pulled", remote, branch, progress, ct);
                 RefreshCommitGraphAfterFetch(repo, op);
                 _notifications.Publish(NotificationSeverity.Success, $"Pulled {remote}/{branch}.");
                 break;
             case RepoNetworkAction.Push when branch is not null:
                 var spec = new PushSpec { RefSpec = branch, SetUpstream = repo.State.CurrentBranch?.UpstreamName is null };
                 await repo.Gateway.PushAsync(remote, spec, progress, ct);
+                await FollowUpFetchAsync(repo, "Pushed", remote, branch, progress, ct);
+                RefreshCommitGraphAfterFetch(repo, op);
                 _notifications.Publish(NotificationSeverity.Success, $"Pushed to {remote}.");
                 break;
             default:
                 _notifications.Publish(NotificationSeverity.Warning, "No current branch to operate on.");
                 break;
+        }
+    }
+
+    /// <summary>R5: a pull or push leaves the remote-tracking refs current without a second user
+    /// action — the follow-up fetch rides on the pull/push the user just triggered (Rule 0.2: no
+    /// network call the user did not initiate), not a new timer or poll. A push that reached the
+    /// remote must never be reported as failed because a fetch afterwards did not; the follow-up
+    /// failing is a warning, not an error. A cancelled follow-up is a cancelled operation and
+    /// propagates so the outer handler reports it the same way as a cancelled pull/push.</summary>
+    private async Task FollowUpFetchAsync(RepositoryContext repo, string verb, string remote, string branch,
+        IProgress<GitProgress> progress, CancellationToken ct)
+    {
+        try
+        {
+            await repo.Gateway.FetchAsync(remote, GitFetchOptions.From(_settings.Current), progress, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Warning,
+                $"{verb} {remote}/{branch}, but the follow-up fetch failed.", ex.NotificationDetails());
         }
     }
 
@@ -207,19 +234,28 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
 
     public void CancelCurrent() => _cts?.Cancel();
 
-    private async Task RunAsync(RepoNetworkAction op)
+    private async Task RunAsync(RepoNetworkRequest request)
     {
+        var op = request.Action;
         if (_workspace.Focused is not { } repo || _busy)
             return;
 
-        var remotes = repo.State.Remotes;
-        if (remotes.Count == 0)
+        string remote;
+        if (request.Remote is { } targetRemote)
         {
-            _notifications.Publish(NotificationSeverity.Warning, "This repository has no remotes configured.");
-            return;
+            remote = targetRemote;
         }
-        var remote = remotes.Any(r => r.Name == "origin") ? "origin" : remotes[0].Name;
-        var branch = repo.State.CurrentBranch?.Name;
+        else
+        {
+            var remotes = repo.State.Remotes;
+            if (remotes.Count == 0)
+            {
+                _notifications.Publish(NotificationSeverity.Warning, "This repository has no remotes configured.");
+                return;
+            }
+            remote = remotes.Any(r => r.Name == "origin") ? "origin" : remotes[0].Name;
+        }
+        var branch = request.Branch ?? repo.State.CurrentBranch?.Name;
 
         _busy = true;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(repo.Lifetime);
