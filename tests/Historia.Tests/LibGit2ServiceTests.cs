@@ -26,6 +26,59 @@ public class LibGit2ServiceTests
     }
 
     [Fact]
+    public void A_workdir_rename_reports_the_old_path()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("libgit2-workdir-rename-seed", r =>
+        {
+            r.WriteFile("original.txt", "rename me, plenty of content so similarity detection kicks in\n")
+                .Stage().Commit("initial");
+        });
+        File.Move(Path.Combine(repo.Path, "original.txt"), Path.Combine(repo.Path, "renamed.txt"));
+
+        using var git = new Repository(repo.Path);
+        var status = _svc.ProjectStatus(git);
+
+        var entry = Assert.Single(status.Unstaged, e => e.Kind == FileChangeKind.Renamed);
+        Assert.Equal("renamed.txt", entry.Path);
+        Assert.Equal("original.txt", entry.OldPath);
+    }
+
+    [Fact]
+    public void A_staged_rename_reports_the_old_path()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("libgit2-staged-rename-seed", r =>
+        {
+            r.WriteFile("original.txt", "rename me, plenty of content so similarity detection kicks in\n")
+                .Stage().Commit("initial");
+        });
+        repo.Git("mv", "original.txt", "renamed.txt");
+
+        using var git = new Repository(repo.Path);
+        var status = _svc.ProjectStatus(git);
+
+        var entry = Assert.Single(status.Staged, e => e.Kind == FileChangeKind.Renamed);
+        Assert.Equal("renamed.txt", entry.Path);
+        Assert.Equal("original.txt", entry.OldPath);
+    }
+
+    [Fact]
+    public void A_plain_modification_has_no_old_path()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("libgit2-plain-mod-seed", r =>
+        {
+            r.WriteFile("tracked.txt", "one\n").Stage().Commit("initial");
+        });
+        repo.WriteFile("tracked.txt", "one\ntwo\n");
+
+        using var git = new Repository(repo.Path);
+        var status = _svc.ProjectStatus(git);
+
+        var entry = Assert.Single(status.Unstaged, e => e.Path == "tracked.txt");
+        Assert.Equal(FileChangeKind.Modified, entry.Kind);
+        Assert.Null(entry.OldPath);
+    }
+
+    [Fact]
     public void Commits_are_paged_and_carry_head_decoration()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("libgit2-paged-commits", r =>

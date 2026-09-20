@@ -92,12 +92,12 @@ public sealed class LibGit2Service
                 continue;
             }
 
-            if (HasIndexChange(state, out var stagedKind, out var stagedOld))
+            if (HasIndexChange(entry, out var stagedKind, out var stagedOld))
                 staged.Add(Make(repo, entry.FilePath, stagedKind, stagedOld, isSubmodule));
 
             if (state.HasFlag(FileStatus.NewInWorkdir))
                 untracked.Add(Make(repo, entry.FilePath, FileChangeKind.Untracked, null, isSubmodule));
-            else if (HasWorkdirChange(state, out var workKind, out var workOld))
+            else if (HasWorkdirChange(entry, out var workKind, out var workOld))
                 unstaged.Add(Make(repo, entry.FilePath, workKind, workOld, isSubmodule));
         }
 
@@ -582,6 +582,17 @@ public sealed class LibGit2Service
     public void SetRemoteUrl(Repository repo, string name, string url)
         => repo.Network.Remotes.Update(name, r => r.Url = url);
 
+    /// <summary>Renames a remote's alias — a config + refspec edit, never a network call.
+    /// <see cref="RemoteCollection.Rename(string, string, RemoteRenameFailureHandler)"/> silently
+    /// drops non-default fetch refspecs it cannot rewrite unless given the failure handler;
+    /// collect those here so the caller can warn the user instead of losing them quietly.</summary>
+    public IReadOnlyList<string> RenameRemote(Repository repo, string name, string newName)
+    {
+        var problematic = new List<string>();
+        repo.Network.Remotes.Rename(name, newName, problematic.Add);
+        return problematic;
+    }
+
     // ── Helpers ──
 
     private static bool IsMerged(Repository repo, Branch branch)
@@ -634,24 +645,26 @@ public sealed class LibGit2Service
         return map;
     }
 
-    private static bool HasIndexChange(FileStatus state, out FileChangeKind kind, out string? oldPath)
+    private static bool HasIndexChange(StatusEntry entry, out FileChangeKind kind, out string? oldPath)
     {
+        var state = entry.State;
         oldPath = null;
         if (state.HasFlag(FileStatus.NewInIndex)) { kind = FileChangeKind.Added; return true; }
         if (state.HasFlag(FileStatus.ModifiedInIndex)) { kind = FileChangeKind.Modified; return true; }
         if (state.HasFlag(FileStatus.DeletedFromIndex)) { kind = FileChangeKind.Deleted; return true; }
-        if (state.HasFlag(FileStatus.RenamedInIndex)) { kind = FileChangeKind.Renamed; return true; }
+        if (state.HasFlag(FileStatus.RenamedInIndex)) { kind = FileChangeKind.Renamed; oldPath = entry.HeadToIndexRenameDetails?.OldFilePath; return true; }
         if (state.HasFlag(FileStatus.TypeChangeInIndex)) { kind = FileChangeKind.TypeChanged; return true; }
         kind = default;
         return false;
     }
 
-    private static bool HasWorkdirChange(FileStatus state, out FileChangeKind kind, out string? oldPath)
+    private static bool HasWorkdirChange(StatusEntry entry, out FileChangeKind kind, out string? oldPath)
     {
+        var state = entry.State;
         oldPath = null;
         if (state.HasFlag(FileStatus.ModifiedInWorkdir)) { kind = FileChangeKind.Modified; return true; }
         if (state.HasFlag(FileStatus.DeletedFromWorkdir)) { kind = FileChangeKind.Deleted; return true; }
-        if (state.HasFlag(FileStatus.RenamedInWorkdir)) { kind = FileChangeKind.Renamed; return true; }
+        if (state.HasFlag(FileStatus.RenamedInWorkdir)) { kind = FileChangeKind.Renamed; oldPath = entry.IndexToWorkDirRenameDetails?.OldFilePath; return true; }
         if (state.HasFlag(FileStatus.TypeChangeInWorkdir)) { kind = FileChangeKind.TypeChanged; return true; }
         kind = default;
         return false;
