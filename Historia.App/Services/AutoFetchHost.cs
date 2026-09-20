@@ -7,7 +7,7 @@ namespace Historia.Services.UI;
 /// through the same gateway a manual Fetch uses, flagged so routing never raises the
 /// switch-to-Local-config prompt (§13.1).
 /// </summary>
-public sealed class AutoFetchHost(IWorkspaceService workspace) : IAutoFetchHost
+public sealed class AutoFetchHost(IWorkspaceService workspace, ISettingsService settings) : IAutoFetchHost
 {
     public Task WhenFullyLoadedAsync(RepositoryContext context, CancellationToken ct)
     {
@@ -23,7 +23,7 @@ public sealed class AutoFetchHost(IWorkspaceService workspace) : IAutoFetchHost
 
         var remote = remotes.Any(r => r.Name == "origin") ? "origin" : remotes[0].Name;
         await context.Gateway
-            .FetchAsync(remote, new GitFetchOptions { Prune = true, Background = true }, progress: null, ct)
+            .FetchAsync(remote, GitFetchOptions.From(settings.Current, background: true), progress: null, ct)
             .ConfigureAwait(false);
 
         // Land the new remote-tracking refs / ahead-behind in the UI, same as a manual fetch.

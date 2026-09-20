@@ -31,6 +31,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
     private readonly IProfileService _profiles;
     private readonly IRepoIdentityService _identity;
     private readonly IGraphLayoutService _graph;
+    private readonly ISettingsService _settings;
 
     private bool _busy;
     private CancellationTokenSource? _cts;
@@ -46,7 +47,8 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         ITerminalSessionService terminals,
         IProfileService profiles,
         IRepoIdentityService identity,
-        IGraphLayoutService graph)
+        IGraphLayoutService graph,
+        ISettingsService settings)
     {
         _workspace = workspace;
         _notifications = notifications;
@@ -56,6 +58,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         _profiles = profiles;
         _identity = identity;
         _graph = graph;
+        _settings = settings;
 
         actionBus.NetworkActionRequested += (_, action) => _ = RunAsync(action);
     }
@@ -95,12 +98,12 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         switch (op)
         {
             case RepoNetworkAction.Fetch:
-                await repo.Gateway.FetchAsync(remote, new GitFetchOptions { Prune = true }, progress, ct);
+                await repo.Gateway.FetchAsync(remote, GitFetchOptions.From(_settings.Current), progress, ct);
                 RefreshCommitGraphAfterFetch(repo, op);
                 _notifications.Publish(NotificationSeverity.Success, $"Fetched {remote}.");
                 break;
             case RepoNetworkAction.Pull when branch is not null:
-                await repo.Gateway.PullAsync(remote, branch, new GitPullOptions(), progress, ct);
+                await repo.Gateway.PullAsync(remote, branch, GitPullOptions.From(_settings.Current), progress, ct);
                 RefreshCommitGraphAfterFetch(repo, op);
                 _notifications.Publish(NotificationSeverity.Success, $"Pulled {remote}/{branch}.");
                 break;
@@ -154,7 +157,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             if (choice is Rebase or Merge)
             {
                 await repo.Gateway.PullAsync(remote, branch,
-                    new GitPullOptions { Rebase = choice == Rebase }, progress, ct);
+                    GitPullOptions.From(_settings.Current) with { Rebase = choice == Rebase }, progress, ct);
                 await repo.Gateway.PushAsync(remote,
                     new PushSpec { RefSpec = branch, SetUpstream = setUpstream }, progress, ct);
                 _notifications.Publish(NotificationSeverity.Success, $"Pushed to {remote}.");
@@ -277,7 +280,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.Details,
             [
                 new NotificationAction("Stash & retry", () => BranchMenu.StashAndRetryAsync(repo, _notifications, _stashes,
-                    () => repo.Gateway.PullAsync(remote, branch, new GitPullOptions(), null, repo.Lifetime), "Pull")),
+                    () => repo.Gateway.PullAsync(remote, branch, GitPullOptions.From(_settings.Current), null, repo.Lifetime), "Pull")),
             ]);
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.RemoteRejected && op == RepoNetworkAction.Push && branch is not null)
@@ -293,7 +296,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                     // finally, not a trailing call: identical trees merge clean, but if they don't,
                     // the merge still throws and the UI needs the refreshed (conflicted) state to
                     // show the resolver panel instead of looking like nothing happened.
-                    try { await repo.Gateway.PullAsync(remote, branch, new GitPullOptions { AllowUnrelatedHistories = true }, null, repo.Lifetime); }
+                    try { await repo.Gateway.PullAsync(remote, branch, GitPullOptions.From(_settings.Current) with { AllowUnrelatedHistories = true }, null, repo.Lifetime); }
                     finally { await repo.State.RefreshAllAsync(repo.Lifetime); }
                 }),
                 new NotificationAction($"Reset to {remote}/{branch}", async () =>
