@@ -21,6 +21,7 @@ global using Historia.Services.Settings;
 global using Historia.Services.State;
 global using Historia.Services.Storage;
 global using Historia.Services.Terminal;
+global using Historia.Services.Text;
 global using Historia.Services.Theming;
 global using Historia.Services.UI;
 global using Historia.Services.Workspace;
