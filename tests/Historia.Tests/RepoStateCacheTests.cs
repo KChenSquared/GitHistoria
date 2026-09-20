@@ -292,7 +292,42 @@ public sealed class RepoStateCacheTests : IDisposable
         }
 
         var jsonNode = JsonNode.Parse(uncompressed)!;
-        jsonNode["Version"] = 99;
+        jsonNode["version"] = 99;
+
+        using (var outFs = File.Create(refsFile))
+        using (var outGz = new GZipStream(outFs, CompressionLevel.Fastest))
+        {
+            var bytes = Encoding.UTF8.GetBytes(jsonNode.ToJsonString());
+            outGz.Write(bytes, 0, bytes.Length);
+        }
+
+        var snapshot = cache.TryLoad(repoPath);
+        Assert.Null(snapshot?.Branches);
+    }
+
+    [Fact]
+    public void Version_1_cache_file_is_cleanly_rejected()
+    {
+        var settings = new FakeSettingsService(new AppSettings { PersistRepoCache = true });
+        var cache = new RepoStateCache(settings);
+        const string repoPath = "C:/test-repo-version1";
+
+        cache.SaveRefs(repoPath, [new BranchInfo { Name = "b1", CanonicalName = "refs/heads/b1", IsRemote = false, IsCurrent = false, TipCommitId = null }], [], []);
+
+        var files = Directory.GetFiles(AppPaths.CacheDirectory, "repo-refs-*.json.gz");
+        var refsFile = Assert.Single(files);
+
+        byte[] uncompressed;
+        using (var inFs = File.OpenRead(refsFile))
+        using (var inGz = new GZipStream(inFs, CompressionMode.Decompress))
+        using (var ms = new MemoryStream())
+        {
+            inGz.CopyTo(ms);
+            uncompressed = ms.ToArray();
+        }
+
+        var jsonNode = JsonNode.Parse(uncompressed)!;
+        jsonNode["version"] = 1;
 
         using (var outFs = File.Create(refsFile))
         using (var outGz = new GZipStream(outFs, CompressionLevel.Fastest))
