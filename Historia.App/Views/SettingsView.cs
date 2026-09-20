@@ -31,9 +31,38 @@ public sealed class SettingsView : UserControl, IDisposable
 
         Content = ClosablePane(new ScrollViewer { Content = _root }, sp);
         this.Dyn(BackgroundProperty, "ColorChrome");
+        // On the view itself, not _root: empirically, a Tunnel handler on _root (the
+        // ScrollViewer's content host) never saw a press that landed on a plain TextBlock —
+        // only on box-typed controls — while the same handler on the UserControl root sees
+        // every press in the subtree, close button included.
+        this.AddHandler(PointerPressedEvent, OnRootPointerPressedTunnel, RoutingStrategies.Tunnel);
         _cfg.Changed += _onCfg;
         _theme.ThemeChanged += _onTheme;
         Rebuild();
+    }
+
+    /// <summary>R10: every settings textbox commits on <c>LostFocus</c>, but clicking a
+    /// non-focusable label or blank space never moves focus, so an edit sits uncommitted until
+    /// the user happens to click another input. Clearing focus here on any press that does not
+    /// land on a real input lets the previously focused textbox's own LostFocus commit handler
+    /// run — no commit logic moves or is duplicated. Tunnel routing so this runs before the
+    /// pressed control's own handler, and <c>e.Handled</c> is left alone so that control still
+    /// receives the press normally.</summary>
+    private static void OnRootPointerPressedTunnel(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.Source is not Visual v)
+            return;
+        if (v is TextBox or ComboBox or ToggleSwitch or CheckBox or Button or NumericUpDown)
+            return;
+        if (v.FindAncestorOfType<TextBox>() is not null
+            || v.FindAncestorOfType<ComboBox>() is not null
+            || v.FindAncestorOfType<ToggleSwitch>() is not null
+            || v.FindAncestorOfType<CheckBox>() is not null
+            || v.FindAncestorOfType<Button>() is not null
+            || v.FindAncestorOfType<NumericUpDown>() is not null)
+            return;
+
+        TopLevel.GetTopLevel(v)?.FocusManager?.ClearFocus();
     }
 
     private void Post() => Avalonia.Threading.Dispatcher.UIThread.Post(Rebuild);
