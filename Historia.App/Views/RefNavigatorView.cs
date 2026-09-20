@@ -81,6 +81,11 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private bool _submodulesFetched;
     private bool _worktreesFetched;
 
+    // F7: submodule paths (or AllSubmodulesBusyKey for "Update all") with an in-flight
+    // "Init & update" — the row renders a busy label instead of its menu while present.
+    private readonly HashSet<string> _submodulesBusy = new(StringComparer.Ordinal);
+    private const string AllSubmodulesBusyKey = "*";
+
     public RefNavigatorView(IServiceProvider sp)
     {
         _workspace = sp.GetRequiredService<IWorkspaceService>();
@@ -446,17 +451,25 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             else foreach (var m in _submoduleList)
             {
                 var sm = m;
+                var busy = _submodulesBusy.Contains(sm.Path);
+                if (busy)
+                {
+                    subBody.Children.Add(Leaf(SubmoduleRowLabel(sm, busy: true), 0, "ColorTextFaint", null, null));
+                    continue;
+                }
+
                 var menuBtn = new Button { Content = "⋯", Padding = new Thickness(4, 0), Background = Brushes.Transparent, BorderThickness = default };
-                var mf = new MenuFlyout();
-                AddMi(mf, "Init & update", () => _ = PowerOp(r => _submodules.InitAndUpdateAsync(r, sm.Path, recursive: true, r.Lifetime)));
-                AddMi(mf, "Sync URL", () => _ = PowerOp(r => _submodules.SyncAsync(r, sm.Path, r.Lifetime)));
-                AddMi(mf, "Remove", () => _ = SubmoduleRemoveAsync(sm));
-                menuBtn.Flyout = mf;
-                subBody.Children.Add(Leaf($"{m.Name}  ({m.Status})", 0, "ColorText", null, menuBtn));
+                menuBtn.Flyout = new MenuFlyout { ItemsSource = BuildSubmoduleMenuItems(sm) };
+                var row = Leaf(SubmoduleRowLabel(sm, busy: false), 0, "ColorText", null, menuBtn);
+                row.ContextMenu = new ContextMenu { ItemsSource = BuildSubmoduleMenuItems(sm) };
+                subBody.Children.Add(row);
             }
             if (_submoduleList is { Count: > 0 })
-                subBody.Children.Add(Leaf("Update all", 0, "ColorTextMuted",
-                    select: () => _ = PowerOp(r => _submodules.InitAndUpdateAsync(r, null, recursive: true, r.Lifetime)), null));
+            {
+                var allBusy = _submodulesBusy.Contains(AllSubmodulesBusyKey);
+                subBody.Children.Add(Leaf(allBusy ? "Update all — Initializing…" : "Update all", 0, "ColorTextMuted",
+                    select: allBusy ? null : () => _ = SubmoduleInitAndUpdateAsync(null), null));
+            }
         }
 
         var wtBody = Section($"Worktrees{Count(_worktreeList)}", _worktreesOpen, () =>
@@ -779,8 +792,50 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             Rebuild();
             _ = LoadPowerToolsAsync(_repo);
         }
+        catch (OperationCanceledException) { /* tab closed or torn down mid-operation — not a failure */ }
         catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, $"Operation failed: {ex.Message}", ex.NotificationDetails()); }
     }
+
+    /// <summary>F7: wraps a submodule "Init & update" (per-row, or <c>null</c> path for "Update
+    /// all") with a busy state so the row shows feedback instead of looking hung.</summary>
+    private async Task SubmoduleInitAndUpdateAsync(string? path)
+    {
+        var key = path ?? AllSubmodulesBusyKey;
+        _submodulesBusy.Add(key);
+        Rebuild();
+        try
+        {
+            await PowerOp(r => _submodules.InitAndUpdateAsync(r, path, true, r.Lifetime));
+        }
+        finally
+        {
+            _submodulesBusy.Remove(key);
+            Rebuild();
+        }
+    }
+
+    /// <summary>F6: a fresh <see cref="MenuItem"/> list per call — an <see cref="ItemsControl"/>
+    /// item can only have one visual parent, so the "⋯" flyout and the row's right-click
+    /// <see cref="ContextMenu"/> each need their own instances.</summary>
+    private List<Control> BuildSubmoduleMenuItems(SubmoduleInfo sm)
+    {
+        var list = new List<Control>();
+        void Add(string label, Action onClick)
+        {
+            var mi = new MenuItem { Header = label };
+            mi.Click += (_, _) => onClick();
+            list.Add(mi);
+        }
+        Add("Init & update", () => _ = SubmoduleInitAndUpdateAsync(sm.Path));
+        Add("Sync URL", () => _ = PowerOp(r => _submodules.SyncAsync(r, sm.Path, r.Lifetime)));
+        Add("Remove", () => _ = SubmoduleRemoveAsync(sm));
+        return list;
+    }
+
+    /// <summary>F7: the submodule row's label, busy or not — extracted so it can be unit tested
+    /// without constructing the view.</summary>
+    internal static string SubmoduleRowLabel(SubmoduleInfo sm, bool busy) =>
+        busy ? $"{sm.Name}  — Initializing…" : $"{sm.Name}  ({sm.Status})";
 
     private async Task WorktreeRemoveAsync(WorktreeInfo wt)
     {
@@ -814,6 +869,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             Rebuild();
             _ = LoadPowerToolsAsync(_repo);
         }
+        catch (OperationCanceledException) { /* tab closed or torn down mid-operation — not a failure */ }
         catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, $"Stash op failed: {ex.Message}"); }
     }
 
