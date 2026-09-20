@@ -17,7 +17,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private readonly IWorktreeService _worktrees;
     private readonly IRepoStateCache _repoCache;
 
-    private readonly StackPanel _root = new();
+    internal readonly StackPanel _root = new();
     private RepositoryContext? _repo;
 
     // Indentation: leaves and folder labels share this left edge (past the section-header
@@ -33,11 +33,29 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     // within a section have their own, depth-dependent default — see IsOpen.
     private bool _localOpen = true, _remotesOpen = true, _tagsOpen = false;
     private bool _stashesOpen = false, _submodulesOpen = false, _worktreesOpen = false;
+    private bool _localFilterOpen, _remotesFilterOpen, _tagsFilterOpen, _stashesFilterOpen;
+
+    internal readonly TextBox _localFilterBox;
+    internal readonly TextBox _remotesFilterBox;
+    internal readonly TextBox _tagsFilterBox;
+    internal readonly TextBox _stashesFilterBox;
+
+    internal bool LocalFilterOpen => _localFilterOpen;
+    internal bool RemotesFilterOpen => _remotesFilterOpen;
+    internal bool TagsFilterOpen => _tagsFilterOpen;
+    internal bool StashesFilterOpen => _stashesFilterOpen;
+    internal bool LocalOpen => _localOpen;
+    internal bool TagsOpen => _tagsOpen;
 
     private void ResetSectionState()
     {
         _localOpen = _remotesOpen = true;
         _tagsOpen = _stashesOpen = _submodulesOpen = _worktreesOpen = false;
+        _localFilterOpen = _remotesFilterOpen = _tagsFilterOpen = _stashesFilterOpen = false;
+        if (_localFilterBox is not null) _localFilterBox.Text = string.Empty;
+        if (_remotesFilterBox is not null) _remotesFilterBox.Text = string.Empty;
+        if (_tagsFilterBox is not null) _tagsFilterBox.Text = string.Empty;
+        if (_stashesFilterBox is not null) _stashesFilterBox.Text = string.Empty;
         _expanded.Clear();
     }
 
@@ -74,6 +92,11 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         _worktrees = sp.GetRequiredService<IWorktreeService>();
         _repoCache = sp.GetRequiredService<IRepoStateCache>();
 
+        _localFilterBox = CreateFilterBox(() => _localFilterOpen = false);
+        _remotesFilterBox = CreateFilterBox(() => _remotesFilterOpen = false);
+        _tagsFilterBox = CreateFilterBox(() => _tagsFilterOpen = false);
+        _stashesFilterBox = CreateFilterBox(() => _stashesFilterOpen = false);
+
         Content = new ScrollViewer { Content = _root, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         this.Dyn(BackgroundProperty, "ColorChrome");
 
@@ -87,6 +110,30 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             if (!e.Handled && _repo is not null)
                 _nav.RequestNavigate("repo");
         });
+    }
+
+    private TextBox CreateFilterBox(Action onClose)
+    {
+        var box = new TextBox
+        {
+            Watermark = "Filter…",
+            FontSize = 12,
+            Height = 24,
+            Padding = new Thickness(6, 2),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        box.TextChanged += (_, _) => Rebuild();
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape)
+            {
+                e.Handled = true;
+                onClose();
+                box.Text = string.Empty;
+                Rebuild();
+            }
+        };
+        return box;
     }
 
     private void OnFocusChanged(object? s, FocusedRepositoryChangedEventArgs e)
@@ -171,6 +218,14 @@ public sealed class RefNavigatorView : UserControl, IDisposable
 
     private void Rebuild()
     {
+        TextBox? focusedBox = null;
+        int selStart = 0;
+        int selEnd = 0;
+        if (_localFilterBox is not null && _localFilterBox.IsFocused) { focusedBox = _localFilterBox; selStart = _localFilterBox.SelectionStart; selEnd = _localFilterBox.SelectionEnd; }
+        else if (_remotesFilterBox is not null && _remotesFilterBox.IsFocused) { focusedBox = _remotesFilterBox; selStart = _remotesFilterBox.SelectionStart; selEnd = _remotesFilterBox.SelectionEnd; }
+        else if (_tagsFilterBox is not null && _tagsFilterBox.IsFocused) { focusedBox = _tagsFilterBox; selStart = _tagsFilterBox.SelectionStart; selEnd = _tagsFilterBox.SelectionEnd; }
+        else if (_stashesFilterBox is not null && _stashesFilterBox.IsFocused) { focusedBox = _stashesFilterBox; selStart = _stashesFilterBox.SelectionStart; selEnd = _stashesFilterBox.SelectionEnd; }
+
         _root.Children.Clear();
         if (_repo is null)
             return;
@@ -184,16 +239,90 @@ public sealed class RefNavigatorView : UserControl, IDisposable
 
         // ── Local branches ──
         var localBody = Section($"Local Branches ({local.Count})", _localOpen,
-            () => { _localOpen = !_localOpen; Rebuild(); }, add: () => _ = CreateBranchAsync());
+            () => { _localOpen = !_localOpen; Rebuild(); },
+            add: () => _ = CreateBranchAsync(),
+            filter: () =>
+            {
+                _localFilterOpen = !_localFilterOpen;
+                if (_localFilterOpen) _localOpen = true;
+                Rebuild();
+                if (_localFilterOpen) _localFilterBox?.Focus();
+            },
+            filterOpen: _localFilterOpen,
+            filterBox: _localFilterBox);
         if (localBody is not null)
+        {
+            if (_localFilterOpen && !string.IsNullOrWhiteSpace(_localFilterBox?.Text))
+            {
+                var query = FuzzyScorer.PrepareQuery(_localFilterBox.Text);
+                var ranked = RefSearch.Rank(local, b => b.Name, query);
+                if (ranked.Count == 0)
+                {
+                    localBody.Children.Add(Leaf("No matches.", 0, "ColorTextFaint", null, null));
+                }
+                else
+                {
+                    foreach (var item in ranked)
+                    {
+                        var b = item.Item;
+                        var current = !b.IsRemote && string.Equals(b.CanonicalName, currentCanonical, StringComparison.Ordinal);
+                        var row = Leaf(b.Name, depth: 0,
+                            current ? "ColorAccent" : "ColorText",
+                            select: () => Select(b.TipCommitId),
+                            action: null,
+                            current: current);
+                        row.DoubleTapped += (_, e) => { e.Handled = true; _ = CheckoutAsync(b, isRemote: false); };
+                        AttachBranchMenu(row, b, isRemote: false);
+                        localBody.Children.Add(row);
+                    }
+                }
+                localBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
+            }
+
             foreach (var node in RefTree.Build(local, b => b.Name))
                 AddNode(localBody, node, depth: 0, isRemote: false, currentCanonical);
+        }
 
         // ── Remotes: one collapsible folder per remote ──
         var remoteBody = Section($"Remotes ({repo.State.Remotes.Count})", _remotesOpen,
-            () => { _remotesOpen = !_remotesOpen; Rebuild(); });
+            () => { _remotesOpen = !_remotesOpen; Rebuild(); },
+            filter: () =>
+            {
+                _remotesFilterOpen = !_remotesFilterOpen;
+                if (_remotesFilterOpen) _remotesOpen = true;
+                Rebuild();
+                if (_remotesFilterOpen) _remotesFilterBox?.Focus();
+            },
+            filterOpen: _remotesFilterOpen,
+            filterBox: _remotesFilterBox);
         if (remoteBody is not null)
         {
+            if (_remotesFilterOpen && !string.IsNullOrWhiteSpace(_remotesFilterBox?.Text))
+            {
+                var query = FuzzyScorer.PrepareQuery(_remotesFilterBox.Text);
+                var ranked = RefSearch.Rank(remote, b => b.Name, query);
+                if (ranked.Count == 0)
+                {
+                    remoteBody.Children.Add(Leaf("No matches.", 0, "ColorTextFaint", null, null));
+                }
+                else
+                {
+                    foreach (var item in ranked)
+                    {
+                        var b = item.Item;
+                        var row = Leaf(b.Name, depth: 0,
+                            "ColorText",
+                            select: () => Select(b.TipCommitId),
+                            action: null,
+                            current: false);
+                        row.DoubleTapped += (_, e) => { e.Handled = true; _ = CheckoutAsync(b, isRemote: true); };
+                        AttachBranchMenu(row, b, isRemote: true);
+                        remoteBody.Children.Add(row);
+                    }
+                }
+                remoteBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
+            }
+
             var byRemote = remote
                 .GroupBy(b => b.RemoteName ?? (b.Name.Contains('/') ? b.Name[..b.Name.IndexOf('/')] : "origin"))
                 .OrderBy(g => g.Key, StringComparer.Ordinal);
@@ -211,9 +340,40 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         }
 
         // ── Tags ──
-        var tagBody = Section($"Tags ({tags.Count})", _tagsOpen, () => { _tagsOpen = !_tagsOpen; Rebuild(); });
+        var tagBody = Section($"Tags ({tags.Count})", _tagsOpen,
+            () => { _tagsOpen = !_tagsOpen; Rebuild(); },
+            filter: () =>
+            {
+                _tagsFilterOpen = !_tagsFilterOpen;
+                if (_tagsFilterOpen) _tagsOpen = true;
+                Rebuild();
+                if (_tagsFilterOpen) _tagsFilterBox?.Focus();
+            },
+            filterOpen: _tagsFilterOpen,
+            filterBox: _tagsFilterBox);
         if (tagBody is not null)
         {
+            if (_tagsFilterOpen && !string.IsNullOrWhiteSpace(_tagsFilterBox?.Text))
+            {
+                var query = FuzzyScorer.PrepareQuery(_tagsFilterBox.Text);
+                var ranked = RefSearch.Rank(tags, t => t.Name, query);
+                if (ranked.Count == 0)
+                {
+                    tagBody.Children.Add(Leaf("No matches.", 0, "ColorTextFaint", null, null));
+                }
+                else
+                {
+                    foreach (var item in ranked)
+                    {
+                        var tag = item.Item;
+                        tagBody.Children.Add(Leaf(tag.Name, 0, "ColorText",
+                            select: () => Select(tag.TargetCommitId),
+                            action: IconButton("delete", "Delete tag", () => _ = DeleteTagAsync(tag))));
+                    }
+                }
+                tagBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
+            }
+
             if (tags.Count == 0)
                 tagBody.Children.Add(Leaf("No tags.", 0, "ColorTextFaint", null, null));
             foreach (var t in tags)
@@ -226,34 +386,49 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         }
 
         // ── Stashes / Submodules / Worktrees (cached) ──
-        var stashBody = Section($"Stashes{Count(_stashList)}", _stashesOpen, () => { _stashesOpen = !_stashesOpen; Rebuild(); });
+        var stashBody = Section($"Stashes{Count(_stashList)}", _stashesOpen,
+            () => { _stashesOpen = !_stashesOpen; Rebuild(); },
+            filter: () =>
+            {
+                _stashesFilterOpen = !_stashesFilterOpen;
+                if (_stashesFilterOpen) _stashesOpen = true;
+                Rebuild();
+                if (_stashesFilterOpen) _stashesFilterBox?.Focus();
+            },
+            filterOpen: _stashesFilterOpen,
+            filterBox: _stashesFilterBox);
         if (stashBody is not null)
         {
             if (_stashList is null) stashBody.Children.Add(Leaf("Loading…", 0, "ColorTextFaint", null, null));
             else if (_stashList.Count == 0) stashBody.Children.Add(Leaf("No stashes.", 0, "ColorTextFaint", null, null));
-            else foreach (var s in _stashList)
+            else
             {
-                var entry = s;
-                var menuBtn = new Button { Content = "⋯", Padding = new Thickness(4, 0), Background = Brushes.Transparent, BorderThickness = default };
-                var mf = new MenuFlyout();
-                var mfItems = new List<Control>();
-                foreach (var (label, act) in new (string, Action)[]
+                if (_stashesFilterOpen && !string.IsNullOrWhiteSpace(_stashesFilterBox?.Text))
                 {
-                    ("Apply", () => _ = StashOp(() => _stashes.ApplyAsync(_repo!, entry.CommitId, restoreIndex: true, _repo!.Lifetime))),
-                    ("Apply & drop", () => _ = StashOp(() => _stashes.ApplyAndDropAsync(_repo!, entry.CommitId, _repo!.Lifetime))),
-                    ("New branch from stash…", () => _ = StashBranchAsync(entry)),
-                    ("Drop", () => _ = StashDropAsync(entry)),
-                })
-                {
-                    var mi = new MenuItem { Header = label };
-                    var a = act;
-                    mi.Click += (_, _) => a();
-                    mfItems.Add(mi);
+                    var query = FuzzyScorer.PrepareQuery(_stashesFilterBox.Text);
+                    var ranked = RefSearch.Rank(_stashList, s => $"stash@{{{s.Index}}}  {s.Message}", query);
+                    if (ranked.Count == 0)
+                    {
+                        stashBody.Children.Add(Leaf("No matches.", 0, "ColorTextFaint", null, null));
+                    }
+                    else
+                    {
+                        foreach (var item in ranked)
+                        {
+                            var entry = item.Item;
+                            stashBody.Children.Add(Leaf($"stash@{{{entry.Index}}}  {entry.Message}", 0, "ColorText",
+                                select: () => Select(entry.CommitId), action: StashMenuButton(entry)));
+                        }
+                    }
+                    stashBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
                 }
-                mf.ItemsSource = mfItems;
-                menuBtn.Flyout = mf;
-                stashBody.Children.Add(Leaf($"stash@{{{s.Index}}}  {s.Message}", 0, "ColorText",
-                    select: () => Select(entry.CommitId), action: menuBtn));
+
+                foreach (var s in _stashList)
+                {
+                    var entry = s;
+                    stashBody.Children.Add(Leaf($"stash@{{{s.Index}}}  {s.Message}", 0, "ColorText",
+                        select: () => Select(entry.CommitId), action: StashMenuButton(entry)));
+                }
             }
         }
 
@@ -314,14 +489,55 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 wtBody.Children.Add(Leaf("Prune stale", 0, "ColorTextMuted",
                     select: () => _ = PowerOp(r => _worktrees.PruneAsync(r, r.Lifetime)), null));
         }
+
+        if (focusedBox is not null)
+        {
+            var target = focusedBox;
+            var start = selStart;
+            var end = selEnd;
+            Dispatcher.UIThread.Post(() =>
+            {
+                target.Focus();
+                target.SelectionStart = start;
+                target.SelectionEnd = end;
+            });
+        }
+    }
+
+    private Button StashMenuButton(StashEntry entry)
+    {
+        var menuBtn = new Button { Content = "⋯", Padding = new Thickness(4, 0), Background = Brushes.Transparent, BorderThickness = default };
+        var mf = new MenuFlyout();
+        var mfItems = new List<Control>();
+        foreach (var (label, act) in new (string, Action)[]
+        {
+            ("Apply", () => _ = StashOp(() => _stashes.ApplyAsync(_repo!, entry.CommitId, restoreIndex: true, _repo!.Lifetime))),
+            ("Apply & drop", () => _ = StashOp(() => _stashes.ApplyAndDropAsync(_repo!, entry.CommitId, _repo!.Lifetime))),
+            ("New branch from stash…", () => _ = StashBranchAsync(entry)),
+            ("Drop", () => _ = StashDropAsync(entry)),
+        })
+        {
+            var mi = new MenuItem { Header = label };
+            var a = act;
+            mi.Click += (_, _) => a();
+            mfItems.Add(mi);
+        }
+        mf.ItemsSource = mfItems;
+        menuBtn.Flyout = mf;
+        return menuBtn;
     }
 
     private static string Count<T>(IReadOnlyList<T>? list) => list is null ? "" : $" ({list.Count})";
 
     /// <summary>Section header; returns the capped body panel when expanded, else null.</summary>
-    private StackPanel? Section(string title, bool open, Action toggle, Action? add = null)
+    private StackPanel? Section(string title, bool open, Action toggle, Action? add = null, Action? filter = null, bool filterOpen = false, TextBox? filterBox = null)
     {
-        _root.Children.Add(SectionHeader(title, open, toggle, add));
+        _root.Children.Add(SectionHeader(title, open, toggle, add, filter));
+        if (open && filterOpen && filterBox is not null)
+        {
+            filterBox.Margin = new Thickness(LeafIndent, 2, 8, 4);
+            _root.Children.Add(filterBox);
+        }
         if (!open)
             return null;
         var body = new StackPanel();
@@ -334,9 +550,9 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         return body;
     }
 
-    private Control SectionHeader(string title, bool open, Action toggle, Action? add)
+    private Control SectionHeader(string title, bool open, Action toggle, Action? add, Action? filter = null)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Height = 28 };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), Height = 28 };
         var caret = Text(open ? "▾" : "▸", "ColorTextMuted", 10);
         caret.Margin = new Thickness(8, 0, 6, 0);
         grid.Children.Add(caret);
@@ -352,10 +568,26 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             Grid.SetColumn(plus, 2);
             grid.Children.Add(plus);
         }
+        if (filter is not null)
+        {
+            var filterBtn = IconButton("filter_alt", "Filter this section", () => filter());
+            filterBtn.AddHandler(PointerPressedEvent, (_, e) =>
+            {
+                e.Handled = true;
+                filter();
+            }, RoutingStrategies.Tunnel);
+            Grid.SetColumn(filterBtn, 3);
+            grid.Children.Add(filterBtn);
+        }
         var b = new Border { Child = grid, Cursor = new Cursor(StandardCursorType.Hand) };
         b.Dyn(Border.BorderBrushProperty, "ColorBorder");
         b.BorderThickness = new Thickness(0, 1, 0, 0);
-        b.PointerPressed += (_, e) => { e.Handled = true; toggle(); };
+        b.PointerPressed += (_, e) =>
+        {
+            if (e.Handled) return;
+            e.Handled = true;
+            toggle();
+        };
         return b;
     }
 
