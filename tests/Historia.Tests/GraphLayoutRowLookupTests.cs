@@ -13,6 +13,7 @@ namespace Historia.Tests;
 /// result to the snapshot's own <c>RowCount</c> — the same way a real extend is locked
 /// (<c>GraphLayoutService.ExtendLayoutAsync</c>).
 /// </summary>
+[Trait("tier", "unit")]
 public class GraphLayoutRowLookupTests
 {
     private readonly DagLayoutEngine _engine = new();

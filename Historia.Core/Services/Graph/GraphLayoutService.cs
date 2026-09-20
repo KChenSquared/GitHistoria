@@ -27,7 +27,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// only a few hundred commits can still exercise multi-batch write races that would otherwise
     /// need a 25,000-row history to trigger. Left at 0 (production default) outside tests; a test
     /// that sets it must reset it to 0 when done, since it's process-wide state.</summary>
-    internal static int TestSpillBatchRowsOverride;
+    private static readonly AsyncLocal<int> _testSpillBatchRowsOverride = new();
+    internal static int TestSpillBatchRowsOverride
+    {
+        get => _testSpillBatchRowsOverride.Value;
+        set => _testSpillBatchRowsOverride.Value = value;
+    }
 
     /// <summary>Test seam: invoked once per streamed batch during
     /// <see cref="RunHeadlessReorderAsync"/> with that batch's own row count (never a running
@@ -41,7 +46,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// these to drive the live splice trigger at small scale. <c>null</c> (production default)
     /// outside tests; a test that sets either must reset it to <c>null</c> when done, since both
     /// are process-wide state.</summary>
-    internal static int? TestSpliceMinRowsOverride;
+    private static readonly AsyncLocal<int?> _testSpliceMinRowsOverride = new();
+    internal static int? TestSpliceMinRowsOverride
+    {
+        get => _testSpliceMinRowsOverride.Value;
+        set => _testSpliceMinRowsOverride.Value = value;
+    }
     internal static int? TestSpliceMaxOldParentRowOverride;
 
     /// <summary>Test seam: substitutes for the header's real <c>LastFullWalkMs</c>
@@ -49,7 +59,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// walk-from-row-0 time is itself only milliseconds, so the 25%-of-it budget guard 4 computes
     /// from it is too tight to reliably clear real process-spawn variance on a test machine — this
     /// lets a wiring test supply a realistic (large) baseline instead. <c>null</c> outside tests.</summary>
-    internal static TimeSpan? TestSpliceFullWalkElapsedOverride;
+    private static readonly AsyncLocal<TimeSpan?> _testSpliceFullWalkElapsedOverride = new();
+    internal static TimeSpan? TestSpliceFullWalkElapsedOverride
+    {
+        get => _testSpliceFullWalkElapsedOverride.Value;
+        set => _testSpliceFullWalkElapsedOverride.Value = value;
+    }
 
     /// <summary>Test seam: invoked with <c>(addedRecords, removedRecords)</c> right
     /// after a splice actually commits — since a spliced header looks identical to a reorder's
@@ -279,6 +294,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         if (!spill)
             return result;
         var swapped = SpillAndSwap(context, cache, query.IncludeRemoteBranches, result);
+        if (cache.Exhausted && cache.MetaComplete)
+            await RetireLiveWalkAsync(context, cache).ConfigureAwait(false);
         MaybeStartBackgroundSpill(context, cache, query);
         return swapped with { Fingerprint = cache.Fingerprint };
     }
@@ -392,6 +409,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         if (!SpillEnabled(extQuery))
             return result with { Fingerprint = cache.Fingerprint };
         var swapped = SpillAndSwap(context, cache, cache.IncludeRemotes, result);
+        if (cache.Exhausted && cache.MetaComplete)
+            await RetireLiveWalkAsync(context, cache).ConfigureAwait(false);
         MaybeStartBackgroundSpill(context, cache, extQuery); // resume if it stalled/hadn't started
         return swapped with { Fingerprint = cache.Fingerprint };
     }
@@ -481,6 +500,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// errors and <c>cache.SpilledRows</c> must never advance on faith alone — "the disk cache is
     /// never a correctness dependency") does it also drop those rows from the resident pending
     /// buffer via <see cref="TrimConfirmedSpilled"/>. Caller holds <c>cache.SpillSync</c>.
+    /// Never touches the live walk.
     /// <para>
     /// The actual append goes through <see cref="GraphMetaWriter.AppendSpillBatch"/>,
     /// which re-checks the on-disk header under this repo's cache-wide writer lock before writing
@@ -522,6 +542,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 cache.MetaStore?.Dispose();
                 cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount, cache.Engine);
                 AdoptDurableStore(cache, rowCount);
+                var probe = GraphMetaStore.Probe(repoPath, cache.WalkKey, includeRemotes, cache.Engine);
+                if (probe is { Ok: true, Exhausted: true })
+                {
+                    cache.MetaComplete = true;
+                    cache.Exhausted = true;
+                }
                 return outcome;
 
             default:
@@ -752,7 +778,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     // writer entirely (another writer reset or reordered it) — stop this whole
                     // background spill attempt rather than keep hammering a store it no longer
                     // safely understands. The next ComputeLayoutAsync/ExtendLayoutAsync resyncs.
-                    if (walkDone || ct.IsCancellationRequested || conflicted)
+                    if (walkDone || cache.Exhausted || cache.MetaComplete || ct.IsCancellationRequested || conflicted)
                         break;
                     await Task.Delay(150, ct).ConfigureAwait(false); // let foreground + crawl gate work in
                 }
@@ -766,7 +792,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // external cancel Forget/reset already DropLiveWalk'd it. This is just a
                 // belt-and-braces no-op for those paths.
                 if (ct.IsCancellationRequested || cache.Exhausted || cache.MetaComplete)
-                    cache.DisposeLiveWalk();
+                    await RetireLiveWalkAsync(context, cache).ConfigureAwait(false);
 
                 // Safety net: the per-chunk call above already schedules commit-graph maintenance
                 // as soon as the repo crosses the size threshold, so this normally no-ops (already
@@ -1132,7 +1158,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // RunHeadlessCacheAsync call re-probes and resyncs.
                 if (conflicted)
                     break;
-                if (walkDone)
+                if (walkDone || cache.Exhausted || cache.MetaComplete)
                 {
                     _backgroundWriter?.MaybeSchedule(context, TotalWalked(cache));
                     break;
@@ -1738,6 +1764,50 @@ public sealed class GraphLayoutService : IGraphLayoutService
         finally
         {
             cache.WalkLock.Release();
+        }
+    }
+
+    private const int RetireWalkLockTimeoutMs = 5_000;
+
+    /// <summary>
+    /// Safely retires and disposes the cache's live walk enumerator off the spill lock.
+    /// Safe contexts: under <see cref="RepoCache.WalkLock"/> for <see cref="WalkEngine.Cli"/>,
+    /// and inside the repo gate (<see cref="RepositoryContext.WithRepositoryAsync{T}"/>) for
+    /// <see cref="WalkEngine.LibGit2"/>.
+    /// </summary>
+    private static async Task RetireLiveWalkAsync(RepositoryContext context, RepoCache cache)
+    {
+        if (cache.LiveWalk is null)
+            return;
+
+        try
+        {
+            if (cache.Engine == WalkEngine.Cli)
+            {
+                if (await cache.WalkLock.WaitAsync(RetireWalkLockTimeoutMs).ConfigureAwait(false))
+                {
+                    try
+                    {
+                        cache.DisposeLiveWalk();
+                    }
+                    finally
+                    {
+                        cache.WalkLock.Release();
+                    }
+                }
+            }
+            else
+            {
+                await context.WithRepositoryAsync(_ =>
+                {
+                    cache.DisposeLiveWalk();
+                    return 0;
+                }, CancellationToken.None).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            // Retirement is best-effort; a failed retirement must never fail a layout.
         }
     }
 

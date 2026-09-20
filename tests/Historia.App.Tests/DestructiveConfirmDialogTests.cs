@@ -15,6 +15,7 @@ namespace HistoriaApp.Tests;
 /// The call-site half (every destructive action routes through the one entry point) is guarded
 /// by <c>Historia.Tests.DestructiveConfirmationTests</c>.
 /// </summary>
+[Trait("tier", "ui")]
 public class DestructiveConfirmDialogTests
 {
     [AvaloniaFact]

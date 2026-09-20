@@ -6,6 +6,7 @@ namespace Historia.Tests;
 /// Asserts self-consistency: every theme defines exactly the declared token set, and each hex
 /// round-trips.
 /// </summary>
+[Trait("tier", "unit")]
 public class PaletteParityTests
 {
     public static IEnumerable<object[]> Themes()

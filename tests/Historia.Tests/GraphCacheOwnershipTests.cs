@@ -15,6 +15,8 @@ namespace Historia.Tests;
 /// the first place.</item>
 /// </list>
 /// </summary>
+[Trait("tier", "git")]
+[Collection("serial")]
 public sealed class GraphCacheOwnershipTests : IAsyncDisposable
 {
     private readonly StateDir _state = new();
@@ -234,8 +236,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public async Task CancelInactiveTabAsync_cancels_a_queued_job_before_it_ever_runs()
     {
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("f.txt", "1\n").Stage().Commit("c1");
+        using var repo = TestRepositoryBuilder.FromTemplate("seed-1", b => b.WriteFile("f.txt", "1\n").Stage().Commit("c1"));
         var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
         await using var ctxA = _host.Open(repo.Path);
         await using var ctxB = _host.Open(repo.Path);
@@ -259,8 +260,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public async Task CancelInactiveTabAsync_waits_for_a_running_jobs_own_exit()
     {
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("f.txt", "1\n").Stage().Commit("c1");
+        using var repo = TestRepositoryBuilder.FromTemplate("seed-1", b => b.WriteFile("f.txt", "1\n").Stage().Commit("c1"));
         var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
         await using var ctx = _host.Open(repo.Path);
 
@@ -284,8 +284,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public async Task CancelInactiveTabAsync_is_a_no_op_when_nothing_is_queued_or_running()
     {
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("f.txt", "1\n").Stage().Commit("c1");
+        using var repo = TestRepositoryBuilder.FromTemplate("seed-1", b => b.WriteFile("f.txt", "1\n").Stage().Commit("c1"));
         var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
         await using var ctx = _host.Open(repo.Path);
 
@@ -303,10 +302,8 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact(Timeout = 60_000)]
     public async Task Concurrent_headless_spool_and_foreground_spill_never_duplicate_or_misorder_the_store()
     {
-        using var repo = TestRepositoryBuilder.Create();
         const int commitCount = 60;
-        for (var i = 0; i < commitCount; i++)
-            repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"commit {i:D2}");
+        using var repo = TestRepositoryBuilder.FromTemplate("linear-60", b => b.LinearHistory(commitCount));
 
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
 

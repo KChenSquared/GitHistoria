@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>Redirects <see cref="AppPaths"/> to a throwaway directory for the life of a test.</summary>
 public sealed class StateDir : IDisposable
@@ -7,13 +7,24 @@ public sealed class StateDir : IDisposable
 
     public StateDir()
     {
-        Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-state-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path);
+        Path = TestScratch.NewDirectory("historia-state-");
         AppPaths.OverrideForTesting(Path);
     }
 
     public void Dispose()
     {
-        try { Directory.Delete(Path, recursive: true); } catch { /* ignore */ }
+        try
+        {
+            if (Directory.Exists(Path))
+            {
+                foreach (var f in Directory.EnumerateFiles(Path, "*", SearchOption.AllDirectories))
+                    File.SetAttributes(f, FileAttributes.Normal);
+                Directory.Delete(Path, recursive: true);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup.
+        }
     }
 }

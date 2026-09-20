@@ -1,6 +1,7 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>§V2-11.1 / §V2-15.1: validation of a hand-edited or migrated-forward column list.</summary>
+[Trait("tier", "unit")]
 public class GraphColumnSettingsTests
 {
     private static List<GraphColumn> Defaults() => GraphColumnDefaults.All.Select(c => c with { }).ToList();

@@ -7,6 +7,7 @@ namespace Historia.Tests;
 /// the headless pipeline is where it was deferred to, since there's no concurrent foreground
 /// reader to protect mid-reorder here.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class GraphHeadlessCacheTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -16,9 +17,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
 
     public GraphHeadlessCacheTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        for (var i = 0; i < CommitCount; i++)
-            _repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"commit {i:D2}");
+        _repo = TestRepositoryBuilder.FromTemplate("linear-20", b => b.LinearHistory(CommitCount));
     }
 
     public async ValueTask DisposeAsync()

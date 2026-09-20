@@ -6,6 +6,7 @@ namespace Historia.Tests;
 /// <see cref="GitLogStreamWalkEquivalenceTests"/> for the end-to-end CLI-vs-libgit2 comparison
 /// against a real repo.
 /// </summary>
+[Trait("tier", "unit")]
 public sealed class GitLogStreamTests
 {
     private const char Sep = '\x1f';

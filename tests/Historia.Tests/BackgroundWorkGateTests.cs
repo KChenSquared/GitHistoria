@@ -31,10 +31,11 @@ internal sealed class FakeWorkspace : IWorkspaceService
 /// <summary>The background-write gate. No commit-graph
 /// or graph disk-cache write may start until the focused tab is "done loading" — first graph
 /// paint reported for the current focus AND <see cref="RepositoryContext.FirstFullLoad"/>.</summary>
+[Trait("tier", "git")]
 public sealed class BackgroundWorkGateTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
-    private readonly TestRepositoryBuilder _repo = TestRepositoryBuilder.Create();
+    private readonly TestRepositoryBuilder _repo = TestRepositoryBuilder.FromTemplate("empty-repo", _ => { });
 
     public async ValueTask DisposeAsync()
     {

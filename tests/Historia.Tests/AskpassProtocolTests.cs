@@ -2,6 +2,7 @@ namespace Historia.Tests;
 
 // The askpass helper must refuse to
 // answer a prompt naming any host other than the one credentials were resolved for.
+[Trait("tier", "unit")]
 public class AskpassProtocolTests
 {
     [Theory]

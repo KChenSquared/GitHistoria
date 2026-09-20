@@ -5,6 +5,7 @@ namespace Historia.Tests;
 /// <summary><see cref="IGraphLayoutService.Hibernate"/>
 /// releases everything a tab's graph holds in memory on switch-away, but leaves any on-disk cache
 /// in place so a re-focus is a normal, faster-than-cold reopen.</summary>
+[Trait("tier", "git")]
 public sealed class GraphLayoutServiceHibernateTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -13,9 +14,7 @@ public sealed class GraphLayoutServiceHibernateTests : IAsyncDisposable
 
     public GraphLayoutServiceHibernateTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        for (var i = 0; i < CommitCount; i++)
-            _repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"commit {i:D2}");
+        _repo = TestRepositoryBuilder.FromTemplate("linear-20", b => b.LinearHistory(CommitCount));
     }
 
     public async ValueTask DisposeAsync()

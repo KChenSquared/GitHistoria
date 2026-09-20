@@ -1,7 +1,5 @@
-using Historia.Diagnostics;
-using Historia.Services.Git;
-
 namespace Historia.Tests;
+[Trait("tier", "unit")]
 
 public sealed class LoggingGitGatewayTests : IDisposable
 {

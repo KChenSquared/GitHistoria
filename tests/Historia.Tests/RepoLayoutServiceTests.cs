@@ -1,6 +1,7 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>§V3-B: per-repository graph layout store.</summary>
+[Trait("tier", "unit")]
 public class RepoLayoutServiceTests : IDisposable
 {
     private readonly StateDir _state = new();

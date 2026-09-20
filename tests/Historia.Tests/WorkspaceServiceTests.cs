@@ -1,5 +1,6 @@
 namespace Historia.Tests;
-
+[Trait("tier", "git")]
+[Collection("serial")]
 public class WorkspaceServiceTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -17,13 +18,12 @@ public class WorkspaceServiceTests : IAsyncDisposable
     private static string Norm(string p) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(p)).ToLowerInvariant();
 
-    private static TestRepositoryBuilder Repo(string file)
-    {
-        var b = TestRepositoryBuilder.Create();
-        b.WriteFile(file, "x\n").Stage();
-        b.Commit("c");
-        return b;
-    }
+    private static TestRepositoryBuilder Repo(string file) =>
+        TestRepositoryBuilder.FromTemplate($"ws-repo-{file}", b =>
+        {
+            b.WriteFile(file, "x\n").Stage();
+            b.Commit("c");
+        });
 
     /// <summary>
     /// Re-opening an already-open repo raises <see cref="IWorkspaceService.FocusedRepositoryChanged"/>
@@ -595,8 +595,8 @@ public class WorkspaceServiceTests : IAsyncDisposable
         public Task<string?> GetTokenAsync(Guid profileId, RemoteHost host, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task ExportProfilesAsync(string exportFilePath, bool includeTokens, string? password, CancellationToken ct = default) => Task.CompletedTask;
         public Task ImportProfilesAsync(string importFilePath, string? password, CancellationToken ct = default) => Task.CompletedTask;
-        public event EventHandler? ProfilesChanged;
-        public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged;
+        public event EventHandler? ProfilesChanged { add { } remove { } }
+        public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged { add { } remove { } }
     }
 
     private static TestRepositoryBuilder RepoWithoutLocalIdentity()

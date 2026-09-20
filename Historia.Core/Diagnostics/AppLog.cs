@@ -47,6 +47,61 @@ public static partial class AppLog
     /// <summary>The shared injectable instance handed to the DI container.</summary>
     public static IAppLog Current { get; } = new AppLogFacade();
 
+    private static readonly AsyncLocal<AppLogSession?> _testSession = new();
+
+    /// <summary>
+    /// Flow-local test session for running tests in parallel without shared log writer state.
+    /// Outside tests this is null. Disposal releases the flow's interception in the flow that
+    /// disposes it; a session disposed from a deeper async frame still needs <see cref="ResetForTesting"/>
+    /// because an <see cref="AsyncLocal{T}"/> write does not propagate back up the async call tree.
+    /// </summary>
+    internal sealed class AppLogSession : IDisposable
+    {
+        private readonly object _gate = new();
+        private StreamWriter? _writer;
+        private bool _disposed;
+
+        public string SessionPath { get; }
+        public bool Enabled { get; set; } = true;
+
+        public AppLogSession(string? logsDirectory = null)
+        {
+            var dir = logsDirectory ?? AppPaths.LogsDirectory;
+            Directory.CreateDirectory(dir);
+            SessionPath = Path.Combine(dir, $"dev-{DateTime.Now:yyyyMMdd-HHmmss-fffffff}.log");
+            var stream = new FileStream(SessionPath, FileMode.Append, FileAccess.Write, FileShare.Read);
+            _writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
+            var asm = typeof(AppLog).Assembly.GetName();
+            WriteLine($"# Historia developer log — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            WriteLine($"# {asm.Name} {asm.Version}  |  {RuntimeInformation.OSDescription}  |  pid {Environment.ProcessId}");
+            WriteLine($"{Stamp()}  INFO   [app]  logging started");
+        }
+
+        public void WriteLine(string line)
+        {
+            lock (_gate)
+            {
+                if (_disposed || _writer is null) return;
+                try { _writer.WriteLine(line); } catch { }
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _disposed = true;
+                Enabled = false;
+                try { _writer?.Dispose(); } catch { }
+                _writer = null;
+            }
+
+            if (ReferenceEquals(_testSession.Value, this))
+                _testSession.Value = null;
+        }
+    }
+
     /// <summary>Marker file (mirrors <see cref="PerfLog"/>'s) that persists the opt-in across launches.</summary>
     private static string FlagFile => Path.Combine(AppPaths.MachineDirectory, "dev-logging.on");
 
@@ -54,9 +109,15 @@ public static partial class AppLog
     /// opens a fresh session file / closes the current one.</summary>
     public static bool Enabled
     {
-        get => Volatile.Read(ref _enabled);
+        get => _testSession.Value?.Enabled ?? Volatile.Read(ref _enabled);
         set
         {
+            if (_testSession.Value is { } testSession)
+            {
+                testSession.Enabled = value;
+                return;
+            }
+
             lock (Gate)
             {
                 PersistFlag(value);
@@ -79,12 +140,12 @@ public static partial class AppLog
     }
 
     /// <summary>Full path of the active session log, or null when disabled. Shown in the Developer panel.</summary>
-    public static string? CurrentLogPath => _sessionPath;
+    public static string? CurrentLogPath => _testSession.Value?.SessionPath ?? _sessionPath;
 
     /// <summary>Write one entry. No-op unless <see cref="Enabled"/>.</summary>
     public static void Write(AppLogLevel level, string category, string message, Exception? ex = null)
     {
-        if (!_enabled)
+        if (!Enabled)
             return;
 
         try
@@ -99,8 +160,15 @@ public static partial class AppLog
                 AppendException(sb, ex);
             }
 
+            var line = sb.ToString();
+            if (_testSession.Value is { } session)
+            {
+                session.WriteLine(line);
+                return;
+            }
+
             lock (Gate)
-                WriteLineLocked(sb.ToString());
+                WriteLineLocked(line);
         }
         catch { /* logging must never throw */ }
     }
@@ -108,11 +176,25 @@ public static partial class AppLog
     /// <summary>Logs <c>-&gt; message</c> now and <c>&lt;- message (outcome, N.Nms)</c> on dispose.
     /// Cheap default-struct no-op when disabled.</summary>
     public static OperationScope Operation(string category, string message)
-        => _enabled ? new OperationScope(category, Redact(message)) : default;
+        => Enabled ? new OperationScope(category, Redact(message)) : default;
+
+    /// <summary>Test seam: starts an isolated per-flow logging session.</summary>
+    internal static AppLogSession StartSessionForTesting(string? dir = null)
+    {
+        var session = new AppLogSession(dir);
+        _testSession.Value = session;
+        return session;
+    }
 
     /// <summary>Test seam: forget the current session without touching the marker file.</summary>
     internal static void ResetForTesting()
     {
+        if (_testSession.Value is { } session)
+        {
+            session.Dispose();
+            _testSession.Value = null;
+        }
+
         lock (Gate)
         {
             _enabled = false;

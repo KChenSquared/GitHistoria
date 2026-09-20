@@ -4,6 +4,7 @@ namespace Historia.Tests;
 /// each remote individually — a single untargeted "git fetch --all" can only be routed as
 /// <see cref="RouteTransport.AsIs"/> (no remote name means no URL to classify), which silently
 /// skips the active profile's credential injection and makes the SSH-Only setting a no-op.</summary>
+[Trait("tier", "git")]
 public sealed class GitGatewayFetchAllTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -11,10 +12,12 @@ public sealed class GitGatewayFetchAllTests : IAsyncDisposable
 
     public GitGatewayFetchAllTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        _repo.WriteFile("f.txt", "x").Stage().Commit("seed");
-        _repo.Git("remote", "add", "origin", "https://example.invalid/origin.git");
-        _repo.Git("remote", "add", "upstream", "https://example.invalid/upstream.git");
+        _repo = TestRepositoryBuilder.FromTemplate("gateway-fetch-all", r =>
+        {
+            r.WriteFile("f.txt", "x").Stage().Commit("seed");
+            r.Git("remote", "add", "origin", "https://example.invalid/origin.git");
+            r.Git("remote", "add", "upstream", "https://example.invalid/upstream.git");
+        });
     }
 
     public async ValueTask DisposeAsync()

@@ -1,4 +1,5 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
+[Trait("tier", "unit")]
 
 public class SyntaxHighlighterTests
 {
@@ -44,6 +45,7 @@ public class SyntaxHighlighterTests
     }
 }
 
+[Trait("tier", "unit")]
 public class WordDiffTests
 {
     [Fact]

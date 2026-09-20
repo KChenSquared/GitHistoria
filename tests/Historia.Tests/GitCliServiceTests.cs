@@ -1,4 +1,5 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
+[Trait("tier", "git")]
 
 public class GitCliServiceTests
 {
@@ -13,8 +14,8 @@ public class GitCliServiceTests
     public async Task Arguments_with_spaces_and_unicode_are_passed_literally_not_shell_interpreted()
     {
         var cli = await MakeAsync();
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("seed", "x").Stage().Commit("seed");
+        using var repo = TestRepositoryBuilder.FromTemplate("git-cli-seed", r =>
+            r.WriteFile("seed", "x").Stage().Commit("seed"));
 
         const string tricky = "a file — with spaces & 日本語.txt";
         repo.WriteFile(tricky, "content\n");
@@ -38,8 +39,8 @@ public class GitCliServiceTests
     public async Task A_leading_dash_path_after_double_dash_is_not_treated_as_an_option()
     {
         var cli = await MakeAsync();
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("seed", "x").Stage().Commit("seed");
+        using var repo = TestRepositoryBuilder.FromTemplate("git-cli-seed", r =>
+            r.WriteFile("seed", "x").Stage().Commit("seed"));
         repo.WriteFile("-weird-name", "content\n");
 
         var add = await cli.RunAsync(new GitCliRequest
@@ -55,8 +56,8 @@ public class GitCliServiceTests
     public async Task Checkout_of_a_missing_ref_is_classified_not_surfaced_raw()
     {
         var cli = await MakeAsync();
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("seed", "x").Stage().Commit("seed");
+        using var repo = TestRepositoryBuilder.FromTemplate("git-cli-seed", r =>
+            r.WriteFile("seed", "x").Stage().Commit("seed"));
 
         var result = await cli.RunAsync(new GitCliRequest
         {
@@ -72,7 +73,7 @@ public class GitCliServiceTests
     public async Task Cancellation_kills_the_process_and_reports_cancelled()
     {
         var cli = await MakeAsync();
-        using var repo = TestRepositoryBuilder.Create();
+        using var repo = TestRepositoryBuilder.FromTemplate("empty-repo", _ => { });
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();

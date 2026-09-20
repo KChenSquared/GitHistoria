@@ -1,16 +1,13 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
+[Trait("tier", "git")]
 
 public class StashServiceTests
 {
     private static StashService Make(MiniHost host)
         => new((IGitCliService)host.Provider.GetService(typeof(IGitCliService))!);
 
-    private static TestRepositoryBuilder SeededRepo()
-    {
-        var b = TestRepositoryBuilder.Create();
-        b.WriteFile("f.txt", "base\n").Stage().Commit("c1");
-        return b;
-    }
+    private static TestRepositoryBuilder SeededRepo() =>
+        TestRepositoryBuilder.FromTemplate("stash-seed", b => b.WriteFile("f.txt", "base\n").Stage().Commit("c1"));
 
     private static string Read(TestRepositoryBuilder b)
         => File.ReadAllText(Path.Combine(b.Path, "f.txt")).Replace("\r\n", "\n");
@@ -49,8 +46,8 @@ public class StashServiceTests
     public async Task StashStaged_stashes_only_the_staged_content(/* v8 M15 */)
     {
         await using var host = new MiniHost();
-        var b = TestRepositoryBuilder.Create();
-        b.WriteFile("a.txt", "a base\n").WriteFile("b.txt", "b base\n").Stage().Commit("c1");
+        var b = TestRepositoryBuilder.FromTemplate("stash-staged-seed", r =>
+            r.WriteFile("a.txt", "a base\n").WriteFile("b.txt", "b base\n").Stage().Commit("c1"));
         using (b)
         {
             await using var ctx = host.Open(b.Path);

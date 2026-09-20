@@ -1,4 +1,5 @@
-﻿global using Historia.Components;
+global using Historia.Components;
+global using Historia.Diagnostics;
 global using Historia.Models;
 global using Historia.Rendering;
 global using Historia.Services.AutoFetch;
@@ -23,11 +24,13 @@ global using Microsoft.Extensions.DependencyInjection;
 global using System.Collections.Concurrent;
 global using System.Collections.Immutable;
 global using System.Diagnostics;
+global using System.Runtime.Loader;
 global using System.Text;
 global using System.Text.Json;
 global using System.Text.Json.Nodes;
 global using System.Text.RegularExpressions;
 global using Xunit;
+global using Xunit.Abstractions;
 
 global using Color = Historia.Rgb;
 global using Point = Historia.PointD;

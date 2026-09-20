@@ -14,6 +14,7 @@ namespace Historia.Tests;
 /// that a genuinely large repo's on-disk cache would produce — reproducing that with real files
 /// would need a repo far larger than a unit test should build.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class GraphWalkResumeAfterPartialCacheTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -22,9 +23,7 @@ public sealed class GraphWalkResumeAfterPartialCacheTests : IAsyncDisposable
 
     public GraphWalkResumeAfterPartialCacheTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        for (var i = 0; i < CommitCount; i++)
-            _repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"commit {i:D2}");
+        _repo = TestRepositoryBuilder.FromTemplate("linear-10", b => b.LinearHistory(CommitCount));
     }
 
     public async ValueTask DisposeAsync()

@@ -1,4 +1,4 @@
-﻿namespace Historia.Diagnostics;
+namespace Historia.Diagnostics;
 
 /// <summary>
 /// Opt-in stopwatch logging for startup / repo-open latency work. On unless every call is a
@@ -10,13 +10,20 @@ public static class PerfLog
     private static readonly string FlagFile = Path.Combine(AppPaths.MachineDirectory, "perf-logging.on");
 
     private static bool _enabled = EnvOptIn() || FlagFileExists();
+    private static readonly AsyncLocal<bool?> _testEnabledOverride = new();
 
     /// <summary>Whether marks are written. Setting it persists the choice across launches.</summary>
     public static bool Enabled
     {
-        get => _enabled;
+        get => _testEnabledOverride.Value ?? _enabled;
         set
         {
+            if (_testEnabledOverride.Value.HasValue)
+            {
+                _testEnabledOverride.Value = value;
+                return;
+            }
+
             _enabled = value;
             try
             {
@@ -27,6 +34,12 @@ public static class PerfLog
             }
             catch { /* diagnostics must never throw */ }
         }
+    }
+
+    /// <summary>Test seam: overrides Enabled for the current async flow without touching the flag file.</summary>
+    internal static void OverrideEnabledForTesting(bool? enabled)
+    {
+        _testEnabledOverride.Value = enabled;
     }
 
     /// <summary>Full path of the log file, for surfacing in the Developer panel.</summary>

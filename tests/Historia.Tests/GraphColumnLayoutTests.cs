@@ -1,6 +1,7 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>§V3-8.4: the grow/shrink sizing model.</summary>
+[Trait("tier", "unit")]
 public class GraphColumnLayoutTests
 {
     private static List<GraphColumn> Defaults() => GraphColumnDefaults.All.Select(c => c with { }).ToList();

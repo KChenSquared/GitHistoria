@@ -1,4 +1,5 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
+[Trait("tier", "git")]
 
 public class RebaseServiceTests : IDisposable
 {
@@ -16,19 +17,18 @@ public class RebaseServiceTests : IDisposable
     public void Dispose() => RebaseService.EditorCommandOverride = null;
 
     /// <summary>main: c1; then main gains m2 while feature adds f1,f2,f3 from c1.</summary>
-    private static TestRepositoryBuilder Fixture()
-    {
-        var b = TestRepositoryBuilder.Create();
-        b.WriteFile("base.txt", "base\n").Stage().Commit("c1");
-        b.Checkout("feature", create: true);
-        b.WriteFile("f1.txt", "1\n").Stage().Commit("f1");
-        b.WriteFile("f2.txt", "2\n").Stage().Commit("f2");
-        b.WriteFile("f3.txt", "3\n").Stage().Commit("f3");
-        b.Checkout("main");
-        b.WriteFile("m2.txt", "m\n").Stage().Commit("m2");
-        b.Checkout("feature");
-        return b;
-    }
+    private static TestRepositoryBuilder Fixture() =>
+        TestRepositoryBuilder.FromTemplate("rebase-fixture", b =>
+        {
+            b.WriteFile("base.txt", "base\n").Stage().Commit("c1");
+            b.Checkout("feature", create: true);
+            b.WriteFile("f1.txt", "1\n").Stage().Commit("f1");
+            b.WriteFile("f2.txt", "2\n").Stage().Commit("f2");
+            b.WriteFile("f3.txt", "3\n").Stage().Commit("f3");
+            b.Checkout("main");
+            b.WriteFile("m2.txt", "m\n").Stage().Commit("m2");
+            b.Checkout("feature");
+        });
 
     [Fact]
     public async Task Build_session_lists_upstream_to_head_oldest_first()

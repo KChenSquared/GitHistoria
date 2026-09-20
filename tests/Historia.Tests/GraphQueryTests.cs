@@ -1,10 +1,11 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>
 /// §V2-17.3: the graph query controls. Path filter restricts the walk (a coherent, valid
 /// topology); ref scope narrows the tips. Search is find-not-filter and lives in the control,
 /// so it is not exercised here — this covers the layout-service side.
 /// </summary>
+[Trait("tier", "git")]
 public class GraphQueryTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -12,17 +13,19 @@ public class GraphQueryTests : IAsyncDisposable
 
     public GraphQueryTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        _repo.WriteFile("main.txt", "1\n").Stage();
-        _repo.Commit("c1 on main");
-        _repo.WriteFile("main.txt", "2\n").Stage();
-        _repo.Commit("c2 on main");
+        _repo = TestRepositoryBuilder.FromTemplate("graph-query-fixture", b =>
+        {
+            b.WriteFile("main.txt", "1\n").Stage();
+            b.Commit("c1 on main");
+            b.WriteFile("main.txt", "2\n").Stage();
+            b.Commit("c2 on main");
 
-        _repo.Checkout("feature", create: true);
-        _repo.WriteFile("feature.txt", "f\n").Stage();
-        _repo.Commit("c3 on feature");
+            b.Checkout("feature", create: true);
+            b.WriteFile("feature.txt", "f\n").Stage();
+            b.Commit("c3 on feature");
 
-        _repo.Checkout("main");
+            b.Checkout("main");
+        });
     }
 
     [Fact]
@@ -72,13 +75,8 @@ public class GraphQueryTests : IAsyncDisposable
     {
         // The control opens a repo with a tiny phase-1 batch, then ExtendLayoutAsync's to the
         // configured "Initial rows loaded" (§7.3). The result must equal one full layout.
-        for (var i = 0; i < 30; i++)
-        {
-            _repo.WriteFile("main.txt", $"{i}\n").Stage();
-            _repo.Commit($"bulk {i}");
-        }
-
-        await using var ctx = _host.Open(_repo.Path);
+        using var repo = RepoTemplates.Linear(30);
+        await using var ctx = _host.Open(repo.Path);
         var svc = new GraphLayoutService();
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
 

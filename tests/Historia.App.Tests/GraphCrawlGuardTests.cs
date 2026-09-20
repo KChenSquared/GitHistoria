@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace HistoriaApp.Tests;
+[Trait("tier", "ui")]
 
 public sealed class GraphCrawlGuardTests : IDisposable
 {

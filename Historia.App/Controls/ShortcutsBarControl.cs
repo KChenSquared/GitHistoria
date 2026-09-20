@@ -177,8 +177,8 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
     private static Button IconTextButton(string icon, string label, string tip, Action onClick)
     {
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
-        content.Children.Add(IconGlyphPath(icon, 15, "ColorTextMuted"));
-        content.Children.Add(new TextBlock { Text = label, FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(IconGlyphPath(icon, 18, "ColorTextMuted"));
+        content.Children.Add(new TextBlock { Text = label, FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
         var b = new Button
         {
             Content = content,

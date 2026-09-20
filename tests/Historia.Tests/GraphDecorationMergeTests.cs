@@ -6,6 +6,7 @@ namespace Historia.Tests;
 /// contains a slash; a tag and a branch of the same name stay separate; HEAD folds into its
 /// branch and only stands alone when detached.
 /// </summary>
+[Trait("tier", "git")]
 public class GraphDecorationMergeTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -13,9 +14,11 @@ public class GraphDecorationMergeTests : IAsyncDisposable
 
     public GraphDecorationMergeTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-        _repo.WriteFile("a.txt", "1\n").Stage();
-        _repo.Commit("c1");
+        _repo = TestRepositoryBuilder.FromTemplate("seed-decoration", b =>
+        {
+            b.WriteFile("a.txt", "1\n").Stage();
+            b.Commit("c1");
+        });
     }
 
     private async Task<GraphDecoration[]> DecorationsForTipAsync()

@@ -1,4 +1,5 @@
 namespace Historia.Tests;
+[Trait("tier", "git")]
 
 public class CloneServiceTests : IAsyncDisposable
 {
@@ -11,8 +12,8 @@ public class CloneServiceTests : IAsyncDisposable
 
     private static RepositoryContext CreateTestContext(MiniHost host, out TestRepositoryBuilder repo)
     {
-        repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("init.txt", "hello").Stage().Commit("initial commit");
+        repo = TestRepositoryBuilder.FromTemplate("clone-seed", r =>
+            r.WriteFile("init.txt", "hello").Stage().Commit("initial commit"));
         return host.Open(repo.Path);
     }
 

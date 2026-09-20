@@ -1,4 +1,4 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>
 /// Constitution rule 24 — "the render path creates no Historia-owned object per frame" — measured
@@ -7,6 +7,7 @@
 /// <see cref="RenderResourceCache{TKey,TValue}"/> and the test drives that directly: warm over a
 /// frame, reset counters, render the same frame again, assert every miss counter is zero.
 /// </summary>
+[Trait("tier", "unit")]
 public class TerminalRenderAllocationTests
 {
     private sealed record PenKey(int Rgb, double Thickness, int Style);

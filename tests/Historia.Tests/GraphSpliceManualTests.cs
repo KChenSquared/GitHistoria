@@ -53,6 +53,8 @@ public sealed class ManualFactAttribute : FactAttribute
 /// pre-check on <see cref="GraphMetaSplice.MinRowsToConsider"/> failed before any query ran).</item>
 /// </list>
 /// </summary>
+[Trait("tier", "git")]
+[Trait("tier", "slow")]
 public sealed class GraphSpliceManualTests
 {
     [ManualFact]

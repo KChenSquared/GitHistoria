@@ -7,6 +7,9 @@ namespace Historia.Tests;
 /// §7.6 full-history disk spill). Ensures the spill tier yields to background-tier callers so the background
 /// spill does not starve the visible-row crawl.
 /// </summary>
+[Trait("tier", "git")]
+// Serialized: assigns process-global PerfLog.Enabled and asserts on process-global RepositoryContext.FormattedGateMarksCount.
+[Collection("serial")]
 public sealed class RepositoryContextGateTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -14,9 +17,11 @@ public sealed class RepositoryContextGateTests : IAsyncDisposable
     [Fact(Timeout = 20000)]
     public async Task Spill_tier_yields_to_a_background_tier_caller_even_under_a_tight_reacquire_loop()
     {
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("a.txt", "x\n").Stage();
-        repo.Commit("c");
+        using var repo = TestRepositoryBuilder.FromTemplate("gate-seed", b =>
+        {
+            b.WriteFile("a.txt", "x\n").Stage();
+            b.Commit("c");
+        });
         var ctx = _host.Open(repo.Path);
 
         using var stopCts = new CancellationTokenSource();
@@ -71,9 +76,11 @@ public sealed class RepositoryContextGateTests : IAsyncDisposable
         Historia.Diagnostics.PerfLog.Enabled = true;
         try
         {
-            using var repo = TestRepositoryBuilder.Create();
-            repo.WriteFile("a.txt", "x\n").Stage();
-            repo.Commit("c");
+            using var repo = TestRepositoryBuilder.FromTemplate("gate-seed", b =>
+            {
+                b.WriteFile("a.txt", "x\n").Stage();
+                b.Commit("c");
+            });
             var ctx = _host.Open(repo.Path);
 
             var startLineCount = File.Exists(Historia.Diagnostics.PerfLog.LogPath)
@@ -103,9 +110,11 @@ public sealed class RepositoryContextGateTests : IAsyncDisposable
         Historia.Diagnostics.PerfLog.Enabled = true;
         try
         {
-            using var repo = TestRepositoryBuilder.Create();
-            repo.WriteFile("a.txt", "x\n").Stage();
-            repo.Commit("c");
+            using var repo = TestRepositoryBuilder.FromTemplate("gate-seed", b =>
+            {
+                b.WriteFile("a.txt", "x\n").Stage();
+                b.Commit("c");
+            });
             var ctx = _host.Open(repo.Path);
 
             var startLineCount = File.Exists(Historia.Diagnostics.PerfLog.LogPath)
@@ -134,9 +143,11 @@ public sealed class RepositoryContextGateTests : IAsyncDisposable
         Historia.Diagnostics.PerfLog.Enabled = false;
         try
         {
-            using var repo = TestRepositoryBuilder.Create();
-            repo.WriteFile("a.txt", "x\n").Stage();
-            repo.Commit("c");
+            using var repo = TestRepositoryBuilder.FromTemplate("gate-seed", b =>
+            {
+                b.WriteFile("a.txt", "x\n").Stage();
+                b.Commit("c");
+            });
             var ctx = _host.Open(repo.Path);
 
             var startCount = Volatile.Read(ref RepositoryContext.FormattedGateMarksCount);

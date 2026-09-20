@@ -4,6 +4,7 @@ namespace Historia.Tests;
 /// per-commit metadata and stubs the resident copy. That stub must keep <c>CommitWhen</c> — the
 /// tip-priority pre-pass sorts candidate tips by it, and zeroing it would make re-layouts after
 /// the first spill sort tips by SHA and pin the trunk to a random lane.</summary>
+[Trait("tier", "git")]
 public sealed class GraphSpillTrunkStabilityTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -11,28 +12,29 @@ public sealed class GraphSpillTrunkStabilityTests : IAsyncDisposable
 
     public GraphSpillTrunkStabilityTests()
     {
-        _repo = TestRepositoryBuilder.Create();
-
-        // main gets the bulk of history and the NEWEST tip; several feature branches fork off it
-        // at earlier points, each with an older tip. SeedTipPriority must keep main (newest,
-        // and checked out) on lane 0 — both on the first compute and on every re-layout after
-        // the spill stubs the resident metadata.
-        void Trunk(int from, int to)
+        _repo = TestRepositoryBuilder.FromTemplate("graph-spill-trunk-stability", repo =>
         {
-            for (var i = from; i < to; i++)
-                _repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"main {i:D3}");
-        }
+            // main gets the bulk of history and the NEWEST tip; several feature branches fork off it
+            // at earlier points, each with an older tip. SeedTipPriority must keep main (newest,
+            // and checked out) on lane 0 — both on the first compute and on every re-layout after
+            // the spill stubs the resident metadata.
+            void Trunk(int from, int to)
+            {
+                for (var i = from; i < to; i++)
+                    repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"main {i:D3}");
+            }
 
-        Trunk(0, 6);
-        for (var b = 0; b < 6; b++)
-        {
-            _repo.Git("checkout", "-b", $"feat-{b}");
-            _repo.WriteFile($"feat{b}.txt", "x").Stage().Commit($"feat {b} tip");
-            _repo.Git("checkout", "main");
-            Trunk(6 + b * 4, 10 + b * 4);
-        }
-        // main's final (newest) commit
-        _repo.WriteFile("f.txt", "final\n").Stage().Commit("main HEAD newest");
+            Trunk(0, 6);
+            for (var b = 0; b < 6; b++)
+            {
+                repo.Git("checkout", "-b", $"feat-{b}");
+                repo.WriteFile($"feat{b}.txt", "x").Stage().Commit($"feat {b} tip");
+                repo.Git("checkout", "main");
+                Trunk(6 + b * 4, 10 + b * 4);
+            }
+            // main's final (newest) commit
+            repo.WriteFile("f.txt", "final\n").Stage().Commit("main HEAD newest");
+        });
     }
 
     public async ValueTask DisposeAsync()

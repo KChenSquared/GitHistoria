@@ -1,10 +1,11 @@
-﻿namespace Historia.Tests;
+namespace Historia.Tests;
 
 /// <summary>
 /// Guards the fix for deviation D5: the pty I/O loops must run on dedicated background threads,
 /// never the <see cref="System.Threading.ThreadPool"/>, and must exit promptly once their
 /// streams close. See <see cref="PtyIoPump"/>.
 /// </summary>
+[Trait("tier", "unit")]
 public class PtyIoPumpTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);

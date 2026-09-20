@@ -13,6 +13,7 @@ namespace HistoriaApp.Tests;
 /// service-less measure/arrange without throwing. A botched rewire of an extracted helper that
 /// touches the ctor or the layout overrides trips this before the diff lands.
 /// </summary>
+[Trait("tier", "ui")]
 public class GraphControlConstructionTests
 {
     [AvaloniaFact]

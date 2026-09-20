@@ -29,6 +29,7 @@ namespace HistoriaApp.Tests;
 /// is what the Avalonia-source finding in the helper's doc comment (`SettingsView.cs`) describes:
 /// by the time our instance handler runs, <c>Value</c> already reflects the typed text.
 /// </summary>
+[Trait("tier", "ui")]
 public class SettingsNumericCommitTests
 {
     private static void WireNumericCommit(NumericUpDown nud, int initial, Func<int, int> clamp, Action<int> commit)

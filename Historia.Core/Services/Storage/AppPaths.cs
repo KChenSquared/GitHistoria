@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Storage;
+namespace Historia.Services.Storage;
 
 /// <summary>
 /// Well-known on-disk locations for Historia's persistent state (§V3-9.1).
@@ -12,7 +12,7 @@
 /// </summary>
 public static class AppPaths
 {
-    private static string? _override;
+    private static readonly AsyncLocal<string?> _override = new();
     private static string? _cachedPortable;
     private static readonly object _sync = new();
 
@@ -20,9 +20,9 @@ public static class AppPaths
     /// §V3-9.1). Short-circuits the whole resolution and invalidates the cache.</summary>
     public static void OverrideForTesting(string? directory)
     {
+        _override.Value = directory;
         lock (_sync)
         {
-            _override = directory;
             _cachedPortable = null;
         }
     }
@@ -32,10 +32,12 @@ public static class AppPaths
     {
         get
         {
+            var ov = _override.Value;
+            if (ov is not null)
+                return ov;
+
             lock (_sync)
             {
-                if (_override is not null)
-                    return _override;
                 return _cachedPortable ??= ResolveFor(
                     () => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
                     DefaultProbe);
@@ -48,7 +50,7 @@ public static class AppPaths
     /// no probe — <c>%APPDATA%</c> is writable on any machine that can run the app.
     /// </summary>
     public static string MachineDirectory =>
-        _override ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Historia");
+        _override.Value ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Historia");
 
     /// <summary>True when neither portable candidate was writable, so persistence is disabled for
     /// the session (rule 0.4). The last <see cref="ResolveFor"/> call sets this.</summary>
@@ -196,7 +198,7 @@ public static class AppPaths
     /// </summary>
     private static void MigratePortableFilesFromAppData()
     {
-        if (_override is not null || PortableResolutionFailed)
+        if (_override.Value is not null || PortableResolutionFailed)
             return;
 
         var portable = DataDirectory;

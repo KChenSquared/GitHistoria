@@ -1,5 +1,7 @@
-﻿namespace Historia.Tests;
-
+namespace Historia.Tests;
+[Trait("tier", "git")]
+// Serialized: sets process-wide GIT_CONFIG_* variables that every concurrently spawned git child inherits.
+[Collection("serial")]
 public class SubmoduleServiceTests : IDisposable
 {
     private static SubmoduleService Make(MiniHost host)
@@ -25,13 +27,15 @@ public class SubmoduleServiceTests : IDisposable
     {
         await using var host = new MiniHost();
 
-        using var inner = TestRepositoryBuilder.Create();
-        inner.WriteFile("lib.txt", "lib\n").Stage().Commit("lib c1");
+        using var inner = TestRepositoryBuilder.FromTemplate("submodule-inner-seed", r =>
+            r.WriteFile("lib.txt", "lib\n").Stage().Commit("lib c1"));
 
-        using var outerB = TestRepositoryBuilder.Create();
-        outerB.WriteFile("app.txt", "app\n").Stage().Commit("app c1");
-        // Local-path submodules need this opt-in on modern Git (CVE-2022-39253).
-        outerB.Git("config", "protocol.file.allow", "always");
+        using var outerB = TestRepositoryBuilder.FromTemplate("submodule-outer-seed", r =>
+        {
+            r.WriteFile("app.txt", "app\n").Stage().Commit("app c1");
+            // Local-path submodules need this opt-in on modern Git (CVE-2022-39253).
+            r.Git("config", "protocol.file.allow", "always");
+        });
 
         await using var ctx = host.Open(outerB.Path);
         var svc = Make(host);
@@ -54,8 +58,7 @@ public class SubmoduleServiceTests : IDisposable
     public async Task An_empty_repo_reports_no_submodules()
     {
         await using var host = new MiniHost();
-        using var b = TestRepositoryBuilder.Create();
-        b.WriteFile("f.txt", "x\n").Stage().Commit("c1");
+        using var b = RepoTemplates.Linear(1);
         await using var ctx = host.Open(b.Path);
         Assert.Empty(await Make(host).ListAsync(ctx));
     }

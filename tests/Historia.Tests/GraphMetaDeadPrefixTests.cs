@@ -5,6 +5,7 @@ namespace Historia.Tests;
 /// instead of appending after them, leaving no dead prefix in <c>.meta.dat</c> and reporting
 /// <see cref="SpillOutcome.Conflict"/> if retirement is blocked by an unshared foreign handle.
 /// </summary>
+[Trait("tier", "unit")]
 public sealed class GraphMetaDeadPrefixTests : IDisposable
 {
     private readonly StateDir _state = new();

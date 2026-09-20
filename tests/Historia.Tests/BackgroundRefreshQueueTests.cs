@@ -7,6 +7,7 @@ namespace Historia.Tests;
 /// background refreshes wait for the focused tab's initial load, and focused tab
 /// refreshes run immediately.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class BackgroundRefreshQueueTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -24,9 +25,11 @@ public sealed class BackgroundRefreshQueueTests : IAsyncDisposable
 
     private TestRepositoryBuilder CreateRepo(string name)
     {
-        var r = TestRepositoryBuilder.Create();
-        r.WriteFile("a.txt", $"{name}\n").Stage();
-        r.Commit("init");
+        var r = TestRepositoryBuilder.FromTemplate($"brq-{name}", b =>
+        {
+            b.WriteFile("a.txt", $"{name}\n").Stage();
+            b.Commit("init");
+        });
         _repos.Add(r);
         return r;
     }

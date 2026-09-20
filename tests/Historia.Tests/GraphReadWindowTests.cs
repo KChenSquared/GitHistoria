@@ -10,6 +10,7 @@ namespace Historia.Tests;
 /// implementation details of <see cref="GraphLayoutService"/>, not part of its public surface, so
 /// this drives them directly via reflection rather than through the full async orchestration.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class GraphReadWindowTests : IDisposable
 {
     private readonly StateDir _state = new();
@@ -160,8 +161,7 @@ public sealed class GraphReadWindowTests : IDisposable
     public async Task Extend_with_a_disposed_backing_store_returns_the_existing_layout_unchanged()
     {
         await using var host = new MiniHost();
-        using var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("f.txt", "x\n").Stage().Commit("initial");
+        using var repo = TestRepositoryBuilder.FromTemplate("seed-initial", b => b.WriteFile("f.txt", "x\n").Stage().Commit("initial"));
         await using var ctx = host.Open(repo.Path);
 
         // 5 rows already laid out; 15 more confirmed "on disk" behind a store we then dispose —

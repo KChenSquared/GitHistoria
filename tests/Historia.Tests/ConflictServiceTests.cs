@@ -1,19 +1,19 @@
 namespace Historia.Tests;
+[Trait("tier", "git")]
 
 public class ConflictServiceTests
 {
     private static ConflictService Make(MiniHost host)
         => new((IGitCliService)host.Provider.GetService(typeof(IGitCliService))!, host.Settings);
 
-    private static TestRepositoryBuilder ConflictedRepo()
-    {
-        var repo = TestRepositoryBuilder.Create();
-        repo.WriteFile("f.txt", "line1\nshared\nline3\n").Stage().Commit("base");
-        repo.Checkout("feature", create: true).WriteFile("f.txt", "line1\nTHEIRS\nline3\n").Stage().Commit("theirs");
-        repo.Checkout("main").WriteFile("f.txt", "line1\nOURS\nline3\n").Stage().Commit("ours");
-        try { repo.Git("merge", "feature"); } catch { /* expected to conflict */ }
-        return repo;
-    }
+    private static TestRepositoryBuilder ConflictedRepo() =>
+        TestRepositoryBuilder.FromTemplate("conflicted-repo", repo =>
+        {
+            repo.WriteFile("f.txt", "line1\nshared\nline3\n").Stage().Commit("base");
+            repo.Checkout("feature", create: true).WriteFile("f.txt", "line1\nTHEIRS\nline3\n").Stage().Commit("theirs");
+            repo.Checkout("main").WriteFile("f.txt", "line1\nOURS\nline3\n").Stage().Commit("ours");
+            try { repo.Git("merge", "feature"); } catch { /* expected to conflict */ }
+        });
 
     [Fact]
     public async Task Lists_and_loads_a_both_modified_conflict_from_index_stages()
@@ -99,11 +99,13 @@ public class ConflictServiceTests
         const string conflictedName = "pwn&calc&file.txt";
 
         await using var host = new MiniHost();
-        using var repoDir = TestRepositoryBuilder.Create();
-        repoDir.WriteFile(conflictedName, "line1\nshared\nline3\n").Stage().Commit("base");
-        repoDir.Checkout("feature", create: true).WriteFile(conflictedName, "line1\nTHEIRS\nline3\n").Stage().Commit("theirs");
-        repoDir.Checkout("main").WriteFile(conflictedName, "line1\nOURS\nline3\n").Stage().Commit("ours");
-        try { repoDir.Git("merge", "feature"); } catch { /* expected to conflict */ }
+        using var repoDir = TestRepositoryBuilder.FromTemplate("conflicted-metachar-path-repo", repo =>
+        {
+            repo.WriteFile(conflictedName, "line1\nshared\nline3\n").Stage().Commit("base");
+            repo.Checkout("feature", create: true).WriteFile(conflictedName, "line1\nTHEIRS\nline3\n").Stage().Commit("theirs");
+            repo.Checkout("main").WriteFile(conflictedName, "line1\nOURS\nline3\n").Stage().Commit("ours");
+            try { repo.Git("merge", "feature"); } catch { /* expected to conflict */ }
+        });
 
         await using var ctx = host.Open(repoDir.Path);
 

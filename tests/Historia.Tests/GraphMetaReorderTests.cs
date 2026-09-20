@@ -7,6 +7,7 @@ namespace Historia.Tests;
 /// it feeds (<see cref="GraphMetaWriter.WriteOrder"/> / <see cref="GraphMetaWriter.CommitReorder"/>
 /// / <c>DiskCommitStore</c> reading through an explicit order) end to end against real files.
 /// </summary>
+[Trait("tier", "unit")]
 public sealed class GraphMetaReorderTests : IDisposable
 {
     private readonly StateDir _state = new();

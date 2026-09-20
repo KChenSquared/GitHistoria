@@ -1,7 +1,6 @@
-using Historia.Diagnostics;
-
 namespace Historia.Tests;
-
+[Trait("tier", "unit")]
+[Collection("serial")]
 public sealed class AppLogTests : IDisposable
 {
     private readonly StateDir _dir = new();
@@ -155,5 +154,95 @@ public sealed class AppLogTests : IDisposable
 
         Assert.Null(AppLog.CurrentLogPath);
         Assert.DoesNotContain("after disable", File.ReadAllText(file));
+    }
+
+    [Fact]
+    public async Task Sessions_are_isolated_between_concurrent_flows()
+    {
+        using var barrier = new Barrier(2);
+        string? session1File = null;
+        string? session2File = null;
+
+        using var dir1 = new StateDir();
+        using var dir2 = new StateDir();
+
+        var t1 = Task.Run(() =>
+        {
+            AppPaths.OverrideForTesting(dir1.Path);
+            using var session1 = AppLog.StartSessionForTesting();
+            session1File = session1.SessionPath;
+            barrier.SignalAndWait();
+            AppLog.Write(AppLogLevel.Info, "flow1", "message from flow 1");
+        });
+
+        var t2 = Task.Run(() =>
+        {
+            AppPaths.OverrideForTesting(dir2.Path);
+            using var session2 = AppLog.StartSessionForTesting();
+            session2File = session2.SessionPath;
+            barrier.SignalAndWait();
+            AppLog.Write(AppLogLevel.Info, "flow2", "message from flow 2");
+        });
+
+        await Task.WhenAll(t1, t2);
+
+        Assert.NotNull(session1File);
+        Assert.NotNull(session2File);
+        Assert.NotEqual(session1File, session2File);
+
+        var text1 = File.ReadAllText(session1File);
+        var text2 = File.ReadAllText(session2File);
+
+        Assert.Contains("message from flow 1", text1);
+        Assert.DoesNotContain("message from flow 2", text1);
+
+        Assert.Contains("message from flow 2", text2);
+        Assert.DoesNotContain("message from flow 1", text2);
+    }
+
+    [Fact]
+    public void A_disposed_session_hands_the_logger_back_to_the_global_writer()
+    {
+        string sessionPath;
+        using (var session = AppLog.StartSessionForTesting(_dir.Path))
+        {
+            sessionPath = session.SessionPath;
+        }
+
+        AppLog.Enabled = true;
+        try
+        {
+            AppLog.Write(AppLogLevel.Info, "global", "after session disposal");
+
+            var globalPath = AppLog.CurrentLogPath;
+            Assert.NotNull(globalPath);
+            Assert.NotEqual(sessionPath, globalPath);
+
+            AppLog.Enabled = false;
+            var text = File.ReadAllText(globalPath);
+            Assert.Contains("after session disposal", text);
+        }
+        finally
+        {
+            AppLog.Enabled = false;
+        }
+    }
+
+    [Fact]
+    public void Enabling_after_a_disposed_session_opens_a_real_session_file()
+    {
+        using (AppLog.StartSessionForTesting(_dir.Path)) { }
+
+        AppLog.Enabled = true;
+        try
+        {
+            var path = AppLog.CurrentLogPath;
+            Assert.NotNull(path);
+            Assert.True(File.Exists(path));
+        }
+        finally
+        {
+            AppLog.Enabled = false;
+        }
     }
 }

@@ -7,6 +7,7 @@ namespace Historia.Tests;
 /// correctness across a chunk boundary, and the concurrent single-writer/many-reader contract its
 /// own doc comment describes (a reader must never see a torn chunk or a stale count).
 /// </summary>
+[Trait("tier", "unit")]
 public sealed class ChunkedAppendListTests
 {
     [Fact]

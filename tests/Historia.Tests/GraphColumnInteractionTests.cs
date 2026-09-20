@@ -2,6 +2,7 @@ namespace Historia.Tests;
 
 /// <summary>T3.3 of the debloat audit: the graph column-header pointer geometry lifted out of
 /// <c>CommitGraphControl</c>.</summary>
+[Trait("tier", "unit")]
 public class GraphColumnInteractionTests
 {
     // Refs [0,100)  Graph [100,300)  Message [300,700)

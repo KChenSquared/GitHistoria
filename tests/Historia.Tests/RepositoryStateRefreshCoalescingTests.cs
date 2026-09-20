@@ -6,10 +6,11 @@ namespace Historia.Tests;
 /// faults are not cached, joiner cancellation does not cancel shared runs, and branches
 /// publish before tags finish.
 /// </summary>
+[Trait("tier", "git")]
 public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
-    private readonly TestRepositoryBuilder _repo = TestRepositoryBuilder.Create();
+    private readonly TestRepositoryBuilder _repo = TestRepositoryBuilder.FromTemplate("empty-repo", _ => { });
 
     public async ValueTask DisposeAsync()
     {
