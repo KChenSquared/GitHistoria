@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Terminal;
+namespace Historia.Services.Terminal;
 
 /// <inheritdoc cref="ITerminalSessionService"/>
 public sealed class TerminalSessionService : ITerminalSessionService, IDisposable
@@ -72,17 +72,23 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
             }
 
             // Re-entrancy guard (V5 §4.1 trap): a double-click must produce one process.
-            // A previous attempt that faulted or was cancelled must not wedge the key forever —
-            // drop it so this click can retry (the hang case is bounded by SpawnTimeout below).
+            // Return a pending start only while it is genuinely in-flight. A completed entry
+            // is always stale: if successful it is already in _sessions above, and if faulted
+            // or cancelled it must not block retrying.
             if (_inFlight.TryGetValue(origin.Key, out var pending))
             {
-                if (!pending.IsFaulted && !pending.IsCanceled)
+                if (!pending.IsCompleted)
                     return pending;
                 _inFlight.Remove(origin.Key);
             }
 
             var task = StartAsync(origin, ct);
-            _inFlight[origin.Key] = task;
+            // When StartAsync completes synchronously (e.g. Porta.Pty on Windows returning
+            // Task.FromResult), its finally block has already run and removed the key before
+            // we reached here. Only register genuine async tasks. For async starts, StartAsync's
+            // finally will acquire _sync after this lock is released and clean up.
+            if (!task.IsCompleted)
+                _inFlight[origin.Key] = task;
             return task;
         }
     }
