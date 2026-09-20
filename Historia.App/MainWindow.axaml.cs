@@ -20,8 +20,6 @@ public partial class MainWindow : Window
     private IRepoNetworkActionRunner? _networkRunner;
     private IWorkspaceService? _workspace;
     private IRepositoryStateService? _boundState;
-    private bool _forceClose;
-    private bool _closingConfirmOpen;
 
     // Parameterless ctor for the XAML previewer only.
     public MainWindow() : this(null!) { }
@@ -397,54 +395,10 @@ public partial class MainWindow : Window
         };
     }
 
-    protected override async void OnClosing(WindowClosingEventArgs e)
+    protected override void OnClosing(WindowClosingEventArgs e)
     {
         Historia.Diagnostics.PerfLog.Mark("MainWindow.OnClosing start");
         base.OnClosing(e);
-        if (_forceClose)
-        {
-            using (Historia.Diagnostics.PerfLog.Scope("MainWindow.OnClosing terminalDock.Dispose"))
-                _terminalDock?.Dispose();
-            return;
-        }
-
-        if (_closingConfirmOpen)
-        {
-            e.Cancel = true;
-            return;
-        }
-
-        var termSessions = _services?.GetService<Historia.Services.Terminal.ITerminalSessionService>();
-        var dialogs = _services?.GetService<Historia.Services.UI.IDialogService>();
-        if (termSessions is { Sessions.Count: > 0 } && dialogs is not null)
-        {
-            e.Cancel = true;
-            _closingConfirmOpen = true;
-            try
-            {
-                var count = termSessions.Sessions.Count;
-                var confirmed = await dialogs.ConfirmDestructiveAsync(
-                    "Quit Historia?",
-                    $"There {(count == 1 ? "is 1 live terminal session" : $"are {count} live terminal sessions")}. Quitting will terminate {(count == 1 ? "it" : "them")} and anything running inside.",
-                    "Quit");
-                if (confirmed)
-                {
-                    _forceClose = true;
-                    Close();
-                }
-            }
-            catch
-            {
-                _forceClose = true;
-                Close();
-            }
-            finally
-            {
-                _closingConfirmOpen = false;
-            }
-            return;
-        }
-
         using (Historia.Diagnostics.PerfLog.Scope("MainWindow.OnClosing terminalDock.Dispose"))
             _terminalDock?.Dispose();
     }

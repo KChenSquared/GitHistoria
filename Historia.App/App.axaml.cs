@@ -13,9 +13,7 @@ public sealed class App : Application
     private SplashWindow? _splash;
     private MainWindow? _mainWindow;
 
-    // Avalonia can raise ShutdownRequested/Exit more than once for a single quit (observed when
-    // the "quit past a live terminal" confirm dialog -- itself a child Window -- closes right
-    // before MainWindow does, seemingly tripping the OnLastWindowClose check twice). A second
+    // Avalonia can raise ShutdownRequested/Exit more than once for a single quit. A second
     // pass would re-cancel/re-dispose everything below, throwing ObjectDisposedException on
     // _singleInstanceCts.Cancel() -- unhandled there, it gets swallowed by the global dispatcher
     // exception handler, which leaves the process alive but stuck forever, never actually
@@ -361,10 +359,7 @@ public sealed class App : Application
     }
 
     /// <summary>
-    /// Flush pending settings before the process exits. The "quit past a live terminal" prompt
-    /// is <b>not</b> here — it is in <see cref="MainWindow.OnClosing"/>, where a window still
-    /// exists to own the dialog (V5 §7.2). Handling it here after <c>OnLastWindowClose</c> had
-    /// already destroyed the window left the process running head-less.
+    /// Flush pending settings before the process exits.
     /// </summary>
     private void OnShutdownRequested(object? sender, ShutdownRequestedEventArgs e)
     {
