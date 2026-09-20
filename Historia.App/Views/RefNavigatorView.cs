@@ -462,6 +462,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 menuBtn.Flyout = new MenuFlyout { ItemsSource = BuildSubmoduleMenuItems(sm) };
                 var row = Leaf(SubmoduleRowLabel(sm, busy: false), 0, "ColorText", null, menuBtn);
                 row.ContextMenu = new ContextMenu { ItemsSource = BuildSubmoduleMenuItems(sm) };
+                row.DoubleTapped += (_, e) => { e.Handled = true; _ = OpenSubmoduleTabAsync(sm); };
                 subBody.Children.Add(row);
             }
             if (_submoduleList is { Count: > 0 })
@@ -836,6 +837,22 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     /// without constructing the view.</summary>
     internal static string SubmoduleRowLabel(SubmoduleInfo sm, bool busy) =>
         busy ? $"{sm.Name}  — Initializing…" : $"{sm.Name}  ({sm.Status})";
+
+    /// <summary>F9: double-clicking a submodule row opens (or focuses) its linked tab.</summary>
+    private async Task OpenSubmoduleTabAsync(SubmoduleInfo sm)
+    {
+        if (_repo is null) return;
+        try
+        {
+            await _workspace.OpenSubmoduleAsync(_repo, sm, _repo.Lifetime);
+            _nav.RequestNavigate("repo");
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error,
+                $"Could not open submodule: {ex.Message}", ex.NotificationDetails());
+        }
+    }
 
     private async Task WorktreeRemoveAsync(WorktreeInfo wt)
     {
