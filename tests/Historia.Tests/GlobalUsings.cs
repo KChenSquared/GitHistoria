@@ -1,6 +1,7 @@
 global using Historia.Components;
 global using Historia.Diagnostics;
 global using Historia.Models;
+global using Historia.Primitives;
 global using Historia.Rendering;
 global using Historia.Services.AutoFetch;
 global using Historia.Services.Diff;
