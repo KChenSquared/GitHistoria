@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>
 /// §V6-G9: the manage-themes panel — a peer of <see cref="SettingsView"/>. Lists the user's
@@ -314,8 +314,6 @@ public sealed class ThemesView : UserControl, IDisposable
         t.TextWrapping = TextWrapping.Wrap;
         return t;
     }
-
-    private static Control Section(string title) => Text(title, "ColorTextMuted", 13, FontWeight.SemiBold);
 
     private static Control LabeledRow(string label, Control control)
     {

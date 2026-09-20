@@ -124,7 +124,7 @@ public sealed class SettingsView : UserControl, IDisposable
             _root.Children.Add(Muted("Tabs shrink to fit short repository names and grow up to ~25 characters for longer ones."));
         }
         _root.Children.Add(Muted("Graph-panel columns are configured per repository — the wrench on a repo tab."));
-        _root.Children.Add(WithHint(Check("Show author date instead of commit date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })), "The graph is always sorted by commit date. This only changes which date the Date column and commit details show."));
+        _root.Children.Add(WithCaption(Check("Show author date instead of commit date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })), "The graph is always sorted by commit date. This only changes which date the Date column and commit details show."));
 
         // v8 M9: mouse-wheel / trackpad scroll direction for the graph and the tab strip.
         var wheelDir = new ComboBox { Width = 220 };
@@ -144,7 +144,7 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         _root.Children.Add(LabeledRow("Scroll direction", wheelDir));
         _root.Children.Add(Muted("Windows always scrolls standard. On macOS and Linux, \"Match system\" follows the OS natural-scroll setting."));
-        _root.Children.Add(WithHint(Check("Store a local repository cache", c.PersistRepoCache,
+        _root.Children.Add(WithCaption(Check("Store a local repository cache", c.PersistRepoCache,
             v =>
             {
                 _ = _cfg.UpdateAsync(s => s with { PersistRepoCache = v });
@@ -213,7 +213,7 @@ public sealed class SettingsView : UserControl, IDisposable
         _root.Children.Add(Check("Prune deleted remote branches on fetch", c.PruneOnFetch, v => _ = _cfg.UpdateAsync(s => s with { PruneOnFetch = v })));
         _root.Children.Add(Check("Pull with rebase by default", c.PullWithRebase, v => _ = _cfg.UpdateAsync(s => s with { PullWithRebase = v })));
         _root.Children.Add(Check("Reopen previous repository tabs on launch", c.RestoreSessionTabs, v => _ = _cfg.UpdateAsync(s => s with { RestoreSessionTabs = v })));
-        _root.Children.Add(WithHint(Check("Use custom stash names", c.UseCustomStashNames,
+        _root.Children.Add(WithCaption(Check("Use custom stash names", c.UseCustomStashNames,
             v => _ = _cfg.UpdateAsync(s => s with { UseCustomStashNames = v })),
             "When on, the \"Stash all\" buttons ask you for a message. When off, they name the stash \"Stash of <branch>\"."));
 
@@ -265,7 +265,7 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         WireNumericCommit(scrollback, c.TerminalScrollbackLines, AppSettings.ClampTerminalScrollback,
             next => _ = _cfg.UpdateAsync(s => s with { TerminalScrollbackLines = next }));
-        termBody.Children.Add(WithHint(LabeledRow("Scrollback lines", scrollback),
+        termBody.Children.Add(WithCaption(LabeledRow("Scrollback lines", scrollback),
             "Memory ≈ lines × columns × ~8 bytes, per session — a 5,000-line buffer on a 120-column grid is ~5 MB, and this multiplies by the number of open terminal sessions."));
 
         var cursorStyle = new ComboBox { Width = 160 };
@@ -302,15 +302,15 @@ public sealed class SettingsView : UserControl, IDisposable
         advBody.Children.Add(Check("Show the splash screen on launch", c.ShowSplashScreen,
             v => _ = _cfg.UpdateAsync(s => s with { ShowSplashScreen = v })));
 
-        advBody.Children.Add(WithHint(Check("Read graph metadata from disk instead of memory", c.GraphMetadataFromDisk,
+        advBody.Children.Add(WithCaption(Check("Read graph metadata from disk instead of memory", c.GraphMetadataFromDisk,
             v => _ = _cfg.UpdateAsync(s => s with { GraphMetadataFromDisk = v })),
             "Pages commit metadata (messages, author, dates) from the local cache folder to minimize memory usage on large repositories. Applies after restart of Historia."));
 
-        advBody.Children.Add(WithHint(Check("Write a commit-graph file for large repositories", c.WriteCommitGraphForLargeRepos,
+        advBody.Children.Add(WithCaption(Check("Write a commit-graph file for large repositories", c.WriteCommitGraphForLargeRepos,
             v => _ = _cfg.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = v })),
             "The commit-graph file is written once a repository is known to have 30,000+ commits, and refreshed after each automatic fetch. Lets Git's own history walk skip straight to recent commits instead of scanning the whole history."));
 
-        advBody.Children.Add(WithHint(Check("Splice new commits into the graph cache instead of re-walking (large repositories, experimental)", c.EnableGraphSplice,
+        advBody.Children.Add(WithCaption(Check("Splice new commits into the graph cache instead of re-walking (large repositories, experimental)", c.EnableGraphSplice,
             v => _ = _cfg.UpdateAsync(s => s with { EnableGraphSplice = v })),
             "Applies after restart of Historia."));
 
@@ -326,7 +326,7 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         WireNumericCommit(silentCrawlCap, c.SilentCrawlRowCap, AppSettings.ClampSilentCrawlRowCap,
             next => _ = _cfg.UpdateAsync(s => s with { SilentCrawlRowCap = next }));
-        advBody.Children.Add(WithHint(LabeledRow("Background auto-load row cap", silentCrawlCap),
+        advBody.Children.Add(WithCaption(LabeledRow("Background auto-load row cap", silentCrawlCap),
             "How many rows the graph silently pre-loads in the background after first paint, and loads another this many each time you scroll past them. 0 means uncapped. Applies after restart of Historia."));
 
         var residentRowCap = new NumericUpDown
@@ -341,7 +341,7 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         WireResidentRowCapCommit(residentRowCap, c.ResidentRowCap, _dialogs,
             next => _cfg.UpdateAsync(s => s with { ResidentRowCap = next }));
-        advBody.Children.Add(WithHint(LabeledRow("Resident row cap", residentRowCap),
+        advBody.Children.Add(WithCaption(LabeledRow("Resident row cap", residentRowCap),
             "The absolute ceiling on how many rows the graph will keep resident for one repository, regardless of scrolling. Applies after restart of Historia."));
         advBody.Margin = new Thickness(0, 10, 0, 0);
 
@@ -505,14 +505,13 @@ public sealed class SettingsView : UserControl, IDisposable
         }, handledEventsToo: true);
     }
 
-    private static Control Section(string title) => Text(title, "ColorTextMuted", 13, FontWeight.SemiBold);
     private static Control Muted(string text) { var t = Text(text, "ColorTextMuted", 11); t.TextWrapping = TextWrapping.Wrap; return t; }
 
-    private static Control WithHint(Control control, string hint)
+    private static Control WithCaption(Control control, string caption)
     {
         var panel = new StackPanel { Spacing = 2 };
         panel.Children.Add(control);
-        panel.Children.Add(Muted(hint));
+        panel.Children.Add(Muted(caption));
         return panel;
     }
 
