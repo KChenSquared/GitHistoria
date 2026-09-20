@@ -1090,33 +1090,13 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         OpenRepositoriesChanged?.Invoke(this, new OpenRepositoriesChangedEventArgs(OpenRepositories));
     }
 
-    // Schemes Historia will pass to `git clone`. Deliberately excludes any custom transport —
-    // notably "ext::", a Git remote-helper syntax that runs an arbitrary shell command — and any
-    // scheme this list doesn't recognise.
-    private static readonly HashSet<string> AllowedCloneSchemes =
-        new(StringComparer.OrdinalIgnoreCase) { "http", "https", "ssh", "git", "file" };
-
-    /// <summary>Rejects a pasted clone URL that would let Git parse it as something other than a
-    /// repository address — a leading '-' (option injection) or a "&lt;transport&gt;::" prefix
-    /// (an arbitrary Git remote helper, e.g. "ext::sh -c ..."). Local paths, and the
-    /// http/https/ssh/git/file schemes, are otherwise unrestricted.</summary>
+    /// <summary>Rejects a pasted clone URL that <see cref="CloneValidation.DescribeUrlProblem"/>
+    /// flags — see its doc comment for the exact checks.</summary>
     private static void ValidateCloneUrl(string url)
     {
-        if (string.IsNullOrWhiteSpace(url))
-            throw new HistoriaGitException(GitErrorKind.Unknown, "A clone URL is required.");
-
-        var trimmed = url.Trim();
-
-        if (trimmed.StartsWith('-'))
-            throw new HistoriaGitException(GitErrorKind.Unknown, "The clone URL cannot start with '-'.");
-
-        if (trimmed.Contains("::", StringComparison.Ordinal))
-            throw new HistoriaGitException(GitErrorKind.Unknown,
-                "This URL uses a Git remote-helper transport, which Historia does not allow for Clone.");
-
-        var schemeEnd = trimmed.IndexOf("://", StringComparison.Ordinal);
-        if (schemeEnd >= 0 && !AllowedCloneSchemes.Contains(trimmed[..schemeEnd]))
-            throw new HistoriaGitException(GitErrorKind.Unknown, $"Unsupported clone URL scheme '{trimmed[..schemeEnd]}'.");
+        var problem = CloneValidation.DescribeUrlProblem(url);
+        if (problem is not null)
+            throw new HistoriaGitException(GitErrorKind.Unknown, problem);
     }
 
     private static string NormalizeDir(string path)

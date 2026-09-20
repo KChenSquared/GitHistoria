@@ -115,7 +115,7 @@ public sealed class CloneService(
         }
         catch (Exception ex)
         {
-            notifications.Publish(NotificationSeverity.Error, $"Clone failed: {ex.Message}", ex.NotificationDetails());
+            notifications.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails());
         }
         finally
         {

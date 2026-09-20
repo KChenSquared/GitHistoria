@@ -74,6 +74,23 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
+    /// <summary>F3: ValidateCloneUrl now delegates to CloneValidation.DescribeUrlProblem, which
+    /// also rejects a URL with no repo-address shape at all (not just the security-motivated
+    /// cases above) — confirms that delegation reaches the new shape check too.</summary>
+    [Fact]
+    public async Task CloneAsync_rejects_a_url_with_no_repository_shape()
+    {
+        var ws = NewWorkspace();
+        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-test-{Guid.NewGuid():N}");
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(
+            () => ws.CloneAsync("just some plain text", target, new Historia.Services.Workspace.CloneOptions(), progress: null));
+
+        Assert.False(Directory.Exists(target));
+        Assert.NotNull(ex);
+        await ws.DisposeAsync();
+    }
+
     [Fact]
     public async Task CloneAsync_still_clones_a_plain_local_path()
     {
