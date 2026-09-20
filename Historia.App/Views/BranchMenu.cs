@@ -13,7 +13,60 @@ internal static class BranchMenu
         string TrackingRef,     // the ref to base a tracking local on for a remote row
         bool IsLocal,
         string? TipSha,         // for "Create branch/tag here"; null → omit those
-        string? CurrentBranch);
+        string? CurrentBranch,
+        // R11: the counterpart ref to measure divergence against — a local row's upstream
+        // (e.g. "origin/main"), or a remote row's local branch of the same short name. Null
+        // when there is no counterpart (no upstream / no local branch), in which case the menu
+        // gets no divergence items.
+        string? CounterpartRef = null,
+        // The owning remote's alias (e.g. "origin"), resolved via BranchInfo.RemoteName rather
+        // than string-splitting Name/UpstreamName, which may itself contain a slash.
+        string? RemoteAlias = null);
+
+    /// <summary>R11: resolves (ahead, behind) for <paramref name="t"/> against its counterpart
+    /// and returns the matching push/pull/fast-forward menu item(s), or empty when there is no
+    /// counterpart, the lookup fails, or the refs are identical. <c>git pull</c> always merges
+    /// into whatever is currently checked out, so a Pull/Fast-forward item is only offered when
+    /// the branch in question is the current branch; a Push item needs no such guard since
+    /// <c>git push</c> takes an explicit local ref regardless of checkout state.</summary>
+    internal static async Task<IReadOnlyList<Control>> BuildDivergenceItemsAsync(
+        Target t, IGitGateway gateway, IRepoActionBus actions, CancellationToken ct)
+    {
+        if (t.CounterpartRef is not { } counterpart || t.RemoteAlias is not { } remoteAlias)
+            return [];
+
+        var (local, remote) = t.IsLocal ? (t.TrackingRef, counterpart) : (counterpart, t.TrackingRef);
+
+        AheadBehind? ab;
+        try { ab = await gateway.GetDivergenceAsync(local, remote, ct); }
+        catch { return []; }
+        if (ab is not { } div || (div.Ahead == 0 && div.Behind == 0))
+            return [];
+
+        var isCurrentLocalBranch = t.IsLocal
+            ? string.Equals(t.Name, t.CurrentBranch, StringComparison.Ordinal)
+            : string.Equals(counterpart, t.CurrentBranch, StringComparison.Ordinal);
+
+        void Push(string branchName) => actions.RequestNetworkAction(new RepoNetworkRequest(RepoNetworkAction.Push, remoteAlias, branchName));
+        void Pull(string branchName) => actions.RequestNetworkAction(new RepoNetworkRequest(RepoNetworkAction.Pull, remoteAlias, branchName));
+
+        var items = new List<Control>();
+        if (t.IsLocal)
+        {
+            if (div.Ahead > 0 && div.Behind == 0)
+                items.Add(MenuLeaf($"Push {div.Ahead} commit(s) to {remoteAlias}", () => Push(t.Name)));
+            else if (div.Behind > 0 && isCurrentLocalBranch)
+                items.Add(MenuLeaf(div.Ahead == 0 ? $"Fast-forward from {counterpart}" : $"Pull from {counterpart}", () => Pull(t.Name)));
+        }
+        else
+        {
+            if (div.Ahead > 0)
+                items.Add(MenuLeaf($"Push {t.Name} to {remoteAlias}", () => Push(t.Name)));
+            else if (div.Behind > 0 && isCurrentLocalBranch)
+                items.Add(MenuLeaf($"Pull {t.TrackingRef}", () => Pull(t.Name)));
+        }
+        return items;
+    }
 
     public static List<Control> Build(
         Target t, RepositoryContext ctx, IDialogService dialogs, INotificationService notify,

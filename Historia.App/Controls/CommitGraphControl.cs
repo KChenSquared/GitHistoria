@@ -38,6 +38,7 @@ public sealed partial class CommitGraphControl : Control
     private Historia.Services.PowerTools.IStashService _stashes = default!;
     private INavigationBus _nav = default!;
     private Historia.Services.Settings.ISettingsService _settings = default!;
+    private Historia.Services.UI.IRepoActionBus _actionBus = default!;
     private Historia.Services.UI.IScrollDirectionProbe _scrollProbe = default!;
     private Historia.Services.Settings.IRepoLayoutService _repoLayout = default!;
 
@@ -520,6 +521,7 @@ public sealed partial class CommitGraphControl : Control
         _stashes = services.GetRequiredService<Historia.Services.PowerTools.IStashService>();
         _nav = services.GetRequiredService<INavigationBus>();
         _settings = services.GetRequiredService<Historia.Services.Settings.ISettingsService>();
+        _actionBus = services.GetRequiredService<Historia.Services.UI.IRepoActionBus>();
         _scrollProbe = services.GetRequiredService<Historia.Services.UI.IScrollDirectionProbe>();
         _graphMetaFromDisk = _settings.Current.GraphMetadataFromDisk;
         _showAuthorDate = _settings.Current.ShowAuthorDate;

@@ -16,6 +16,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private readonly ISubmoduleService _submodules;
     private readonly IWorktreeService _worktrees;
     private readonly IRepoStateCache _repoCache;
+    private readonly IRepoActionBus _actions;
 
     internal readonly StackPanel _root = new();
     private RepositoryContext? _repo;
@@ -96,6 +97,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         _submodules = sp.GetRequiredService<ISubmoduleService>();
         _worktrees = sp.GetRequiredService<IWorktreeService>();
         _repoCache = sp.GetRequiredService<IRepoStateCache>();
+        _actions = sp.GetRequiredService<IRepoActionBus>();
 
         _localFilterBox = CreateFilterBox(() => _localFilterOpen = false);
         _remotesFilterBox = CreateFilterBox(() => _remotesFilterOpen = false);
@@ -334,7 +336,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             foreach (var g in byRemote)
             {
                 var key = "remote:" + g.Key;
-                remoteBody.Children.Add(FolderRow(g.Key, key, depth: 0));
+                remoteBody.Children.Add(FolderRow(g.Key, key, depth: 0, remoteAlias: g.Key));
                 if (IsOpen(key, depth: 0))
                 {
                     var prefix = g.Key + "/";
@@ -629,7 +631,9 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     }
 
     /// <summary>A collapsible folder row (remote root or path segment). Its label aligns with leaves.</summary>
-    private Border FolderRow(string segment, string path, int depth)
+    /// <summary><paramref name="remoteAlias"/> is non-null only for a remote's own root folder
+    /// row (never a path-segment folder beneath it) and adds a "Rename remote…" context menu.</summary>
+    private Border FolderRow(string segment, string path, int depth, string? remoteAlias = null)
     {
         var open = IsOpen(path, depth);
         var caret = Text(open ? "▾" : "▸", "ColorTextMuted", 10);
@@ -648,7 +652,51 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             if (!_expanded.Remove(path)) _expanded.Add(path);
             Rebuild();
         };
+
+        if (remoteAlias is not null)
+        {
+            b.ContextMenu = new ContextMenu
+            {
+                ItemsSource = new Control[]
+                {
+                    MenuLeaf("Rename remote…", () => RenameRemoteAsync(remoteAlias)),
+                },
+            };
+        }
         return b;
+    }
+
+    /// <summary>R12: renames a remote's alias from the sidebar. Rejects an empty/unchanged name
+    /// or a collision with an existing remote before calling git — a caller-side check is
+    /// friendlier than letting libgit2 throw for the common mistakes. Surfaces any fetch
+    /// refspecs the rename could not rewrite automatically as a warning, per M2.1's
+    /// <c>RenameRemoteAsync</c> contract.</summary>
+    private async Task RenameRemoteAsync(string oldName)
+    {
+        if (_repo is not { } ctx)
+            return;
+        var newName = await _dialogs.PromptAsync("Rename remote", $"New name for '{oldName}':", oldName);
+        if (string.IsNullOrWhiteSpace(newName) || newName == oldName)
+            return;
+        newName = newName.Trim();
+        if (ctx.State.Remotes.Any(r => string.Equals(r.Name, newName, StringComparison.Ordinal)))
+        {
+            await _dialogs.ShowMessageAsync("Rename remote", $"A remote named '{newName}' already exists.");
+            return;
+        }
+
+        try
+        {
+            var untouched = await ctx.Gateway.RenameRemoteAsync(oldName, newName, ctx.Lifetime);
+            await ctx.State.RefreshAllAsync(ctx.Lifetime);
+            if (untouched.Count > 0)
+                _notifications.Publish(NotificationSeverity.Warning,
+                    $"'{oldName}' renamed to '{newName}', but these fetch refspecs need manual fixing: {string.Join(", ", untouched)}");
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, $"Rename remote failed: {ex.Message}", ex.NotificationDetails());
+        }
     }
 
     private Border Leaf(string text, int depth, string fgKey, Action? select, Control? action, bool current = false)
@@ -687,19 +735,53 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             ? b.Name[(r.Length + 1)..]
             : b.Name;
 
+        // R11: the counterpart to measure divergence against, and the remote alias that owns
+        // it — resolved via BranchInfo.RemoteName (reliable even when the alias itself contains
+        // a slash), never by splitting Name/UpstreamName on '/'.
+        string? counterpartRef = null, remoteAlias = null;
+        if (!isRemote && b.UpstreamName is { } upstream)
+        {
+            counterpartRef = upstream;
+            remoteAlias = ctx.State.Branches.FirstOrDefault(x => x.IsRemote && x.Name == upstream)?.RemoteName;
+        }
+        else if (isRemote)
+        {
+            var localCounterpart = ctx.State.Branches.FirstOrDefault(x => !x.IsRemote && x.Name == shortLocal);
+            if (localCounterpart is not null)
+                counterpartRef = shortLocal;
+            remoteAlias = b.RemoteName;
+        }
+
         var target = new BranchMenu.Target(
             Name: shortLocal,
             CopyName: b.Name,
             TrackingRef: b.Name,
             IsLocal: !isRemote,
             TipSha: b.TipCommitId?.Sha,
-            CurrentBranch: ctx.State.CurrentBranch?.Name);
+            CurrentBranch: ctx.State.CurrentBranch?.Name,
+            CounterpartRef: counterpartRef,
+            RemoteAlias: remoteAlias);
 
-        row.ContextMenu = new ContextMenu
+        var baseItems = BranchMenu.Build(target, ctx, _dialogs, _notifications, _stashes,
+            s => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(s));
+
+        var menu = new ContextMenu { ItemsSource = baseItems };
+        // R11: the divergence lookup shells out to git — resolve it lazily on Opening so the
+        // popup never blocks on a git process, and show the base menu immediately.
+        menu.Opening += async (_, _) =>
         {
-            ItemsSource = BranchMenu.Build(target, ctx, _dialogs, _notifications, _stashes,
-                s => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(s)),
+            var opened = menu;
+            IReadOnlyList<Control> divergenceItems;
+            try { divergenceItems = await BranchMenu.BuildDivergenceItemsAsync(target, ctx.Gateway, _actions, ctx.Lifetime); }
+            catch { return; }
+            if (divergenceItems.Count == 0 || !ReferenceEquals(menu, opened) || !menu.IsOpen)
+                return;
+            var afterCheckout = baseItems.Take(1).ToList();
+            afterCheckout.AddRange(divergenceItems);
+            afterCheckout.AddRange(baseItems.Skip(1));
+            menu.ItemsSource = afterCheckout;
         };
+        row.ContextMenu = menu;
     }
 
     private void Select(LibGit2Sharp.ObjectId? id)
