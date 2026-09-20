@@ -245,4 +245,49 @@ public sealed class AppLogTests : IDisposable
             AppLog.Enabled = false;
         }
     }
+
+    [Fact]
+    public void OptInFlag_precedence_env_var_and_flag_file()
+    {
+        var envVar = "HISTORIA_TEST_FLAG_" + Guid.NewGuid().ToString("N");
+        var flagFile = "test-flag-" + Guid.NewGuid().ToString("N") + ".on";
+        var flagPath = Path.Combine(AppPaths.MachineDirectory, flagFile);
+
+        try
+        {
+            var flag = new OptInFlag(envVar, flagFile);
+            Assert.False(flag.IsOptedIn);
+            Assert.False(flag.Enabled);
+
+            // Flag file enables it
+            File.WriteAllText(flagPath, "");
+            Assert.True(flag.FlagFileExists());
+            Assert.True(flag.IsOptedIn);
+
+            File.Delete(flagPath);
+            Assert.False(flag.FlagFileExists());
+
+            // Env var enables it upon construction
+            Environment.SetEnvironmentVariable(envVar, "1");
+            var envFlag = new OptInFlag(envVar, flagFile);
+            Assert.True(envFlag.EnvOptIn());
+            Assert.True(envFlag.IsOptedIn);
+            Assert.True(envFlag.Enabled);
+
+            // Test override wins over env var
+            envFlag.OverrideForTesting(false);
+            Assert.False(envFlag.Enabled);
+
+            envFlag.OverrideForTesting(true);
+            Assert.True(envFlag.Enabled);
+
+            envFlag.OverrideForTesting(null);
+            Assert.True(envFlag.Enabled);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envVar, null);
+            try { if (File.Exists(flagPath)) File.Delete(flagPath); } catch { }
+        }
+    }
 }
