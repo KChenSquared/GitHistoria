@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Profiles;
+namespace Historia.Services.Profiles;
 
 /// <inheritdoc cref="IProfileService"/>
 public sealed class ProfileService : IProfileService, IAsyncDisposable
@@ -46,7 +46,6 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
     private readonly Dictionary<string, BindingDto> _bindings = new(StringComparer.Ordinal);
 
     public event EventHandler? ProfilesChanged;
-    public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged;
 
     public ProfileService(ISettingsService settings, ICredentialVaultService vault, IGitCliService cli)
     {
@@ -706,9 +705,6 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
     }
 
     private void RaiseProfilesChanged() => ProfilesChanged?.Invoke(this, EventArgs.Empty);
-
-    internal void RaiseActiveProfileChanged(GitProfile? profile, RepoIdentityKey? repoKey)
-        => ActiveProfileChanged?.Invoke(this, new ActiveProfileChangedEventArgs(profile, repoKey));
 
     private static bool SafeDirExists(string path)
     {

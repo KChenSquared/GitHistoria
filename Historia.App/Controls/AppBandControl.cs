@@ -30,7 +30,6 @@ public sealed class AppBandControl : UserControl, IDisposable
     private EventHandler<OpenRepositoriesChangedEventArgs>? _onOpenChanged;
     private EventHandler<FocusedRepositoryChangedEventArgs>? _onFocusChanged;
     private EventHandler? _onProfilesChanged;
-    private EventHandler<ActiveProfileChangedEventArgs>? _onActiveProfileChanged;
     private EventHandler<SettingsChangedEventArgs>? _onSettingsChanged;
     private EventHandler? _onAutoFetchStates;
     private Action? _onAutoFetchDebug;
@@ -69,10 +68,10 @@ public sealed class AppBandControl : UserControl, IDisposable
     public AppBandControl()
     {
         Height = RowHeight + 1;
-        Dyn(this, BackgroundProperty, "ColorChrome");
+        this.Dyn(BackgroundProperty, "ColorChrome");
 
         var border = new Border { BorderThickness = new Thickness(0, 0, 0, 1) };
-        Dyn(border, Border.BorderBrushProperty, "ColorBorder");
+        border.Dyn(Border.BorderBrushProperty, "ColorBorder");
 
         _dock = new DockPanel { LastChildFill = true };
         border.Child = _dock;
@@ -89,14 +88,14 @@ public sealed class AppBandControl : UserControl, IDisposable
         brandRow.Children.Add(_hamburger);
 
         var menuDivider = new Border { Width = 1, Margin = new Thickness(6, 4, 0, 4) };
-        Dyn(menuDivider, Border.BackgroundProperty, "ColorBorder");
+        menuDivider.Dyn(Border.BackgroundProperty, "ColorBorder");
         brandRow.Children.Add(menuDivider);
 
         // The ship emblem — a full-colour raster that follows the theme (wired in Initialize,
         // once the theme service is available). Was a monochrome silhouette Path off Historia.svg.
         _brandMark = new Image { Width = 24, Height = 24, Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         var word = new TextBlock { Text = "Historia", FontWeight = FontWeight.SemiBold, Margin = new Thickness(8, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
-        Dyn(word, TextBlock.ForegroundProperty, "ColorText");
+        word.Dyn(TextBlock.ForegroundProperty, "ColorText");
 
         // The mark + wordmark are their own click target, separate from the hamburger —
         // clicking them opens the Home right panel directly, without also popping the app menu.
@@ -133,7 +132,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         _dock.Children.Add(_brand);
 
         var brandDivider = new Border { Width = 1 };
-        Dyn(brandDivider, Border.BackgroundProperty, "ColorBorder");
+        brandDivider.Dyn(Border.BackgroundProperty, "ColorBorder");
         DockPanel.SetDock(brandDivider, Dock.Left);
         _dock.Children.Add(brandDivider);
 
@@ -206,9 +205,6 @@ public sealed class AppBandControl : UserControl, IDisposable
         _dock.Children.Add(_scroller);
     }
 
-    private static void Dyn(Control c, AvaloniaProperty p, string key)
-        => c.Bind(p, new DynamicResourceExtension(key));
-
     private double ScrollableWidth => Math.Max(0, _scroller.Extent.Width - _scroller.Viewport.Width);
     private double ScrollableHeight => Math.Max(0, _scroller.Extent.Height - _scroller.Viewport.Height);
 
@@ -265,7 +261,6 @@ public sealed class AppBandControl : UserControl, IDisposable
         _onOpenChanged = (_, _) => Dispatcher.UIThread.Post(RebuildTabs);
         _onFocusChanged = (_, _) => Dispatcher.UIThread.Post(RebuildTabs);
         _onProfilesChanged = (_, _) => Dispatcher.UIThread.Post(BuildAppMenu);
-        _onActiveProfileChanged = (_, _) => Dispatcher.UIThread.Post(BuildAppMenu);
         _onSettingsChanged = (_, _) => Dispatcher.UIThread.Post(() =>
         {
             ApplyTabStripMode();
@@ -278,7 +273,6 @@ public sealed class AppBandControl : UserControl, IDisposable
         _workspace.OpenRepositoriesChanged += _onOpenChanged;
         _workspace.FocusedRepositoryChanged += _onFocusChanged;
         _profiles.ProfilesChanged += _onProfilesChanged;
-        _profiles.ActiveProfileChanged += _onActiveProfileChanged;
         _settings.Changed += _onSettingsChanged;
         _autoFetch.TabStatesChanged += _onAutoFetchStates;
         AutoFetchDebug.Changed += _onAutoFetchDebug;
@@ -301,7 +295,6 @@ public sealed class AppBandControl : UserControl, IDisposable
         if (_profiles is not null)
         {
             _profiles.ProfilesChanged -= _onProfilesChanged;
-            _profiles.ActiveProfileChanged -= _onActiveProfileChanged;
         }
         if (_settings is not null)
             _settings.Changed -= _onSettingsChanged;
@@ -337,7 +330,7 @@ public sealed class AppBandControl : UserControl, IDisposable
             var want = AutoFetchBarToken(_autoFetch.GetTabState(ctx));
             if (want == token)
                 continue;
-            Dyn(bar, Border.BackgroundProperty, want);
+            bar.Dyn(Border.BackgroundProperty, want);
             _autoFetchBars[ctx] = (bar, want);
         }
     }
@@ -453,7 +446,7 @@ public sealed class AppBandControl : UserControl, IDisposable
             BorderThickness = new Thickness(first ? 0 : 1, 0, 0, 0),
             Height = RowHeight,
         };
-        Dyn(shell, Border.BorderBrushProperty, "ColorBorder");
+        shell.Dyn(Border.BorderBrushProperty, "ColorBorder");
 
         // Dynamic (default) → no Width, the tab sizes to its label. Fixed → every tab is
         // the configured pixel width. 5 px of breathing room after the last
@@ -470,12 +463,12 @@ public sealed class AppBandControl : UserControl, IDisposable
             body.Width = FixedTabWidth;
         if (active)
         {
-            Dyn(body, Border.BackgroundProperty, "ColorBg");
-            Dyn(body, Border.BorderBrushProperty, "ColorPrimary");
+            body.Dyn(Border.BackgroundProperty, "ColorBg");
+            body.Dyn(Border.BorderBrushProperty, "ColorPrimary");
         }
         else
         {
-            Dyn(body, Border.BackgroundProperty, "ColorChrome");
+            body.Dyn(Border.BackgroundProperty, "ColorChrome");
         }
 
         var grid = new Grid
@@ -496,7 +489,7 @@ public sealed class AppBandControl : UserControl, IDisposable
             name.MaxWidth = TabNameMaxChars * ApproxCharPx;
         ToolTip.SetTip(name, ctx.RepositoryPath);
         ToolTip.SetShowDelay(name, 75);
-        Dyn(name, TextBlock.ForegroundProperty, active ? "ColorText" : "ColorTextMuted");
+        name.Dyn(TextBlock.ForegroundProperty, active ? "ColorText" : "ColorTextMuted");
         Grid.SetColumn(name, 0);
         grid.Children.Add(name);
 
@@ -604,7 +597,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         // unless AutoFetchDebug.Enabled; recoloured in place on IAutoFetchService.TabStatesChanged.
         var afBarToken = AutoFetchBarToken(_autoFetch.GetTabState(ctx));
         var afBar = new Border { Width = 4, IsVisible = AutoFetchDebug.Enabled };
-        Dyn(afBar, Border.BackgroundProperty, afBarToken);
+        afBar.Dyn(Border.BackgroundProperty, afBarToken);
         _autoFetchBars[ctx] = (afBar, afBarToken);
 
         var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };

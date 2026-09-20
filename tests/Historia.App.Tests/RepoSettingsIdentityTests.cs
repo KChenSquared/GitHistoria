@@ -168,7 +168,6 @@ public class RepoSettingsIdentityTests : IDisposable
 
 #pragma warning disable CS0067
         public event EventHandler? ProfilesChanged;
-        public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged;
 #pragma warning restore CS0067
 
         public IReadOnlyList<GitProfile> GetAllProfiles() => _profiles;

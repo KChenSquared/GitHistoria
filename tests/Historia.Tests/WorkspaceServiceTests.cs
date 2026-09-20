@@ -596,7 +596,6 @@ public class WorkspaceServiceTests : IAsyncDisposable
         public Task ExportProfilesAsync(string exportFilePath, bool includeTokens, string? password, CancellationToken ct = default) => Task.CompletedTask;
         public Task ImportProfilesAsync(string importFilePath, string? password, CancellationToken ct = default) => Task.CompletedTask;
         public event EventHandler? ProfilesChanged { add { } remove { } }
-        public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged { add { } remove { } }
     }
 
     private static TestRepositoryBuilder RepoWithoutLocalIdentity()
