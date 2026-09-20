@@ -37,6 +37,16 @@ public interface IWorkspaceService
         IProgress<GitProgress>? progress,
         CancellationToken ct = default);
 
+    /// <summary>Opens <paramref name="submodule"/> (relative to <paramref name="owner"/>'s
+    /// working directory) as a tab linked to <paramref name="owner"/> (§F9) — inserted
+    /// immediately after <paramref name="owner"/>'s current group (its own tab plus any already-
+    /// linked children), focused once opened. If the submodule's working copy is already open
+    /// under a tab, that tab is focused instead of opening a duplicate; if it isn't already
+    /// linked to a different owner, its <see cref="RepositoryContext.LinkOwner"/> is set to
+    /// <paramref name="owner"/>. An existing link to a *different* owner is left untouched —
+    /// this never force-relinks a tab away from its current group.</summary>
+    Task<RepositoryContext> OpenSubmoduleAsync(RepositoryContext owner, SubmoduleInfo submodule, CancellationToken ct = default);
+
     Task CloseAsync(RepositoryContext context);
     void Focus(RepositoryContext context);
 
@@ -57,6 +67,12 @@ public interface IWorkspaceService
     /// §V3-B/19.21). No-op when the context is not open or is already there. Raises
     /// <see cref="OpenRepositoriesChanged"/> and re-persists the session so the order survives a
     /// restart. Focus is unaffected.
+    /// <para>§F9 — group-aware: when <paramref name="context"/> is a group owner (or a standalone
+    /// tab), its whole contiguous group (itself plus any linked children) moves together as one
+    /// block, snapping to the nearest group boundary to <paramref name="newIndex"/> — it never
+    /// splits another group. When <paramref name="context"/> is itself a linked child,
+    /// <paramref name="newIndex"/> is clamped to its own group's span, so it can only reorder
+    /// among its own siblings.</para>
     /// </summary>
     void Move(RepositoryContext context, int newIndex);
 

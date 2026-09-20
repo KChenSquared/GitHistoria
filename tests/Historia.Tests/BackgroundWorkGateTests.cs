@@ -21,6 +21,7 @@ internal sealed class FakeWorkspace : IWorkspaceService
     public Task<RepositoryContext> OpenAsync(string path, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<RepositoryContext> InitAsync(string path, string? initialBranch, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<RepositoryContext> CloneAsync(string url, string targetDirectory, Historia.Services.Workspace.CloneOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<RepositoryContext> OpenSubmoduleAsync(RepositoryContext owner, SubmoduleInfo submodule, CancellationToken ct = default) => throw new NotSupportedException();
     public Task CloseAsync(RepositoryContext context) => throw new NotSupportedException();
     public void Focus(RepositoryContext context) => SetFocused(context);
     public void EnsureInitialized(RepositoryContext context) { }

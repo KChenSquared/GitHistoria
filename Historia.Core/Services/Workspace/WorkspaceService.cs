@@ -444,6 +444,65 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             targetDirectory, focus: true, initialize: true, CancellationToken.None, prefetched: Task.FromResult(context)).ConfigureAwait(false);
     }
 
+    /// <summary>Under <see cref="_sync"/>: the contiguous index range occupied by
+    /// <paramref name="member"/>'s group — the owner (or <paramref name="member"/> itself when
+    /// it has no <see cref="RepositoryContext.LinkOwner"/>) plus every tab whose
+    /// <c>LinkOwner</c> is that owner. Groups do not nest, so this walks up at most one level.
+    /// Returns <c>(0, 0)</c> when the owner isn't found in <see cref="_open"/>.</summary>
+    private (int Start, int Count) GroupSpan(RepositoryContext member)
+    {
+        var owner = member.LinkOwner ?? member;
+        var start = _open.IndexOf(owner);
+        if (start < 0)
+            return (0, 0);
+        var count = 1;
+        while (start + count < _open.Count && ReferenceEquals(_open[start + count].LinkOwner, owner))
+            count++;
+        return (start, count);
+    }
+
+    public async Task<RepositoryContext> OpenSubmoduleAsync(RepositoryContext owner, SubmoduleInfo submodule, CancellationToken ct = default)
+    {
+        var submodulePath = Path.Combine(owner.RepositoryPath, submodule.Path);
+        var discovered = await Task.Run(() => Repository.Discover(submodulePath), ct).ConfigureAwait(false)
+            ?? throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
+                $"No Git repository was found at or above '{submodulePath}'.");
+
+        var normalizedGitDir = NormalizeDir(discovered);
+        RepositoryContext? existing;
+        lock (_sync)
+        {
+            existing = _open.FirstOrDefault(c =>
+                string.Equals(NormalizeDir(c.GitDirectory), normalizedGitDir, StringComparison.OrdinalIgnoreCase));
+            existing?.LinkOwner ??= owner;
+        }
+        if (existing is not null)
+        {
+            // §I-6.7 / rule 18: raise outside the lock.
+            FocusInternal(existing);
+            return existing;
+        }
+
+        var context = await Task.Run(() => RepositoryContext.Open(submodulePath, _services), ct).ConfigureAwait(false);
+        context.Workspace = this;
+        context.LinkOwner = owner;
+
+        lock (_sync)
+        {
+            var (start, count) = GroupSpan(owner);
+            var insertAt = Math.Clamp(start + count, 0, _open.Count);
+            _open.Insert(insertAt, context);
+        }
+
+        FocusInternal(context);
+        RaiseOpenChanged();
+
+        lock (_sync) SetForegroundInit(context);
+        _ = InitializeContextAsync(context, foreground: true);
+
+        return context;
+    }
+
     public async Task CloseAsync(RepositoryContext context)
     {
         bool wasFocused;
@@ -451,6 +510,11 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         lock (_sync)
         {
             _open.Remove(context);
+            // §F9 (Decisions table): closing a group's owner detaches its children rather than
+            // closing them — no uncommitted work in a submodule tab is ever silently discarded.
+            foreach (var t in _open)
+                if (ReferenceEquals(t.LinkOwner, context))
+                    t.LinkOwner = null;
             _deferredInit.Remove(context);
             foreach (var item in _bgQueue.Where(x => ReferenceEquals(x.Context, context)))
             {
@@ -495,21 +559,71 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
     public void Move(RepositoryContext context, int newIndex)
     {
+        bool moved;
         lock (_sync)
         {
-            var from = _open.IndexOf(context);
-            if (from < 0)
-                return;
-            newIndex = Math.Clamp(newIndex, 0, _open.Count - 1);
-            if (newIndex == from)
-                return;
-            _open.RemoveAt(from);
-            _open.Insert(newIndex, context);
+            moved = context.LinkOwner is { } owner
+                ? MoveLinkedChild(context, owner, newIndex)
+                : MoveGroup(context, newIndex);
         }
+
+        if (!moved)
+            return;
 
         // §I-6.7 / rule 18: raise outside the lock. RaiseOpenChanged re-persists the session, so
         // the dragged order is what a later RestoreSessionAsync replays.
         RaiseOpenChanged();
+    }
+
+    /// <summary>Under <see cref="_sync"/>: a linked child can only reorder among its own
+    /// siblings — <paramref name="newIndex"/> is clamped into its owner group's span
+    /// (<c>[ownerStart + 1, ownerStart + groupCount - 1]</c>). Returns whether anything moved.</summary>
+    private bool MoveLinkedChild(RepositoryContext context, RepositoryContext owner, int newIndex)
+    {
+        var (ownerStart, groupCount) = GroupSpan(owner);
+        if (groupCount <= 1)
+            return false; // no siblings — nothing legal to move to
+        var from = _open.IndexOf(context);
+        if (from < 0)
+            return false;
+        var clamped = Math.Clamp(newIndex, ownerStart + 1, ownerStart + groupCount - 1);
+        if (clamped == from)
+            return false;
+        _open.RemoveAt(from);
+        _open.Insert(Math.Clamp(clamped, 0, _open.Count), context);
+        return true;
+    }
+
+    /// <summary>Under <see cref="_sync"/>: an owner or standalone tab's whole contiguous group
+    /// moves as one block, snapping to the nearest other group's boundary (or the trailing
+    /// sentinel) to <paramref name="newIndex"/> — this never splits another group in the
+    /// middle. Returns whether anything moved.</summary>
+    private bool MoveGroup(RepositoryContext context, int newIndex)
+    {
+        var (start, count) = GroupSpan(context);
+        if (start < 0 || count == 0)
+            return false;
+
+        var boundaries = new List<int>();
+        for (var i = 0; i < _open.Count; i++)
+        {
+            if (_open[i].LinkOwner is not null) continue;         // only a group's own start counts
+            if (i >= start && i < start + count) continue;        // skip the moving group's own boundary
+            boundaries.Add(i);
+        }
+        boundaries.Add(_open.Count); // trailing sentinel: "move to the very end"
+
+        var target = boundaries.MinBy(b => Math.Abs(b - newIndex));
+        if (target == start)
+            return false; // already at the nearest boundary — no-op
+
+        // No shift adjustment for the just-removed block: matches the pre-existing (ungrouped)
+        // Move's semantics, where the target index is used exactly as computed pre-removal —
+        // Move_reorders_open_tabs_and_raises_open_changed (a single-tab group) depends on this.
+        var block = _open.GetRange(start, count);
+        _open.RemoveRange(start, count);
+        _open.InsertRange(Math.Clamp(target, 0, _open.Count), block);
+        return true;
     }
 
     public async Task RestoreSessionAsync(CancellationToken ct = default)
@@ -521,6 +635,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
         List<string> paths = [];
         string? focusedPath = null;
+        List<string?>? linkOwnerPaths = null;
         try
         {
             var node = JsonNode.Parse(await System.IO.File.ReadAllTextAsync(file, ct).ConfigureAwait(false));
@@ -528,11 +643,17 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             {
                 paths = arr.Select(n => n?.GetValue<string>()).Where(p => p is not null).Cast<string>().ToList();
             }
-            else if (node is JsonObject obj) // v2: { schemaVersion, paths, focusedPath }
+            else if (node is JsonObject obj) // v2+: { schemaVersion, paths, focusedPath, [linkOwners] }
             {
                 if (obj["paths"] is JsonArray p)
                     paths = p.Select(n => n?.GetValue<string>()).Where(s => s is not null).Cast<string>().ToList();
                 focusedPath = obj["focusedPath"]?.GetValue<string>();
+
+                // v3: a parallel array of owner paths (or null) — a v1/v2 file has no key here,
+                // so every restored tab keeps LinkOwner at its default (null), unchanged.
+                var schemaVersion = obj["schemaVersion"]?.GetValue<int>() ?? 2;
+                if (schemaVersion >= 3 && obj["linkOwners"] is JsonArray lo)
+                    linkOwnerPaths = lo.Select(n => n?.GetValue<string>()).ToList();
             }
         }
         catch
@@ -590,6 +711,30 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                     catch (OperationCanceledException) { return; }
                 }
             }
+
+            // v3: re-establish each restored tab's link group. The saved "paths" order already
+            // reflects the persisted group layout, so this only needs to set LinkOwner directly
+            // — no need to go through OpenSubmoduleAsync's insertion logic.
+            if (linkOwnerPaths is not null)
+            {
+                lock (_sync)
+                {
+                    for (var i = 0; i < paths.Count && i < linkOwnerPaths.Count; i++)
+                    {
+                        var ownerPath = linkOwnerPaths[i];
+                        if (ownerPath is null) continue;
+                        // Raw session-file paths don't share libgit2's normalized RepositoryPath
+                        // formatting (trailing separator, casing), so compare normalized forms —
+                        // the same helper OpenAsync's own duplicate-open check uses.
+                        var childKey = NormalizeDir(paths[i]);
+                        var ownerKey = NormalizeDir(ownerPath);
+                        var child = _open.FirstOrDefault(c => string.Equals(NormalizeDir(c.RepositoryPath), childKey, StringComparison.OrdinalIgnoreCase));
+                        var owner = _open.FirstOrDefault(c => string.Equals(NormalizeDir(c.RepositoryPath), ownerKey, StringComparison.OrdinalIgnoreCase));
+                        if (child is not null && owner is not null)
+                            child.LinkOwner = owner;
+                    }
+                }
+            }
         }
         finally
         {
@@ -614,17 +759,20 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         try
         {
             string[] paths;
+            string?[] linkOwnerPaths;
             string? focusedPath;
             lock (_sync)
             {
                 paths = _open.Select(c => c.RepositoryPath).ToArray();
+                linkOwnerPaths = _open.Select(c => c.LinkOwner?.RepositoryPath).ToArray();
                 focusedPath = _focused?.RepositoryPath;
             }
 
             var payload = new JsonObject
             {
-                ["schemaVersion"] = 2,
+                ["schemaVersion"] = 3,
                 ["paths"] = new JsonArray([.. paths.Select(p => (JsonNode)p!)]),
+                ["linkOwners"] = new JsonArray([.. linkOwnerPaths.Select(p => p is null ? null : (JsonNode)p)]),
                 ["focusedPath"] = focusedPath,
             };
             SessionWriter.QueueWrite(payload.ToJsonString());

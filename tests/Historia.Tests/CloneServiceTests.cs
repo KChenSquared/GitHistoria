@@ -277,6 +277,7 @@ public class CloneServiceTests : IAsyncDisposable
             return await CloneTcs.Task.ConfigureAwait(false);
         }
 
+        public Task<RepositoryContext> OpenSubmoduleAsync(RepositoryContext owner, SubmoduleInfo submodule, CancellationToken ct = default) => throw new NotImplementedException();
         public Task CloseAsync(RepositoryContext context) => Task.CompletedTask;
         public void Focus(RepositoryContext context) { }
         public void EnsureInitialized(RepositoryContext context) { }

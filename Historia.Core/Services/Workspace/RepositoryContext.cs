@@ -74,6 +74,13 @@ public sealed class RepositoryContext : IAsyncDisposable
     internal FileWatcherService Watcher { get; }
     internal IWorkspaceService? Workspace { get; set; }
 
+    /// <summary>Null when this tab is standalone; otherwise the tab that opened it as one of its
+    /// submodules (§F9). Invariant <see cref="WorkspaceService"/> maintains in its open-tab list:
+    /// a linked tab always sits contiguously after its owner, and one owner's own children are
+    /// always contiguous too — never interleaved with a different owner's group. Cleared (not
+    /// closed) when the owner tab closes (see <c>WorkspaceService.CloseAsync</c>).</summary>
+    public RepositoryContext? LinkOwner { get; internal set; }
+
     /// <summary>
     /// Stable repo identity (§9.3.1), resolved once per open by <c>IRepoIdentityService</c>
     /// and cached here — it walks history, so it is never recomputed per status refresh.
