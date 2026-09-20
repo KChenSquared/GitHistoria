@@ -131,7 +131,7 @@ public partial class MainWindow : Window
     private void ApplyCenter(DiffRequest? request)
     {
         if (request is not null && _workspace?.Focused is { } ctx)
-            CenterHost.Content = new DiffView(ctx, request, null, _services);
+            CenterHost.Content = new DiffView(ctx, request, _services?.GetService<ISettingsService>(), _services);
         else
             CenterHost.Content = _graph;
     }
