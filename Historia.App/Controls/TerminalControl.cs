@@ -1,4 +1,4 @@
-﻿namespace Historia.Controls;
+namespace Historia.Controls;
 
 /// <summary>
 /// The custom-drawn embedded terminal (V5 §6). A monospace grid of coloured cells — a simpler
@@ -586,7 +586,7 @@ public sealed class TerminalControl : Control
         // Ctrl+letter / Ctrl+punctuation control codes.
         if (mods.HasFlag(TerminalModifiers.Control) && !mods.HasFlag(TerminalModifiers.Alt))
         {
-            var ch = KeyToChar(e.Key);
+            var ch = ControlCharFor(e.Key);
             if (ch is not null && KeyEncoder.EncodeControlChar(ch.Value, TerminalModifiers.Control) is { } code)
             {
                 _session.Write(new[] { code });
@@ -596,11 +596,27 @@ public sealed class TerminalControl : Control
             }
         }
 
-        // While focused the terminal claims everything else (V5 §7.3) except pure modifiers.
+        // Alt+letter / Alt+digit / Alt+punctuation (xterm metaSendsEscape).
+        if (mods.HasFlag(TerminalModifiers.Alt) && !mods.HasFlag(TerminalModifiers.Control))
+        {
+            var ch = MetaCharFor(e.Key, mods.HasFlag(TerminalModifiers.Shift));
+            if (ch is not null && KeyEncoder.EncodeMeta(ch.Value, mods) is { } metaBytes)
+            {
+                _session.Write(metaBytes);
+                _scrollOffsetLines = 0;
+                e.Handled = true;
+                return;
+            }
+        }
+
+        // Only keys that cannot produce text (exactly one of Ctrl or Alt held) are claimed
+        // here; plain keys, Shift-only keys, and Ctrl+Alt (AltGr) must stay unhandled so the
+        // platform can deliver character messages to OnTextInput.
         if (e.Key is not (Key.LeftCtrl or Key.RightCtrl or Key.LeftShift or Key.RightShift
             or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin))
         {
-            e.Handled = true;
+            if (KeyEncoder.ClaimsUnencodedKey(mods))
+                e.Handled = true;
         }
     }
 
@@ -796,7 +812,7 @@ public sealed class TerminalControl : Control
         return (int)t >= 0;
     }
 
-    private static char? KeyToChar(Key k)
+    internal static char? ControlCharFor(Key k)
     {
         if (k is >= Key.A and <= Key.Z)
             return (char)('a' + (k - Key.A));
@@ -809,6 +825,59 @@ public sealed class TerminalControl : Control
             Key.OemMinus => '_',
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// Maps a key to the character to be prefixed with ESC under Alt (xterm metaSendsEscape).
+    /// Letters respect Shift. Unshifted digits and period, comma, minus produce their ASCII character.
+    /// Shifted symbols depend on the active keyboard layout and Windows generates them via WM_SYSCHAR
+    /// which bypasses TextInput, so they are deliberately omitted.
+    /// </summary>
+    internal static char? MetaCharFor(Key k, bool shift)
+    {
+        if (k is >= Key.A and <= Key.Z)
+            return shift ? (char)('A' + (k - Key.A)) : (char)('a' + (k - Key.A));
+
+        if (!shift)
+        {
+            if (k is >= Key.D0 and <= Key.D9)
+                return (char)('0' + (k - Key.D0));
+            if (k is >= Key.NumPad0 and <= Key.NumPad9)
+                return (char)('0' + (k - Key.NumPad0));
+
+            return k switch
+            {
+                Key.OemPeriod => '.',
+                Key.OemComma => ',',
+                Key.OemMinus => '-',
+                _ => null,
+            };
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Decides whether a focused terminal claims a chord as shell input rather than letting it
+    /// trigger an application-level accelerator. Ctrl+` always toggles the dock.
+    /// </summary>
+    internal static bool ClaimsChord(Key key, KeyModifiers modifiers)
+    {
+        if (modifiers.HasFlag(KeyModifiers.Control) && key == Key.OemTilde)
+            return false;
+
+        if (modifiers == KeyModifiers.Control)
+        {
+            var ch = ControlCharFor(key);
+            return ch is not null && KeyEncoder.EncodeControlChar(ch.Value, TerminalModifiers.Control) is not null;
+        }
+
+        if ((modifiers & ~KeyModifiers.Shift) == KeyModifiers.Alt)
+        {
+            return MetaCharFor(key, modifiers.HasFlag(KeyModifiers.Shift)) is not null;
+        }
+
+        return false;
     }
 
     // ── small helpers ───────────────────────────────────────────────────────────────────────

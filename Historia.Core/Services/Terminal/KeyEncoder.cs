@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Terminal;
+namespace Historia.Services.Terminal;
 
 /// <summary>Keys that do not arrive as printable text and must be encoded (V5 §6.5).</summary>
 public enum TerminalKey
@@ -98,6 +98,33 @@ public static class KeyEncoder
             '/' => 0x1F,
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// Decides whether an unmapped key is claimed by the terminal or left unhandled so the
+    /// platform character message (e.g. WM_CHAR on Windows) can reach <c>TextInput</c>.
+    /// A handled <c>KeyDown</c> suppresses character input, so text-producing states (no
+    /// modifier, Shift only, or Ctrl+Alt which represents AltGr on European layouts) must
+    /// stay unhandled. Exactly one of Ctrl or Alt must be set to claim the key.
+    /// </summary>
+    public static bool ClaimsUnencodedKey(TerminalModifiers mods)
+    {
+        var ctrl = mods.HasFlag(TerminalModifiers.Control);
+        var alt = mods.HasFlag(TerminalModifiers.Alt);
+        return ctrl ^ alt;
+    }
+
+    /// <summary>
+    /// Encodes an Alt+printable character as an ESC-prefixed byte sequence (xterm metaSendsEscape).
+    /// Returns null when Alt is not held, Control is held, or the character is not printable ASCII (0x20–0x7E).
+    /// </summary>
+    public static byte[]? EncodeMeta(char ch, TerminalModifiers mods)
+    {
+        if (!mods.HasFlag(TerminalModifiers.Alt) || mods.HasFlag(TerminalModifiers.Control))
+            return null;
+        if (ch is < ' ' or > '~')
+            return null;
+        return new[] { Esc, (byte)ch };
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────────────────────
