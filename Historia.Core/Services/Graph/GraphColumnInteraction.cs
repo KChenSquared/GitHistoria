@@ -72,27 +72,33 @@ public static class GraphColumnInteraction
     }
 
     private const double MinLabelRoom = 24;
+    private const double DefaultIconGap = 4;
 
-    /// <summary>Returns the right-aligned bounding rect for the header icon of <paramref name="kind"/>,
-    /// or <c>null</c> when the column is not visible or too narrow to fit the icon without colliding with its label.</summary>
+    /// <summary>Returns the right-aligned bounding rect for header icon <paramref name="slot"/>
+    /// (0 = right-most, increasing slots sit further left) of <paramref name="kind"/>'s column,
+    /// or <c>null</c> when the column is not visible or too narrow to fit every slot up to and
+    /// including this one without colliding with its label.</summary>
     public static HeaderIconRect? HeaderIconRectFor(
         IReadOnlyList<ResolvedColumn> resolved,
         GraphColumnKind kind,
         double hScrollOffset,
         double headerHeight,
         double iconSize,
-        double inset)
+        double inset,
+        int slot = 0,
+        double gap = DefaultIconGap)
     {
         for (var i = 0; i < resolved.Count; i++)
         {
             var col = resolved[i];
             if (col.Kind == kind)
             {
-                if (col.Width < iconSize + inset + MinLabelRoom)
+                var occupiedWidth = (slot + 1) * iconSize + slot * gap;
+                if (col.Width < occupiedWidth + inset + MinLabelRoom)
                     return null;
 
                 var right = col.Left + col.Width - hScrollOffset;
-                var x = right - inset - iconSize;
+                var x = right - inset - iconSize - slot * (iconSize + gap);
                 var y = (headerHeight - iconSize) / 2;
                 return new HeaderIconRect(x, y, iconSize, iconSize);
             }
@@ -100,26 +106,34 @@ public static class GraphColumnInteraction
         return null;
     }
 
-    /// <summary>Returns the column whose header icon contains (<paramref name="x"/>, <paramref name="y"/>),
-    /// restricted to <see cref="GraphColumnKind.Refs"/> and <see cref="GraphColumnKind.Message"/>, or <c>null</c>.</summary>
-    public static GraphColumnKind? HeaderIconAt(
+    /// <summary>The single-slot (Refs, Message) search list every pre-multi-slot caller used —
+    /// the default for <see cref="HeaderIconAt"/> so those call sites keep compiling unchanged.</summary>
+    private static readonly (GraphColumnKind Kind, int Slot)[] DefaultHeaderIconCandidates =
+        [(GraphColumnKind.Refs, 0), (GraphColumnKind.Message, 0)];
+
+    /// <summary>Returns the (kind, slot) pair of the header icon containing
+    /// (<paramref name="x"/>, <paramref name="y"/>), restricted to the candidates in
+    /// <paramref name="candidates"/> (default: the single-slot Refs/Message search every caller
+    /// used before multi-slot columns existed), or <c>null</c>.</summary>
+    public static (GraphColumnKind Kind, int Slot)? HeaderIconAt(
         IReadOnlyList<ResolvedColumn> resolved,
         double x,
         double y,
         double hScrollOffset,
         double headerHeight,
         double iconSize,
-        double inset)
+        double inset,
+        IReadOnlyList<(GraphColumnKind Kind, int Slot)>? candidates = null,
+        double gap = DefaultIconGap)
     {
         if (y < 0 || y > headerHeight)
             return null;
 
-        Span<GraphColumnKind> searchColumns = [GraphColumnKind.Refs, GraphColumnKind.Message];
-        foreach (var kind in searchColumns)
+        foreach (var candidate in candidates ?? DefaultHeaderIconCandidates)
         {
-            var rect = HeaderIconRectFor(resolved, kind, hScrollOffset, headerHeight, iconSize, inset);
+            var rect = HeaderIconRectFor(resolved, candidate.Kind, hScrollOffset, headerHeight, iconSize, inset, candidate.Slot, gap);
             if (rect != null && rect.Value.Contains(x, y))
-                return kind;
+                return candidate;
         }
 
         return null;

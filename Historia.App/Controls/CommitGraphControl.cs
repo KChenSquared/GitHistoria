@@ -1749,7 +1749,7 @@ public sealed partial class CommitGraphControl : Control
         => GraphColumnInteraction.BoundaryAt(_resolvedColumns, x, _hScrollOffset, BoundaryGrab);
 
     private GraphColumnKind? HeaderIconAt(double x, double y)
-        => GraphColumnInteraction.HeaderIconAt(_resolvedColumns, x, y, _hScrollOffset, HeaderHeight, HeaderIconSize, HeaderIconInset);
+        => GraphColumnInteraction.HeaderIconAt(_resolvedColumns, x, y, _hScrollOffset, HeaderHeight, HeaderIconSize, HeaderIconInset)?.Kind;
 
     private static IReadOnlyList<GraphColumn> WithColumnWidth(IReadOnlyList<GraphColumn> cols, GraphColumnKind kind, double width)
         => [.. cols.Select(c => c.Kind == kind ? c with { Width = width } : c)];
