@@ -52,7 +52,7 @@ public class ShortcutBarLayoutTests
     }
 
     [AvaloniaFact]
-    public async Task Left_bar_has_branch_then_settings_then_terminal()
+    public async Task Left_bar_has_branch_then_terminal()
     {
         await using var sp = CreateServices();
         var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
@@ -64,7 +64,7 @@ public class ShortcutBarLayoutTests
         var tips = buttons.Select(b => ToolTip.GetTip(b)?.ToString()).ToList();
 
         Assert.Equal(
-            ["Create a branch at the selected commit", "Repository settings", "Open terminal in this repository"],
+            ["Create a branch at the selected commit", "Open terminal in this repository"],
             tips);
     }
 
@@ -83,7 +83,7 @@ public class ShortcutBarLayoutTests
         Assert.Equal("Branch", branchStack.Children.OfType<TextBlock>().Single().Text);
 
         var utilityBtns = trailGroup.Children.OfType<Button>().ToList();
-        Assert.Equal(2, utilityBtns.Count);
+        Assert.Single(utilityBtns);
         foreach (var btn in utilityBtns)
         {
             var stack = (StackPanel)btn.Content!;
@@ -122,7 +122,7 @@ public class ShortcutBarLayoutTests
 
         Assert.Equal(2, Grid.GetColumn(trailGroup));
         Assert.Equal(Avalonia.Layout.HorizontalAlignment.Right, trailGroup.HorizontalAlignment);
-        Assert.Equal(2, trailGroup.Children.OfType<Button>().Count());
+        Assert.Single(trailGroup.Children.OfType<Button>());
     }
 
     [AvaloniaFact]

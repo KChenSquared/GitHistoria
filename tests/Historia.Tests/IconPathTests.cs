@@ -9,10 +9,7 @@ public class IconPathTests
 {
     // Glyphs reserved until remaining views or affordances consume them.
     private static readonly HashSet<string> ReservedForLaterMilestones =
-        new(StringComparer.Ordinal)
-        {
-            "refresh", // M3.1 of 2026-09-20-ui-and-remote-workflow-plan.md draws it in the graph header
-        };
+        new(StringComparer.Ordinal);
 
     [Fact]
     public void EveryReferencedIconResolves()

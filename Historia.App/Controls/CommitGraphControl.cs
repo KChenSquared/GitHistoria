@@ -226,6 +226,8 @@ public sealed partial class CommitGraphControl : Control
     private const double HeaderIconInset = 6;
     private readonly Geometry _icoFilter;
     private readonly Geometry _icoSearch;
+    private readonly Geometry _icoSettings;
+    private readonly Geometry _icoReset;
 
     private readonly Popup _refSearch = new()
     {
@@ -236,7 +238,18 @@ public sealed partial class CommitGraphControl : Control
     private readonly StackPanel _refSearchItems = new();
     private readonly List<(RefCandidate Candidate, Border Row)> _refSearchRows = [];
     private int _refSearchSelectedIndex = -1;
-    private GraphColumnKind? _hoverHeaderIcon;
+    private (GraphColumnKind Kind, int Slot)? _hoverHeaderIcon;
+
+    /// <summary>The Graph column header's two right-aligned action icons: slot 0 (right-most)
+    /// is the cog, slot 1 is the reset. Passed to <see cref="GraphColumnInteraction.HeaderIconAt"/>
+    /// alongside the single-slot Refs/Message search icons.</summary>
+    private static readonly (GraphColumnKind Kind, int Slot)[] HeaderIconCandidates =
+    [
+        (GraphColumnKind.Refs, 0),
+        (GraphColumnKind.Message, 0),
+        (GraphColumnKind.Graph, 0),
+        (GraphColumnKind.Graph, 1),
+    ];
 
     private readonly record struct RefCandidate(string Label, string Icon, ObjectId? CommitId);
 
@@ -248,9 +261,20 @@ public sealed partial class CommitGraphControl : Control
     internal double RowHeightValue => _rowHeight;
     internal IReadOnlyList<ResolvedColumn> ResolvedColumnsForTesting => _resolvedColumns;
     internal double HScrollOffsetForTesting => _hScrollOffset;
+    internal double GraphPanOffsetForTesting => _graphPanOffset;
     internal int RowCountForTesting => _layout?.Layout.RowCount ?? 0;
     internal IReadOnlyList<GraphColumn> ColumnsForTesting => _columns;
     internal ContextMenu? OpenMenuForTesting => _openMenu;
+
+    /// <summary>Test-only: simulates a horizontal scroll/pan without driving the real
+    /// <see cref="ScrollBar"/> or lane-pan gestures.</summary>
+    internal void SetScrollOffsetsForTesting(double hScrollOffset, double graphPanOffset)
+    {
+        _hScrollOffset = hScrollOffset;
+        _graphPanOffset = graphPanOffset;
+        _hScrollBar.Value = hScrollOffset;
+        InvalidateVisual();
+    }
 
     // The graph builds a fresh ContextMenu per right-click (content depends on hit
     // position — column header / overflow chip / pill / row), so there's no single control-owned
@@ -458,6 +482,8 @@ public sealed partial class CommitGraphControl : Control
         _icoTag = ParseBadgeIcon(IconPaths.Get("sell"));
         _icoFilter = ParseHeaderIcon(IconPaths.Get("filter_alt"));
         _icoSearch = ParseHeaderIcon(IconPaths.Get("search"));
+        _icoSettings = ParseHeaderIcon(IconPaths.Get("settings"));
+        _icoReset = ParseHeaderIcon(IconPaths.Get("refresh"));
     }
 
     private static void Dyn(Control c, AvaloniaProperty p, string key)
@@ -1748,8 +1774,23 @@ public sealed partial class CommitGraphControl : Control
     private int BoundaryAt(double x)
         => GraphColumnInteraction.BoundaryAt(_resolvedColumns, x, _hScrollOffset, BoundaryGrab);
 
-    private GraphColumnKind? HeaderIconAt(double x, double y)
-        => GraphColumnInteraction.HeaderIconAt(_resolvedColumns, x, y, _hScrollOffset, HeaderHeight, HeaderIconSize, HeaderIconInset)?.Kind;
+    private (GraphColumnKind Kind, int Slot)? HeaderIconAt(double x, double y)
+        => GraphColumnInteraction.HeaderIconAt(_resolvedColumns, x, y, _hScrollOffset, HeaderHeight, HeaderIconSize, HeaderIconInset, HeaderIconCandidates);
+
+    /// <summary>R9: returns the graph to the left-most horizontal position — both the whole
+    /// column band (<see cref="_hScrollOffset"/>) and the lane pan inside the Graph column
+    /// (<see cref="_graphPanOffset"/>). Vertical scroll, column widths and column order are
+    /// untouched. A no-op when already left-most.</summary>
+    private void ResetGraphScroll()
+    {
+        if (_hScrollOffset == 0 && _graphPanOffset == 0)
+            return;
+
+        _hScrollOffset = 0;
+        _graphPanOffset = 0;
+        _hScrollBar.Value = 0;
+        InvalidateVisual();
+    }
 
     private static IReadOnlyList<GraphColumn> WithColumnWidth(IReadOnlyList<GraphColumn> cols, GraphColumnKind kind, double width)
         => [.. cols.Select(c => c.Kind == kind ? c with { Width = width } : c)];
@@ -1793,6 +1834,16 @@ public sealed partial class CommitGraphControl : Control
                 _ = _repoLayout.UpdateAsync(ctx.RepositoryPath, l => l with { Columns = GraphColumnDefaults.All, GraphWidthPinned = false });
             InvalidateArrange();
             InvalidateVisual();
+        }));
+        items.Add(new Separator());
+        // Hiding the Graph column would otherwise strand the cog with no entry point.
+        items.Add(MenuLeaf("Repository settings", () =>
+        {
+            if (_workspace?.Focused is { } focused)
+            {
+                _workspace.Focus(focused);
+                _nav.RequestNavigate("repo-settings");
+            }
         }));
         menu.ItemsSource = items;
         OpenMenu(menu);
@@ -1977,15 +2028,31 @@ public sealed partial class CommitGraphControl : Control
         if (pos.Y < HeaderHeight)
         {
             var icon = HeaderIconAt(pos.X, pos.Y);
-            if (icon == GraphColumnKind.Message)
+            if (icon == (GraphColumnKind.Message, 0))
             {
                 ToggleQueryBar(!_queryBar.IsVisible);
                 e.Handled = true;
                 return;
             }
-            if (icon == GraphColumnKind.Refs)
+            if (icon == (GraphColumnKind.Refs, 0))
             {
                 OpenRefSearchPopup();
+                e.Handled = true;
+                return;
+            }
+            if (icon == (GraphColumnKind.Graph, 0))
+            {
+                if (_workspace?.Focused is { } focused)
+                {
+                    _workspace.Focus(focused);
+                    _nav.RequestNavigate("repo-settings");
+                }
+                e.Handled = true;
+                return;
+            }
+            if (icon == (GraphColumnKind.Graph, 1))
+            {
+                ResetGraphScroll();
                 e.Handled = true;
                 return;
             }
@@ -2303,17 +2370,20 @@ public sealed partial class CommitGraphControl : Control
 
         string? tip = null;
 
-        foreach (var p in _pillRects)
-            if (p.Rect.Contains(pos) && p.Deco.SiblingsOrNull is { Length: > 0 })
-            {
-                OpenRefListFor(p.Deco, p.Rect);
-                ToolTip.SetIsOpen(this, false);
-                _lastTip = null;
-                return;
-            }
-
+        // R7: an explicit hover on the small local/remote glyph is the more specific intent, so
+        // it must win over a sibling-ref-list popup on the same badge — check icons first.
         foreach (var ic in _iconRects)
             if (ic.Rect.Contains(pos)) { tip = ic.Tip; break; }
+
+        if (tip is null)
+            foreach (var p in _pillRects)
+                if (p.Rect.Contains(pos) && p.Deco.SiblingsOrNull is { Length: > 0 })
+                {
+                    OpenRefListFor(p.Deco, p.Rect);
+                    ToolTip.SetIsOpen(this, false);
+                    _lastTip = null;
+                    return;
+                }
 
         if (tip is null)
             foreach (var p in _pillRects)
@@ -2986,21 +3056,49 @@ public sealed partial class CommitGraphControl : Control
                 GraphColumnKind.Sha => "SHA",
                 _ => "",
             };
-            var iconRect = col.Kind is GraphColumnKind.Refs or GraphColumnKind.Message
-                ? GraphColumnInteraction.HeaderIconRectFor(_resolvedColumns, col.Kind, _hScrollOffset, HeaderHeight, HeaderIconSize, HeaderIconInset)
-                : null;
-            var labelMaxWidth = iconRect is { } r ? Math.Max(10, r.X - x - 12) : Math.Max(10, col.Width - 12);
+            HeaderIconRect? iconRect = null;
+            HeaderIconRect? secondIconRect = null;
+            if (col.Kind is GraphColumnKind.Refs or GraphColumnKind.Message)
+            {
+                iconRect = GraphColumnInteraction.HeaderIconRectFor(_resolvedColumns, col.Kind, _hScrollOffset, HeaderHeight, HeaderIconSize, HeaderIconInset);
+            }
+            else if (col.Kind == GraphColumnKind.Graph)
+            {
+                iconRect = GraphColumnInteraction.HeaderIconRectFor(_resolvedColumns, col.Kind, _hScrollOffset, HeaderHeight, HeaderIconSize, HeaderIconInset, slot: 0);
+                secondIconRect = GraphColumnInteraction.HeaderIconRectFor(_resolvedColumns, col.Kind, _hScrollOffset, HeaderHeight, HeaderIconSize, HeaderIconInset, slot: 1);
+            }
+
+            var leftmostIconX = secondIconRect?.X ?? iconRect?.X;
+            var labelMaxWidth = leftmostIconX is { } lx ? Math.Max(10, lx - x - 12) : Math.Max(10, col.Width - 12);
             var ft = Text(label, _headerText, labelMaxWidth, HeaderTextSize);
             dc.DrawText(ft, new Point(x + 8, (HeaderHeight - ft.Height) / 2));
 
             if (col.Left > 0.5)
                 dc.DrawLine(_borderPen, new Point(x, 4), new Point(x, HeaderHeight - 4));
 
-            if (iconRect is { } ir)
+            if (col.Kind is GraphColumnKind.Refs or GraphColumnKind.Message)
             {
-                if (_hoverHeaderIcon == col.Kind)
-                    dc.DrawRectangle(_hoverFill, null, new Rect(ir.X - 2, ir.Y - 2, ir.Width + 4, ir.Height + 4), 3, 3);
-                DrawBadgeIcon(dc, col.Kind == GraphColumnKind.Refs ? _icoFilter : _icoSearch, ir.X, ir.Y, _headerText);
+                if (iconRect is { } ir)
+                {
+                    if (_hoverHeaderIcon == (col.Kind, 0))
+                        dc.DrawRectangle(_hoverFill, null, new Rect(ir.X - 2, ir.Y - 2, ir.Width + 4, ir.Height + 4), 3, 3);
+                    DrawBadgeIcon(dc, col.Kind == GraphColumnKind.Refs ? _icoFilter : _icoSearch, ir.X, ir.Y, _headerText);
+                }
+            }
+            else if (col.Kind == GraphColumnKind.Graph)
+            {
+                if (iconRect is { } cog)
+                {
+                    if (_hoverHeaderIcon == (GraphColumnKind.Graph, 0))
+                        dc.DrawRectangle(_hoverFill, null, new Rect(cog.X - 2, cog.Y - 2, cog.Width + 4, cog.Height + 4), 3, 3);
+                    DrawBadgeIcon(dc, _icoSettings, cog.X, cog.Y, _headerText);
+                }
+                if (secondIconRect is { } reset)
+                {
+                    if (_hoverHeaderIcon == (GraphColumnKind.Graph, 1))
+                        dc.DrawRectangle(_hoverFill, null, new Rect(reset.X - 2, reset.Y - 2, reset.Width + 4, reset.Height + 4), 3, 3);
+                    DrawBadgeIcon(dc, _icoReset, reset.X, reset.Y, _headerText);
+                }
             }
         }
 

@@ -31,7 +31,6 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
     private readonly Border _border;
 
     private readonly Button? _branchBtn;
-    private readonly Button? _settingsBtn;
     private readonly Button? _terminalBtn;
     private readonly Button? _fetchBtn;
     private readonly Button? _pullBtn;
@@ -84,14 +83,6 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
         {
             _branchBtn = IconTextButton("graph_8", "Branch", "Create a branch at the selected commit",
                 () => _ = CreateBranchAsync());
-            _settingsBtn = IconTextButton("settings", null, "Repository settings", () =>
-            {
-                if (_workspace?.Focused is { } ctx)
-                {
-                    _workspace.Focus(ctx);
-                    _nav?.RequestNavigate("repo-settings");
-                }
-            });
             _terminalBtn = IconTextButton("terminal", null, "Open terminal in this repository", () =>
             {
                 if (_workspace?.Focused is { } ctx)
@@ -115,7 +106,6 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Center,
             };
-            trailGroup.Children.Add(_settingsBtn);
             trailGroup.Children.Add(_terminalBtn);
 
             var grid = new Grid
@@ -202,7 +192,6 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
         if (_side == ShortcutsBarSide.Left)
         {
             if (_branchBtn is not null) _branchBtn.IsEnabled = hasRepo;
-            if (_settingsBtn is not null) _settingsBtn.IsEnabled = hasRepo;
             if (_terminalBtn is not null) _terminalBtn.IsEnabled = hasRepo;
         }
         else
