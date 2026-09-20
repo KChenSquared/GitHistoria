@@ -56,4 +56,14 @@ public class TerminalKeyRoutingTests
     {
         Assert.False(TerminalControl.ClaimsChord(Key.F, KeyModifiers.None));
     }
+
+    [Theory]
+    [InlineData(Key.B, KeyModifiers.Control, true)]
+    [InlineData(Key.OemComma, KeyModifiers.Control, false)]
+    [InlineData(Key.Enter, KeyModifiers.Control, false)]
+    [InlineData(Key.OemTilde, KeyModifiers.Control, false)]
+    public void ClaimsChord_MatchesRegisteredAppChords(Key key, KeyModifiers modifiers, bool expectedTerminalClaim)
+    {
+        Assert.Equal(expectedTerminalClaim, TerminalControl.ClaimsChord(key, modifiers));
+    }
 }

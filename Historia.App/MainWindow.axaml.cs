@@ -290,6 +290,13 @@ public partial class MainWindow : Window
             or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin)
             return;
 
+        // A focused terminal claims the chords it turns into shell input (e.g. Ctrl+B for
+        // readline backward-char / tmux prefix); chords the terminal has no use for (Ctrl+,,
+        // Ctrl+Enter) and Ctrl+` (dock toggle) stay with the application.
+        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+        if (focused is TerminalControl && TerminalControl.ClaimsChord(e.Key, e.KeyModifiers))
+            return;
+
         var parts = new List<string>(4);
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control)) parts.Add("Ctrl");
         if (e.KeyModifiers.HasFlag(KeyModifiers.Shift)) parts.Add("Shift");
