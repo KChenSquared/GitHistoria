@@ -485,24 +485,20 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
 
     private static void RetireFile(string path)
     {
+        if (!File.Exists(path))
+            return;
+
+        var retiredPath = $"{path}.{Guid.NewGuid():N}.retired";
         try
         {
-            if (!File.Exists(path))
-                return;
-
-            var retiredPath = $"{path}.{Guid.NewGuid():N}.retired";
-            try
-            {
-                File.Move(path, retiredPath);
-                try { File.Delete(retiredPath); } catch { /* OS removes on handle close or sweep cleans up */ }
-            }
-            catch
-            {
-                // Move failed (e.g. non-sharing lock or foreign handle): fall back to direct delete.
-                try { File.Delete(path); } catch { }
-            }
+            File.Move(path, retiredPath);
+            try { File.Delete(retiredPath); } catch { /* OS removes on handle close or sweep cleans up */ }
         }
-        catch { }
+        catch
+        {
+            // Move failed (e.g. non-sharing lock or foreign handle): fall back to direct delete.
+            try { File.Delete(path); } catch { }
+        }
     }
 
     private static void RetireOrderFiles(string cacheDir, string stem)
