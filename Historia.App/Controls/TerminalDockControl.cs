@@ -203,6 +203,8 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     private void OnThemeChanged(object? sender, ThemeChangedEventArgs e) => Dispatcher.UIThread.Post(RebuildTabs);
 
 
+    internal static bool ShouldAutoHide(bool open, int sessionCount) => open && sessionCount == 0;
+
     // ── open / close / maximize ─────────────────────────────────────────────────────────────
 
     public void ToggleFromKeyboard()
@@ -213,8 +215,18 @@ public sealed class TerminalDockControl : UserControl, IDisposable
         }
         else
         {
-            SetOpen(true);
-            _terminal.Focus();
+            if (_sessions.Sessions.Count == 0)
+            {
+                if (_workspace.Focused is { } focused)
+                    _ = _sessions.OpenOrFocusAsync(AppBandControl.RepoOrigin(focused));
+                else
+                    _ = _sessions.OpenNewAsync(TerminalOrigin.Home(HomeDirectory));
+            }
+            else
+            {
+                SetOpen(true);
+                _terminal.Focus();
+            }
         }
     }
 
@@ -349,7 +361,12 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     // ── session events ──────────────────────────────────────────────────────────────────────
 
     private void OnSessionsChanged(object? sender, EventArgs e)
-        => Dispatcher.UIThread.Post(RebuildTabs);
+        => Dispatcher.UIThread.Post(() =>
+        {
+            RebuildTabs();
+            if (ShouldAutoHide(_open, _sessions.Sessions.Count))
+                SetOpen(false);
+        });
 
     // Closing the dock (✕) only hides it; an entry point reopens it (review §2).
     private void OnActivationRequested(object? sender, EventArgs e)
