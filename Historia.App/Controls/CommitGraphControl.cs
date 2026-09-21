@@ -9,6 +9,7 @@ public sealed partial class CommitGraphControl : Control
 {
     private const double MinRowHeight = 20;
     private const double MaxRowHeight = 44;
+    private const double WashRowGap = 2; // px of background between adjacent rows' lane washes
     private const double MinLaneWidth = 15; // §V3.1
     private const double MaxLaneWidth = 60;
     /// <summary>§V3.2: commit node radius.</summary>
@@ -2921,8 +2922,11 @@ public sealed partial class CommitGraphControl : Control
                 // and runs right to the column edge, rather than beginning half a lane to its
                 // left and covering the whole lane band.
                 var fillLeft = Math.Max(gx, NodeX(gr.LaneIndex, out _));
+                // Inset half the gap top and bottom so adjacent rows' washes are separated by
+                // WashRowGap px; the right-edge tick and the lane lines stay continuous.
                 if (washRight > fillLeft)
-                    dc.DrawRectangle(LaneFill(colorIndex), null, new Rect(fillLeft, y, washRight - fillLeft, _rowHeight));
+                    dc.DrawRectangle(LaneFill(colorIndex), null,
+                        new Rect(fillLeft, y + WashRowGap / 2, washRight - fillLeft, _rowHeight - WashRowGap));
                 // The solid right-edge tick is drawn in DrawGraphColumn, AFTER the edges, so a
                 // lane line routed near the column's right edge can't paint over it.
             }
