@@ -503,7 +503,7 @@ public sealed class LibGit2Service
     {
         var branch = repo.CreateBranch(name, startPoint);
         if (checkout)
-            Commands.Checkout(repo, branch);
+            CheckoutBranchWithRollback(repo, branch, new CheckoutOptions());
 
         return new BranchInfo
         {
@@ -542,11 +542,72 @@ public sealed class LibGit2Service
         if (options.CreateBranch && options.NewBranchName is { } newName)
         {
             var branch = repo.CreateBranch(newName, refName);
-            Commands.Checkout(repo, branch, checkoutOptions);
+            CheckoutBranchWithRollback(repo, branch, checkoutOptions);
             return;
         }
 
-        Commands.Checkout(repo, refName, checkoutOptions);
+        CheckoutOrThrowClassified(repo, opts => Commands.Checkout(repo, refName, opts), checkoutOptions);
+    }
+
+    private static void CheckoutBranchWithRollback(Repository repo, Branch branch, CheckoutOptions options)
+    {
+        try
+        {
+            CheckoutOrThrowClassified(repo, opts => Commands.Checkout(repo, branch, opts), options);
+        }
+        catch
+        {
+            // Safe to remove: a ref created in this call, pointing at an already-reachable commit.
+            try
+            {
+                if (repo.Head.CanonicalName != branch.CanonicalName)
+                    repo.Branches.Remove(branch);
+            }
+            catch
+            {
+            }
+
+            throw;
+        }
+    }
+
+    // Translates libgit2 checkout conflicts at the repo gate so stash recovery can key on UncommittedChanges.
+    private static void CheckoutOrThrowClassified(Repository repo, Action<CheckoutOptions> checkout, CheckoutOptions options)
+    {
+        var conflictingPaths = new List<string>();
+        var prevNotify = options.OnCheckoutNotify;
+        options.CheckoutNotifyFlags |= CheckoutNotifyFlags.Conflict;
+        options.OnCheckoutNotify = (path, flags) =>
+        {
+            if ((flags & CheckoutNotifyFlags.Conflict) != 0 && path is not null)
+            {
+                var normalized = path.Replace('\\', '/');
+                if (!conflictingPaths.Contains(normalized))
+                    conflictingPaths.Add(normalized);
+            }
+
+            return prevNotify?.Invoke(path, flags) ?? true;
+        };
+
+        try
+        {
+            checkout(options);
+        }
+        catch (CheckoutConflictException ex)
+        {
+            if (conflictingPaths.Count == 0)
+                throw new HistoriaGitException(GitErrorKind.UncommittedChanges, ex.Message);
+
+            var summaryPaths = conflictingPaths.Count <= 3
+                ? string.Join(", ", conflictingPaths)
+                : $"{string.Join(", ", conflictingPaths.Take(3))} and {conflictingPaths.Count - 3} more";
+            var message = $"Checkout would overwrite local changes to {summaryPaths}.";
+            var details = "error: Your local changes to the following files would be overwritten by checkout:\n\t"
+                + string.Join("\n\t", conflictingPaths)
+                + "\nPlease commit your changes or stash them before you switch branches.\nAborting";
+
+            throw new HistoriaGitException(GitErrorKind.UncommittedChanges, message, details);
+        }
     }
 
     public TagInfo CreateTag(Repository repo, string name, string target, string? message, Signature? tagger)
