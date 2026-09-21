@@ -23,7 +23,7 @@ public sealed class RefNavigatorLayoutTests
     {
         public string Path { get; }
 
-        public TestRepoFixture(int extraLocalBranches = 0)
+        public TestRepoFixture(IEnumerable<string>? extraBranchNames = null)
         {
             Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-refnav-layout-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Path);
@@ -50,8 +50,9 @@ public sealed class RefNavigatorLayoutTests
             File.WriteAllText(file, "wip\n");
             RunGit(Path, "stash", "push", "-m", "wip: stash work");
 
-            for (int i = 0; i < extraLocalBranches; i++)
-                RunGit(Path, "branch", $"worktree-agent-{i:D3}-a-very-long-descriptive-branch-name-indeed");
+            if (extraBranchNames is not null)
+                foreach (var name in extraBranchNames)
+                    RunGit(Path, "branch", name);
         }
 
         private static void RunGit(string dir, params string[] args)
@@ -142,9 +143,9 @@ public sealed class RefNavigatorLayoutTests
     }
 
     private static (RefNavigatorView View, ServiceProvider Sp, TestRepoFixture Fixture, RepositoryContext Context, Window Window) CreateView(
-        int extraLocalBranches = 0, double windowWidth = 300)
+        double windowWidth = 300, IEnumerable<string>? extraBranchNames = null)
     {
-        var fixture = new TestRepoFixture(extraLocalBranches);
+        var fixture = new TestRepoFixture(extraBranchNames);
         var sp = CreateServices();
         var ws = sp.GetRequiredService<IWorkspaceService>();
         var ctx = ws.OpenAsync(fixture.Path).GetAwaiter().GetResult();
@@ -177,6 +178,27 @@ public sealed class RefNavigatorLayoutTests
         return headers;
     }
 
+    private static StackPanel GetSectionBody(RefNavigatorView view, int sectionIndex)
+    {
+        var headers = GetSectionHeaders(view);
+        var header = headers[sectionIndex];
+        var headerIdx = view._root.Children.IndexOf(header);
+        for (int i = headerIdx + 1; i < view._root.Children.Count; i++)
+        {
+            if (view._root.Children[i] is ScrollViewer sv && sv.Content is StackPanel sp)
+                return sp;
+            if (headers.Contains(view._root.Children[i]))
+                break;
+        }
+        throw new InvalidOperationException($"No body found for section {sectionIndex}");
+    }
+
+    private static double RightEdgeInView(Control view, Control element)
+    {
+        var topLeft = element.TranslatePoint(new Point(0, 0), view) ?? default;
+        return topLeft.X + element.Bounds.Width;
+    }
+
     [AvaloniaFact]
     public void NoSectionHeaderHasAnAddButton()
     {
@@ -196,6 +218,156 @@ public sealed class RefNavigatorLayoutTests
                     Assert.NotEqual("＋", button.Content?.ToString());
                 }
             }
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void LongBranchNameIsTrimmedBeforeTheGutter()
+    {
+        var longName = "worktree-agent-" + new string('x', 60);
+        var setup = CreateView(extraBranchNames: [longName]);
+        try
+        {
+            var body = GetSectionBody(setup.View, 0);
+            var row = body.Children.OfType<Border>()
+                .FirstOrDefault(b => ToolTip.GetTip(b)?.ToString() == longName);
+            Assert.NotNull(row);
+
+            var label = row!.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == longName);
+            Assert.Equal(TextTrimming.CharacterEllipsis, label.TextTrimming);
+
+            var limit = setup.View.Bounds.Width - RefNavigatorView.RowRightGutter;
+            Assert.True(RightEdgeInView(setup.View, label) <= limit + 0.5,
+                $"label right edge {RightEdgeInView(setup.View, label)} exceeds gutter limit {limit}");
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void EveryRowEndsAtTheSameRightEdge()
+    {
+        var setup = CreateView();
+        try
+        {
+            // Expand every collapsed section (Tags, Stashes, Submodules, Worktrees).
+            void Click(Border header) => header.RaiseEvent(new PointerPressedEventArgs(header,
+                new Pointer(1, PointerType.Mouse, true), header, new Point(5, 5), 0,
+                new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonPressed), KeyModifiers.None));
+
+            var headersToExpand = new[] { 2, 3, 4, 5 };
+            foreach (var idx in headersToExpand)
+            {
+                var header = GetSectionHeaders(setup.View)[idx];
+                Click(header);
+                Dispatcher.UIThread.RunJobs();
+            }
+
+            for (int i = 0; i < 50; i++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                var texts = GetSectionBody(setup.View, 3).Children.OfType<Border>()
+                    .SelectMany(b => b.GetVisualDescendants().OfType<TextBlock>())
+                    .Select(t => t.Text);
+                if (!texts.Contains("Loading…")) break;
+                System.Threading.Thread.Sleep(20);
+            }
+
+            var limit = setup.View.Bounds.Width - RefNavigatorView.RowRightGutter;
+            var headers = GetSectionHeaders(setup.View);
+            Assert.True(headers.Count >= 6);
+
+            // The Border itself always stretches to the panel width; what must respect the
+            // gutter is its padded-in content (the Grid holding the label/action), since a
+            // Border's Padding shrinks its child's arranged area, not its own outer bounds.
+            foreach (var header in headers)
+            {
+                Assert.NotNull(header.Child);
+                var edge = RightEdgeInView(setup.View, header.Child!);
+                Assert.True(edge <= limit + 0.5, $"header right edge {edge} exceeds gutter limit {limit}");
+            }
+
+            for (int i = 0; i < headers.Count; i++)
+            {
+                StackPanel body;
+                try { body = GetSectionBody(setup.View, i); }
+                catch (InvalidOperationException) { continue; }
+
+                foreach (var row in body.Children.OfType<Border>())
+                {
+                    if (row.Child is null) continue;
+                    var edge = RightEdgeInView(setup.View, row.Child);
+                    Assert.True(edge <= limit + 0.5, $"row right edge {edge} exceeds gutter limit {limit}");
+                }
+            }
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void TrimmingReflowsOnResize()
+    {
+        var longName = "worktree-agent-" + new string('y', 60);
+        var setup = CreateView(windowWidth: 300, extraBranchNames: [longName]);
+        try
+        {
+            var body = GetSectionBody(setup.View, 0);
+            var row = body.Children.OfType<Border>().First(b => ToolTip.GetTip(b)?.ToString() == longName);
+            var label = row.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == longName);
+            var narrowEdge = RightEdgeInView(setup.View, label);
+            var narrowWidth = label.Bounds.Width;
+
+            setup.Window.Width = 900;
+            Dispatcher.UIThread.RunJobs();
+
+            var bodyAfter = GetSectionBody(setup.View, 0);
+            var rowAfter = bodyAfter.Children.OfType<Border>().First(b => ToolTip.GetTip(b)?.ToString() == longName);
+            var labelAfter = rowAfter.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == longName);
+            var wideWidth = labelAfter.Bounds.Width;
+            var wideLimit = setup.View.Bounds.Width - RefNavigatorView.RowRightGutter;
+
+            Assert.True(wideWidth > narrowWidth, $"label should grow when widened: {wideWidth} vs {narrowWidth}");
+            Assert.True(RightEdgeInView(setup.View, labelAfter) <= wideLimit + 0.5);
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void RemoteTreeLeafTooltipIsFullRefName()
+    {
+        var setup = CreateView();
+        try
+        {
+            void Click(Border row) => row.RaiseEvent(new PointerPressedEventArgs(row,
+                new Pointer(1, PointerType.Mouse, true), row, new Point(5, 5), 0,
+                new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonPressed), KeyModifiers.None));
+
+            // Remotes section starts expanded (index 1); "origin" (depth 0, expanded by default)
+            // holds a "feature" folder (depth 1, collapsed by default) holding leaf "auth" —
+            // full ref name "origin/feature/auth". Expand the nested folder to reach the leaf.
+            var body = GetSectionBody(setup.View, 1);
+            var folderRow = body.Children.OfType<Border>()
+                .FirstOrDefault(b => ToolTip.GetTip(b)?.ToString() == "feature");
+            Assert.NotNull(folderRow);
+            Click(folderRow!);
+            Dispatcher.UIThread.RunJobs();
+
+            body = GetSectionBody(setup.View, 1);
+            var leafRow = body.Children.OfType<Border>()
+                .FirstOrDefault(b => ToolTip.GetTip(b)?.ToString() == "origin/feature/auth");
+            Assert.NotNull(leafRow);
         }
         finally
         {
