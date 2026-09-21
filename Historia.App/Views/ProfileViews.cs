@@ -309,7 +309,7 @@ public sealed class ProfilesView : UserControl, IDisposable
         catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, ex.Message); }
     }
 
-    private async Task SetDefaultAsync(GitProfile p)
+    internal async Task SetDefaultAsync(GitProfile p)
     {
         if (p.IsGlobal)
         {
@@ -322,6 +322,13 @@ public sealed class ProfilesView : UserControl, IDisposable
             "Set as default",
             $"Make repositories that don't have their own profile use '{p.DisplayName}'?",
             ["Follow the default", "Only new repositories"]);
+
+        if (choice < 0)
+        {
+            // The user declined; nothing changed, so there's nothing new to tell them.
+            AppLog.Write(AppLogLevel.Info, "declined", $"Set default profile '{p.DisplayName}' cancelled");
+            return;
+        }
 
         if (choice == 1)
             await PinExistingRowlessReposAsync();
