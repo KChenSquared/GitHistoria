@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>Request to create a commit (§6.9.2).</summary>
 public sealed record CommitRequest
@@ -38,6 +38,12 @@ public sealed record GitFetchOptions
     /// raise the switch-to-Local-config fallback (that prompt is user-ops only, §13.1); the
     /// caller swallows failures quietly.</summary>
     public bool Background { get; init; }
+
+    public static GitFetchOptions From(AppSettings s, bool background = false) => new()
+    {
+        Prune = s.PruneOnFetch,
+        Background = background,
+    };
 }
 
 public sealed record GitPullOptions
@@ -48,6 +54,12 @@ public sealed record GitPullOptions
     /// <summary>Passes <c>--allow-unrelated-histories</c> — the explicit opt-in a user gives after
     /// a first pull hits <see cref="GitErrorKind.UnrelatedHistories"/>.</summary>
     public bool AllowUnrelatedHistories { get; init; }
+
+    public static GitPullOptions From(AppSettings s) => new()
+    {
+        Rebase = s.PullWithRebase,
+        Prune = s.PruneOnFetch,
+    };
 }
 
 /// <summary>What to push and how (§6.13).</summary>

@@ -16,8 +16,9 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private readonly ISubmoduleService _submodules;
     private readonly IWorktreeService _worktrees;
     private readonly IRepoStateCache _repoCache;
+    private readonly IRepoActionBus _actions;
 
-    private readonly StackPanel _root = new();
+    internal readonly StackPanel _root = new();
     private RepositoryContext? _repo;
 
     // Indentation: leaves and folder labels share this left edge (past the section-header
@@ -33,11 +34,29 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     // within a section have their own, depth-dependent default — see IsOpen.
     private bool _localOpen = true, _remotesOpen = true, _tagsOpen = false;
     private bool _stashesOpen = false, _submodulesOpen = false, _worktreesOpen = false;
+    private bool _localFilterOpen, _remotesFilterOpen, _tagsFilterOpen, _stashesFilterOpen;
+
+    internal readonly TextBox _localFilterBox;
+    internal readonly TextBox _remotesFilterBox;
+    internal readonly TextBox _tagsFilterBox;
+    internal readonly TextBox _stashesFilterBox;
+
+    internal bool LocalFilterOpen => _localFilterOpen;
+    internal bool RemotesFilterOpen => _remotesFilterOpen;
+    internal bool TagsFilterOpen => _tagsFilterOpen;
+    internal bool StashesFilterOpen => _stashesFilterOpen;
+    internal bool LocalOpen => _localOpen;
+    internal bool TagsOpen => _tagsOpen;
 
     private void ResetSectionState()
     {
         _localOpen = _remotesOpen = true;
         _tagsOpen = _stashesOpen = _submodulesOpen = _worktreesOpen = false;
+        _localFilterOpen = _remotesFilterOpen = _tagsFilterOpen = _stashesFilterOpen = false;
+        if (_localFilterBox is not null) _localFilterBox.Text = string.Empty;
+        if (_remotesFilterBox is not null) _remotesFilterBox.Text = string.Empty;
+        if (_tagsFilterBox is not null) _tagsFilterBox.Text = string.Empty;
+        if (_stashesFilterBox is not null) _stashesFilterBox.Text = string.Empty;
         _expanded.Clear();
     }
 
@@ -63,6 +82,11 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private bool _submodulesFetched;
     private bool _worktreesFetched;
 
+    // F7: submodule paths (or AllSubmodulesBusyKey for "Update all") with an in-flight
+    // "Init & update" — the row renders a busy label instead of its menu while present.
+    private readonly HashSet<string> _submodulesBusy = new(StringComparer.Ordinal);
+    private const string AllSubmodulesBusyKey = "*";
+
     public RefNavigatorView(IServiceProvider sp)
     {
         _workspace = sp.GetRequiredService<IWorkspaceService>();
@@ -73,6 +97,12 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         _submodules = sp.GetRequiredService<ISubmoduleService>();
         _worktrees = sp.GetRequiredService<IWorktreeService>();
         _repoCache = sp.GetRequiredService<IRepoStateCache>();
+        _actions = sp.GetRequiredService<IRepoActionBus>();
+
+        _localFilterBox = CreateFilterBox(() => _localFilterOpen = false);
+        _remotesFilterBox = CreateFilterBox(() => _remotesFilterOpen = false);
+        _tagsFilterBox = CreateFilterBox(() => _tagsFilterOpen = false);
+        _stashesFilterBox = CreateFilterBox(() => _stashesFilterOpen = false);
 
         Content = new ScrollViewer { Content = _root, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         this.Dyn(BackgroundProperty, "ColorChrome");
@@ -87,6 +117,30 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             if (!e.Handled && _repo is not null)
                 _nav.RequestNavigate("repo");
         });
+    }
+
+    private TextBox CreateFilterBox(Action onClose)
+    {
+        var box = new TextBox
+        {
+            Watermark = "Filter…",
+            FontSize = 12,
+            Height = 24,
+            Padding = new Thickness(6, 2),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        box.TextChanged += (_, _) => Rebuild();
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape)
+            {
+                e.Handled = true;
+                onClose();
+                box.Text = string.Empty;
+                Rebuild();
+            }
+        };
+        return box;
     }
 
     private void OnFocusChanged(object? s, FocusedRepositoryChangedEventArgs e)
@@ -171,6 +225,14 @@ public sealed class RefNavigatorView : UserControl, IDisposable
 
     private void Rebuild()
     {
+        TextBox? focusedBox = null;
+        int selStart = 0;
+        int selEnd = 0;
+        if (_localFilterBox is not null && _localFilterBox.IsFocused) { focusedBox = _localFilterBox; selStart = _localFilterBox.SelectionStart; selEnd = _localFilterBox.SelectionEnd; }
+        else if (_remotesFilterBox is not null && _remotesFilterBox.IsFocused) { focusedBox = _remotesFilterBox; selStart = _remotesFilterBox.SelectionStart; selEnd = _remotesFilterBox.SelectionEnd; }
+        else if (_tagsFilterBox is not null && _tagsFilterBox.IsFocused) { focusedBox = _tagsFilterBox; selStart = _tagsFilterBox.SelectionStart; selEnd = _tagsFilterBox.SelectionEnd; }
+        else if (_stashesFilterBox is not null && _stashesFilterBox.IsFocused) { focusedBox = _stashesFilterBox; selStart = _stashesFilterBox.SelectionStart; selEnd = _stashesFilterBox.SelectionEnd; }
+
         _root.Children.Clear();
         if (_repo is null)
             return;
@@ -184,23 +246,97 @@ public sealed class RefNavigatorView : UserControl, IDisposable
 
         // ── Local branches ──
         var localBody = Section($"Local Branches ({local.Count})", _localOpen,
-            () => { _localOpen = !_localOpen; Rebuild(); }, add: () => _ = CreateBranchAsync());
+            () => { _localOpen = !_localOpen; Rebuild(); },
+            add: () => _ = CreateBranchAsync(),
+            filter: () =>
+            {
+                _localFilterOpen = !_localFilterOpen;
+                if (_localFilterOpen) _localOpen = true;
+                Rebuild();
+                if (_localFilterOpen) _localFilterBox?.Focus();
+            },
+            filterOpen: _localFilterOpen,
+            filterBox: _localFilterBox);
         if (localBody is not null)
+        {
+            if (_localFilterOpen && !string.IsNullOrWhiteSpace(_localFilterBox?.Text))
+            {
+                var query = FuzzyScorer.PrepareQuery(_localFilterBox.Text);
+                var ranked = RefSearch.Rank(local, b => b.Name, query);
+                if (ranked.Count == 0)
+                {
+                    localBody.Children.Add(Leaf("No matches.", 0, "ColorTextFaint", null, null));
+                }
+                else
+                {
+                    foreach (var item in ranked)
+                    {
+                        var b = item.Item;
+                        var current = !b.IsRemote && string.Equals(b.CanonicalName, currentCanonical, StringComparison.Ordinal);
+                        var row = Leaf(b.Name, depth: 0,
+                            current ? "ColorAccent" : "ColorText",
+                            select: () => Select(b.TipCommitId),
+                            action: null,
+                            current: current);
+                        row.DoubleTapped += (_, e) => { e.Handled = true; _ = CheckoutAsync(b, isRemote: false); };
+                        AttachBranchMenu(row, b, isRemote: false);
+                        localBody.Children.Add(row);
+                    }
+                }
+                localBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
+            }
+
             foreach (var node in RefTree.Build(local, b => b.Name))
                 AddNode(localBody, node, depth: 0, isRemote: false, currentCanonical);
+        }
 
         // ── Remotes: one collapsible folder per remote ──
         var remoteBody = Section($"Remotes ({repo.State.Remotes.Count})", _remotesOpen,
-            () => { _remotesOpen = !_remotesOpen; Rebuild(); });
+            () => { _remotesOpen = !_remotesOpen; Rebuild(); },
+            filter: () =>
+            {
+                _remotesFilterOpen = !_remotesFilterOpen;
+                if (_remotesFilterOpen) _remotesOpen = true;
+                Rebuild();
+                if (_remotesFilterOpen) _remotesFilterBox?.Focus();
+            },
+            filterOpen: _remotesFilterOpen,
+            filterBox: _remotesFilterBox);
         if (remoteBody is not null)
         {
+            if (_remotesFilterOpen && !string.IsNullOrWhiteSpace(_remotesFilterBox?.Text))
+            {
+                var query = FuzzyScorer.PrepareQuery(_remotesFilterBox.Text);
+                var ranked = RefSearch.Rank(remote, b => b.Name, query);
+                if (ranked.Count == 0)
+                {
+                    remoteBody.Children.Add(Leaf("No matches.", 0, "ColorTextFaint", null, null));
+                }
+                else
+                {
+                    foreach (var item in ranked)
+                    {
+                        var b = item.Item;
+                        var row = Leaf(b.Name, depth: 0,
+                            "ColorText",
+                            select: () => Select(b.TipCommitId),
+                            action: null,
+                            current: false);
+                        row.DoubleTapped += (_, e) => { e.Handled = true; _ = CheckoutAsync(b, isRemote: true); };
+                        AttachBranchMenu(row, b, isRemote: true);
+                        remoteBody.Children.Add(row);
+                    }
+                }
+                remoteBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
+            }
+
             var byRemote = remote
                 .GroupBy(b => b.RemoteName ?? (b.Name.Contains('/') ? b.Name[..b.Name.IndexOf('/')] : "origin"))
                 .OrderBy(g => g.Key, StringComparer.Ordinal);
             foreach (var g in byRemote)
             {
                 var key = "remote:" + g.Key;
-                remoteBody.Children.Add(FolderRow(g.Key, key, depth: 0));
+                remoteBody.Children.Add(FolderRow(g.Key, key, depth: 0, remoteAlias: g.Key));
                 if (IsOpen(key, depth: 0))
                 {
                     var prefix = g.Key + "/";
@@ -211,9 +347,40 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         }
 
         // ── Tags ──
-        var tagBody = Section($"Tags ({tags.Count})", _tagsOpen, () => { _tagsOpen = !_tagsOpen; Rebuild(); });
+        var tagBody = Section($"Tags ({tags.Count})", _tagsOpen,
+            () => { _tagsOpen = !_tagsOpen; Rebuild(); },
+            filter: () =>
+            {
+                _tagsFilterOpen = !_tagsFilterOpen;
+                if (_tagsFilterOpen) _tagsOpen = true;
+                Rebuild();
+                if (_tagsFilterOpen) _tagsFilterBox?.Focus();
+            },
+            filterOpen: _tagsFilterOpen,
+            filterBox: _tagsFilterBox);
         if (tagBody is not null)
         {
+            if (_tagsFilterOpen && !string.IsNullOrWhiteSpace(_tagsFilterBox?.Text))
+            {
+                var query = FuzzyScorer.PrepareQuery(_tagsFilterBox.Text);
+                var ranked = RefSearch.Rank(tags, t => t.Name, query);
+                if (ranked.Count == 0)
+                {
+                    tagBody.Children.Add(Leaf("No matches.", 0, "ColorTextFaint", null, null));
+                }
+                else
+                {
+                    foreach (var item in ranked)
+                    {
+                        var tag = item.Item;
+                        tagBody.Children.Add(Leaf(tag.Name, 0, "ColorText",
+                            select: () => Select(tag.TargetCommitId),
+                            action: IconButton("delete", "Delete tag", () => _ = DeleteTagAsync(tag))));
+                    }
+                }
+                tagBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
+            }
+
             if (tags.Count == 0)
                 tagBody.Children.Add(Leaf("No tags.", 0, "ColorTextFaint", null, null));
             foreach (var t in tags)
@@ -226,34 +393,49 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         }
 
         // ── Stashes / Submodules / Worktrees (cached) ──
-        var stashBody = Section($"Stashes{Count(_stashList)}", _stashesOpen, () => { _stashesOpen = !_stashesOpen; Rebuild(); });
+        var stashBody = Section($"Stashes{Count(_stashList)}", _stashesOpen,
+            () => { _stashesOpen = !_stashesOpen; Rebuild(); },
+            filter: () =>
+            {
+                _stashesFilterOpen = !_stashesFilterOpen;
+                if (_stashesFilterOpen) _stashesOpen = true;
+                Rebuild();
+                if (_stashesFilterOpen) _stashesFilterBox?.Focus();
+            },
+            filterOpen: _stashesFilterOpen,
+            filterBox: _stashesFilterBox);
         if (stashBody is not null)
         {
             if (_stashList is null) stashBody.Children.Add(Leaf("Loading…", 0, "ColorTextFaint", null, null));
             else if (_stashList.Count == 0) stashBody.Children.Add(Leaf("No stashes.", 0, "ColorTextFaint", null, null));
-            else foreach (var s in _stashList)
+            else
             {
-                var entry = s;
-                var menuBtn = new Button { Content = "⋯", Padding = new Thickness(4, 0), Background = Brushes.Transparent, BorderThickness = default };
-                var mf = new MenuFlyout();
-                var mfItems = new List<Control>();
-                foreach (var (label, act) in new (string, Action)[]
+                if (_stashesFilterOpen && !string.IsNullOrWhiteSpace(_stashesFilterBox?.Text))
                 {
-                    ("Apply", () => _ = StashOp(() => _stashes.ApplyAsync(_repo!, entry.CommitId, restoreIndex: true, _repo!.Lifetime))),
-                    ("Apply & drop", () => _ = StashOp(() => _stashes.ApplyAndDropAsync(_repo!, entry.CommitId, _repo!.Lifetime))),
-                    ("New branch from stash…", () => _ = StashBranchAsync(entry)),
-                    ("Drop", () => _ = StashDropAsync(entry)),
-                })
-                {
-                    var mi = new MenuItem { Header = label };
-                    var a = act;
-                    mi.Click += (_, _) => a();
-                    mfItems.Add(mi);
+                    var query = FuzzyScorer.PrepareQuery(_stashesFilterBox.Text);
+                    var ranked = RefSearch.Rank(_stashList, s => $"stash@{{{s.Index}}}  {s.Message}", query);
+                    if (ranked.Count == 0)
+                    {
+                        stashBody.Children.Add(Leaf("No matches.", 0, "ColorTextFaint", null, null));
+                    }
+                    else
+                    {
+                        foreach (var item in ranked)
+                        {
+                            var entry = item.Item;
+                            stashBody.Children.Add(Leaf($"stash@{{{entry.Index}}}  {entry.Message}", 0, "ColorText",
+                                select: () => Select(entry.CommitId), action: StashMenuButton(entry)));
+                        }
+                    }
+                    stashBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
                 }
-                mf.ItemsSource = mfItems;
-                menuBtn.Flyout = mf;
-                stashBody.Children.Add(Leaf($"stash@{{{s.Index}}}  {s.Message}", 0, "ColorText",
-                    select: () => Select(entry.CommitId), action: menuBtn));
+
+                foreach (var s in _stashList)
+                {
+                    var entry = s;
+                    stashBody.Children.Add(Leaf($"stash@{{{s.Index}}}  {s.Message}", 0, "ColorText",
+                        select: () => Select(entry.CommitId), action: StashMenuButton(entry)));
+                }
             }
         }
 
@@ -271,17 +453,26 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             else foreach (var m in _submoduleList)
             {
                 var sm = m;
+                var busy = _submodulesBusy.Contains(sm.Path);
+                if (busy)
+                {
+                    subBody.Children.Add(Leaf(SubmoduleRowLabel(sm, busy: true), 0, "ColorTextFaint", null, null));
+                    continue;
+                }
+
                 var menuBtn = new Button { Content = "⋯", Padding = new Thickness(4, 0), Background = Brushes.Transparent, BorderThickness = default };
-                var mf = new MenuFlyout();
-                AddMi(mf, "Init & update", () => _ = PowerOp(r => _submodules.InitAndUpdateAsync(r, sm.Path, recursive: true, r.Lifetime)));
-                AddMi(mf, "Sync URL", () => _ = PowerOp(r => _submodules.SyncAsync(r, sm.Path, r.Lifetime)));
-                AddMi(mf, "Remove", () => _ = SubmoduleRemoveAsync(sm));
-                menuBtn.Flyout = mf;
-                subBody.Children.Add(Leaf($"{m.Name}  ({m.Status})", 0, "ColorText", null, menuBtn));
+                menuBtn.Flyout = new MenuFlyout { ItemsSource = BuildSubmoduleMenuItems(sm) };
+                var row = Leaf(SubmoduleRowLabel(sm, busy: false), 0, "ColorText", null, menuBtn);
+                row.ContextMenu = new ContextMenu { ItemsSource = BuildSubmoduleMenuItems(sm) };
+                row.DoubleTapped += (_, e) => { e.Handled = true; _ = OpenSubmoduleTabAsync(sm); };
+                subBody.Children.Add(row);
             }
             if (_submoduleList is { Count: > 0 })
-                subBody.Children.Add(Leaf("Update all", 0, "ColorTextMuted",
-                    select: () => _ = PowerOp(r => _submodules.InitAndUpdateAsync(r, null, recursive: true, r.Lifetime)), null));
+            {
+                var allBusy = _submodulesBusy.Contains(AllSubmodulesBusyKey);
+                subBody.Children.Add(Leaf(allBusy ? "Update all — Initializing…" : "Update all", 0, "ColorTextMuted",
+                    select: allBusy ? null : () => _ = SubmoduleInitAndUpdateAsync(null), null));
+            }
         }
 
         var wtBody = Section($"Worktrees{Count(_worktreeList)}", _worktreesOpen, () =>
@@ -314,14 +505,55 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 wtBody.Children.Add(Leaf("Prune stale", 0, "ColorTextMuted",
                     select: () => _ = PowerOp(r => _worktrees.PruneAsync(r, r.Lifetime)), null));
         }
+
+        if (focusedBox is not null)
+        {
+            var target = focusedBox;
+            var start = selStart;
+            var end = selEnd;
+            Dispatcher.UIThread.Post(() =>
+            {
+                target.Focus();
+                target.SelectionStart = start;
+                target.SelectionEnd = end;
+            });
+        }
+    }
+
+    private Button StashMenuButton(StashEntry entry)
+    {
+        var menuBtn = new Button { Content = "⋯", Padding = new Thickness(4, 0), Background = Brushes.Transparent, BorderThickness = default };
+        var mf = new MenuFlyout();
+        var mfItems = new List<Control>();
+        foreach (var (label, act) in new (string, Action)[]
+        {
+            ("Apply", () => _ = StashOp(() => _stashes.ApplyAsync(_repo!, entry.CommitId, restoreIndex: true, _repo!.Lifetime))),
+            ("Apply & drop", () => _ = StashOp(() => _stashes.ApplyAndDropAsync(_repo!, entry.CommitId, _repo!.Lifetime))),
+            ("New branch from stash…", () => _ = StashBranchAsync(entry)),
+            ("Drop", () => _ = StashDropAsync(entry)),
+        })
+        {
+            var mi = new MenuItem { Header = label };
+            var a = act;
+            mi.Click += (_, _) => a();
+            mfItems.Add(mi);
+        }
+        mf.ItemsSource = mfItems;
+        menuBtn.Flyout = mf;
+        return menuBtn;
     }
 
     private static string Count<T>(IReadOnlyList<T>? list) => list is null ? "" : $" ({list.Count})";
 
     /// <summary>Section header; returns the capped body panel when expanded, else null.</summary>
-    private StackPanel? Section(string title, bool open, Action toggle, Action? add = null)
+    private StackPanel? Section(string title, bool open, Action toggle, Action? add = null, Action? filter = null, bool filterOpen = false, TextBox? filterBox = null)
     {
-        _root.Children.Add(SectionHeader(title, open, toggle, add));
+        _root.Children.Add(SectionHeader(title, open, toggle, add, filter));
+        if (open && filterOpen && filterBox is not null)
+        {
+            filterBox.Margin = new Thickness(LeafIndent, 2, 8, 4);
+            _root.Children.Add(filterBox);
+        }
         if (!open)
             return null;
         var body = new StackPanel();
@@ -334,9 +566,9 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         return body;
     }
 
-    private Control SectionHeader(string title, bool open, Action toggle, Action? add)
+    private Control SectionHeader(string title, bool open, Action toggle, Action? add, Action? filter = null)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Height = 28 };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), Height = 28 };
         var caret = Text(open ? "▾" : "▸", "ColorTextMuted", 10);
         caret.Margin = new Thickness(8, 0, 6, 0);
         grid.Children.Add(caret);
@@ -352,10 +584,26 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             Grid.SetColumn(plus, 2);
             grid.Children.Add(plus);
         }
+        if (filter is not null)
+        {
+            var filterBtn = IconButton("filter_alt", "Filter this section", () => filter());
+            filterBtn.AddHandler(PointerPressedEvent, (_, e) =>
+            {
+                e.Handled = true;
+                filter();
+            }, RoutingStrategies.Tunnel);
+            Grid.SetColumn(filterBtn, 3);
+            grid.Children.Add(filterBtn);
+        }
         var b = new Border { Child = grid, Cursor = new Cursor(StandardCursorType.Hand) };
         b.Dyn(Border.BorderBrushProperty, "ColorBorder");
         b.BorderThickness = new Thickness(0, 1, 0, 0);
-        b.PointerPressed += (_, e) => { e.Handled = true; toggle(); };
+        b.PointerPressed += (_, e) =>
+        {
+            if (e.Handled) return;
+            e.Handled = true;
+            toggle();
+        };
         return b;
     }
 
@@ -383,7 +631,9 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     }
 
     /// <summary>A collapsible folder row (remote root or path segment). Its label aligns with leaves.</summary>
-    private Border FolderRow(string segment, string path, int depth)
+    /// <summary><paramref name="remoteAlias"/> is non-null only for a remote's own root folder
+    /// row (never a path-segment folder beneath it) and adds a "Rename remote…" context menu.</summary>
+    private Border FolderRow(string segment, string path, int depth, string? remoteAlias = null)
     {
         var open = IsOpen(path, depth);
         var caret = Text(open ? "▾" : "▸", "ColorTextMuted", 10);
@@ -402,7 +652,51 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             if (!_expanded.Remove(path)) _expanded.Add(path);
             Rebuild();
         };
+
+        if (remoteAlias is not null)
+        {
+            b.ContextMenu = new ContextMenu
+            {
+                ItemsSource = new Control[]
+                {
+                    MenuLeaf("Rename remote…", () => RenameRemoteAsync(remoteAlias)),
+                },
+            };
+        }
         return b;
+    }
+
+    /// <summary>R12: renames a remote's alias from the sidebar. Rejects an empty/unchanged name
+    /// or a collision with an existing remote before calling git — a caller-side check is
+    /// friendlier than letting libgit2 throw for the common mistakes. Surfaces any fetch
+    /// refspecs the rename could not rewrite automatically as a warning, per M2.1's
+    /// <c>RenameRemoteAsync</c> contract.</summary>
+    private async Task RenameRemoteAsync(string oldName)
+    {
+        if (_repo is not { } ctx)
+            return;
+        var newName = await _dialogs.PromptAsync("Rename remote", $"New name for '{oldName}':", oldName);
+        if (string.IsNullOrWhiteSpace(newName) || newName == oldName)
+            return;
+        newName = newName.Trim();
+        if (ctx.State.Remotes.Any(r => string.Equals(r.Name, newName, StringComparison.Ordinal)))
+        {
+            await _dialogs.ShowMessageAsync("Rename remote", $"A remote named '{newName}' already exists.");
+            return;
+        }
+
+        try
+        {
+            var untouched = await ctx.Gateway.RenameRemoteAsync(oldName, newName, ctx.Lifetime);
+            await ctx.State.RefreshAllAsync(ctx.Lifetime);
+            if (untouched.Count > 0)
+                _notifications.Publish(NotificationSeverity.Warning,
+                    $"'{oldName}' renamed to '{newName}', but these fetch refspecs need manual fixing: {string.Join(", ", untouched)}");
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, $"Rename remote failed: {ex.Message}", ex.NotificationDetails());
+        }
     }
 
     private Border Leaf(string text, int depth, string fgKey, Action? select, Control? action, bool current = false)
@@ -441,19 +735,53 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             ? b.Name[(r.Length + 1)..]
             : b.Name;
 
+        // R11: the counterpart to measure divergence against, and the remote alias that owns
+        // it — resolved via BranchInfo.RemoteName (reliable even when the alias itself contains
+        // a slash), never by splitting Name/UpstreamName on '/'.
+        string? counterpartRef = null, remoteAlias = null;
+        if (!isRemote && b.UpstreamName is { } upstream)
+        {
+            counterpartRef = upstream;
+            remoteAlias = ctx.State.Branches.FirstOrDefault(x => x.IsRemote && x.Name == upstream)?.RemoteName;
+        }
+        else if (isRemote)
+        {
+            var localCounterpart = ctx.State.Branches.FirstOrDefault(x => !x.IsRemote && x.Name == shortLocal);
+            if (localCounterpart is not null)
+                counterpartRef = shortLocal;
+            remoteAlias = b.RemoteName;
+        }
+
         var target = new BranchMenu.Target(
             Name: shortLocal,
             CopyName: b.Name,
             TrackingRef: b.Name,
             IsLocal: !isRemote,
             TipSha: b.TipCommitId?.Sha,
-            CurrentBranch: ctx.State.CurrentBranch?.Name);
+            CurrentBranch: ctx.State.CurrentBranch?.Name,
+            CounterpartRef: counterpartRef,
+            RemoteAlias: remoteAlias);
 
-        row.ContextMenu = new ContextMenu
+        var baseItems = BranchMenu.Build(target, ctx, _dialogs, _notifications, _stashes,
+            s => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(s));
+
+        var menu = new ContextMenu { ItemsSource = baseItems };
+        // R11: the divergence lookup shells out to git — resolve it lazily on Opening so the
+        // popup never blocks on a git process, and show the base menu immediately.
+        menu.Opening += async (_, _) =>
         {
-            ItemsSource = BranchMenu.Build(target, ctx, _dialogs, _notifications, _stashes,
-                s => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(s)),
+            var opened = menu;
+            IReadOnlyList<Control> divergenceItems;
+            try { divergenceItems = await BranchMenu.BuildDivergenceItemsAsync(target, ctx.Gateway, _actions, ctx.Lifetime); }
+            catch { return; }
+            if (divergenceItems.Count == 0 || !ReferenceEquals(menu, opened) || !menu.IsOpen)
+                return;
+            var afterCheckout = baseItems.Take(1).ToList();
+            afterCheckout.AddRange(divergenceItems);
+            afterCheckout.AddRange(baseItems.Skip(1));
+            menu.ItemsSource = afterCheckout;
         };
+        row.ContextMenu = menu;
     }
 
     private void Select(LibGit2Sharp.ObjectId? id)
@@ -547,7 +875,65 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             Rebuild();
             _ = LoadPowerToolsAsync(_repo);
         }
+        catch (OperationCanceledException) { /* tab closed or torn down mid-operation — not a failure */ }
         catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, $"Operation failed: {ex.Message}", ex.NotificationDetails()); }
+    }
+
+    /// <summary>F7: wraps a submodule "Init & update" (per-row, or <c>null</c> path for "Update
+    /// all") with a busy state so the row shows feedback instead of looking hung.</summary>
+    private async Task SubmoduleInitAndUpdateAsync(string? path)
+    {
+        var key = path ?? AllSubmodulesBusyKey;
+        _submodulesBusy.Add(key);
+        Rebuild();
+        try
+        {
+            await PowerOp(r => _submodules.InitAndUpdateAsync(r, path, true, r.Lifetime));
+        }
+        finally
+        {
+            _submodulesBusy.Remove(key);
+            Rebuild();
+        }
+    }
+
+    /// <summary>F6: a fresh <see cref="MenuItem"/> list per call — an <see cref="ItemsControl"/>
+    /// item can only have one visual parent, so the "⋯" flyout and the row's right-click
+    /// <see cref="ContextMenu"/> each need their own instances.</summary>
+    private List<Control> BuildSubmoduleMenuItems(SubmoduleInfo sm)
+    {
+        var list = new List<Control>();
+        void Add(string label, Action onClick)
+        {
+            var mi = new MenuItem { Header = label };
+            mi.Click += (_, _) => onClick();
+            list.Add(mi);
+        }
+        Add("Init & update", () => _ = SubmoduleInitAndUpdateAsync(sm.Path));
+        Add("Sync URL", () => _ = PowerOp(r => _submodules.SyncAsync(r, sm.Path, r.Lifetime)));
+        Add("Remove", () => _ = SubmoduleRemoveAsync(sm));
+        return list;
+    }
+
+    /// <summary>F7: the submodule row's label, busy or not — extracted so it can be unit tested
+    /// without constructing the view.</summary>
+    internal static string SubmoduleRowLabel(SubmoduleInfo sm, bool busy) =>
+        busy ? $"{sm.Name}  — Initializing…" : $"{sm.Name}  ({sm.Status})";
+
+    /// <summary>F9: double-clicking a submodule row opens (or focuses) its linked tab.</summary>
+    private async Task OpenSubmoduleTabAsync(SubmoduleInfo sm)
+    {
+        if (_repo is null) return;
+        try
+        {
+            await _workspace.OpenSubmoduleAsync(_repo, sm, _repo.Lifetime);
+            _nav.RequestNavigate("repo");
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error,
+                $"Could not open submodule: {ex.Message}", ex.NotificationDetails());
+        }
     }
 
     private async Task WorktreeRemoveAsync(WorktreeInfo wt)
@@ -582,6 +968,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             Rebuild();
             _ = LoadPowerToolsAsync(_repo);
         }
+        catch (OperationCanceledException) { /* tab closed or torn down mid-operation — not a failure */ }
         catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, $"Stash op failed: {ex.Message}"); }
     }
 

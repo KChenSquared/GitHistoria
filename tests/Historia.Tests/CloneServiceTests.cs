@@ -208,6 +208,31 @@ public class CloneServiceTests : IAsyncDisposable
         repo.Dispose();
     }
 
+    [Fact]
+    public async Task An_unclassified_clone_failure_is_reported_once_not_doubled()
+    {
+        var fakeWs = new ScriptedWorkspaceService();
+        var autoFetch = new FakeAutoFetchService();
+        var nav = new NavigationBus();
+        var notifications = new NotificationService();
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
+        var identity = new RepoIdentityService(cli);
+
+        var service = new CloneService(fakeWs, profiles, identity, notifications, nav, autoFetch);
+
+        var request = new CloneRequest("https://example.com/repo.git", "C:/repo", new Historia.Services.Workspace.CloneOptions(), null);
+        var startTask = service.StartAsync(request);
+
+        fakeWs.CloneTcs.TrySetException(new HistoriaGitException(GitErrorKind.Unknown, "Clone failed (Unknown)."));
+        await startTask;
+
+        var note = notifications.Current.FirstOrDefault(n => n.Severity == NotificationSeverity.Error);
+        Assert.NotNull(note);
+        Assert.Equal("Clone failed (Unknown).", note.Message);
+        Assert.DoesNotContain("Clone failed: Clone failed", note.Message);
+    }
+
     private sealed class FakeAutoFetchService : IAutoFetchService
     {
         public RepoEntrySource? LastEntrySource { get; private set; }
@@ -252,6 +277,7 @@ public class CloneServiceTests : IAsyncDisposable
             return await CloneTcs.Task.ConfigureAwait(false);
         }
 
+        public Task<RepositoryContext> OpenSubmoduleAsync(RepositoryContext owner, SubmoduleInfo submodule, CancellationToken ct = default) => throw new NotImplementedException();
         public Task CloseAsync(RepositoryContext context) => Task.CompletedTask;
         public void Focus(RepositoryContext context) { }
         public void EnsureInitialized(RepositoryContext context) { }

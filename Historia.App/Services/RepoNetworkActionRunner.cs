@@ -31,6 +31,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
     private readonly IProfileService _profiles;
     private readonly IRepoIdentityService _identity;
     private readonly IGraphLayoutService _graph;
+    private readonly ISettingsService _settings;
 
     private bool _busy;
     private CancellationTokenSource? _cts;
@@ -46,7 +47,8 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         ITerminalSessionService terminals,
         IProfileService profiles,
         IRepoIdentityService identity,
-        IGraphLayoutService graph)
+        IGraphLayoutService graph,
+        ISettingsService settings)
     {
         _workspace = workspace;
         _notifications = notifications;
@@ -56,8 +58,9 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         _profiles = profiles;
         _identity = identity;
         _graph = graph;
+        _settings = settings;
 
-        actionBus.NetworkActionRequested += (_, action) => _ = RunAsync(action);
+        actionBus.NetworkActionRequested += (_, request) => _ = RunAsync(request);
     }
 
     /// <summary>§14.5: a tab whose selection went stale (profile deleted / default changed)
@@ -89,29 +92,82 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         Historia.Diagnostics.PerfLog.Mark($"manual {op}: commit-graph refresh requested ({repo.DisplayName})");
     }
 
-    private async Task ExecOpAsync(RepositoryContext repo, RepoNetworkAction op, string remote, string? branch,
+    internal static PushSpec BuildPushSpec(string branch, string? remoteBranch, bool targetHasUpstream)
+    {
+        var refspec = remoteBranch is not null && !string.Equals(branch, remoteBranch, StringComparison.Ordinal)
+            ? $"{branch}:{remoteBranch}"
+            : branch;
+        return new PushSpec
+        {
+            RefSpec = refspec,
+            SetUpstream = !targetHasUpstream,
+        };
+    }
+
+    internal static bool TargetHasUpstream(IEnumerable<BranchInfo> branches, string branch)
+    {
+        var target = branches.FirstOrDefault(b => !b.IsRemote && string.Equals(b.Name, branch, StringComparison.Ordinal));
+        return target?.UpstreamName is not null;
+    }
+
+    private async Task ExecOpAsync(RepositoryContext repo, RepoNetworkAction op, string remote, string? branch, string? remoteBranch,
         IProgress<GitProgress> progress, CancellationToken ct)
     {
         switch (op)
         {
             case RepoNetworkAction.Fetch:
-                await repo.Gateway.FetchAsync(remote, new GitFetchOptions { Prune = true }, progress, ct);
+                await repo.Gateway.FetchAsync(remote, GitFetchOptions.From(_settings.Current), progress, ct);
                 RefreshCommitGraphAfterFetch(repo, op);
                 _notifications.Publish(NotificationSeverity.Success, $"Fetched {remote}.");
                 break;
             case RepoNetworkAction.Pull when branch is not null:
-                await repo.Gateway.PullAsync(remote, branch, new GitPullOptions(), progress, ct);
+                if (!string.Equals(branch, repo.State.CurrentBranch?.Name, StringComparison.Ordinal))
+                {
+                    _notifications.Publish(NotificationSeverity.Warning, "Pull only runs on the checked-out branch.");
+                    return;
+                }
+                var targetRemoteBranch = remoteBranch ?? branch;
+                await repo.Gateway.PullAsync(remote, targetRemoteBranch, GitPullOptions.From(_settings.Current), progress, ct);
+                await FollowUpFetchAsync(repo, "Pulled", remote, targetRemoteBranch, progress, ct);
                 RefreshCommitGraphAfterFetch(repo, op);
-                _notifications.Publish(NotificationSeverity.Success, $"Pulled {remote}/{branch}.");
+                _notifications.Publish(NotificationSeverity.Success, $"Pulled {remote}/{targetRemoteBranch}.");
                 break;
             case RepoNetworkAction.Push when branch is not null:
-                var spec = new PushSpec { RefSpec = branch, SetUpstream = repo.State.CurrentBranch?.UpstreamName is null };
+                var hasUpstream = TargetHasUpstream(repo.State.Branches, branch);
+                var spec = BuildPushSpec(branch, remoteBranch, hasUpstream);
                 await repo.Gateway.PushAsync(remote, spec, progress, ct);
+                var pushedRemoteBranch = remoteBranch ?? branch;
+                await FollowUpFetchAsync(repo, "Pushed", remote, pushedRemoteBranch, progress, ct);
+                RefreshCommitGraphAfterFetch(repo, op);
                 _notifications.Publish(NotificationSeverity.Success, $"Pushed to {remote}.");
                 break;
             default:
                 _notifications.Publish(NotificationSeverity.Warning, "No current branch to operate on.");
                 break;
+        }
+    }
+
+    /// <summary>R5: a pull or push leaves the remote-tracking refs current without a second user
+    /// action — the follow-up fetch rides on the pull/push the user just triggered (Rule 0.2: no
+    /// network call the user did not initiate), not a new timer or poll. A push that reached the
+    /// remote must never be reported as failed because a fetch afterwards did not; the follow-up
+    /// failing is a warning, not an error. A cancelled follow-up is a cancelled operation and
+    /// propagates so the outer handler reports it the same way as a cancelled pull/push.</summary>
+    private async Task FollowUpFetchAsync(RepositoryContext repo, string verb, string remote, string branch,
+        IProgress<GitProgress> progress, CancellationToken ct)
+    {
+        try
+        {
+            await repo.Gateway.FetchAsync(remote, GitFetchOptions.From(_settings.Current), progress, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Warning,
+                $"{verb} {remote}/{branch}, but the follow-up fetch failed.", ex.NotificationDetails());
         }
     }
 
@@ -126,6 +182,12 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         RepositoryContext repo, string remote, string branch, HistoriaGitException ex,
         IProgress<GitProgress> progress, CancellationToken ct)
     {
+        if (!string.Equals(branch, repo.State.CurrentBranch?.Name, StringComparison.Ordinal))
+        {
+            _notifications.Publish(NotificationSeverity.Warning, ex.Message, ex.Details);
+            return;
+        }
+
         // Left→right: Fetch & merge (blue default) · Fetch & rebase · Force push (red) · Cancel.
         const int Merge = 0, Rebase = 1, Force = 2;
         var choice = await _dialogs.ChooseAsync(
@@ -148,13 +210,13 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             return;
         }
 
-        var setUpstream = repo.State.CurrentBranch?.UpstreamName is null;
+        var setUpstream = !TargetHasUpstream(repo.State.Branches, branch);
         try
         {
             if (choice is Rebase or Merge)
             {
                 await repo.Gateway.PullAsync(remote, branch,
-                    new GitPullOptions { Rebase = choice == Rebase }, progress, ct);
+                    GitPullOptions.From(_settings.Current) with { Rebase = choice == Rebase }, progress, ct);
                 await repo.Gateway.PushAsync(remote,
                     new PushSpec { RefSpec = branch, SetUpstream = setUpstream }, progress, ct);
                 _notifications.Publish(NotificationSeverity.Success, $"Pushed to {remote}.");
@@ -204,19 +266,28 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
 
     public void CancelCurrent() => _cts?.Cancel();
 
-    private async Task RunAsync(RepoNetworkAction op)
+    private async Task RunAsync(RepoNetworkRequest request)
     {
+        var op = request.Action;
         if (_workspace.Focused is not { } repo || _busy)
             return;
 
-        var remotes = repo.State.Remotes;
-        if (remotes.Count == 0)
+        string remote;
+        if (request.Remote is { } targetRemote)
         {
-            _notifications.Publish(NotificationSeverity.Warning, "This repository has no remotes configured.");
-            return;
+            remote = targetRemote;
         }
-        var remote = remotes.Any(r => r.Name == "origin") ? "origin" : remotes[0].Name;
-        var branch = repo.State.CurrentBranch?.Name;
+        else
+        {
+            var remotes = repo.State.Remotes;
+            if (remotes.Count == 0)
+            {
+                _notifications.Publish(NotificationSeverity.Warning, "This repository has no remotes configured.");
+                return;
+            }
+            remote = remotes.Any(r => r.Name == "origin") ? "origin" : remotes[0].Name;
+        }
+        var branch = request.Branch ?? repo.State.CurrentBranch?.Name;
 
         _busy = true;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(repo.Lifetime);
@@ -226,7 +297,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         try
         {
             await EnsureActiveProfileFreshAsync(repo);
-            await ExecOpAsync(repo, op, remote, branch, progress, ct);
+            await ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct);
             await repo.State.RefreshAllAsync(repo.Lifetime);
         }
         catch (OperationCanceledException)
@@ -248,7 +319,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                     var key = repo.IdentityKey ?? await _identity.ResolveAsync(repo, repo.Lifetime);
                     await _profiles.SetLocalConfigForRepositoryAsync(key, repo.RepositoryPath, repo.Lifetime);
                     repo.State.SetActiveProfile(null);
-                    await ExecOpAsync(repo, op, remote, branch, progress, ct);
+                    await ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct);
                     await repo.State.RefreshAllAsync(repo.Lifetime);
                 }
                 catch (Exception retryEx)
@@ -274,10 +345,11 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.UncommittedChanges && op == RepoNetworkAction.Pull && branch is not null)
         {
+            var pullTarget = request.RemoteBranch ?? branch;
             _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.Details,
             [
                 new NotificationAction("Stash & retry", () => BranchMenu.StashAndRetryAsync(repo, _notifications, _stashes,
-                    () => repo.Gateway.PullAsync(remote, branch, new GitPullOptions(), null, repo.Lifetime), "Pull")),
+                    () => repo.Gateway.PullAsync(remote, pullTarget, GitPullOptions.From(_settings.Current), null, repo.Lifetime), "Pull")),
             ]);
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.RemoteRejected && op == RepoNetworkAction.Push && branch is not null)
@@ -293,7 +365,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                     // finally, not a trailing call: identical trees merge clean, but if they don't,
                     // the merge still throws and the UI needs the refreshed (conflicted) state to
                     // show the resolver panel instead of looking like nothing happened.
-                    try { await repo.Gateway.PullAsync(remote, branch, new GitPullOptions { AllowUnrelatedHistories = true }, null, repo.Lifetime); }
+                    try { await repo.Gateway.PullAsync(remote, branch, GitPullOptions.From(_settings.Current) with { AllowUnrelatedHistories = true }, null, repo.Lifetime); }
                     finally { await repo.State.RefreshAllAsync(repo.Lifetime); }
                 }),
                 new NotificationAction($"Reset to {remote}/{branch}", async () =>

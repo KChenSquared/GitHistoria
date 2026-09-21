@@ -115,4 +115,44 @@ public class KeyEncoderTests
         Assert.Equal((byte)0x1D, KeyEncoder.EncodeControlChar(']', TerminalModifiers.Control));
         Assert.Equal((byte)0x1F, KeyEncoder.EncodeControlChar('_', TerminalModifiers.Control));
     }
+
+    [Fact]
+    public void ClaimsUnencodedKey_False_ForNoModifierAndShift()
+    {
+        Assert.False(KeyEncoder.ClaimsUnencodedKey(TerminalModifiers.None));
+        Assert.False(KeyEncoder.ClaimsUnencodedKey(TerminalModifiers.Shift));
+    }
+
+    [Fact]
+    public void ClaimsUnencodedKey_False_ForCtrlAlt_AltGr()
+    {
+        Assert.False(KeyEncoder.ClaimsUnencodedKey(TerminalModifiers.Control | TerminalModifiers.Alt));
+        Assert.False(KeyEncoder.ClaimsUnencodedKey(TerminalModifiers.Control | TerminalModifiers.Alt | TerminalModifiers.Shift));
+    }
+
+    [Fact]
+    public void ClaimsUnencodedKey_True_ForCtrlOnly_AndAltOnly()
+    {
+        Assert.True(KeyEncoder.ClaimsUnencodedKey(TerminalModifiers.Control));
+        Assert.True(KeyEncoder.ClaimsUnencodedKey(TerminalModifiers.Control | TerminalModifiers.Shift));
+        Assert.True(KeyEncoder.ClaimsUnencodedKey(TerminalModifiers.Alt));
+        Assert.True(KeyEncoder.ClaimsUnencodedKey(TerminalModifiers.Alt | TerminalModifiers.Shift));
+    }
+
+    [Fact]
+    public void EncodeMeta_PrefixesEscape()
+    {
+        Assert.Equal(new byte[] { 0x1B, (byte)'b' }, KeyEncoder.EncodeMeta('b', TerminalModifiers.Alt));
+        Assert.Equal(new byte[] { 0x1B, (byte)'B' }, KeyEncoder.EncodeMeta('B', TerminalModifiers.Alt));
+        Assert.Equal(new byte[] { 0x1B, (byte)'.' }, KeyEncoder.EncodeMeta('.', TerminalModifiers.Alt));
+    }
+
+    [Fact]
+    public void EncodeMeta_Null_WithCtrl_OrWithoutAlt()
+    {
+        Assert.Null(KeyEncoder.EncodeMeta('b', TerminalModifiers.None));
+        Assert.Null(KeyEncoder.EncodeMeta('b', TerminalModifiers.Control));
+        Assert.Null(KeyEncoder.EncodeMeta('b', TerminalModifiers.Control | TerminalModifiers.Alt));
+        Assert.Null(KeyEncoder.EncodeMeta('\t', TerminalModifiers.Alt));
+    }
 }

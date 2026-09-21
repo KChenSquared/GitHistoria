@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>Local or remote branch (§6.12). Ahead/behind are computed lazily per visible row.</summary>
 public sealed record BranchInfo
@@ -8,7 +8,7 @@ public sealed record BranchInfo
     public required string CanonicalName { get; init; }
     public required bool IsRemote { get; init; }
     public required bool IsCurrent { get; init; }
-    public required ObjectId? TipCommitId { get; init; }
+    public ObjectId? TipCommitId { get; init; }
 
     /// <summary>The owning remote's name for a remote-tracking branch (e.g. "origin", or
     /// "team/infra" — a remote name may itself contain a slash). Null for a local branch.
@@ -18,7 +18,10 @@ public sealed record BranchInfo
     public string? UpstreamName { get; init; }
 
     /// <summary>Null until computed lazily for a visible row (§6.12).</summary>
+    [JsonIgnore]
     public int? AheadBy { get; init; }
+
+    [JsonIgnore]
     public int? BehindBy { get; init; }
 }
 

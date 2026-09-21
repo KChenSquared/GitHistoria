@@ -96,6 +96,34 @@ public sealed class LoggingGitGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task GetDivergenceAsync_logs_arguments_and_outcome()
+    {
+        AppLog.Enabled = true;
+        var gw = new LoggingGitGateway(new FakeGateway { DivergenceResult = new AheadBehind(2, 1) }, @"C:\repos\demo");
+
+        var ab = await gw.GetDivergenceAsync("refs/heads/main", "refs/remotes/origin/main");
+
+        Assert.Equal(new AheadBehind(2, 1), ab);
+        var text = SessionText();
+        Assert.Contains("GetDivergenceAsync(refs/heads/main...refs/remotes/origin/main)", text);
+        Assert.Contains("+2/-1", text);
+    }
+
+    [Fact]
+    public async Task RenameRemoteAsync_logs_arguments_and_outcome()
+    {
+        AppLog.Enabled = true;
+        var gw = new LoggingGitGateway(new FakeGateway { RenameRemoteResult = ["+refs/heads/*:refs/custom/*"] }, @"C:\repos\demo");
+
+        var untouched = await gw.RenameRemoteAsync("origin", "upstream");
+
+        Assert.Single(untouched);
+        var text = SessionText();
+        Assert.Contains("RenameRemoteAsync(origin -> upstream)", text);
+        Assert.Contains("1 unrewritten refspec(s)", text);
+    }
+
+    [Fact]
     public async Task Pure_passthrough_when_logging_is_disabled()
     {
         var inner = new FakeGateway { Branches = [Branch("main")] };
@@ -146,6 +174,9 @@ public sealed class LoggingGitGatewayTests : IDisposable
         public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<RemoteInfo>>>();
         public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => No<Task<FileDiff>>();
         public Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default) => No<Task<AheadBehind?>>();
+        public AheadBehind? DivergenceResult { get; set; }
+        public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default)
+            => DivergenceResult is { } ab ? Task.FromResult<AheadBehind?>(ab) : No<Task<AheadBehind?>>();
         public Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default) => No<Task<(string?, string?)>>();
         public Task<(string? Name, string? Email)> GetGlobalIdentityAsync(CancellationToken ct = default) => No<Task<(string?, string?)>>();
         public Task<bool> GetGpgSignConfiguredAsync(CancellationToken ct = default) => No<Task<bool>>();
@@ -167,6 +198,9 @@ public sealed class LoggingGitGatewayTests : IDisposable
         public Task AddRemoteAsync(string name, string url, CancellationToken ct = default) => No<Task>();
         public Task RemoveRemoteAsync(string name, CancellationToken ct = default) => No<Task>();
         public Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default) => No<Task>();
+        public IReadOnlyList<string>? RenameRemoteResult { get; set; }
+        public Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default)
+            => RenameRemoteResult is { } r ? Task.FromResult(r) : No<Task<IReadOnlyList<string>>>();
         public Task FetchAsync(string remote, GitFetchOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();
         public Task PullAsync(string remote, string branch, GitPullOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();
         public Task PushAsync(string remote, PushSpec spec, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();

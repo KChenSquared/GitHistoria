@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>
 /// Renders the <see cref="MarkdownRenderer.ToBlocks"/> model to native Avalonia controls
@@ -28,19 +28,23 @@ public sealed class MarkdownView : UserControl
             CornerRadius = new CornerRadius(4),
             Child = new SelectableTextBlock { Text = c.Text, FontFamily = Mono, FontSize = 12, TextWrapping = TextWrapping.NoWrap },
         }.Dyn(Border.BackgroundProperty, "ColorSurface2"),
-        MdQuote q => new Border
-        {
-            BorderThickness = new Thickness(3, 0, 0, 0),
-            Padding = new Thickness(10, 0, 0, 0),
-            Child = new StackPanel { Spacing = 6, Children = { } }.Also(sp =>
-            {
-                foreach (var child in q.Children) sp.Children.Add(RenderBlock(child, launcher));
-            }),
-        }.Dyn(Border.BorderBrushProperty, "ColorBorderStrong"),
+        MdQuote q => RenderQuote(q, launcher),
         MdList l => RenderList(l, launcher),
         MdTable t => RenderTable(t, launcher),
         _ => new Control(),
     };
+
+    private static Control RenderQuote(MdQuote q, IExternalLauncher launcher)
+    {
+        var sp = new StackPanel { Spacing = 6 };
+        foreach (var child in q.Children) sp.Children.Add(RenderBlock(child, launcher));
+        return new Border
+        {
+            BorderThickness = new Thickness(3, 0, 0, 0),
+            Padding = new Thickness(10, 0, 0, 0),
+            Child = sp,
+        }.Dyn(Border.BorderBrushProperty, "ColorBorderStrong");
+    }
 
     private static Control RenderList(MdList l, IExternalLauncher launcher)
     {
@@ -125,9 +129,4 @@ public sealed class MarkdownView : UserControl
         }
         return tb;
     }
-}
-
-internal static class ControlExtensions
-{
-    public static T Also<T>(this T self, Action<T> act) { act(self); return self; }
 }

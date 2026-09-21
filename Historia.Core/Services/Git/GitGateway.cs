@@ -46,6 +46,24 @@ public sealed class GitGateway(
     public Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default)
         => context.WithRepositoryAsync(r => lib.CalculateAheadBehind(r, branchCanonicalName), ct);
 
+    public async Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default)
+    {
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-list", "--left-right", "--count", $"{local}...{remote}"],
+            WorkingDirectory = context.RepositoryPath,
+        }, ct).ConfigureAwait(false);
+
+        if (!result.IsSuccess)
+            return null;
+
+        var parts = result.StandardOutput.Trim().Split('\t', StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 || !int.TryParse(parts[0], out var ahead) || !int.TryParse(parts[1], out var behind))
+            return null;
+
+        return new AheadBehind(ahead, behind);
+    }
+
     public async Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default)
     {
         var name = await ReadConfigAsync("--local", "user.name", ct).ConfigureAwait(false);
@@ -305,6 +323,12 @@ public sealed class GitGateway(
     {
         using var _ = context.BeginSelfOperation();
         await context.WithRepositoryAsync(r => lib.SetRemoteUrl(r, name, url), ct).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+        return await context.WithRepositoryAsync(r => lib.RenameRemote(r, oldName, newName), ct).ConfigureAwait(false);
     }
 
     // ── Network (always CLI) ──

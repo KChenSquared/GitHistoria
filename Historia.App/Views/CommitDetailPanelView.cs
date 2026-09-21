@@ -487,18 +487,14 @@ public sealed class DiffView : UserControl
     private readonly Historia.Services.Notifications.INotificationService? _notifications;
     private FileDiff? _diff;
     private bool _sideBySide;
-
-    public DiffView(RepositoryContext ctx, DiffRequest request)
-        : this(ctx, request, null, null) { }
-
-    public DiffView(RepositoryContext ctx, DiffRequest request, ISettingsService? settings)
-        : this(ctx, request, settings, null) { }
+    private readonly bool _wordWrap;
 
     public DiffView(RepositoryContext ctx, DiffRequest request, ISettingsService? settings, IServiceProvider? sp)
     {
         _ctx = ctx;
         _request = request;
         _sideBySide = settings?.Current.DefaultDiffView == DiffViewMode.SideBySide;
+        _wordWrap = settings?.Current.DiffWordWrap ?? false;
         _patches = sp?.GetService(typeof(Historia.Services.PowerTools.IPatchService)) as Historia.Services.PowerTools.IPatchService;
         _notifications = sp?.GetService(typeof(Historia.Services.Notifications.INotificationService)) as Historia.Services.Notifications.INotificationService;
         this.Dyn(BackgroundProperty, "ColorBg");
@@ -545,7 +541,9 @@ public sealed class DiffView : UserControl
         {
             Content = _sideBySide ? BuildSideBySide(_diff) : BuildUnified(_diff),
             Padding = new Thickness(12, 0),
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = _wordWrap
+                ? Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled
+                : Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
         };
     }
 
@@ -629,11 +627,11 @@ public sealed class DiffView : UserControl
     /// exactly like <see cref="HighlightedLine"/>, so a drag-select can span multiple lines.
     /// <paramref name="lineHeight"/> must match the fixed row height of the gutter/background
     /// grid this overlays, so text lines land exactly on their background rows.</summary>
-    private static Control BuildHunkCode(DiffHunk hunk, string? lang, double lineHeight)
+    private Control BuildHunkCode(DiffHunk hunk, string? lang, double lineHeight)
     {
         var tb = new SelectableTextBlock
         {
-            FontFamily = Mono, FontSize = 12, TextWrapping = TextWrapping.NoWrap, LineHeight = lineHeight,
+            FontFamily = Mono, FontSize = 12, TextWrapping = _wordWrap ? TextWrapping.Wrap : TextWrapping.NoWrap, LineHeight = lineHeight,
         }.Dyn(SelectableTextBlock.ForegroundProperty, "ColorText");
 
         for (var i = 0; i < hunk.Lines.Count; i++)
@@ -741,9 +739,9 @@ public sealed class DiffView : UserControl
         return t;
     }
 
-    private static Control HighlightedLine(string text, string? lang, int prefixLen)
+    private Control HighlightedLine(string text, string? lang, int prefixLen)
     {
-        var tb = new SelectableTextBlock { FontFamily = Mono, FontSize = 12, TextWrapping = TextWrapping.NoWrap }
+        var tb = new SelectableTextBlock { FontFamily = Mono, FontSize = 12, TextWrapping = _wordWrap ? TextWrapping.Wrap : TextWrapping.NoWrap }
             .Dyn(SelectableTextBlock.ForegroundProperty, "ColorText");
         AppendHighlightedInlines(tb.Inlines!, text, lang, prefixLen);
         return tb;

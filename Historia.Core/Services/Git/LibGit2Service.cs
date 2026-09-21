@@ -92,12 +92,12 @@ public sealed class LibGit2Service
                 continue;
             }
 
-            if (HasIndexChange(state, out var stagedKind, out var stagedOld))
+            if (HasIndexChange(entry, out var stagedKind, out var stagedOld))
                 staged.Add(Make(repo, entry.FilePath, stagedKind, stagedOld, isSubmodule));
 
             if (state.HasFlag(FileStatus.NewInWorkdir))
                 untracked.Add(Make(repo, entry.FilePath, FileChangeKind.Untracked, null, isSubmodule));
-            else if (HasWorkdirChange(state, out var workKind, out var workOld))
+            else if (HasWorkdirChange(entry, out var workKind, out var workOld))
                 unstaged.Add(Make(repo, entry.FilePath, workKind, workOld, isSubmodule));
         }
 
@@ -503,7 +503,7 @@ public sealed class LibGit2Service
     {
         var branch = repo.CreateBranch(name, startPoint);
         if (checkout)
-            Commands.Checkout(repo, branch);
+            CheckoutBranchWithRollback(repo, branch, new CheckoutOptions());
 
         return new BranchInfo
         {
@@ -542,11 +542,72 @@ public sealed class LibGit2Service
         if (options.CreateBranch && options.NewBranchName is { } newName)
         {
             var branch = repo.CreateBranch(newName, refName);
-            Commands.Checkout(repo, branch, checkoutOptions);
+            CheckoutBranchWithRollback(repo, branch, checkoutOptions);
             return;
         }
 
-        Commands.Checkout(repo, refName, checkoutOptions);
+        CheckoutOrThrowClassified(repo, opts => Commands.Checkout(repo, refName, opts), checkoutOptions);
+    }
+
+    private static void CheckoutBranchWithRollback(Repository repo, Branch branch, CheckoutOptions options)
+    {
+        try
+        {
+            CheckoutOrThrowClassified(repo, opts => Commands.Checkout(repo, branch, opts), options);
+        }
+        catch
+        {
+            // Safe to remove: a ref created in this call, pointing at an already-reachable commit.
+            try
+            {
+                if (repo.Head.CanonicalName != branch.CanonicalName)
+                    repo.Branches.Remove(branch);
+            }
+            catch
+            {
+            }
+
+            throw;
+        }
+    }
+
+    // Translates libgit2 checkout conflicts at the repo gate so stash recovery can key on UncommittedChanges.
+    private static void CheckoutOrThrowClassified(Repository repo, Action<CheckoutOptions> checkout, CheckoutOptions options)
+    {
+        var conflictingPaths = new List<string>();
+        var prevNotify = options.OnCheckoutNotify;
+        options.CheckoutNotifyFlags |= CheckoutNotifyFlags.Conflict;
+        options.OnCheckoutNotify = (path, flags) =>
+        {
+            if ((flags & CheckoutNotifyFlags.Conflict) != 0 && path is not null)
+            {
+                var normalized = path.Replace('\\', '/');
+                if (!conflictingPaths.Contains(normalized))
+                    conflictingPaths.Add(normalized);
+            }
+
+            return prevNotify?.Invoke(path, flags) ?? true;
+        };
+
+        try
+        {
+            checkout(options);
+        }
+        catch (CheckoutConflictException ex)
+        {
+            if (conflictingPaths.Count == 0)
+                throw new HistoriaGitException(GitErrorKind.UncommittedChanges, ex.Message);
+
+            var summaryPaths = conflictingPaths.Count <= 3
+                ? string.Join(", ", conflictingPaths)
+                : $"{string.Join(", ", conflictingPaths.Take(3))} and {conflictingPaths.Count - 3} more";
+            var message = $"Checkout would overwrite local changes to {summaryPaths}.";
+            var details = "error: Your local changes to the following files would be overwritten by checkout:\n\t"
+                + string.Join("\n\t", conflictingPaths)
+                + "\nPlease commit your changes or stash them before you switch branches.\nAborting";
+
+            throw new HistoriaGitException(GitErrorKind.UncommittedChanges, message, details);
+        }
     }
 
     public TagInfo CreateTag(Repository repo, string name, string target, string? message, Signature? tagger)
@@ -581,6 +642,17 @@ public sealed class LibGit2Service
 
     public void SetRemoteUrl(Repository repo, string name, string url)
         => repo.Network.Remotes.Update(name, r => r.Url = url);
+
+    /// <summary>Renames a remote's alias — a config + refspec edit, never a network call.
+    /// <see cref="RemoteCollection.Rename(string, string, RemoteRenameFailureHandler)"/> silently
+    /// drops non-default fetch refspecs it cannot rewrite unless given the failure handler;
+    /// collect those here so the caller can warn the user instead of losing them quietly.</summary>
+    public IReadOnlyList<string> RenameRemote(Repository repo, string name, string newName)
+    {
+        var problematic = new List<string>();
+        repo.Network.Remotes.Rename(name, newName, problematic.Add);
+        return problematic;
+    }
 
     // ── Helpers ──
 
@@ -634,24 +706,26 @@ public sealed class LibGit2Service
         return map;
     }
 
-    private static bool HasIndexChange(FileStatus state, out FileChangeKind kind, out string? oldPath)
+    private static bool HasIndexChange(StatusEntry entry, out FileChangeKind kind, out string? oldPath)
     {
+        var state = entry.State;
         oldPath = null;
         if (state.HasFlag(FileStatus.NewInIndex)) { kind = FileChangeKind.Added; return true; }
+        if (state.HasFlag(FileStatus.RenamedInIndex)) { kind = FileChangeKind.Renamed; oldPath = entry.HeadToIndexRenameDetails?.OldFilePath; return true; }
         if (state.HasFlag(FileStatus.ModifiedInIndex)) { kind = FileChangeKind.Modified; return true; }
         if (state.HasFlag(FileStatus.DeletedFromIndex)) { kind = FileChangeKind.Deleted; return true; }
-        if (state.HasFlag(FileStatus.RenamedInIndex)) { kind = FileChangeKind.Renamed; return true; }
         if (state.HasFlag(FileStatus.TypeChangeInIndex)) { kind = FileChangeKind.TypeChanged; return true; }
         kind = default;
         return false;
     }
 
-    private static bool HasWorkdirChange(FileStatus state, out FileChangeKind kind, out string? oldPath)
+    private static bool HasWorkdirChange(StatusEntry entry, out FileChangeKind kind, out string? oldPath)
     {
+        var state = entry.State;
         oldPath = null;
+        if (state.HasFlag(FileStatus.RenamedInWorkdir)) { kind = FileChangeKind.Renamed; oldPath = entry.IndexToWorkDirRenameDetails?.OldFilePath; return true; }
         if (state.HasFlag(FileStatus.ModifiedInWorkdir)) { kind = FileChangeKind.Modified; return true; }
         if (state.HasFlag(FileStatus.DeletedFromWorkdir)) { kind = FileChangeKind.Deleted; return true; }
-        if (state.HasFlag(FileStatus.RenamedInWorkdir)) { kind = FileChangeKind.Renamed; return true; }
         if (state.HasFlag(FileStatus.TypeChangeInWorkdir)) { kind = FileChangeKind.TypeChanged; return true; }
         kind = default;
         return false;

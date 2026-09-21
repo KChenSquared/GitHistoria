@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Storage;
+namespace Historia.Services.Storage;
 
 /// <summary>Shared JSON serialization settings for all of Historia's persistent files (§9.3).</summary>
 public static class HistoriaJson
@@ -7,7 +7,7 @@ public static class HistoriaJson
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase), new ObjectIdJsonConverter() },
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 }

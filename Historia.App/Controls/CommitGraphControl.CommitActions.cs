@@ -97,8 +97,7 @@ public sealed partial class CommitGraphControl
 
         if (hasLocal)
         {
-            _ = BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
-                () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout");
+            _ = CheckoutLocalThenMaybeSyncAsync(ctx, deco, name);
             return;
         }
 
@@ -106,6 +105,49 @@ public sealed partial class CommitGraphControl
         var tracking = remotes.Length > 0 ? $"{remotes[0]}/{name}" : name;
         _ = BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
             () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout");
+    }
+
+    /// <summary>R6: double-clicking a remote badge whose local counterpart exists switches to
+    /// the local branch, then — only when the badge that was actually clicked was the remote one
+    /// (a local-badge double-click stays a plain, silent checkout) — measures divergence against
+    /// that remote and either fast-forwards silently (a guaranteed no-loss fast-forward) or asks
+    /// before pulling a merge (the local branch also has commits the remote lacks).</summary>
+    internal async Task CheckoutLocalThenMaybeSyncAsync(RepositoryContext ctx, GraphDecoration deco, string name)
+    {
+        await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+            () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout");
+
+        // The recovery helper reports failures itself and returns normally, so HEAD is the only reliable signal.
+        if (!string.Equals(ctx.State.CurrentBranch?.Name, name, StringComparison.Ordinal))
+            return;
+
+        if (deco.IsLocal)
+            return;
+        var remotes = deco.RemotesOrNull ?? [];
+        if (remotes.Length == 0)
+            return;
+        var remote = remotes[0];
+        var upstream = $"{remote}/{name}";
+
+        AheadBehind? ab;
+        try { ab = await ctx.Gateway.GetDivergenceAsync(name, upstream, ctx.Lifetime); }
+        catch { return; }
+        if (ab is not { Behind: > 0 } div)
+            return;
+
+        if (div.Ahead == 0)
+        {
+            // ahead == 0 && behind > 0: a guaranteed fast-forward — nothing local to lose.
+            await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+                () => ctx.Gateway.PullAsync(remote, name, GitPullOptions.From(_settings.Current), null, ctx.Lifetime), "Pull");
+            return;
+        }
+
+        if (!await _dialogs.ConfirmAsync("Pull and merge?",
+                $"{upstream} has {div.Behind} commit(s) you don't have, and you have {div.Ahead} it doesn't. Pull and merge?"))
+            return;
+        await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+            () => ctx.Gateway.PullAsync(remote, name, GitPullOptions.From(_settings.Current), null, ctx.Lifetime), "Pull");
     }
 
     private void ShowPillContextMenu(GraphDecoration deco)
@@ -187,6 +229,48 @@ public sealed partial class CommitGraphControl
         if (items.Count > 0)
         {
             var menu = new ContextMenu { ItemsSource = items };
+
+            // R11: mirror the sidebar's divergence-aware push/pull/fast-forward items, resolved
+            // lazily on Opening (git process) rather than at menu-build time.
+            if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
+            {
+                string? counterpartRef = null, remoteAlias = null;
+                if (deco.IsLocal)
+                {
+                    var local = _state?.Branches.FirstOrDefault(b => !b.IsRemote && b.Name == name);
+                    if (local?.UpstreamName is { } upstream)
+                    {
+                        counterpartRef = upstream;
+                        remoteAlias = _state?.Branches.FirstOrDefault(b => b.IsRemote && b.Name == upstream)?.RemoteName;
+                    }
+                }
+                else if (remotes.Length > 0)
+                {
+                    var hasLocalCounterpart = _state?.Branches.Any(b => !b.IsRemote && b.Name == name) ?? false;
+                    if (hasLocalCounterpart)
+                        counterpartRef = name;
+                    remoteAlias = remotes[0];
+                }
+
+                if (counterpartRef is not null && remoteAlias is not null)
+                {
+                    var divergenceTarget = new BranchMenu.Target(
+                        Name: name, CopyName: name, TrackingRef: deco.IsLocal ? name : $"{remoteAlias}/{name}",
+                        IsLocal: deco.IsLocal, TipSha: null, CurrentBranch: _state?.CurrentBranch?.Name,
+                        CounterpartRef: counterpartRef, RemoteAlias: remoteAlias);
+                    var baseItems = items;
+                    menu.Opening += async (_, _) =>
+                    {
+                        var opened = menu;
+                        IReadOnlyList<Control> divergenceItems;
+                        try { divergenceItems = await BranchMenu.BuildDivergenceItemsAsync(divergenceTarget, ctx.Gateway, _actionBus, ctx.Lifetime); }
+                        catch { return; }
+                        if (divergenceItems.Count == 0 || !ReferenceEquals(menu, opened) || !menu.IsOpen)
+                            return;
+                        menu.ItemsSource = divergenceItems.Concat(new Control[] { new Separator() }).Concat(baseItems).ToList();
+                    };
+                }
+            }
 
             // Long branch/tag names get ellipsis-trimmed in the menu items above (so the
             // popup never overflows the screen) — show the untrimmed name as a tooltip anchored

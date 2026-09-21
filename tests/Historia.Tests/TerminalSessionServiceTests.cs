@@ -57,6 +57,55 @@ public class TerminalSessionServiceTests
     }
 
     [Fact]
+    public async Task CloseThenReopen_SameOrigin_SpawnsNewSession()
+    {
+        var (svc, backend) = NewService();
+        var origin = Repo();
+        var first = await svc.OpenOrFocusAsync(origin);
+        await svc.CloseAsync(first.Id);
+
+        var second = await svc.OpenOrFocusAsync(origin);
+
+        Assert.NotSame(first, second);
+        Assert.Equal(2, backend.Starts.Count);
+        Assert.Single(svc.Sessions);
+        Assert.Contains(second, svc.Sessions);
+    }
+
+    [Fact]
+    public async Task CloseThenReopen_SameOrigin_SpawnsNewSession_WhenSpawnIsAsync()
+    {
+        var backend = new FakeTerminalBackend { StartDelayMs = 20 };
+        var (svc, _) = NewService(backend);
+        var origin = Repo();
+        var first = await svc.OpenOrFocusAsync(origin);
+        await svc.CloseAsync(first.Id);
+
+        var second = await svc.OpenOrFocusAsync(origin);
+
+        Assert.NotSame(first, second);
+        Assert.Equal(2, backend.Starts.Count);
+        Assert.Single(svc.Sessions);
+        Assert.Contains(second, svc.Sessions);
+    }
+
+    [Fact]
+    public async Task Restart_CloseThenOpenOrFocus_SpawnsNewShell()
+    {
+        var (svc, backend) = NewService();
+        var origin = Repo();
+        var first = await svc.OpenOrFocusAsync(origin);
+        await svc.CloseAsync(first.Id);
+
+        var restarted = await svc.OpenOrFocusAsync(origin);
+
+        Assert.NotSame(first, restarted);
+        Assert.Equal(2, backend.Starts.Count);
+        Assert.Single(svc.Sessions);
+        Assert.Same(restarted, svc.Sessions[0]);
+    }
+
+    [Fact]
     public async Task OriginEquality_IgnoresWorkingDirectory()
     {
         var (svc, backend) = NewService();

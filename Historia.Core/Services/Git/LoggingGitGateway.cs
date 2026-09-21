@@ -88,6 +88,10 @@ public sealed class LoggingGitGateway(IGitGateway inner, string repositoryPath) 
         => Run($"GetAheadBehindAsync({branchCanonicalName})", () => inner.GetAheadBehindAsync(branchCanonicalName, ct),
             r => r is { } ab ? $"+{ab.Ahead}/-{ab.Behind}" : "none");
 
+    public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default)
+        => Run($"GetDivergenceAsync({local}...{remote})", () => inner.GetDivergenceAsync(local, remote, ct),
+            r => r is { } ab ? $"+{ab.Ahead}/-{ab.Behind}" : "none");
+
     public Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default)
         => Run("GetConfiguredIdentityAsync", () => inner.GetConfiguredIdentityAsync(ct));
 
@@ -153,6 +157,9 @@ public sealed class LoggingGitGateway(IGitGateway inner, string repositoryPath) 
 
     public Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default)
         => Run($"SetRemoteUrlAsync({name}, {url})", () => inner.SetRemoteUrlAsync(name, url, ct));
+
+    public Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default)
+        => Run($"RenameRemoteAsync({oldName} -> {newName})", () => inner.RenameRemoteAsync(oldName, newName, ct), r => Count(r, "unrewritten refspec(s)"));
 
     // ── Network ──
 

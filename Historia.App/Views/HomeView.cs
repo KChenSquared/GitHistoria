@@ -13,6 +13,7 @@ public sealed class HomeView : UserControl, IDisposable
     private readonly IProfileService _profiles;
     private readonly IRepoLayoutService _repoLayout;
     private readonly Historia.Services.AutoFetch.IAutoFetchService _autoFetch;
+    private readonly ISubmoduleService _submodules;
 
     private readonly UniformWidthStackPanel _recentList = new() { Spacing = 4 };
     private readonly TextBlock _cloneStatus = Text("", "ColorSuccess", 12);
@@ -37,6 +38,7 @@ public sealed class HomeView : UserControl, IDisposable
         _profiles = sp.GetRequiredService<IProfileService>();
         _repoLayout = sp.GetRequiredService<IRepoLayoutService>();
         _autoFetch = sp.GetRequiredService<Historia.Services.AutoFetch.IAutoFetchService>();
+        _submodules = sp.GetRequiredService<ISubmoduleService>();
 
         var root = new StackPanel { Spacing = 16, Margin = new Thickness(32), MaxWidth = 640 };
 
@@ -263,6 +265,48 @@ public sealed class HomeView : UserControl, IDisposable
         catch (InvalidOperationException ex)
         {
             _notifications.Publish(NotificationSeverity.Error, ex.Message);
+            return;
+        }
+
+        if (FindClonedRepository(_workspace.OpenRepositories, r.TargetDirectory) is { } cloned)
+            await OfferSubmoduleInitAsync(cloned);
+    }
+
+    internal static bool PathsEqual(string a, string b)
+    {
+        var normA = a.Replace('/', '\\').TrimEnd('/', '\\');
+        var normB = b.Replace('/', '\\').TrimEnd('/', '\\');
+        return string.Equals(normA, normB,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+
+    internal static RepositoryContext? FindClonedRepository(IEnumerable<RepositoryContext> open, string targetDirectory) =>
+        open.FirstOrDefault(ctx => PathsEqual(ctx.RepositoryPath, targetDirectory));
+
+    /// <summary>F5: a freshly cloned repository with a top-level `.gitmodules` leaves its
+    /// submodules uninitialized unless the user opts in here — matches how "Init & update"
+    /// already behaves from the sidebar (non-destructive, so a plain <c>ConfirmAsync</c>).</summary>
+    private async Task OfferSubmoduleInitAsync(RepositoryContext after)
+    {
+        if (after.IsBare || !File.Exists(System.IO.Path.Combine(after.RepositoryPath, ".gitmodules")))
+            return;
+
+        var proceed = await _dialogs.ConfirmAsync(
+            "Initialize submodules?",
+            "This repository has submodules. Initialize and check them out now?",
+            confirmLabel: "Initialize");
+        if (!proceed) return;
+
+        _notifications.Publish(NotificationSeverity.Info, "Initializing submodules…");
+        try
+        {
+            await _submodules.InitAndUpdateAsync(after, null, true, after.Lifetime);
+            await after.State.RefreshAllAsync(after.Lifetime);
+            _notifications.Publish(NotificationSeverity.Success, "Submodules initialized.");
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, $"Could not initialize submodules: {ex.Message}", ex.NotificationDetails());
         }
     }
 

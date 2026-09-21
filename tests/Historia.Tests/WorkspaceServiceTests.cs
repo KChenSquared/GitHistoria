@@ -74,6 +74,23 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
+    /// <summary>F3: ValidateCloneUrl now delegates to CloneValidation.DescribeUrlProblem, which
+    /// also rejects a URL with no repo-address shape at all (not just the security-motivated
+    /// cases above) — confirms that delegation reaches the new shape check too.</summary>
+    [Fact]
+    public async Task CloneAsync_rejects_a_url_with_no_repository_shape()
+    {
+        var ws = NewWorkspace();
+        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-test-{Guid.NewGuid():N}");
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(
+            () => ws.CloneAsync("just some plain text", target, new Historia.Services.Workspace.CloneOptions(), progress: null));
+
+        Assert.False(Directory.Exists(target));
+        Assert.NotNull(ex);
+        await ws.DisposeAsync();
+    }
+
     [Fact]
     public async Task CloneAsync_still_clones_a_plain_local_path()
     {
@@ -277,7 +294,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
     }
 
     [Fact(Timeout = 30000)]
-    public async Task Restoring_persists_a_v2_session_file_on_the_next_change()
+    public async Task Restoring_persists_a_v3_session_file_on_the_next_change()
     {
         using var r1 = Repo("a.txt");
 
@@ -287,9 +304,11 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
 
         var node = JsonNode.Parse(File.ReadAllText(AppPaths.SessionFile))!;
-        Assert.Equal(2, node["schemaVersion"]!.GetValue<int>());
+        Assert.Equal(3, node["schemaVersion"]!.GetValue<int>());
         Assert.Equal(Norm(r1.Path), Norm(node["focusedPath"]!.GetValue<string>()));
         Assert.Single(node["paths"]!.AsArray());
+        Assert.Single(node["linkOwners"]!.AsArray());
+        Assert.True(node["linkOwners"]!.AsArray()[0] is null);
     }
 
     // ── Focus-priority interrupt-and-promote ──
@@ -596,7 +615,6 @@ public class WorkspaceServiceTests : IAsyncDisposable
         public Task ExportProfilesAsync(string exportFilePath, bool includeTokens, string? password, CancellationToken ct = default) => Task.CompletedTask;
         public Task ImportProfilesAsync(string importFilePath, string? password, CancellationToken ct = default) => Task.CompletedTask;
         public event EventHandler? ProfilesChanged { add { } remove { } }
-        public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged { add { } remove { } }
     }
 
     private static TestRepositoryBuilder RepoWithoutLocalIdentity()
@@ -720,6 +738,403 @@ public class WorkspaceServiceTests : IAsyncDisposable
             await ws.DisposeAsync();
             try { if (Directory.Exists(target)) Directory.Delete(target, recursive: true); } catch { /* best effort */ }
         }
+    }
+
+    // ── §F9: linked submodule tab groups ──
+
+    /// <summary>A real nested git repo under <paramref name="owner"/>'s working directory —
+    /// enough for <c>Repository.Discover</c> to find it, without needing real
+    /// <c>git submodule add</c> registration (OpenSubmoduleAsync only cares about the on-disk
+    /// working copy, not <c>.gitmodules</c>).</summary>
+    private static SubmoduleInfo MakeNestedSubmodule(RepositoryContext owner, string relativePath, string fileName)
+    {
+        var fullPath = Path.Combine(owner.RepositoryPath, relativePath);
+        Directory.CreateDirectory(fullPath);
+        LibGit2Sharp.Repository.Init(fullPath);
+        using (var repo = new LibGit2Sharp.Repository(fullPath))
+        {
+            File.WriteAllText(Path.Combine(fullPath, fileName), "x");
+            LibGit2Sharp.Commands.Stage(repo, "*");
+            var sig = new LibGit2Sharp.Signature("Test User", "test@example.com", DateTimeOffset.Now);
+            repo.Commit("c", sig, sig);
+        }
+        return new SubmoduleInfo
+        {
+            Name = relativePath,
+            Path = relativePath,
+            Url = fullPath,
+            Status = SubmoduleStatus.Clean,
+        };
+    }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_inserts_the_new_tab_immediately_after_the_owners_group()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        using var otherRepo = Repo("other.txt");
+
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var other = await ws.OpenAsync(otherRepo.Path);
+        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
+
+        var child = await ws.OpenSubmoduleAsync(owner, sub);
+
+        Assert.Equal([owner, child, other], ws.OpenRepositories);
+        Assert.Same(owner, child.LinkOwner);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_on_an_already_open_path_focuses_it_instead_of_duplicating()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
+
+        var first = await ws.OpenSubmoduleAsync(owner, sub);
+        var countAfterFirst = ws.OpenRepositories.Count;
+
+        var second = await ws.OpenSubmoduleAsync(owner, sub);
+
+        Assert.Same(first, second);
+        Assert.Equal(countAfterFirst, ws.OpenRepositories.Count);
+        Assert.Same(owner, first.LinkOwner);
+        Assert.Same(first, ws.Focused);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_twice_for_two_submodules_keeps_both_contiguous_after_the_owner()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        using var otherRepo = Repo("other.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var other = await ws.OpenAsync(otherRepo.Path);
+
+        var sub1 = MakeNestedSubmodule(owner, "vendor/lib1", "a.txt");
+        var sub2 = MakeNestedSubmodule(owner, "vendor/lib2", "b.txt");
+        var child1 = await ws.OpenSubmoduleAsync(owner, sub1);
+        var child2 = await ws.OpenSubmoduleAsync(owner, sub2);
+
+        Assert.Equal([owner, child1, child2, other], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Move_on_a_group_owner_relocates_the_whole_group_as_one_contiguous_block()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        using var otherRepo = Repo("other.txt");
+        using var thirdRepo = Repo("third.txt");
+
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var other = await ws.OpenAsync(otherRepo.Path);
+        var third = await ws.OpenAsync(thirdRepo.Path);
+        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
+        var child = await ws.OpenSubmoduleAsync(owner, sub);
+        // _open: [owner, child, other, third]
+
+        ws.Move(owner, newIndex: 3);
+
+        // The owner+child block relocates together, snapping to the boundary nearest index 3
+        // (third's own start) — matching the pre-existing (ungrouped) Move's convention of using
+        // the target index exactly as computed pre-removal, with no shift adjustment.
+        Assert.Equal([other, third, owner, child], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Move_on_a_linked_child_is_clamped_to_its_own_groups_span()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        using var otherRepo = Repo("other.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var other = await ws.OpenAsync(otherRepo.Path);
+        var sub1 = MakeNestedSubmodule(owner, "vendor/lib1", "a.txt");
+        var sub2 = MakeNestedSubmodule(owner, "vendor/lib2", "b.txt");
+        var child1 = await ws.OpenSubmoduleAsync(owner, sub1);
+        var child2 = await ws.OpenSubmoduleAsync(owner, sub2);
+        // _open: [owner, child1, child2, other]
+
+        ws.Move(child1, newIndex: 10); // far past the owner's group and past `other`
+
+        // child1 can only reorder among the owner's other children — clamped to the group's tail.
+        Assert.Equal([owner, child2, child1, other], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Move_never_splits_a_group_when_dropped_in_the_middle_of_one()
+    {
+        var ws = NewWorkspace();
+        using var ownerARepo = Repo("ownerA.txt");
+        using var ownerBRepo = Repo("ownerB.txt");
+        using var soloRepo = Repo("solo.txt");
+
+        var ownerA = await ws.OpenAsync(ownerARepo.Path);
+        var subA = MakeNestedSubmodule(ownerA, "vendor/a", "a.txt");
+        var childA = await ws.OpenSubmoduleAsync(ownerA, subA);
+
+        var ownerB = await ws.OpenAsync(ownerBRepo.Path);
+        var subB = MakeNestedSubmodule(ownerB, "vendor/b", "b.txt");
+        var childB = await ws.OpenSubmoduleAsync(ownerB, subB);
+
+        var solo = await ws.OpenAsync(soloRepo.Path);
+        // _open: [ownerA, childA, ownerB, childB, solo]
+
+        ws.Move(solo, newIndex: 2); // 2 is inside groupB's span (ownerB=2, childB=3)
+
+        // solo snaps to groupB's own start boundary — landing before it, never inside it.
+        Assert.Equal([ownerA, childA, solo, ownerB, childB], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Move_right_past_a_multi_tab_group_keeps_that_group_contiguous()
+    {
+        var ws = NewWorkspace();
+        using var aRepo = Repo("a.txt");
+        using var bRepo = Repo("b.txt");
+        using var cRepo = Repo("c.txt");
+
+        var a = await ws.OpenAsync(aRepo.Path);
+        var b = await ws.OpenAsync(bRepo.Path);
+        var bSub = MakeNestedSubmodule(b, "vendor/sub", "sub.txt");
+        var b1 = await ws.OpenSubmoduleAsync(b, bSub);
+        var c = await ws.OpenAsync(cRepo.Path);
+        // _open: [a, b, b1, c]
+
+        ws.Move(a, 2);
+
+        // A moves past B's group; B and B1 stay contiguous.
+        Assert.Equal([b, b1, a, c], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Move_right_with_an_index_inside_a_group_snaps_forward()
+    {
+        var ws = NewWorkspace();
+        using var aRepo = Repo("a.txt");
+        using var bRepo = Repo("b.txt");
+        using var cRepo = Repo("c.txt");
+
+        var a = await ws.OpenAsync(aRepo.Path);
+        var b = await ws.OpenAsync(bRepo.Path);
+        var bSub = MakeNestedSubmodule(b, "vendor/sub", "sub.txt");
+        var b1 = await ws.OpenSubmoduleAsync(b, bSub);
+        var c = await ws.OpenAsync(cRepo.Path);
+        // _open: [a, b, b1, c]
+
+        ws.Move(a, 1);
+
+        // newIndex=1 is inside B's group (boundaries 0 and 2 are equidistant from 1).
+        // Tie snaps in direction of travel (forward) -> [b, b1, a, c].
+        Assert.Equal([b, b1, a, c], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Move_a_group_right_past_another_group()
+    {
+        var ws = NewWorkspace();
+        using var oRepo = Repo("o.txt");
+        using var pRepo = Repo("p.txt");
+        using var sRepo = Repo("s.txt");
+
+        var o = await ws.OpenAsync(oRepo.Path);
+        var oSub = MakeNestedSubmodule(o, "vendor/c1", "c1.txt");
+        var c1 = await ws.OpenSubmoduleAsync(o, oSub);
+
+        var p = await ws.OpenAsync(pRepo.Path);
+        var pSub = MakeNestedSubmodule(p, "vendor/p1", "p1.txt");
+        var p1 = await ws.OpenSubmoduleAsync(p, pSub);
+
+        var s = await ws.OpenAsync(sRepo.Path);
+        // _open: [o, c1, p, p1, s]
+
+        ws.Move(o, 2);
+        Assert.Equal([p, p1, o, c1, s], ws.OpenRepositories);
+
+        ws.Move(o, 3);
+        Assert.Equal([p, p1, s, o, c1], ws.OpenRepositories);
+
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Move_to_its_own_position_raises_nothing()
+    {
+        var ws = NewWorkspace();
+        using var aRepo = Repo("a.txt");
+        using var bRepo = Repo("b.txt");
+        var a = await ws.OpenAsync(aRepo.Path);
+        var b = await ws.OpenAsync(bRepo.Path);
+
+        var raised = false;
+        ws.OpenRepositoriesChanged += (_, _) => raised = true;
+
+        ws.Move(a, 0);
+
+        Assert.False(raised);
+        Assert.Equal([a, b], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_refuses_an_uninitialized_submodule()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+
+        var emptySubDir = Path.Combine(owner.RepositoryPath, "vendor/empty");
+        Directory.CreateDirectory(emptySubDir);
+
+        var sub = new SubmoduleInfo
+        {
+            Name = "vendor/empty",
+            Path = "vendor/empty",
+            Url = emptySubDir,
+            Status = SubmoduleStatus.Uninitialized,
+        };
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() => ws.OpenSubmoduleAsync(owner, sub));
+        Assert.Equal(GitErrorKind.NotAGitRepository, ex.Kind);
+        Assert.Null(owner.LinkOwner);
+        Assert.Single(ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_links_to_the_root_owner_when_opened_from_a_linked_tab()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var sub1 = MakeNestedSubmodule(owner, "vendor/child", "child.txt");
+        var child = await ws.OpenSubmoduleAsync(owner, sub1);
+
+        var sub2 = MakeNestedSubmodule(child, "sub2", "sub2.txt");
+        var grandchild = await ws.OpenSubmoduleAsync(child, sub2);
+
+        Assert.Same(owner, child.LinkOwner);
+        Assert.Same(owner, grandchild.LinkOwner);
+        Assert.Equal([owner, child, grandchild], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_adopts_and_moves_an_existing_standalone_tab()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        using var otherRepo = Repo("other.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var other = await ws.OpenAsync(otherRepo.Path);
+
+        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
+        var fullSubPath = Path.Combine(owner.RepositoryPath, "vendor/lib");
+        var subTab = await ws.OpenAsync(fullSubPath);
+        // _open: [owner, other, subTab]
+        Assert.Equal([owner, other, subTab], ws.OpenRepositories);
+        Assert.Null(subTab.LinkOwner);
+
+        var adopted = await ws.OpenSubmoduleAsync(owner, sub);
+
+        Assert.Same(subTab, adopted);
+        Assert.Same(owner, subTab.LinkOwner);
+        Assert.Equal([owner, subTab, other], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_never_relinks_a_group_owner()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+
+        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
+        var fullSubPath = Path.Combine(owner.RepositoryPath, "vendor/lib");
+        var subOwner = await ws.OpenAsync(fullSubPath);
+        var nestedUnderSub = MakeNestedSubmodule(subOwner, "nested", "n.txt");
+        var subChild = await ws.OpenSubmoduleAsync(subOwner, nestedUnderSub);
+        // _open: [owner, subOwner, subChild]
+        Assert.Null(subOwner.LinkOwner);
+        Assert.Same(subOwner, subChild.LinkOwner);
+
+        var result = await ws.OpenSubmoduleAsync(owner, sub);
+
+        Assert.Same(subOwner, result);
+        Assert.Null(subOwner.LinkOwner);
+        Assert.Equal([owner, subOwner, subChild], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task CloseAsync_on_a_group_owner_detaches_its_children_instead_of_closing_them()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
+        var child = await ws.OpenSubmoduleAsync(owner, sub);
+
+        await ws.CloseAsync(owner);
+
+        Assert.Contains(child, ws.OpenRepositories);
+        Assert.Null(child.LinkOwner);
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task RestoreSessionAsync_reestablishes_link_groups_from_a_schemaVersion_3_file()
+    {
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+        var payload = new JsonObject
+        {
+            ["schemaVersion"] = 3,
+            ["paths"] = new JsonArray(r1.Path, r2.Path),
+            ["linkOwners"] = new JsonArray(null, r1.Path),
+            ["focusedPath"] = r1.Path,
+        };
+        File.WriteAllText(AppPaths.SessionFile, payload.ToJsonString());
+
+        var ws = NewWorkspace();
+        await ws.RestoreSessionAsync();
+
+        Assert.Equal(2, ws.OpenRepositories.Count);
+        var owner = ws.OpenRepositories.First(c => Norm(c.RepositoryPath) == Norm(r1.Path));
+        var child = ws.OpenRepositories.First(c => Norm(c.RepositoryPath) == Norm(r2.Path));
+        Assert.Same(owner, child.LinkOwner);
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task RestoreSessionAsync_reads_a_schemaVersion_2_file_with_every_tab_ungrouped()
+    {
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+        File.WriteAllText(AppPaths.SessionFile, new JsonObject
+        {
+            ["schemaVersion"] = 2,
+            ["paths"] = new JsonArray(r1.Path, r2.Path),
+            ["focusedPath"] = r1.Path,
+        }.ToJsonString());
+
+        var ws = NewWorkspace();
+        await ws.RestoreSessionAsync();
+
+        Assert.Equal(2, ws.OpenRepositories.Count);
+        Assert.All(ws.OpenRepositories, c => Assert.Null(c.LinkOwner));
+        await ws.DisposeAsync();
     }
 
     public async ValueTask DisposeAsync() => await _host.DisposeAsync();

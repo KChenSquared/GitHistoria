@@ -60,9 +60,6 @@ public sealed record DiffLine
     public required string Content { get; init; }
     public required int? OldLineNumber { get; init; }
     public required int? NewLineNumber { get; init; }
-
-    /// <summary>For partial line selection.</summary>
-    public bool IsSelected { get; set; }
 }
 
 public enum DiffLineType

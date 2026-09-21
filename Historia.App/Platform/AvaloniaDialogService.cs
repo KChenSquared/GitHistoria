@@ -330,6 +330,14 @@ public sealed record CloneDialogResult(
 /// </summary>
 internal static class CloneDialog
 {
+    /// <summary>F2: whether the folder box's current text is still "owned" by the auto-fill —
+    /// i.e. it should be overwritten by the next URL-derived guess. True both when the box is
+    /// empty and when its text is exactly what the auto-fill itself last wrote there (so the
+    /// auto-fill's own programmatic write is never mistaken for a user edit); false the moment
+    /// the user types something else.</summary>
+    internal static bool ShouldAutoFillFolder(string currentFolderText, string? lastAutoFilled) =>
+        string.IsNullOrEmpty(currentFolderText) || currentFolderText == lastAutoFilled;
+
     public static async Task<CloneDialogResult?> ShowAsync(
         IDialogService dialogs, string defaultRoot, Func<string, string> guessFolderName,
         IReadOnlyList<Historia.Models.GitProfile> profiles)
@@ -342,6 +350,7 @@ internal static class CloneDialog
         var browse = new Button { Content = "Browse…", MinWidth = 80 };
         var shallow = new CheckBox { Content = "Shallow clone (--depth 1)" };
         var sparse = new CheckBox { Content = "Sparse checkout (--sparse)" };
+        var urlHint = new TextBlock { FontSize = 11, Margin = new Thickness(0, 3, 0, 0), IsVisible = false }.Dyn(TextBlock.ForegroundProperty, "ColorDanger");
 
         // Which identity checks the clone out under, and in which network mode:
         // §13.4: the chosen identity becomes this repo's per-repo selection once the clone
@@ -355,19 +364,27 @@ internal static class CloneDialog
         confirm.Classes.Add("primary");
         var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80 };
 
-        // Folder box auto-fills from the URL until the user types into it.
-        var folderEdited = false;
+        // Folder box auto-fills from the URL until the user types into it (F2: the auto-fill's
+        // own write to folder.Text must never be mistaken for a user edit).
+        string? lastAutoFilled = null;
         url.TextChanged += (_, _) =>
         {
-            if (!folderEdited)
-                folder.Text = guessFolderName(url.Text ?? "");
+            if (ShouldAutoFillFolder(folder.Text ?? "", lastAutoFilled))
+            {
+                lastAutoFilled = guessFolderName(url.Text ?? "");
+                folder.Text = lastAutoFilled;
+            }
         };
-        folder.TextChanged += (_, _) => folderEdited = !string.IsNullOrEmpty(folder.Text);
 
-        void Revalidate() => confirm.IsEnabled =
-            !string.IsNullOrWhiteSpace(url.Text)
-            && !string.IsNullOrWhiteSpace(root.Text)
-            && !string.IsNullOrWhiteSpace(folder.Text);
+        void Revalidate()
+        {
+            var urlProblem = CloneValidation.DescribeUrlProblem(url.Text ?? "");
+            urlHint.Text = urlProblem;
+            urlHint.IsVisible = urlProblem is not null;
+            confirm.IsEnabled = urlProblem is null
+                && !string.IsNullOrWhiteSpace(root.Text)
+                && !string.IsNullOrWhiteSpace(folder.Text);
+        }
         url.TextChanged += (_, _) => Revalidate();
         root.TextChanged += (_, _) => Revalidate();
         folder.TextChanged += (_, _) => Revalidate();
@@ -419,6 +436,7 @@ internal static class CloneDialog
         var panel = new StackPanel { Margin = new Thickness(20) };
         panel.Children.Add(Label("Remote URL"));
         panel.Children.Add(url);
+        panel.Children.Add(urlHint);
         panel.Children.Add(Label("Where to clone to"));
         panel.Children.Add(pathRow);
         panel.Children.Add(optionsRow);
@@ -437,8 +455,17 @@ internal static class CloneDialog
         };
 
         var tcs = new TaskCompletionSource<CloneDialogResult?>();
-        confirm.Click += (_, _) =>
+        confirm.Click += async (_, _) =>
         {
+            // F1/F4a: validated once more here (not just via Revalidate/IsEnabled) because this
+            // is the only check that touches disk — it runs on click, not on every keystroke.
+            var destProblem = CloneValidation.DescribeDestinationProblem(root.Text ?? "", folder.Text ?? "");
+            if (destProblem is not null)
+            {
+                await dialogs.ShowMessageAsync("Clone repository", destProblem);
+                return;
+            }
+
             var target = System.IO.Path.Combine((root.Text ?? "").Trim(), (folder.Text ?? "").Trim());
             tcs.TrySetResult(new CloneDialogResult(
                 (url.Text ?? "").Trim(), target, shallow.IsChecked == true, sparse.IsChecked == true,

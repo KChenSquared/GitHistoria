@@ -444,6 +444,97 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             targetDirectory, focus: true, initialize: true, CancellationToken.None, prefetched: Task.FromResult(context)).ConfigureAwait(false);
     }
 
+    /// <summary>Under <see cref="_sync"/>: the contiguous index range occupied by
+    /// <paramref name="member"/>'s group — the owner (or <paramref name="member"/> itself when
+    /// it has no <see cref="RepositoryContext.LinkOwner"/>) plus every tab whose
+    /// <c>LinkOwner</c> is that owner. Groups do not nest, so this walks up at most one level.
+    /// Returns <c>(0, 0)</c> when the owner isn't found in <see cref="_open"/>.</summary>
+    private (int Start, int Count) GroupSpan(RepositoryContext member)
+    {
+        var owner = member.LinkOwner ?? member;
+        var start = _open.IndexOf(owner);
+        if (start < 0)
+            return (0, 0);
+        var count = 1;
+        while (start + count < _open.Count && ReferenceEquals(_open[start + count].LinkOwner, owner))
+            count++;
+        return (start, count);
+    }
+
+    public async Task<RepositoryContext> OpenSubmoduleAsync(RepositoryContext owner, SubmoduleInfo submodule, CancellationToken ct = default)
+    {
+        var root = owner.LinkOwner ?? owner;
+        var submodulePath = Path.Combine(owner.RepositoryPath, submodule.Path);
+        var dotGit = Path.Combine(submodulePath, ".git");
+        if (!File.Exists(dotGit) && !Directory.Exists(dotGit))
+        {
+            throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
+                $"Submodule '{submodule.Name}' isn't initialized. Use Init & update first.");
+        }
+
+        var discovered = await Task.Run(() => Repository.Discover(submodulePath), ct).ConfigureAwait(false)
+            ?? throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
+                $"No Git repository was found at or above '{submodulePath}'.");
+
+        var normalizedGitDir = NormalizeDir(discovered);
+        bool orderChanged = false;
+        RepositoryContext? existing;
+        lock (_sync)
+        {
+            existing = _open.FirstOrDefault(c =>
+                string.Equals(NormalizeDir(c.GitDirectory), normalizedGitDir, StringComparison.OrdinalIgnoreCase));
+
+            if (existing is not null && (ReferenceEquals(existing, root) || ReferenceEquals(existing, owner)))
+            {
+                throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
+                    $"Submodule '{submodule.Name}' isn't initialized. Use Init & update first.");
+            }
+
+            if (existing is not null)
+            {
+                if (existing.LinkOwner is null &&
+                    !ReferenceEquals(existing, root) &&
+                    !_open.Any(t => ReferenceEquals(t.LinkOwner, existing)))
+                {
+                    existing.LinkOwner = root;
+                    var oldIndex = _open.IndexOf(existing);
+                    _open.RemoveAt(oldIndex);
+                    var (rStart, rCount) = GroupSpan(root);
+                    var insertAt = Math.Clamp(rStart + rCount, 0, _open.Count);
+                    _open.Insert(insertAt, existing);
+                    orderChanged = oldIndex != insertAt;
+                }
+            }
+        }
+
+        if (existing is not null)
+        {
+            FocusInternal(existing);
+            if (orderChanged)
+                RaiseOpenChanged();
+            return existing;
+        }
+
+        var context = await Task.Run(() => RepositoryContext.Open(submodulePath, _services), ct).ConfigureAwait(false);
+        context.Workspace = this;
+        context.LinkOwner = root;
+
+        lock (_sync)
+        {
+            var (start, count) = GroupSpan(root);
+            var insertAt = Math.Clamp(start + count, 0, _open.Count);
+            _open.Insert(insertAt, context);
+        }
+
+        FocusInternal(context);
+        RaiseOpenChanged();
+
+        lock (_sync) SetForegroundInit(context);
+        _ = InitializeContextAsync(context, foreground: true);
+
+        return context;
+    }
+
     public async Task CloseAsync(RepositoryContext context)
     {
         bool wasFocused;
@@ -451,6 +542,11 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         lock (_sync)
         {
             _open.Remove(context);
+            // §F9 (Decisions table): closing a group's owner detaches its children rather than
+            // closing them — no uncommitted work in a submodule tab is ever silently discarded.
+            foreach (var t in _open)
+                if (ReferenceEquals(t.LinkOwner, context))
+                    t.LinkOwner = null;
             _deferredInit.Remove(context);
             foreach (var item in _bgQueue.Where(x => ReferenceEquals(x.Context, context)))
             {
@@ -495,21 +591,78 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
     public void Move(RepositoryContext context, int newIndex)
     {
+        bool moved;
         lock (_sync)
         {
-            var from = _open.IndexOf(context);
-            if (from < 0)
-                return;
-            newIndex = Math.Clamp(newIndex, 0, _open.Count - 1);
-            if (newIndex == from)
-                return;
-            _open.RemoveAt(from);
-            _open.Insert(newIndex, context);
+            moved = context.LinkOwner is { } owner
+                ? MoveLinkedChild(context, owner, newIndex)
+                : MoveGroup(context, newIndex);
         }
+
+        if (!moved)
+            return;
 
         // §I-6.7 / rule 18: raise outside the lock. RaiseOpenChanged re-persists the session, so
         // the dragged order is what a later RestoreSessionAsync replays.
         RaiseOpenChanged();
+    }
+
+    /// <summary>Under <see cref="_sync"/>: a linked child can only reorder among its own
+    /// siblings — <paramref name="newIndex"/> is clamped into its owner group's span
+    /// (<c>[ownerStart + 1, ownerStart + groupCount - 1]</c>). Returns whether anything moved.</summary>
+    private bool MoveLinkedChild(RepositoryContext context, RepositoryContext owner, int newIndex)
+    {
+        var (ownerStart, groupCount) = GroupSpan(owner);
+        if (groupCount <= 1)
+            return false; // no siblings — nothing legal to move to
+        var from = _open.IndexOf(context);
+        if (from < 0)
+            return false;
+        var clamped = Math.Clamp(newIndex, ownerStart + 1, ownerStart + groupCount - 1);
+        if (clamped == from)
+            return false;
+        _open.RemoveAt(from);
+        _open.Insert(Math.Clamp(clamped, 0, _open.Count), context);
+        return true;
+    }
+
+    /// <summary>Under <see cref="_sync"/>: an owner or standalone tab's whole contiguous group
+    /// moves as one block. The block is removed from the list, boundaries are collected from the
+    /// remaining list, and the block is inserted at the boundary nearest <paramref name="newIndex"/>
+    /// (snapping in the direction of travel on ties). This ensures groups stay contiguous and
+    /// never split. Returns whether anything moved.</summary>
+    private bool MoveGroup(RepositoryContext context, int newIndex)
+    {
+        var (start, count) = GroupSpan(context);
+        if (start < 0 || count == 0)
+            return false;
+
+        var block = _open.GetRange(start, count);
+        _open.RemoveRange(start, count);
+
+        var boundaries = new List<int>();
+        for (var i = 0; i < _open.Count; i++)
+        {
+            if (_open[i].LinkOwner is null)
+                boundaries.Add(i);
+        }
+        boundaries.Add(_open.Count); // trailing sentinel: "move to the very end"
+
+        var target = boundaries.MinBy(b =>
+        {
+            var dist = Math.Abs(b - newIndex);
+            var tieBreaker = newIndex > start ? -b : b;
+            return (dist, tieBreaker);
+        });
+
+        if (target == start)
+        {
+            _open.InsertRange(start, block);
+            return false; // already at the nearest boundary — no-op
+        }
+
+        _open.InsertRange(Math.Clamp(target, 0, _open.Count), block);
+        return true;
     }
 
     public async Task RestoreSessionAsync(CancellationToken ct = default)
@@ -521,6 +674,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
         List<string> paths = [];
         string? focusedPath = null;
+        List<string?>? linkOwnerPaths = null;
         try
         {
             var node = JsonNode.Parse(await System.IO.File.ReadAllTextAsync(file, ct).ConfigureAwait(false));
@@ -528,11 +682,17 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             {
                 paths = arr.Select(n => n?.GetValue<string>()).Where(p => p is not null).Cast<string>().ToList();
             }
-            else if (node is JsonObject obj) // v2: { schemaVersion, paths, focusedPath }
+            else if (node is JsonObject obj) // v2+: { schemaVersion, paths, focusedPath, [linkOwners] }
             {
                 if (obj["paths"] is JsonArray p)
                     paths = p.Select(n => n?.GetValue<string>()).Where(s => s is not null).Cast<string>().ToList();
                 focusedPath = obj["focusedPath"]?.GetValue<string>();
+
+                // v3: a parallel array of owner paths (or null) — a v1/v2 file has no key here,
+                // so every restored tab keeps LinkOwner at its default (null), unchanged.
+                var schemaVersion = obj["schemaVersion"]?.GetValue<int>() ?? 2;
+                if (schemaVersion >= 3 && obj["linkOwners"] is JsonArray lo)
+                    linkOwnerPaths = lo.Select(n => n?.GetValue<string>()).ToList();
             }
         }
         catch
@@ -590,6 +750,30 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                     catch (OperationCanceledException) { return; }
                 }
             }
+
+            // v3: re-establish each restored tab's link group. The saved "paths" order already
+            // reflects the persisted group layout, so this only needs to set LinkOwner directly
+            // — no need to go through OpenSubmoduleAsync's insertion logic.
+            if (linkOwnerPaths is not null)
+            {
+                lock (_sync)
+                {
+                    for (var i = 0; i < paths.Count && i < linkOwnerPaths.Count; i++)
+                    {
+                        var ownerPath = linkOwnerPaths[i];
+                        if (ownerPath is null) continue;
+                        // Raw session-file paths don't share libgit2's normalized RepositoryPath
+                        // formatting (trailing separator, casing), so compare normalized forms —
+                        // the same helper OpenAsync's own duplicate-open check uses.
+                        var childKey = NormalizeDir(paths[i]);
+                        var ownerKey = NormalizeDir(ownerPath);
+                        var child = _open.FirstOrDefault(c => string.Equals(NormalizeDir(c.RepositoryPath), childKey, StringComparison.OrdinalIgnoreCase));
+                        var owner = _open.FirstOrDefault(c => string.Equals(NormalizeDir(c.RepositoryPath), ownerKey, StringComparison.OrdinalIgnoreCase));
+                        if (child is not null && owner is not null)
+                            child.LinkOwner = owner;
+                    }
+                }
+            }
         }
         finally
         {
@@ -614,17 +798,20 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         try
         {
             string[] paths;
+            string?[] linkOwnerPaths;
             string? focusedPath;
             lock (_sync)
             {
                 paths = _open.Select(c => c.RepositoryPath).ToArray();
+                linkOwnerPaths = _open.Select(c => c.LinkOwner?.RepositoryPath).ToArray();
                 focusedPath = _focused?.RepositoryPath;
             }
 
             var payload = new JsonObject
             {
-                ["schemaVersion"] = 2,
+                ["schemaVersion"] = 3,
                 ["paths"] = new JsonArray([.. paths.Select(p => (JsonNode)p!)]),
+                ["linkOwners"] = new JsonArray([.. linkOwnerPaths.Select(p => p is null ? null : (JsonNode)p)]),
                 ["focusedPath"] = focusedPath,
             };
             SessionWriter.QueueWrite(payload.ToJsonString());
@@ -713,7 +900,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         if (isFocused)
             return full ? context.State.RefreshAllAsync(ct) : context.State.RefreshStatusAsync(ct);
 
-        return WaitWithCancellationAsync(taskToAwait!, ct);
+        return TaskGate.WaitWithCancellationAsync(taskToAwait!, ct);
     }
 
     /// <summary>Initialises and refreshes the queued background tabs one at a time in app-band tab order,
@@ -1090,33 +1277,13 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         OpenRepositoriesChanged?.Invoke(this, new OpenRepositoriesChangedEventArgs(OpenRepositories));
     }
 
-    // Schemes Historia will pass to `git clone`. Deliberately excludes any custom transport —
-    // notably "ext::", a Git remote-helper syntax that runs an arbitrary shell command — and any
-    // scheme this list doesn't recognise.
-    private static readonly HashSet<string> AllowedCloneSchemes =
-        new(StringComparer.OrdinalIgnoreCase) { "http", "https", "ssh", "git", "file" };
-
-    /// <summary>Rejects a pasted clone URL that would let Git parse it as something other than a
-    /// repository address — a leading '-' (option injection) or a "&lt;transport&gt;::" prefix
-    /// (an arbitrary Git remote helper, e.g. "ext::sh -c ..."). Local paths, and the
-    /// http/https/ssh/git/file schemes, are otherwise unrestricted.</summary>
+    /// <summary>Rejects a pasted clone URL that <see cref="CloneValidation.DescribeUrlProblem"/>
+    /// flags — see its doc comment for the exact checks.</summary>
     private static void ValidateCloneUrl(string url)
     {
-        if (string.IsNullOrWhiteSpace(url))
-            throw new HistoriaGitException(GitErrorKind.Unknown, "A clone URL is required.");
-
-        var trimmed = url.Trim();
-
-        if (trimmed.StartsWith('-'))
-            throw new HistoriaGitException(GitErrorKind.Unknown, "The clone URL cannot start with '-'.");
-
-        if (trimmed.Contains("::", StringComparison.Ordinal))
-            throw new HistoriaGitException(GitErrorKind.Unknown,
-                "This URL uses a Git remote-helper transport, which Historia does not allow for Clone.");
-
-        var schemeEnd = trimmed.IndexOf("://", StringComparison.Ordinal);
-        if (schemeEnd >= 0 && !AllowedCloneSchemes.Contains(trimmed[..schemeEnd]))
-            throw new HistoriaGitException(GitErrorKind.Unknown, $"Unsupported clone URL scheme '{trimmed[..schemeEnd]}'.");
+        var problem = CloneValidation.DescribeUrlProblem(url);
+        if (problem is not null)
+            throw new HistoriaGitException(GitErrorKind.Unknown, problem);
     }
 
     private static string NormalizeDir(string path)
@@ -1157,31 +1324,5 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         foreach (var context in toDispose)
             await context.DisposeAsync().ConfigureAwait(false);
         Historia.Diagnostics.PerfLog.Mark($"WorkspaceService.DisposeAsync done ({toDispose.Count} repos)");
-    }
-
-    private static async Task WaitWithCancellationAsync(Task task, CancellationToken ct)
-    {
-        if (!ct.CanBeCanceled)
-        {
-            await task.ConfigureAwait(false);
-            return;
-        }
-
-        try
-        {
-            await task.WaitAsync(ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // If this caller was cancelled before the shared coalesced task completed,
-            // ensure any later fault on the shared task is observed so it does not trigger
-            // an UnobservedTaskException if no other caller is awaiting it.
-            _ = task.ContinueWith(
-                static t => _ = t.Exception,
-                CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
-            throw;
-        }
     }
 }

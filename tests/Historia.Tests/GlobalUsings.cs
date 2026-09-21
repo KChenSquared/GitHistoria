@@ -1,6 +1,7 @@
 global using Historia.Components;
 global using Historia.Diagnostics;
 global using Historia.Models;
+global using Historia.Primitives;
 global using Historia.Rendering;
 global using Historia.Services.AutoFetch;
 global using Historia.Services.Diff;
@@ -24,6 +25,8 @@ global using Microsoft.Extensions.DependencyInjection;
 global using System.Collections.Concurrent;
 global using System.Collections.Immutable;
 global using System.Diagnostics;
+global using System.IO.Compression;
+global using System.Reflection;
 global using System.Runtime.Loader;
 global using System.Text;
 global using System.Text.Json;

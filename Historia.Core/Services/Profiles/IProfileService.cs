@@ -1,7 +1,5 @@
-﻿
-namespace Historia.Services.Profiles;
 
-public sealed record ActiveProfileChangedEventArgs(GitProfile? Profile, RepoIdentityKey? RepoKey);
+namespace Historia.Services.Profiles;
 
 /// <summary>
 /// Core multi-account profile management (§9.8). All I/O methods are async with
@@ -51,5 +49,4 @@ public interface IProfileService
 
     // ── Events ──
     event EventHandler? ProfilesChanged;
-    event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged;
 }

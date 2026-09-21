@@ -29,6 +29,8 @@ internal static class ViewKit
             TextTrimming = TextTrimming.CharacterEllipsis,
         }.Dyn(TextBlock.ForegroundProperty, fgKey);
 
+    public static Control Section(string title) => Text(title, "ColorTextMuted", 13, FontWeight.SemiBold);
+
     public static Button TextButton(string caption, Action onClick, bool primary = false)
     {
         var b = new Button

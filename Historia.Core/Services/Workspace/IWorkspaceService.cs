@@ -37,6 +37,18 @@ public interface IWorkspaceService
         IProgress<GitProgress>? progress,
         CancellationToken ct = default);
 
+    /// <summary>Opens <paramref name="submodule"/> (relative to <paramref name="owner"/>'s
+    /// working directory) as a tab linked to <paramref name="owner"/>'s root group owner (§F9) — inserted
+    /// immediately after the root owner's current group (its own tab plus any already-
+    /// linked children), focused once opened. Groups are flat: if <paramref name="owner"/> is itself
+    /// linked, the new tab links to <paramref name="owner"/>'s root owner. If the submodule's on-disk
+    /// <c>.git</c> entry is missing (uninitialized submodule), throws
+    /// <see cref="HistoriaGitException"/> with <see cref="GitErrorKind.NotAGitRepository"/>.
+    /// If the submodule's working copy is already open under a standalone tab that owns no children,
+    /// that tab is adopted into the group and moved to the end of the group. If it is already linked
+    /// to an owner or owns children, it is focused without relinking.</summary>
+    Task<RepositoryContext> OpenSubmoduleAsync(RepositoryContext owner, SubmoduleInfo submodule, CancellationToken ct = default);
+
     Task CloseAsync(RepositoryContext context);
     void Focus(RepositoryContext context);
 
@@ -53,10 +65,16 @@ public interface IWorkspaceService
         => full ? context.State.RefreshAllAsync(ct) : context.State.RefreshStatusAsync(ct);
 
     /// <summary>
-    /// Moves an open tab to <paramref name="newIndex"/> in the strip (drag-and-drop reorder,
-    /// §V3-B/19.21). No-op when the context is not open or is already there. Raises
-    /// <see cref="OpenRepositoriesChanged"/> and re-persists the session so the order survives a
+    /// Moves an open tab so its first tab ends at <paramref name="newIndex"/> in the strip
+    /// (drag-and-drop reorder, §V3-B/19.21). No-op when the context is not open or is already there.
+    /// Raises <see cref="OpenRepositoriesChanged"/> and re-persists the session so the order survives a
     /// restart. Focus is unaffected.
+    /// <para>§F9 — group-aware: when <paramref name="context"/> is a group owner (or a standalone
+    /// tab), its whole contiguous group (itself plus any linked children) moves together as one
+    /// block, snapping to the nearest group boundary in the direction of travel — it never
+    /// splits another group. When <paramref name="context"/> is itself a linked child,
+    /// <paramref name="newIndex"/> is clamped to its own group's span, so it can only reorder
+    /// among its own siblings.</para>
     /// </summary>
     void Move(RepositoryContext context, int newIndex);
 

@@ -258,8 +258,6 @@ public sealed class FileWatcherService : IAsyncDisposable
         }
     }
 
-    /// <summary>Called by the workspace when the tab regains focus, for the degraded-mode fallback (§6.8.2).</summary>
-    public Task RefreshOnFocusAsync() => _state.RefreshAllAsync(_context.Lifetime);
 
     /// <summary>Internal for a direct test seam (Historia.Tests) — otherwise only called from
     /// <see cref="OnRawEvent"/>.</summary>

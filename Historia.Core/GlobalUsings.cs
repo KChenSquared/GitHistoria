@@ -1,5 +1,6 @@
-﻿global using Historia.Diagnostics;
+global using Historia.Diagnostics;
 global using Historia.Models;
+global using Historia.Primitives;
 global using Historia.Services.Diff;
 global using Historia.Services.Git;
 global using Historia.Services.Graph;
@@ -10,6 +11,7 @@ global using Historia.Services.Profiles;
 global using Historia.Services.Settings;
 global using Historia.Services.State;
 global using Historia.Services.Storage;
+global using Historia.Services.Text;
 global using Historia.Services.Theming;
 global using Historia.Services.UI;
 global using Historia.Services.Watching;

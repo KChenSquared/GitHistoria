@@ -168,7 +168,6 @@ public class RepoSettingsIdentityTests : IDisposable
 
 #pragma warning disable CS0067
         public event EventHandler? ProfilesChanged;
-        public event EventHandler<ActiveProfileChangedEventArgs>? ActiveProfileChanged;
 #pragma warning restore CS0067
 
         public IReadOnlyList<GitProfile> GetAllProfiles() => _profiles;
@@ -225,6 +224,7 @@ public class RepoSettingsIdentityTests : IDisposable
         public Task<RepositoryContext> OpenAsync(string repositoryPath, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<RepositoryContext> InitAsync(string path, string? initialBranch, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<RepositoryContext> CloneAsync(string url, string targetDirectory, CloneOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<RepositoryContext> OpenSubmoduleAsync(RepositoryContext owner, SubmoduleInfo submodule, CancellationToken ct = default) => throw new NotImplementedException();
         public Task CloseAsync(RepositoryContext context) => Task.CompletedTask;
         public void EnsureInitialized(RepositoryContext context) { }
         public void Move(RepositoryContext context, int newIndex) { }

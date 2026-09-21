@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Graph;
+namespace Historia.Services.Graph;
 
 /// <summary>
 /// Pure geometry for the commit-graph column header's pointer interactions (§V3-8.4): which
@@ -70,4 +70,85 @@ public static class GraphColumnInteraction
 
         return [.. visible, .. hidden];
     }
+
+    private const double MinLabelRoom = 24;
+    private const double DefaultIconGap = 4;
+
+    /// <summary>Returns the right-aligned bounding rect for header icon <paramref name="slot"/>
+    /// (0 = right-most, increasing slots sit further left) of <paramref name="kind"/>'s column,
+    /// or <c>null</c> when the column is not visible or too narrow to fit every slot up to and
+    /// including this one without colliding with its label.</summary>
+    public static HeaderIconRect? HeaderIconRectFor(
+        IReadOnlyList<ResolvedColumn> resolved,
+        GraphColumnKind kind,
+        double hScrollOffset,
+        double headerHeight,
+        double iconSize,
+        double inset,
+        int slot = 0,
+        double gap = DefaultIconGap)
+    {
+        for (var i = 0; i < resolved.Count; i++)
+        {
+            var col = resolved[i];
+            if (col.Kind == kind)
+            {
+                var occupiedWidth = (slot + 1) * iconSize + slot * gap;
+                if (col.Width < occupiedWidth + inset + MinLabelRoom)
+                    return null;
+
+                var right = col.Left + col.Width - hScrollOffset;
+                var x = right - inset - iconSize - slot * (iconSize + gap);
+                var y = (headerHeight - iconSize) / 2;
+                return new HeaderIconRect(x, y, iconSize, iconSize);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The single-slot (Refs, Message) search list every pre-multi-slot caller used —
+    /// the default for <see cref="HeaderIconAt"/> so those call sites keep compiling unchanged.</summary>
+    private static readonly (GraphColumnKind Kind, int Slot)[] DefaultHeaderIconCandidates =
+        [(GraphColumnKind.Refs, 0), (GraphColumnKind.Message, 0)];
+
+    /// <summary>Returns the (kind, slot) pair of the header icon containing
+    /// (<paramref name="x"/>, <paramref name="y"/>), restricted to the candidates in
+    /// <paramref name="candidates"/> (default: the single-slot Refs/Message search every caller
+    /// used before multi-slot columns existed), or <c>null</c>.</summary>
+    public static (GraphColumnKind Kind, int Slot)? HeaderIconAt(
+        IReadOnlyList<ResolvedColumn> resolved,
+        double x,
+        double y,
+        double hScrollOffset,
+        double headerHeight,
+        double iconSize,
+        double inset,
+        IReadOnlyList<(GraphColumnKind Kind, int Slot)>? candidates = null,
+        double gap = DefaultIconGap)
+    {
+        if (y < 0 || y > headerHeight)
+            return null;
+
+        foreach (var candidate in candidates ?? DefaultHeaderIconCandidates)
+        {
+            var rect = HeaderIconRectFor(resolved, candidate.Kind, hScrollOffset, headerHeight, iconSize, inset, candidate.Slot, gap);
+            if (rect != null && rect.Value.Contains(x, y))
+                return candidate;
+        }
+
+        return null;
+    }
 }
+
+/// <summary>
+/// A bounding rectangle for a column header icon in viewport pixels.
+/// </summary>
+public readonly record struct HeaderIconRect(double X, double Y, double Width, double Height)
+{
+    public double Right => X + Width;
+    public double Bottom => Y + Height;
+
+    public bool Contains(double px, double py) =>
+        px >= X && px <= X + Width && py >= Y && py <= Y + Height;
+}
+

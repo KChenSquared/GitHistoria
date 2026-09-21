@@ -20,8 +20,6 @@ public partial class MainWindow : Window
     private IRepoNetworkActionRunner? _networkRunner;
     private IWorkspaceService? _workspace;
     private IRepositoryStateService? _boundState;
-    private bool _forceClose;
-    private bool _closingConfirmOpen;
 
     // Parameterless ctor for the XAML previewer only.
     public MainWindow() : this(null!) { }
@@ -133,7 +131,7 @@ public partial class MainWindow : Window
     private void ApplyCenter(DiffRequest? request)
     {
         if (request is not null && _workspace?.Focused is { } ctx)
-            CenterHost.Content = new DiffView(ctx, request, null, _services);
+            CenterHost.Content = new DiffView(ctx, request, _services?.GetService<ISettingsService>(), _services);
         else
             CenterHost.Content = _graph;
     }
@@ -156,7 +154,10 @@ public partial class MainWindow : Window
     // (Refs 140 + Graph 150 + Message 150 + 40), so a sidebar-divider drag can't squeeze
     // Message past the right edge. Both dividers clamp against it (§4.2.9).
     private const double CentreMin = 480;
-    private const double BaseRightMin = 250;
+    // The detail pane's declared floor, set marginally above the width the right shortcut bar's
+    // four labelled buttons render at, keeping the pane minimum a deliberate design constraint
+    // rather than a consequence of label metrics.
+    private const double BaseRightMin = 360;
 
     private double _leftMin = BaseLeftMin;
     private double _rightMin = BaseRightMin;
@@ -290,6 +291,13 @@ public partial class MainWindow : Window
             or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin)
             return;
 
+        // A focused terminal claims the chords it turns into shell input (e.g. Ctrl+B for
+        // readline backward-char / tmux prefix); chords the terminal has no use for (Ctrl+,,
+        // Ctrl+Enter) and Ctrl+` (dock toggle) stay with the application.
+        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+        if (focused is TerminalControl && TerminalControl.ClaimsChord(e.Key, e.KeyModifiers))
+            return;
+
         var parts = new List<string>(4);
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control)) parts.Add("Ctrl");
         if (e.KeyModifiers.HasFlag(KeyModifiers.Shift)) parts.Add("Shift");
@@ -390,54 +398,10 @@ public partial class MainWindow : Window
         };
     }
 
-    protected override async void OnClosing(WindowClosingEventArgs e)
+    protected override void OnClosing(WindowClosingEventArgs e)
     {
         Historia.Diagnostics.PerfLog.Mark("MainWindow.OnClosing start");
         base.OnClosing(e);
-        if (_forceClose)
-        {
-            using (Historia.Diagnostics.PerfLog.Scope("MainWindow.OnClosing terminalDock.Dispose"))
-                _terminalDock?.Dispose();
-            return;
-        }
-
-        if (_closingConfirmOpen)
-        {
-            e.Cancel = true;
-            return;
-        }
-
-        var termSessions = _services?.GetService<Historia.Services.Terminal.ITerminalSessionService>();
-        var dialogs = _services?.GetService<Historia.Services.UI.IDialogService>();
-        if (termSessions is { Sessions.Count: > 0 } && dialogs is not null)
-        {
-            e.Cancel = true;
-            _closingConfirmOpen = true;
-            try
-            {
-                var count = termSessions.Sessions.Count;
-                var confirmed = await dialogs.ConfirmDestructiveAsync(
-                    "Quit Historia?",
-                    $"There {(count == 1 ? "is 1 live terminal session" : $"are {count} live terminal sessions")}. Quitting will terminate {(count == 1 ? "it" : "them")} and anything running inside.",
-                    "Quit");
-                if (confirmed)
-                {
-                    _forceClose = true;
-                    Close();
-                }
-            }
-            catch
-            {
-                _forceClose = true;
-                Close();
-            }
-            finally
-            {
-                _closingConfirmOpen = false;
-            }
-            return;
-        }
-
         using (Historia.Diagnostics.PerfLog.Scope("MainWindow.OnClosing terminalDock.Dispose"))
             _terminalDock?.Dispose();
     }

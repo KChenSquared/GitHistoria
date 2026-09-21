@@ -21,8 +21,7 @@ public static partial class AppLog
     private const int RetainedSessions = 10;
 
     private static readonly object Gate = new();
-
-    private static bool _enabled;
+    private static readonly OptInFlag Flag = new("HISTORIA_LOG", "dev-logging.on");
     private static string? _sessionPath;
 
     /// <summary>The session file, held open for as long as logging is enabled. Every previous
@@ -37,7 +36,7 @@ public static partial class AppLog
     {
         try
         {
-            if (EnvOptIn() || FlagFileExists())
+            if (Flag.IsOptedIn)
                 lock (Gate)
                     OpenSessionLocked();
         }
@@ -102,14 +101,11 @@ public static partial class AppLog
         }
     }
 
-    /// <summary>Marker file (mirrors <see cref="PerfLog"/>'s) that persists the opt-in across launches.</summary>
-    private static string FlagFile => Path.Combine(AppPaths.MachineDirectory, "dev-logging.on");
-
     /// <summary>Whether anything is written. Setting it persists the choice (marker file) and
     /// opens a fresh session file / closes the current one.</summary>
     public static bool Enabled
     {
-        get => _testSession.Value?.Enabled ?? Volatile.Read(ref _enabled);
+        get => _testSession.Value?.Enabled ?? Flag.Enabled;
         set
         {
             if (_testSession.Value is { } testSession)
@@ -120,8 +116,9 @@ public static partial class AppLog
 
             lock (Gate)
             {
-                PersistFlag(value);
-                if (value == _enabled)
+                var wasEnabled = Flag.Enabled;
+                Flag.Enabled = value;
+                if (value == wasEnabled)
                     return;
 
                 if (value)
@@ -131,7 +128,6 @@ public static partial class AppLog
                 else
                 {
                     WriteLineLocked($"{Stamp()}  INFO   [app]  logging stopped");
-                    _enabled = false;
                     _sessionPath = null;
                     CloseWriterLocked();
                 }
@@ -197,7 +193,7 @@ public static partial class AppLog
 
         lock (Gate)
         {
-            _enabled = false;
+            Flag.SetEnabledInMemory(false);
             _sessionPath = null;
             CloseWriterLocked();
         }
@@ -234,7 +230,7 @@ public static partial class AppLog
             // silent no-op via the null check, same as any other diagnostics failure.
             _writer = null;
         }
-        _enabled = true;
+        Flag.SetEnabledInMemory(true);
 
         var asm = typeof(AppLog).Assembly.GetName();
         WriteLineLocked($"# Historia developer log — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
@@ -272,21 +268,6 @@ public static partial class AppLog
         try { _writer.WriteLine(line); }
         catch { /* disk full / permission — drop the line */ }
     }
-
-    private static void PersistFlag(bool on)
-    {
-        try
-        {
-            if (on)
-                File.WriteAllText(FlagFile, "");
-            else if (File.Exists(FlagFile))
-                File.Delete(FlagFile);
-        }
-        catch { /* diagnostics must never throw */ }
-    }
-
-    private static bool EnvOptIn() => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HISTORIA_LOG"));
-    private static bool FlagFileExists() { try { return File.Exists(FlagFile); } catch { return false; } }
 
     // ── formatting ──
 

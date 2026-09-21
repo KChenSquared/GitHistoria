@@ -7,46 +7,23 @@ namespace Historia.Diagnostics;
 /// </summary>
 public static class PerfLog
 {
-    private static readonly string FlagFile = Path.Combine(AppPaths.MachineDirectory, "perf-logging.on");
-
-    private static bool _enabled = EnvOptIn() || FlagFileExists();
-    private static readonly AsyncLocal<bool?> _testEnabledOverride = new();
+    private static readonly OptInFlag Flag = new("HISTORIA_PERF", "perf-logging.on");
 
     /// <summary>Whether marks are written. Setting it persists the choice across launches.</summary>
     public static bool Enabled
     {
-        get => _testEnabledOverride.Value ?? _enabled;
-        set
-        {
-            if (_testEnabledOverride.Value.HasValue)
-            {
-                _testEnabledOverride.Value = value;
-                return;
-            }
-
-            _enabled = value;
-            try
-            {
-                if (value)
-                    File.WriteAllText(FlagFile, "");
-                else if (File.Exists(FlagFile))
-                    File.Delete(FlagFile);
-            }
-            catch { /* diagnostics must never throw */ }
-        }
+        get => Flag.Enabled;
+        set => Flag.Enabled = value;
     }
 
     /// <summary>Test seam: overrides Enabled for the current async flow without touching the flag file.</summary>
     internal static void OverrideEnabledForTesting(bool? enabled)
     {
-        _testEnabledOverride.Value = enabled;
+        Flag.OverrideForTesting(enabled);
     }
 
     /// <summary>Full path of the log file, for surfacing in the Developer panel.</summary>
     public static string LogPath => Path.Combine(AppPaths.LogsDirectory, "perf.log");
-
-    private static bool EnvOptIn() => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HISTORIA_PERF"));
-    private static bool FlagFileExists() { try { return File.Exists(FlagFile); } catch { return false; } }
 
     private static readonly object Gate = new();
     private static readonly long Origin = Stopwatch.GetTimestamp();
