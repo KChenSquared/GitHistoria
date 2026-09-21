@@ -72,7 +72,7 @@ public sealed class RepositoryView : UserControl, IDisposable
             Content = _workingCopyText,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Left,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             CornerRadius = new CornerRadius(0),
             Padding = new Thickness(12, 0),

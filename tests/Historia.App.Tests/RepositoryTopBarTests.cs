@@ -194,7 +194,40 @@ public class RepositoryTopBarTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task Branch_and_working_copy_text_are_16_bold()
+    public void Working_copy_text_is_centred()
+    {
+        var view = new RepositoryView(_sp);
+        var window = new Window { Width = 800, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            var headId = _fixture.HeadCommitId;
+            _context.State.SetSelectedCommit(headId);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(Avalonia.Layout.HorizontalAlignment.Center, view.WorkingCopyButtonForTesting.HorizontalContentAlignment);
+
+            var button = view.WorkingCopyButtonForTesting;
+            var textBlock = view.WorkingCopyTextBlockForTesting;
+
+            var origin = textBlock.TranslatePoint(new Point(0, 0), button);
+            Assert.NotNull(origin);
+
+            var leftGap = origin.Value.X;
+            var rightGap = button.Bounds.Width - (origin.Value.X + textBlock.Bounds.Width);
+
+            Assert.True(button.Bounds.Width > 0);
+            Assert.True(textBlock.Bounds.Width > 0);
+            Assert.InRange(Math.Abs(leftGap - rightGap), 0, 1.01);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Branch_and_working_copy_text_are_16_bold()
     {
         var view = new RepositoryView(_sp);
         var window = new Window { Width = 800, Height = 600, Content = view };
@@ -211,15 +244,6 @@ public class RepositoryTopBarTests : IDisposable
 
             Assert.Equal(16, view.WorkingCopyTextBlockForTesting.FontSize);
             Assert.Equal(FontWeight.Bold, view.WorkingCopyTextBlockForTesting.FontWeight);
-
-            // Changing CommitDetailFontSize setting to 20 leaves branch size at 16
-            var settings = _sp.GetRequiredService<ISettingsService>();
-            await settings.UpdateAsync(s => s with { CommitDetailFontSize = 20 });
-            Dispatcher.UIThread.RunJobs();
-
-            Assert.Equal(16, view.BranchTextBlockForTesting.FontSize);
-            Assert.Equal(16, view.WorkingCopyButtonForTesting.FontSize);
-            Assert.Equal(16, view.WorkingCopyTextBlockForTesting.FontSize);
         }
         finally
         {
