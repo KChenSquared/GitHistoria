@@ -90,11 +90,7 @@ public sealed record AppSettings
     // §V3-B: graph column layout (order, widths, visibility, the width pin) and the commit-walk
     // ceiling moved to a per-repository store — see Historia.Services.Settings.IRepoLayoutService.
 
-    /// <summary>v8 M13: font size for the selected-commit detail panel — the message body and
-    /// the changed-files list share it so they read as one block.</summary>
-    public int CommitDetailFontSize { get; init; } = 14;
-
-    /// <summary>v8 M13: flat path list vs. collapsible folder tree for a commit's changed files.</summary>
+    /// <summary>Flat path list vs. collapsible folder tree for a commit's changed files.</summary>
     public CommitFilesView CommitFilesView { get; init; } = CommitFilesView.Path;
 
     // ── Diff &amp; editor ──

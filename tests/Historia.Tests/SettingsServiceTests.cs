@@ -20,6 +20,24 @@ public class SettingsServiceTests : IDisposable
         Assert.False(svc.Current.EnableGraphSplice); // Default off
     }
 
+    [Fact]
+    public async Task Load_ignores_removed_commitDetailFontSize_key()
+    {
+        File.WriteAllText(AppPaths.SettingsFile, "{ \"schemaVersion\": 18, \"appTheme\": \"dark\", \"commitDetailFontSize\": 20, \"tabWidth\": 8 }");
+
+        var svc = SettingsService.Load();
+
+        Assert.Equal(ThemeMode.Dark, svc.Current.AppTheme);
+        Assert.Equal(8, svc.Current.TabWidth);
+
+        await svc.UpdateAsync(s => s with { TabWidth = 6 });
+        await svc.FlushAsync();
+
+        var json = File.ReadAllText(AppPaths.SettingsFile);
+        Assert.DoesNotContain("commitDetailFontSize", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"tabWidth\": 6", json);
+    }
+
     // ── §12.1: v15 → v16 (auto-fetch toggle) ──
 
     [Fact]
