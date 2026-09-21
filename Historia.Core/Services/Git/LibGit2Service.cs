@@ -178,6 +178,7 @@ public sealed class LibGit2Service
         return new CommitDetail
         {
             Id = commit.Id,
+            Message = fullMessage.TrimEnd('\n', '\r'),
             MessageShort = commit.MessageShort,
             MessageBody = messageBody,
             AuthorName = commit.Author.Name,
