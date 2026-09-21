@@ -1,6 +1,9 @@
 namespace Historia.Views;
 
-/// <summary>Selected-commit detail: metadata, changed files, file diff (V4 port of CommitDetailPanel.razor).</summary>
+/// <summary>
+/// Selected-commit detail: metadata, parent commits, full raw commit message, and changed files.
+/// The working copy return button resides in the repository top bar.
+/// </summary>
 public sealed class CommitDetailPanelView : UserControl, IDisposable
 {
     private readonly RepositoryContext _ctx;
@@ -9,13 +12,13 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     private readonly ISettingsService _settings;
     private readonly Historia.Services.UI.IExternalLauncher _launcher;
 
-    private readonly StackPanel _head = new() { Spacing = 4 };
+    private readonly ContentControl _metaHost = new();
+    private readonly ContentControl _parentsHost = new();
+    private readonly ContentControl _messageHost = new();
     private readonly ContentControl _filesHost = new();
     private readonly StackPanel _filesToggleRow = new()
-        { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(12, 8, 12, 0) };
+        { Orientation = Orientation.Horizontal, Spacing = 2 };
     private readonly TextBlock _statusMsg = Text("", "ColorTextMuted", 12);
-    private int _parentIndex = 1;
-    private bool _renderBody = true;
     private CancellationTokenSource? _loadCts;
     private bool _disposed;
     private CommitDetail? _detail;
@@ -23,10 +26,17 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     private IReadOnlyList<FileStatusEntry> _files = [];
     private Dictionary<string, List<FileStatusEntry>>? _treeByFolder;
     private Dictionary<string, SortedSet<string>>? _treeChildFolders;
-    // v8 M13: which folder tree rows are collapsed (session-only, keyed by folder path).
     private readonly HashSet<string> _collapsedFolders = new(StringComparer.Ordinal);
 
     private int DetailFontSize => Math.Clamp(_settings.Current.CommitDetailFontSize, 10, 24);
+
+    internal ContentControl MetaHostForTesting => _metaHost;
+    internal ContentControl ParentsHostForTesting => _parentsHost;
+    internal ContentControl MessageHostForTesting => _messageHost;
+    internal ContentControl FilesHostForTesting => _filesHost;
+    internal Border TopSectionForTesting { get; }
+    internal Control FilesSectionForTesting { get; }
+    internal Control FilesDividerHandleForTesting { get; }
 
     public CommitDetailPanelView(IServiceProvider sp, RepositoryContext ctx, ObjectId id)
     {
@@ -37,33 +47,87 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         _launcher = sp.GetRequiredService<Historia.Services.UI.IExternalLauncher>();
         _settings.Changed += OnSettingsChanged;
 
-        var header = new StackPanel { Spacing = 8, Margin = new Thickness(12, 12, 12, 0) };
-        var back = TextButton("← Working copy", () => _ctx.State.SetSelectedCommit(null));
-        header.Children.Add(back);
-        header.Children.Add(_head);
-        header.Children.Add(_statusMsg);
+        _statusMsg.HorizontalAlignment = HorizontalAlignment.Center;
+        _statusMsg.VerticalAlignment = VerticalAlignment.Center;
+        _statusMsg.Margin = new Thickness(0, 24, 0, 0);
 
-        var filesScroll = new ScrollViewer
+        var topInner = new DockPanel
         {
-            Content = _filesHost,
-            Margin = new Thickness(12, 4, 12, 12)
+            LastChildFill = true,
+            Margin = new Thickness(SectionFrame.InnerSide, SectionFrame.HeaderGap, SectionFrame.InnerSide, SectionFrame.InnerBottom),
+        };
+        DockPanel.SetDock(_metaHost, Dock.Top);
+        DockPanel.SetDock(_parentsHost, Dock.Top);
+        topInner.Children.Add(_metaHost);
+        topInner.Children.Add(_parentsHost);
+
+        var messageScroll = new ScrollViewer
+        {
+            Content = _messageHost,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+        };
+        topInner.Children.Add(messageScroll);
+
+        var topSection = new Border
+        {
+            Child = topInner,
+            BorderThickness = new Thickness(1, 1, 1, 0),
+            MinHeight = SectionFrame.TopMinHeight,
+        }.Dyn(Border.BorderBrushProperty, "ColorBorder");
+        TopSectionForTesting = topSection;
+
+        var filesSection = SectionFrame.Build(
+            left: Text("Files:", "ColorText", 14),
+            center: null,
+            right: _filesToggleRow,
+            body: _filesHost,
+            border: new Thickness(1),
+            minHeight: SectionFrame.BottomMinHeight,
+            out var filesDividerHandle);
+        FilesSectionForTesting = filesSection;
+        FilesDividerHandleForTesting = filesDividerHandle;
+
+        var topRow = new RowDefinition(new GridLength(SectionFrame.GetSplitHeight(_ctx.Id), GridUnitType.Pixel))
+        {
+            MinHeight = SectionFrame.TopMinHeight
+        };
+        var handleRow = new RowDefinition(new GridLength(SectionFrame.HandleHeight, GridUnitType.Pixel));
+        var bottomRow = new RowDefinition(new GridLength(1, GridUnitType.Star))
+        {
+            MinHeight = SectionFrame.BottomMinHeight
         };
 
         var root = new Grid
         {
-            RowDefinitions = new RowDefinitions("Auto,Auto,*")
+            ClipToBounds = true,
+            RowDefinitions = { topRow, handleRow, bottomRow }
         };
-        Grid.SetRow(header, 0);
-        Grid.SetRow(_filesToggleRow, 1);
-        Grid.SetRow(filesScroll, 2);
-        root.Children.Add(header);
-        root.Children.Add(_filesToggleRow);
-        root.Children.Add(filesScroll);
 
-        // The diff itself renders in the centre panel (MainWindow.ApplyCenter listens for
-        // OpenDiffChanged); this pane only lists the commit's changed files.
+        Grid.SetRow(topSection, 0);
+        root.Children.Add(topSection);
+
+        var splitHandle = new Border
+        {
+            Height = SectionFrame.HandleHeight,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Center,
+            Background = Brushes.Transparent,
+        };
+        Grid.SetRow(splitHandle, 1);
+        root.Children.Add(splitHandle);
+
+        Grid.SetRow(filesSection, 2);
+        root.Children.Add(filesSection);
+
+        SectionFrame.AttachRowResize(splitHandle, root, topRow, h => SectionFrame.SetSplitHeight(_ctx.Id, h));
+        SectionFrame.AttachRowResize(filesDividerHandle, root, topRow, h => SectionFrame.SetSplitHeight(_ctx.Id, h));
+
+        AttachedToVisualTree += (_, _) => SectionFrame.ApplySplitHeight(root, topRow, _ctx.Id);
+        root.SizeChanged += (_, _) => SectionFrame.ApplySplitHeight(root, topRow, _ctx.Id);
+
         Content = root;
 
+        BuildFilesToggle();
         QueueLoad();
     }
 
@@ -73,7 +137,6 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
             return;
 
         _id = id;
-        _parentIndex = 1;
         QueueLoad();
     }
 
@@ -84,12 +147,12 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
 
-        _head.Children.Clear();
-        _head.Children.Add(Text($"Commit {_id.Sha[..10]}", "ColorText", DetailFontSize + 1, FontWeight.SemiBold));
+        _metaHost.Content = null;
+        _parentsHost.Content = null;
+        _messageHost.Content = null;
         _statusMsg.Text = "Loading file changes…";
         _statusMsg.IsVisible = true;
-        _filesToggleRow.Children.Clear();
-        _filesHost.Content = null;
+        _filesHost.Content = _statusMsg;
         _files = [];
 
         _ = LoadAsync(ct);
@@ -104,80 +167,28 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
             if (ct.IsCancellationRequested) return;
 
             var currentId = _id;
-            var currentParent = _parentIndex;
             var detail = await _ctx.Gateway.GetCommitDetailAsync(currentId, ct).ConfigureAwait(false);
-            var files = await _ctx.Gateway.GetCommitFilesAsync(currentId, currentParent, ct).ConfigureAwait(false);
+            var files = await _ctx.Gateway.GetCommitFilesAsync(currentId, 1, ct).ConfigureAwait(false);
 
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
             {
-                if (ct.IsCancellationRequested || _id != currentId) return;
+                if (ct.IsCancellationRequested || _disposed || _id != currentId) return;
 
                 _detail = detail;
                 var rules = _settings.Current.IssueAutolinks;
-                var fs = DetailFontSize;
-                _head.Children.Clear();
-                _head.Children.Add(Autolinked(detail.MessageShort, rules, _launcher, fs + 1, "ColorText"));
-                _head.Children.Add(BuildMetaRow(detail));
-                var bodyText = (detail.MessageBody ?? "").Trim();
-                if (!string.IsNullOrWhiteSpace(bodyText))
-                {
-                    var bodyHost = new ContentControl();
-                    void ShowBody(bool rendered) => bodyHost.Content = rendered
-                        ? new MarkdownView(bodyText, _launcher)
-                        : Autolinked(bodyText, rules, _launcher, fs, "ColorText");
-
-                    var raw = new Button { Content = "Raw", Padding = new Thickness(6, 2), Background = Brushes.Transparent, BorderThickness = default };
-                    var rend = new Button { Content = "Rendered", Padding = new Thickness(6, 2), Background = Brushes.Transparent, BorderThickness = default };
-                    void SetToggle(bool rendered)
-                    {
-                        rend.FontWeight = rendered ? FontWeight.SemiBold : FontWeight.Normal;
-                        raw.FontWeight = rendered ? FontWeight.Normal : FontWeight.SemiBold;
-                        ShowBody(rendered);
-                    }
-                    raw.Click += (_, _) => SetToggle(false);
-                    rend.Click += (_, _) => SetToggle(true);
-
-                    var tools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
-                    tools.Children.Add(raw);
-                    tools.Children.Add(rend);
-                    _head.Children.Add(tools);
-                    _head.Children.Add(bodyHost);
-                    SetToggle(_renderBody);
-                    raw.Click += (_, _) => _renderBody = false;
-                    rend.Click += (_, _) => _renderBody = true;
-                }
-
-                // Merge commit: a parent selector — the diff is against the chosen parent.
-                if (detail.ParentIds.Count > 1)
-                {
-                    var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-                    row.Children.Add(Text("Merge — diff vs", "ColorTextMuted", 12));
-                    for (var i = 1; i <= detail.ParentIds.Count; i++)
-                    {
-                        var idx = i;
-                        var btn = new Button
-                        {
-                            Content = $"parent {i}",
-                            Padding = new Thickness(8, 2),
-                            FontWeight = idx == _parentIndex ? FontWeight.SemiBold : FontWeight.Normal,
-                        };
-                        btn.Click += (_, _) =>
-                        {
-                            _parentIndex = idx;
-                            _ctx.State.SetOpenDiff(null);
-                            QueueLoad();
-                        };
-                        row.Children.Add(btn);
-                    }
-                    _head.Children.Add(row);
-                }
+                _metaHost.Content = BuildMetaRow(detail);
+                _parentsHost.Content = BuildParentsRow(detail);
+                _messageHost.Content = Autolinked(detail.Message, rules, _launcher, 14, "ColorText");
 
                 _files = files;
                 BuildTreeCache(files);
                 _statusMsg.IsVisible = files.Count == 0;
                 _statusMsg.Text = files.Count == 0 ? "No file changes." : "";
                 BuildFilesToggle();
-                RenderFiles();
+                if (files.Count == 0)
+                    _filesHost.Content = _statusMsg;
+                else
+                    RenderFiles();
             });
         }
         catch (OperationCanceledException) { }
@@ -197,7 +208,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     {
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
 
-        var author = Text(detail.AuthorName, "ColorTextMuted", 12);
+        var author = Text(detail.AuthorName, "ColorText", 16);
         ToolTip.SetTip(author, detail.AuthorEmail);
         Grid.SetColumn(author, 0);
         row.Children.Add(author);
@@ -209,13 +220,13 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
             HorizontalAlignment = HorizontalAlignment.Right,
         };
         var displayedDate = CommitDateDisplay.Pick(detail.AuthorWhen, detail.CommitWhen, _settings.Current.ShowAuthorDate);
-        var dateText = Text($"{displayedDate:yyyy-MM-dd HH:mm}", "ColorTextMuted", 12);
+        var dateText = Text($"{displayedDate:yyyy-MM-dd HH:mm}", "ColorTextMuted", 16);
         ToolTip.SetTip(dateText, $"Committed {detail.CommitWhen:yyyy-MM-dd HH:mm}\nAuthored {detail.AuthorWhen:yyyy-MM-dd HH:mm}");
         right.Children.Add(dateText);
 
-        var hash = Text(detail.Id.Sha[..10], "ColorAccent", 12);
+        var hash = Text(detail.Id.Sha[..10], "ColorAccent", 16);
         hash.TextDecorations = TextDecorations.Underline;
-        hash.Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand);
+        hash.Cursor = new Cursor(StandardCursorType.Hand);
         ToolTip.SetTip(hash, "Click to copy full commit hash");
         var fullSha = detail.Id.Sha;
         hash.PointerPressed += (_, _) =>
@@ -227,13 +238,42 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         return row;
     }
 
-    // ── v8 M13: Path / Tree file views ──
+    private Control BuildParentsRow(CommitDetail detail)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        row.Children.Add(Text("Parent(s):", "ColorTextMuted", 12));
+
+        if (detail.ParentIds.Count == 0)
+        {
+            row.Children.Add(Text("none", "ColorTextMuted", 12));
+            return row;
+        }
+
+        foreach (var pid in detail.ParentIds)
+        {
+            var parentSha = pid.Sha;
+            var shortSha = parentSha.Length >= 10 ? parentSha[..10] : parentSha;
+            var hash = Text(shortSha, "ColorText", 12);
+            hash.TextDecorations = TextDecorations.Underline;
+            hash.Cursor = new Cursor(StandardCursorType.Hand);
+            ToolTip.SetTip(hash, "Go to parent commit");
+            hash.PointerPressed += (_, e) =>
+            {
+                if (!e.GetCurrentPoint(hash).Properties.IsLeftButtonPressed)
+                    return;
+                e.Handled = true;
+                _ctx.State.SetSelectedCommit(pid);
+                _ctx.State.RequestRevealCommit(pid);
+            };
+            row.Children.Add(hash);
+        }
+
+        return row;
+    }
 
     private void BuildFilesToggle()
     {
         _filesToggleRow.Children.Clear();
-        if (_files.Count == 0)
-            return;
 
         Button Seg(string label, CommitFilesView mode)
         {
@@ -256,7 +296,6 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
             return b;
         }
 
-        _filesToggleRow.Children.Add(Text("Files", "ColorTextMuted", 12));
         _filesToggleRow.Children.Add(Seg("Path", CommitFilesView.Path));
         _filesToggleRow.Children.Add(Seg("Tree", CommitFilesView.Tree));
     }
@@ -429,7 +468,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
             Source = DiffSource.Commit,
             Path = entryPath,
             CommitId = _id,
-            ParentIndex = _parentIndex,
+            ParentIndex = 1,
             ContextLines = _settings.Current.DiffContextLines,
         });
         return b;
@@ -464,9 +503,9 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         {
             Dispatcher.UIThread.Post(() =>
             {
-                if (_disposed || _detail is null || _head.Children.Count < 2)
+                if (_disposed || _detail is null)
                     return;
-                _head.Children[1] = BuildMetaRow(_detail);
+                _metaHost.Content = BuildMetaRow(_detail);
             });
         }
     }
