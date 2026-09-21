@@ -112,10 +112,14 @@ public sealed partial class CommitGraphControl
     /// (a local-badge double-click stays a plain, silent checkout) — measures divergence against
     /// that remote and either fast-forwards silently (a guaranteed no-loss fast-forward) or asks
     /// before pulling a merge (the local branch also has commits the remote lacks).</summary>
-    private async Task CheckoutLocalThenMaybeSyncAsync(RepositoryContext ctx, GraphDecoration deco, string name)
+    internal async Task CheckoutLocalThenMaybeSyncAsync(RepositoryContext ctx, GraphDecoration deco, string name)
     {
         await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
             () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout");
+
+        // The recovery helper reports failures itself and returns normally, so HEAD is the only reliable signal.
+        if (!string.Equals(ctx.State.CurrentBranch?.Name, name, StringComparison.Ordinal))
+            return;
 
         if (deco.IsLocal)
             return;
