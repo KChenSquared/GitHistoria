@@ -258,7 +258,6 @@ public sealed class HomeView : UserControl, IDisposable
             Sparse = r.Sparse,
         };
 
-        var before = _workspace.Focused;
         try
         {
             await _cloneService.StartAsync(new CloneRequest(r.Url, r.TargetDirectory, options, r.ProfileId));
@@ -269,10 +268,20 @@ public sealed class HomeView : UserControl, IDisposable
             return;
         }
 
-        var after = _workspace.Focused;
-        if (after is not null && !ReferenceEquals(after, before))
-            await OfferSubmoduleInitAsync(after);
+        if (FindClonedRepository(_workspace.OpenRepositories, r.TargetDirectory) is { } cloned)
+            await OfferSubmoduleInitAsync(cloned);
     }
+
+    internal static bool PathsEqual(string a, string b)
+    {
+        var normA = a.Replace('/', '\\').TrimEnd('/', '\\');
+        var normB = b.Replace('/', '\\').TrimEnd('/', '\\');
+        return string.Equals(normA, normB,
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    }
+
+    internal static RepositoryContext? FindClonedRepository(IEnumerable<RepositoryContext> open, string targetDirectory) =>
+        open.FirstOrDefault(ctx => PathsEqual(ctx.RepositoryPath, targetDirectory));
 
     /// <summary>F5: a freshly cloned repository with a top-level `.gitmodules` leaves its
     /// submodules uninitialized unless the user opts in here — matches how "Init & update"
