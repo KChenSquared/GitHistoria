@@ -463,33 +463,65 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
     public async Task<RepositoryContext> OpenSubmoduleAsync(RepositoryContext owner, SubmoduleInfo submodule, CancellationToken ct = default)
     {
+        var root = owner.LinkOwner ?? owner;
         var submodulePath = Path.Combine(owner.RepositoryPath, submodule.Path);
+        var dotGit = Path.Combine(submodulePath, ".git");
+        if (!File.Exists(dotGit) && !Directory.Exists(dotGit))
+        {
+            throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
+                $"Submodule '{submodule.Name}' isn't initialized. Use Init & update first.");
+        }
+
         var discovered = await Task.Run(() => Repository.Discover(submodulePath), ct).ConfigureAwait(false)
             ?? throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
                 $"No Git repository was found at or above '{submodulePath}'.");
 
         var normalizedGitDir = NormalizeDir(discovered);
+        bool orderChanged = false;
         RepositoryContext? existing;
         lock (_sync)
         {
             existing = _open.FirstOrDefault(c =>
                 string.Equals(NormalizeDir(c.GitDirectory), normalizedGitDir, StringComparison.OrdinalIgnoreCase));
-            existing?.LinkOwner ??= owner;
+
+            if (existing is not null && (ReferenceEquals(existing, root) || ReferenceEquals(existing, owner)))
+            {
+                throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
+                    $"Submodule '{submodule.Name}' isn't initialized. Use Init & update first.");
+            }
+
+            if (existing is not null)
+            {
+                if (existing.LinkOwner is null &&
+                    !ReferenceEquals(existing, root) &&
+                    !_open.Any(t => ReferenceEquals(t.LinkOwner, existing)))
+                {
+                    existing.LinkOwner = root;
+                    var oldIndex = _open.IndexOf(existing);
+                    _open.RemoveAt(oldIndex);
+                    var (rStart, rCount) = GroupSpan(root);
+                    var insertAt = Math.Clamp(rStart + rCount, 0, _open.Count);
+                    _open.Insert(insertAt, existing);
+                    orderChanged = oldIndex != insertAt;
+                }
+            }
         }
+
         if (existing is not null)
         {
-            // §I-6.7 / rule 18: raise outside the lock.
             FocusInternal(existing);
+            if (orderChanged)
+                RaiseOpenChanged();
             return existing;
         }
 
         var context = await Task.Run(() => RepositoryContext.Open(submodulePath, _services), ct).ConfigureAwait(false);
         context.Workspace = this;
-        context.LinkOwner = owner;
+        context.LinkOwner = root;
 
         lock (_sync)
         {
-            var (start, count) = GroupSpan(owner);
+            var (start, count) = GroupSpan(root);
             var insertAt = Math.Clamp(start + count, 0, _open.Count);
             _open.Insert(insertAt, context);
         }
@@ -595,33 +627,40 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     }
 
     /// <summary>Under <see cref="_sync"/>: an owner or standalone tab's whole contiguous group
-    /// moves as one block, snapping to the nearest other group's boundary (or the trailing
-    /// sentinel) to <paramref name="newIndex"/> — this never splits another group in the
-    /// middle. Returns whether anything moved.</summary>
+    /// moves as one block. The block is removed from the list, boundaries are collected from the
+    /// remaining list, and the block is inserted at the boundary nearest <paramref name="newIndex"/>
+    /// (snapping in the direction of travel on ties). This ensures groups stay contiguous and
+    /// never split. Returns whether anything moved.</summary>
     private bool MoveGroup(RepositoryContext context, int newIndex)
     {
         var (start, count) = GroupSpan(context);
         if (start < 0 || count == 0)
             return false;
 
+        var block = _open.GetRange(start, count);
+        _open.RemoveRange(start, count);
+
         var boundaries = new List<int>();
         for (var i = 0; i < _open.Count; i++)
         {
-            if (_open[i].LinkOwner is not null) continue;         // only a group's own start counts
-            if (i >= start && i < start + count) continue;        // skip the moving group's own boundary
-            boundaries.Add(i);
+            if (_open[i].LinkOwner is null)
+                boundaries.Add(i);
         }
         boundaries.Add(_open.Count); // trailing sentinel: "move to the very end"
 
-        var target = boundaries.MinBy(b => Math.Abs(b - newIndex));
-        if (target == start)
-            return false; // already at the nearest boundary — no-op
+        var target = boundaries.MinBy(b =>
+        {
+            var dist = Math.Abs(b - newIndex);
+            var tieBreaker = newIndex > start ? -b : b;
+            return (dist, tieBreaker);
+        });
 
-        // No shift adjustment for the just-removed block: matches the pre-existing (ungrouped)
-        // Move's semantics, where the target index is used exactly as computed pre-removal —
-        // Move_reorders_open_tabs_and_raises_open_changed (a single-tab group) depends on this.
-        var block = _open.GetRange(start, count);
-        _open.RemoveRange(start, count);
+        if (target == start)
+        {
+            _open.InsertRange(start, block);
+            return false; // already at the nearest boundary — no-op
+        }
+
         _open.InsertRange(Math.Clamp(target, 0, _open.Count), block);
         return true;
     }
