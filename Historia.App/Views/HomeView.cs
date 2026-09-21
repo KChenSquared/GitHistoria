@@ -15,6 +15,11 @@ public sealed class HomeView : UserControl, IDisposable
     private readonly Historia.Services.AutoFetch.IAutoFetchService _autoFetch;
     private readonly ISubmoduleService _submodules;
 
+    // Avalonia 11.3.20 Fluent vertical ScrollBar expanded width is 16 px (Avalonia.Themes.Fluent Controls/ScrollBar.xaml).
+    // Inset content by 16 px + 4 px margin so the scrollbar sits fully clear of the rows and remove buttons.
+    private const double ScrollBarExpandedWidth = 16;
+    private const double RecentScrollerRightPadding = ScrollBarExpandedWidth + 4;
+
     private readonly UniformWidthStackPanel _recentList = new() { Spacing = 4 };
     private readonly TextBlock _cloneStatus = Text("", "ColorSuccess", 12);
     private readonly Button _cloneCancel;
@@ -51,10 +56,10 @@ public sealed class HomeView : UserControl, IDisposable
         root.Children.Add(Text("Navigate every timeline without the paradox.", "ColorTextMuted", 13));
 
         _cloneBtn = TextButton("Clone…", () => _ = CloneAsync());
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        actions.Children.Add(TextButton("Open repository…", () => _ = OpenAsync(), primary: true));
-        actions.Children.Add(_cloneBtn);
-        actions.Children.Add(TextButton("New repository…", () => _ = InitAsync()));
+        var actions = BuildActionRow(
+            TextButton("Open repository…", () => _ = OpenAsync(), primary: true),
+            _cloneBtn,
+            TextButton("New repository…", () => _ = InitAsync()));
         root.Children.Add(actions);
 
         _cloneCancel = TextButton("Cancel", () => _cloneService.Cancel());
@@ -74,17 +79,15 @@ public sealed class HomeView : UserControl, IDisposable
         root.Children.Add(_cloneBox);
 
         root.Children.Add(Text("Recent", "ColorTextMuted", 12, FontWeight.SemiBold));
-        // 4 px right padding so the minimized scrollbar sits 4 px to the right of the
-        // recent folder boxes; the expanded scrollbar overlaps the boxes on hover.
-        root.Children.Add(new ScrollViewer
-        {
-            Content = _recentList,
-            MaxHeight = 380,
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            Padding = new Thickness(0, 0, 4, 0),
-        });
+        // Right padding keeps the scrollbar clear of the recent folder boxes and their
+        // remove buttons whether minimized or expanded on hover.
+        root.Children.Add(BuildRecentScroller(_recentList));
 
-        Content = ClosablePane(new ScrollViewer { Content = root }, sp, requireFocusedRepo: true);
+        Content = ClosablePane(new ScrollViewer
+        {
+            Content = root,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+        }, sp, requireFocusedRepo: true);
         this.Dyn(BackgroundProperty, "ColorChrome");
 
         _recents.Changed += OnRecentsChanged;
@@ -323,6 +326,28 @@ public sealed class HomeView : UserControl, IDisposable
         _recents.Changed -= OnRecentsChanged;
         _cloneService.Changed -= OnCloneServiceChanged;
     }
+
+    internal static Panel BuildActionRow(params Control[] buttons)
+    {
+        var panel = new WrapPanel
+        {
+            Orientation = Orientation.Horizontal,
+            ItemSpacing = 8,
+            LineSpacing = 8,
+        };
+        foreach (var b in buttons)
+            panel.Children.Add(b);
+        return panel;
+    }
+
+    internal static ScrollViewer BuildRecentScroller(Control content) =>
+        new()
+        {
+            Content = content,
+            MaxHeight = 380,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            Padding = new Thickness(0, 0, RecentScrollerRightPadding, 0),
+        };
 
     private sealed class UniformWidthStackPanel : StackPanel
     {
