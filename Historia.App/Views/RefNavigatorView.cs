@@ -247,7 +247,6 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         // ── Local branches ──
         var localBody = Section($"Local Branches ({local.Count})", _localOpen,
             () => { _localOpen = !_localOpen; Rebuild(); },
-            add: () => _ = CreateBranchAsync(),
             filter: () =>
             {
                 _localFilterOpen = !_localFilterOpen;
@@ -546,9 +545,9 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private static string Count<T>(IReadOnlyList<T>? list) => list is null ? "" : $" ({list.Count})";
 
     /// <summary>Section header; returns the capped body panel when expanded, else null.</summary>
-    private StackPanel? Section(string title, bool open, Action toggle, Action? add = null, Action? filter = null, bool filterOpen = false, TextBox? filterBox = null)
+    private StackPanel? Section(string title, bool open, Action toggle, Action? filter = null, bool filterOpen = false, TextBox? filterBox = null)
     {
-        _root.Children.Add(SectionHeader(title, open, toggle, add, filter));
+        _root.Children.Add(SectionHeader(title, open, toggle, filter));
         if (open && filterOpen && filterBox is not null)
         {
             filterBox.Margin = new Thickness(LeafIndent, 2, 8, 4);
@@ -566,9 +565,9 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         return body;
     }
 
-    private Control SectionHeader(string title, bool open, Action toggle, Action? add, Action? filter = null)
+    private Control SectionHeader(string title, bool open, Action toggle, Action? filter = null)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), Height = 28 };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Height = 28 };
         var caret = Text(open ? "▾" : "▸", "ColorTextMuted", 10);
         caret.Margin = new Thickness(8, 0, 6, 0);
         grid.Children.Add(caret);
@@ -576,14 +575,6 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         label.LetterSpacing = 0.4;
         Grid.SetColumn(label, 1);
         grid.Children.Add(label);
-        if (add is not null)
-        {
-            var plus = new Button { Content = "＋", Padding = new Thickness(8, 0), Background = Brushes.Transparent, BorderThickness = default };
-            ToolTip.SetTip(plus, "New branch");
-            plus.Click += (_, e) => { e.Handled = true; add(); };
-            Grid.SetColumn(plus, 2);
-            grid.Children.Add(plus);
-        }
         if (filter is not null)
         {
             var filterBtn = IconButton("filter_alt", "Filter this section", () => filter());
@@ -592,7 +583,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 e.Handled = true;
                 filter();
             }, RoutingStrategies.Tunnel);
-            Grid.SetColumn(filterBtn, 3);
+            Grid.SetColumn(filterBtn, 2);
             grid.Children.Add(filterBtn);
         }
         var b = new Border { Child = grid, Cursor = new Cursor(StandardCursorType.Hand) };
@@ -815,24 +806,6 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             }
             _notifications.Publish(NotificationSeverity.Success, $"Switched to {name}.");
         }, "Checkout");
-    }
-
-    private async Task CreateBranchAsync()
-    {
-        if (_repo is null) return;
-        var name = await _dialogs.PromptAsync("New branch", "Branch name:");
-        if (string.IsNullOrWhiteSpace(name)) return;
-        try
-        {
-            var start = _repo.State.CurrentBranch?.CanonicalName ?? "HEAD";
-            await _repo.Gateway.CreateBranchAsync(name.Trim(), start, checkout: true, _repo.Lifetime);
-            await _repo.State.RefreshAllAsync(_repo.Lifetime);
-            _notifications.Publish(NotificationSeverity.Success, $"Created and checked out {name.Trim()}.");
-        }
-        catch (Exception ex)
-        {
-            _notifications.Publish(NotificationSeverity.Error, $"Could not create branch: {ex.Message}", ex.NotificationDetails());
-        }
     }
 
     private async Task DeleteTagAsync(TagInfo tag)
