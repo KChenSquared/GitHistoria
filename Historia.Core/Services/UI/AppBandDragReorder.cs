@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.UI;
+namespace Historia.Services.UI;
 
 /// <summary>
 /// Pure geometry for the app-band tab-strip drag reorder (§V2-9.3). Lifted out of
@@ -47,4 +47,25 @@ public static class AppBandDragReorder
     /// member or fewer (nothing to reorder among).</summary>
     public static int ClampChildTarget(int rawTarget, int groupStart, int groupCount)
         => groupCount <= 1 ? groupStart : Math.Clamp(rawTarget, groupStart + 1, groupStart + groupCount - 1);
+
+    /// <summary>
+    /// Returns the flat index at which the moving group's block should be inserted
+    /// after it has been removed: the sum of the sizes of the first
+    /// <paramref name="targetGroup"/> groups, skipping <paramref name="currentGroup"/>.
+    /// <paramref name="targetGroup"/> is the group slot the block should occupy afterwards,
+    /// which is what <see cref="TargetIndex"/> returns.
+    /// </summary>
+    public static int BlockInsertIndex(IReadOnlyList<int> groupSizes, int currentGroup, int targetGroup)
+    {
+        var insertAt = 0;
+        var count = 0;
+        for (var i = 0; i < groupSizes.Count && count < targetGroup; i++)
+        {
+            if (i == currentGroup)
+                continue;
+            insertAt += groupSizes[i];
+            count++;
+        }
+        return insertAt;
+    }
 }

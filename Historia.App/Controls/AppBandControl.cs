@@ -76,9 +76,10 @@ public sealed class AppBandControl : UserControl, IDisposable
     // target into that span. -1/0 when the pressed tab isn't a group member (no clamping needed).
     private int _dragGroupStart = -1;
     private int _dragGroupCount;
-    // Reused per-group width/start buffers for an owner/standalone drag's block-move preview.
+    // Reused per-group width/start/size buffers for an owner/standalone drag's block-move preview.
     private readonly List<double> _reorderGroupWidths = new();
     private readonly List<int> _reorderGroupStarts = new();
+    private readonly List<int> _reorderGroupSizes = new();
 
     public AppBandControl()
     {
@@ -909,8 +910,9 @@ public sealed class AppBandControl : UserControl, IDisposable
 
             _reorderGroupWidths.Clear();
             _reorderGroupStarts.Clear();
+            _reorderGroupSizes.Clear();
             var i = 0;
-            while (i < _tabViews.Count)
+            while (i < _tabViews.Count && _tabViews[i].Tag is RepositoryContext)
             {
                 var start = i;
                 var owner = _tabViews[i].Tag as RepositoryContext;
@@ -927,6 +929,7 @@ public sealed class AppBandControl : UserControl, IDisposable
                 }
                 _reorderGroupWidths.Add(w);
                 _reorderGroupStarts.Add(start);
+                _reorderGroupSizes.Add(i - start);
             }
 
             var currentGroupIndex = _reorderGroupStarts.IndexOf(groupStart);
@@ -937,12 +940,7 @@ public sealed class AppBandControl : UserControl, IDisposable
             if (targetGroupIndex == currentGroupIndex)
                 return;
 
-            var insertAt = 0;
-            for (var g = 0; g < targetGroupIndex; g++)
-            {
-                var memberCount = (g + 1 < _reorderGroupStarts.Count ? _reorderGroupStarts[g + 1] : _tabViews.Count) - _reorderGroupStarts[g];
-                insertAt += memberCount;
-            }
+            var insertAt = AppBandDragReorder.BlockInsertIndex(_reorderGroupSizes, currentGroupIndex, targetGroupIndex);
 
             var block = _tabViews.GetRange(groupStart, groupCount);
             _tabViews.RemoveRange(groupStart, groupCount);
