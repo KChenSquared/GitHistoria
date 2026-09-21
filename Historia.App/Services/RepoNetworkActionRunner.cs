@@ -92,7 +92,25 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         Historia.Diagnostics.PerfLog.Mark($"manual {op}: commit-graph refresh requested ({repo.DisplayName})");
     }
 
-    private async Task ExecOpAsync(RepositoryContext repo, RepoNetworkAction op, string remote, string? branch,
+    internal static PushSpec BuildPushSpec(string branch, string? remoteBranch, bool targetHasUpstream)
+    {
+        var refspec = remoteBranch is not null && !string.Equals(branch, remoteBranch, StringComparison.Ordinal)
+            ? $"{branch}:{remoteBranch}"
+            : branch;
+        return new PushSpec
+        {
+            RefSpec = refspec,
+            SetUpstream = !targetHasUpstream,
+        };
+    }
+
+    internal static bool TargetHasUpstream(IEnumerable<BranchInfo> branches, string branch)
+    {
+        var target = branches.FirstOrDefault(b => !b.IsRemote && string.Equals(b.Name, branch, StringComparison.Ordinal));
+        return target?.UpstreamName is not null;
+    }
+
+    private async Task ExecOpAsync(RepositoryContext repo, RepoNetworkAction op, string remote, string? branch, string? remoteBranch,
         IProgress<GitProgress> progress, CancellationToken ct)
     {
         switch (op)
@@ -103,15 +121,23 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                 _notifications.Publish(NotificationSeverity.Success, $"Fetched {remote}.");
                 break;
             case RepoNetworkAction.Pull when branch is not null:
-                await repo.Gateway.PullAsync(remote, branch, GitPullOptions.From(_settings.Current), progress, ct);
-                await FollowUpFetchAsync(repo, "Pulled", remote, branch, progress, ct);
+                if (!string.Equals(branch, repo.State.CurrentBranch?.Name, StringComparison.Ordinal))
+                {
+                    _notifications.Publish(NotificationSeverity.Warning, "Pull only runs on the checked-out branch.");
+                    return;
+                }
+                var targetRemoteBranch = remoteBranch ?? branch;
+                await repo.Gateway.PullAsync(remote, targetRemoteBranch, GitPullOptions.From(_settings.Current), progress, ct);
+                await FollowUpFetchAsync(repo, "Pulled", remote, targetRemoteBranch, progress, ct);
                 RefreshCommitGraphAfterFetch(repo, op);
-                _notifications.Publish(NotificationSeverity.Success, $"Pulled {remote}/{branch}.");
+                _notifications.Publish(NotificationSeverity.Success, $"Pulled {remote}/{targetRemoteBranch}.");
                 break;
             case RepoNetworkAction.Push when branch is not null:
-                var spec = new PushSpec { RefSpec = branch, SetUpstream = repo.State.CurrentBranch?.UpstreamName is null };
+                var hasUpstream = TargetHasUpstream(repo.State.Branches, branch);
+                var spec = BuildPushSpec(branch, remoteBranch, hasUpstream);
                 await repo.Gateway.PushAsync(remote, spec, progress, ct);
-                await FollowUpFetchAsync(repo, "Pushed", remote, branch, progress, ct);
+                var pushedRemoteBranch = remoteBranch ?? branch;
+                await FollowUpFetchAsync(repo, "Pushed", remote, pushedRemoteBranch, progress, ct);
                 RefreshCommitGraphAfterFetch(repo, op);
                 _notifications.Publish(NotificationSeverity.Success, $"Pushed to {remote}.");
                 break;
@@ -156,6 +182,12 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         RepositoryContext repo, string remote, string branch, HistoriaGitException ex,
         IProgress<GitProgress> progress, CancellationToken ct)
     {
+        if (!string.Equals(branch, repo.State.CurrentBranch?.Name, StringComparison.Ordinal))
+        {
+            _notifications.Publish(NotificationSeverity.Warning, ex.Message, ex.Details);
+            return;
+        }
+
         // Left→right: Fetch & merge (blue default) · Fetch & rebase · Force push (red) · Cancel.
         const int Merge = 0, Rebase = 1, Force = 2;
         var choice = await _dialogs.ChooseAsync(
@@ -178,7 +210,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             return;
         }
 
-        var setUpstream = repo.State.CurrentBranch?.UpstreamName is null;
+        var setUpstream = !TargetHasUpstream(repo.State.Branches, branch);
         try
         {
             if (choice is Rebase or Merge)
@@ -265,7 +297,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         try
         {
             await EnsureActiveProfileFreshAsync(repo);
-            await ExecOpAsync(repo, op, remote, branch, progress, ct);
+            await ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct);
             await repo.State.RefreshAllAsync(repo.Lifetime);
         }
         catch (OperationCanceledException)
@@ -287,7 +319,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                     var key = repo.IdentityKey ?? await _identity.ResolveAsync(repo, repo.Lifetime);
                     await _profiles.SetLocalConfigForRepositoryAsync(key, repo.RepositoryPath, repo.Lifetime);
                     repo.State.SetActiveProfile(null);
-                    await ExecOpAsync(repo, op, remote, branch, progress, ct);
+                    await ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct);
                     await repo.State.RefreshAllAsync(repo.Lifetime);
                 }
                 catch (Exception retryEx)
@@ -313,10 +345,11 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.UncommittedChanges && op == RepoNetworkAction.Pull && branch is not null)
         {
+            var pullTarget = request.RemoteBranch ?? branch;
             _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.Details,
             [
                 new NotificationAction("Stash & retry", () => BranchMenu.StashAndRetryAsync(repo, _notifications, _stashes,
-                    () => repo.Gateway.PullAsync(remote, branch, GitPullOptions.From(_settings.Current), null, repo.Lifetime), "Pull")),
+                    () => repo.Gateway.PullAsync(remote, pullTarget, GitPullOptions.From(_settings.Current), null, repo.Lifetime), "Pull")),
             ]);
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.RemoteRejected && op == RepoNetworkAction.Push && branch is not null)

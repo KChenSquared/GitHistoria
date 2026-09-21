@@ -57,6 +57,21 @@ public sealed class BranchMenuDivergenceTests
         public Task PushAsync(string remote, PushSpec spec, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();
     }
 
+    private sealed class CapturingActionBus : IRepoActionBus
+    {
+        public RepoNetworkRequest? LastRequest { get; private set; }
+        public event EventHandler<RepoNetworkRequest>? NetworkActionRequested;
+
+        public void RequestNetworkAction(RepoNetworkAction action) =>
+            RequestNetworkAction(new RepoNetworkRequest(action, null, null));
+
+        public void RequestNetworkAction(RepoNetworkRequest request)
+        {
+            LastRequest = request;
+            NetworkActionRequested?.Invoke(this, request);
+        }
+    }
+
     private static BranchMenu.Target LocalTarget(string name, string currentBranch, string? counterpart, string? remoteAlias) =>
         new(Name: name, CopyName: name, TrackingRef: name, IsLocal: true, TipSha: null, CurrentBranch: currentBranch,
             CounterpartRef: counterpart, RemoteAlias: remoteAlias);
@@ -66,6 +81,68 @@ public sealed class BranchMenuDivergenceTests
             CounterpartRef: counterpart, RemoteAlias: remoteAlias);
 
     private static string? Header(Control c) => (c as MenuItem)?.Header as string;
+
+    [Fact]
+    public async Task Local_behind_current_branch_pulls_the_upstream_name()
+    {
+        var gw = new StubGateway { Result = new AheadBehind(0, 2) };
+        var t = LocalTarget("feature", currentBranch: "feature", counterpart: "origin/feat-x", remoteAlias: "origin");
+        var bus = new CapturingActionBus();
+
+        var items = await BranchMenu.BuildDivergenceItemsAsync(t, gw, bus, CancellationToken.None);
+
+        var item = Assert.Single(items);
+        item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+
+        Assert.NotNull(bus.LastRequest);
+        Assert.Equal("feature", bus.LastRequest.Value.Branch);
+        Assert.Equal("feat-x", bus.LastRequest.Value.RemoteBranch);
+    }
+
+    [Fact]
+    public async Task Local_ahead_pushes_to_the_upstream_name()
+    {
+        var gw = new StubGateway { Result = new AheadBehind(2, 0) };
+        var t = LocalTarget("feature", currentBranch: "feature", counterpart: "origin/feat-x", remoteAlias: "origin");
+        var bus = new CapturingActionBus();
+
+        var items = await BranchMenu.BuildDivergenceItemsAsync(t, gw, bus, CancellationToken.None);
+
+        var item = Assert.Single(items);
+        item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+
+        Assert.NotNull(bus.LastRequest);
+        Assert.Equal("feature", bus.LastRequest.Value.Branch);
+        Assert.Equal("feat-x", bus.LastRequest.Value.RemoteBranch);
+    }
+
+    [Fact]
+    public async Task A_remote_alias_with_a_slash_is_stripped_once()
+    {
+        var gw = new StubGateway { Result = new AheadBehind(0, 1) };
+        var t = LocalTarget("main", currentBranch: "main", counterpart: "team/infra/main", remoteAlias: "team/infra");
+        var bus = new CapturingActionBus();
+
+        var items = await BranchMenu.BuildDivergenceItemsAsync(t, gw, bus, CancellationToken.None);
+
+        var item = Assert.Single(items);
+        item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+
+        Assert.NotNull(bus.LastRequest);
+        Assert.Equal("main", bus.LastRequest.Value.RemoteBranch);
+    }
+
+    [Fact]
+    public async Task Remote_row_ahead_and_behind_offers_no_push()
+    {
+        var gw = new StubGateway { Result = new AheadBehind(2, 1) };
+        var t = RemoteTarget("main", "origin/main", currentBranch: "main", counterpart: "main", remoteAlias: "origin");
+        var bus = new CapturingActionBus();
+
+        var items = await BranchMenu.BuildDivergenceItemsAsync(t, gw, bus, CancellationToken.None);
+
+        Assert.DoesNotContain(items, i => (Header(i) ?? "").StartsWith("Push", StringComparison.OrdinalIgnoreCase));
+    }
 
     [Fact]
     public async Task Local_ahead_offers_push_regardless_of_current_branch()

@@ -34,5 +34,22 @@ public sealed class RepoActionBusTests
         Assert.Equal(RepoNetworkAction.Push, received!.Value.Action);
         Assert.Equal("upstream", received.Value.Remote);
         Assert.Equal("feature-a", received.Value.Branch);
+        Assert.Null(received.Value.RemoteBranch);
+    }
+
+    [Fact]
+    public void Targeted_overload_round_trips_remote_branch()
+    {
+        var bus = new RepoActionBus();
+        RepoNetworkRequest? received = null;
+        bus.NetworkActionRequested += (_, r) => received = r;
+
+        bus.RequestNetworkAction(new RepoNetworkRequest(RepoNetworkAction.Push, "upstream", "feature-a", "feat-x"));
+
+        Assert.NotNull(received);
+        Assert.Equal(RepoNetworkAction.Push, received!.Value.Action);
+        Assert.Equal("upstream", received.Value.Remote);
+        Assert.Equal("feature-a", received.Value.Branch);
+        Assert.Equal("feat-x", received.Value.RemoteBranch);
     }
 }

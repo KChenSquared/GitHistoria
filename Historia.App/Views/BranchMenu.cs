@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>
 /// v8 M4: the branch context-menu items common to GitKraken · Fork · GitComet · GitHub Desktop,
@@ -47,8 +47,13 @@ internal static class BranchMenu
             ? string.Equals(t.Name, t.CurrentBranch, StringComparison.Ordinal)
             : string.Equals(counterpart, t.CurrentBranch, StringComparison.Ordinal);
 
-        void Push(string branchName) => actions.RequestNetworkAction(new RepoNetworkRequest(RepoNetworkAction.Push, remoteAlias, branchName));
-        void Pull(string branchName) => actions.RequestNetworkAction(new RepoNetworkRequest(RepoNetworkAction.Pull, remoteAlias, branchName));
+        var prefix = $"{remoteAlias}/";
+        var remoteBranch = t.IsLocal
+            ? (counterpart.StartsWith(prefix, StringComparison.Ordinal) ? counterpart[prefix.Length..] : counterpart)
+            : (t.TrackingRef.StartsWith(prefix, StringComparison.Ordinal) ? t.TrackingRef[prefix.Length..] : t.TrackingRef);
+
+        void Push(string branchName) => actions.RequestNetworkAction(new RepoNetworkRequest(RepoNetworkAction.Push, remoteAlias, branchName, remoteBranch));
+        void Pull(string branchName) => actions.RequestNetworkAction(new RepoNetworkRequest(RepoNetworkAction.Pull, remoteAlias, branchName, remoteBranch));
 
         var items = new List<Control>();
         if (t.IsLocal)
@@ -60,7 +65,7 @@ internal static class BranchMenu
         }
         else
         {
-            if (div.Ahead > 0)
+            if (div.Ahead > 0 && div.Behind == 0)
                 items.Add(MenuLeaf($"Push {t.Name} to {remoteAlias}", () => Push(t.Name)));
             else if (div.Behind > 0 && isCurrentLocalBranch)
                 items.Add(MenuLeaf($"Pull {t.TrackingRef}", () => Pull(t.Name)));
