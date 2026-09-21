@@ -200,7 +200,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         var arrowStrip = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 0, // R3: was 4, -4 so the two buttons sit flush against each other
+            Spacing = 0, // buttons sit flush against each other
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -267,7 +267,13 @@ public sealed class StagingPanelView : UserControl, IDisposable
         string? bulkClass = null, Control? extraAction = null, Control? headerCenter = null, Thickness? borderThickness = null,
         double minHeight = 64)
     {
-        var head = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto"), Margin = new Thickness(0, 0, 0, 2) };
+        // The header row gets the same gap above (from the section's top border) as below (to the
+        // divider), so its centred children (checkbox, label, bulk button, arrows) sit centred
+        // between the two rules; the row itself is 32 px because of the Fluent CheckBox MinHeight.
+        const double headerGap = 2;
+        const double dividerBottomGap = 6;
+
+        var head = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto"), Margin = new Thickness(0, 0, 0, headerGap) };
         selectAll.VerticalAlignment = VerticalAlignment.Center;
         selectAll.Margin = new Thickness(2, 0, 6, 0);
         head.Children.Add(selectAll);
@@ -307,16 +313,11 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
         // Rule between the header row and the list (or its "No changes." / "Nothing staged."
         // placeholder), so the header reads as a distinct band.
-        const double dividerBottomGap = 6;
         var divider = new Border { Height = 1, Margin = new Thickness(0, 0, 0, dividerBottomGap) }
             .Dyn(Border.BackgroundProperty, "ColorBorder");
         DockPanel.SetDock(divider, Dock.Top);
 
-        // R2: the gap above the header text must match the gap below the divider — the top
-        // margin was 8 (the same as the other three sides) while the divider's bottom margin is
-        // 6, so the header sat visibly lower than the rule below it than the rule sits above the
-        // rows. Only the top margin changes; left/right/bottom stay at 8.
-        var inner = new DockPanel { LastChildFill = true, Margin = new Thickness(8, dividerBottomGap, 8, 8) };
+        var inner = new DockPanel { LastChildFill = true, Margin = new Thickness(8, headerGap, 8, 8) };
         DockPanel.SetDock(head, Dock.Top);
         inner.Children.Add(head);
         inner.Children.Add(divider);
@@ -332,7 +333,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private Button ArrowButton(string icon, string tintKey, string tip, Action onClick)
     {
-        var glyph = IconGlyphPath(icon, 21, tintKey); // R3: was 15, +6
+        var glyph = IconGlyphPath(icon, 21, tintKey);
         var b = new Button
         {
             Content = glyph,
