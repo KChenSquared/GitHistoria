@@ -711,9 +711,9 @@ public sealed class LibGit2Service
         var state = entry.State;
         oldPath = null;
         if (state.HasFlag(FileStatus.NewInIndex)) { kind = FileChangeKind.Added; return true; }
+        if (state.HasFlag(FileStatus.RenamedInIndex)) { kind = FileChangeKind.Renamed; oldPath = entry.HeadToIndexRenameDetails?.OldFilePath; return true; }
         if (state.HasFlag(FileStatus.ModifiedInIndex)) { kind = FileChangeKind.Modified; return true; }
         if (state.HasFlag(FileStatus.DeletedFromIndex)) { kind = FileChangeKind.Deleted; return true; }
-        if (state.HasFlag(FileStatus.RenamedInIndex)) { kind = FileChangeKind.Renamed; oldPath = entry.HeadToIndexRenameDetails?.OldFilePath; return true; }
         if (state.HasFlag(FileStatus.TypeChangeInIndex)) { kind = FileChangeKind.TypeChanged; return true; }
         kind = default;
         return false;
@@ -723,9 +723,9 @@ public sealed class LibGit2Service
     {
         var state = entry.State;
         oldPath = null;
+        if (state.HasFlag(FileStatus.RenamedInWorkdir)) { kind = FileChangeKind.Renamed; oldPath = entry.IndexToWorkDirRenameDetails?.OldFilePath; return true; }
         if (state.HasFlag(FileStatus.ModifiedInWorkdir)) { kind = FileChangeKind.Modified; return true; }
         if (state.HasFlag(FileStatus.DeletedFromWorkdir)) { kind = FileChangeKind.Deleted; return true; }
-        if (state.HasFlag(FileStatus.RenamedInWorkdir)) { kind = FileChangeKind.Renamed; oldPath = entry.IndexToWorkDirRenameDetails?.OldFilePath; return true; }
         if (state.HasFlag(FileStatus.TypeChangeInWorkdir)) { kind = FileChangeKind.TypeChanged; return true; }
         kind = default;
         return false;

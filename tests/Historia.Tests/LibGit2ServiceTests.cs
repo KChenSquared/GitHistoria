@@ -62,6 +62,63 @@ public class LibGit2ServiceTests
     }
 
     [Fact]
+    public void A_staged_rename_with_edits_is_renamed_with_its_old_path()
+    {
+        var content = string.Join("\n", Enumerable.Range(1, 50).Select(i => $"Line {i} content for similarity")) + "\n";
+        using var repo = TestRepositoryBuilder.FromTemplate("libgit2-staged-rename-edit-seed", r =>
+        {
+            r.WriteFile("original.txt", content).Stage().Commit("initial");
+        });
+        repo.Git("mv", "original.txt", "renamed.txt");
+        File.AppendAllText(Path.Combine(repo.Path, "renamed.txt"), "Extra line\n");
+        repo.Git("add", "renamed.txt");
+
+        using var git = new Repository(repo.Path);
+        var status = _svc.ProjectStatus(git);
+
+        var entry = Assert.Single(status.Staged, e => e.Path == "renamed.txt");
+        Assert.Equal(FileChangeKind.Renamed, entry.Kind);
+        Assert.Equal("original.txt", entry.OldPath);
+    }
+
+    [Fact]
+    public void A_workdir_rename_with_edits_is_renamed_with_its_old_path()
+    {
+        var content = string.Join("\n", Enumerable.Range(1, 50).Select(i => $"Line {i} content for similarity")) + "\n";
+        using var repo = TestRepositoryBuilder.FromTemplate("libgit2-workdir-rename-edit-seed", r =>
+        {
+            r.WriteFile("original.txt", content).Stage().Commit("initial");
+        });
+        File.Move(Path.Combine(repo.Path, "original.txt"), Path.Combine(repo.Path, "renamed.txt"));
+        File.AppendAllText(Path.Combine(repo.Path, "renamed.txt"), "Extra line\n");
+
+        using var git = new Repository(repo.Path);
+        var status = _svc.ProjectStatus(git);
+
+        var entry = Assert.Single(status.Unstaged, e => e.Path == "renamed.txt");
+        Assert.Equal(FileChangeKind.Renamed, entry.Kind);
+        Assert.Equal("original.txt", entry.OldPath);
+    }
+
+    [Fact]
+    public void StagePathExpansion_expands_a_rename_with_edits()
+    {
+        var content = string.Join("\n", Enumerable.Range(1, 50).Select(i => $"Line {i} content for similarity")) + "\n";
+        using var repo = TestRepositoryBuilder.FromTemplate("libgit2-stage-expansion-rename-seed", r =>
+        {
+            r.WriteFile("original.txt", content).Stage().Commit("initial");
+        });
+        File.Move(Path.Combine(repo.Path, "original.txt"), Path.Combine(repo.Path, "renamed.txt"));
+        File.AppendAllText(Path.Combine(repo.Path, "renamed.txt"), "Extra line\n");
+
+        using var git = new Repository(repo.Path);
+        var status = _svc.ProjectStatus(git);
+
+        var expanded = StagePathExpansion.ForStaging(status.Unstaged, ["renamed.txt"]);
+        Assert.Equal(["renamed.txt", "original.txt"], expanded);
+    }
+
+    [Fact]
     public void A_plain_modification_has_no_old_path()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("libgit2-plain-mod-seed", r =>
