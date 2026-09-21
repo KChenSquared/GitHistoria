@@ -28,7 +28,15 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     private Dictionary<string, SortedSet<string>>? _treeChildFolders;
     private readonly HashSet<string> _collapsedFolders = new(StringComparer.Ordinal);
 
-    private int DetailFontSize => Math.Clamp(_settings.Current.CommitDetailFontSize, 10, 24);
+    private const double AuthorGap = SectionFrame.HeaderGap + 4;
+    private const double FileRowFontSize = 14;
+
+    private readonly Border _authorRule;
+    private readonly TextBlock _filesLabel;
+    private TextBlock? _authorText;
+    private TextBlock? _hashText;
+    private TextBlock? _dateText;
+    private StackPanel? _parentsList;
 
     internal ContentControl MetaHostForTesting => _metaHost;
     internal ContentControl ParentsHostForTesting => _parentsHost;
@@ -37,6 +45,12 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     internal Border TopSectionForTesting { get; }
     internal Control FilesSectionForTesting { get; }
     internal Control FilesDividerHandleForTesting { get; }
+    internal TextBlock? AuthorTextForTesting => _authorText;
+    internal TextBlock? HashTextForTesting => _hashText;
+    internal TextBlock? DateTextForTesting => _dateText;
+    internal StackPanel? ParentsListForTesting => _parentsList;
+    internal Border AuthorRuleForTesting => _authorRule;
+    internal TextBlock FilesLabelForTesting => _filesLabel;
 
     public CommitDetailPanelView(IServiceProvider sp, RepositoryContext ctx, ObjectId id)
     {
@@ -54,12 +68,20 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         var topInner = new DockPanel
         {
             LastChildFill = true,
-            Margin = new Thickness(SectionFrame.InnerSide, SectionFrame.HeaderGap, SectionFrame.InnerSide, SectionFrame.InnerBottom),
+            Margin = new Thickness(SectionFrame.InnerSide, AuthorGap, SectionFrame.InnerSide, SectionFrame.InnerBottom),
         };
         DockPanel.SetDock(_metaHost, Dock.Top);
         DockPanel.SetDock(_parentsHost, Dock.Top);
         topInner.Children.Add(_metaHost);
         topInner.Children.Add(_parentsHost);
+
+        _authorRule = new Border
+        {
+            Height = 1,
+            Margin = new Thickness(0, AuthorGap, 0, SectionFrame.DividerBottomGap),
+        }.Dyn(Border.BackgroundProperty, "ColorBorder");
+        DockPanel.SetDock(_authorRule, Dock.Top);
+        topInner.Children.Add(_authorRule);
 
         var messageScroll = new ScrollViewer
         {
@@ -76,8 +98,9 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         }.Dyn(Border.BorderBrushProperty, "ColorBorder");
         TopSectionForTesting = topSection;
 
+        _filesLabel = Text("Files:", "ColorText", 16);
         var filesSection = SectionFrame.Build(
-            left: Text("Files:", "ColorText", 14),
+            left: _filesLabel,
             center: null,
             right: _filesToggleRow,
             body: _filesHost,
@@ -200,9 +223,8 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     }
 
     /// <summary>
-    /// Author + date + hash line. The author's email shows only as a tooltip on the name
-    /// (not inline); date and hash are right-aligned, and the hash is a click-to-copy control
-    /// styled brighter and underlined to read as clickable.
+    /// Author name and click-to-copy hash. Author email shows as a tooltip on the name.
+    /// The commit date has moved to the parents row.
     /// </summary>
     private Control BuildMetaRow(CommitDetail detail)
     {
@@ -212,6 +234,37 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         ToolTip.SetTip(author, detail.AuthorEmail);
         Grid.SetColumn(author, 0);
         row.Children.Add(author);
+        _authorText = author;
+
+        var hash = Text(detail.Id.Sha[..10], "ColorAccent", 14);
+        hash.VerticalAlignment = VerticalAlignment.Center;
+        hash.TextDecorations = TextDecorations.Underline;
+        hash.Cursor = new Cursor(StandardCursorType.Hand);
+        ToolTip.SetTip(hash, "Click to copy full commit hash");
+        var fullSha = detail.Id.Sha;
+        hash.PointerPressed += (_, _) =>
+            _ = TopLevel.GetTopLevel(hash)?.Clipboard?.SetTextAsync(fullSha);
+        Grid.SetColumn(hash, 1);
+        row.Children.Add(hash);
+        _hashText = hash;
+
+        return row;
+    }
+
+    /// <summary>
+    /// Date on the left (yyyy-MM-dd), parents list on the right.
+    /// </summary>
+    private Control BuildParentsRow(CommitDetail detail)
+    {
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+
+        var displayedDate = CommitDateDisplay.Pick(detail.AuthorWhen, detail.CommitWhen, _settings.Current.ShowAuthorDate);
+        var dateText = Text($"{displayedDate:yyyy-MM-dd}", "ColorTextMuted", 12);
+        dateText.VerticalAlignment = VerticalAlignment.Center;
+        ToolTip.SetTip(dateText, $"Committed {detail.CommitWhen:yyyy-MM-dd HH:mm}\nAuthored {detail.AuthorWhen:yyyy-MM-dd HH:mm}");
+        Grid.SetColumn(dateText, 0);
+        row.Children.Add(dateText);
+        _dateText = dateText;
 
         var right = new StackPanel
         {
@@ -219,55 +272,37 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
             Spacing = 8,
             HorizontalAlignment = HorizontalAlignment.Right,
         };
-        var displayedDate = CommitDateDisplay.Pick(detail.AuthorWhen, detail.CommitWhen, _settings.Current.ShowAuthorDate);
-        var dateText = Text($"{displayedDate:yyyy-MM-dd HH:mm}", "ColorTextMuted", 16);
-        ToolTip.SetTip(dateText, $"Committed {detail.CommitWhen:yyyy-MM-dd HH:mm}\nAuthored {detail.AuthorWhen:yyyy-MM-dd HH:mm}");
-        right.Children.Add(dateText);
-
-        var hash = Text(detail.Id.Sha[..10], "ColorAccent", 16);
-        hash.TextDecorations = TextDecorations.Underline;
-        hash.Cursor = new Cursor(StandardCursorType.Hand);
-        ToolTip.SetTip(hash, "Click to copy full commit hash");
-        var fullSha = detail.Id.Sha;
-        hash.PointerPressed += (_, _) =>
-            _ = TopLevel.GetTopLevel(hash)?.Clipboard?.SetTextAsync(fullSha);
-        right.Children.Add(hash);
-
-        Grid.SetColumn(right, 1);
-        row.Children.Add(right);
-        return row;
-    }
-
-    private Control BuildParentsRow(CommitDetail detail)
-    {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        row.Children.Add(Text("Parent(s):", "ColorTextMuted", 12));
+        _parentsList = right;
+        right.Children.Add(Text("Parent(s):", "ColorTextMuted", 12));
 
         if (detail.ParentIds.Count == 0)
         {
-            row.Children.Add(Text("none", "ColorTextMuted", 12));
-            return row;
+            right.Children.Add(Text("none", "ColorTextMuted", 12));
         }
-
-        foreach (var pid in detail.ParentIds)
+        else
         {
-            var parentSha = pid.Sha;
-            var shortSha = parentSha.Length >= 10 ? parentSha[..10] : parentSha;
-            var hash = Text(shortSha, "ColorText", 12);
-            hash.TextDecorations = TextDecorations.Underline;
-            hash.Cursor = new Cursor(StandardCursorType.Hand);
-            ToolTip.SetTip(hash, "Go to parent commit");
-            hash.PointerPressed += (_, e) =>
+            foreach (var pid in detail.ParentIds)
             {
-                if (!e.GetCurrentPoint(hash).Properties.IsLeftButtonPressed)
-                    return;
-                e.Handled = true;
-                _ctx.State.SetSelectedCommit(pid);
-                _ctx.State.RequestRevealCommit(pid);
-            };
-            row.Children.Add(hash);
+                var parentSha = pid.Sha;
+                var shortSha = parentSha.Length >= 10 ? parentSha[..10] : parentSha;
+                var hash = Text(shortSha, "ColorText", 12);
+                hash.TextDecorations = TextDecorations.Underline;
+                hash.Cursor = new Cursor(StandardCursorType.Hand);
+                ToolTip.SetTip(hash, "Go to parent commit");
+                hash.PointerPressed += (_, e) =>
+                {
+                    if (!e.GetCurrentPoint(hash).Properties.IsLeftButtonPressed)
+                        return;
+                    e.Handled = true;
+                    _ctx.State.SetSelectedCommit(pid);
+                    _ctx.State.RequestRevealCommit(pid);
+                };
+                right.Children.Add(hash);
+            }
         }
 
+        Grid.SetColumn(right, 1);
+        row.Children.Add(right);
         return row;
     }
 
@@ -428,11 +463,11 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
 
     private Control FolderRow(string folderPath, string name, int depth, bool collapsed)
     {
-        var g = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Height = DetailFontSize + 8 };
-        var chev = Text(collapsed ? "▸" : "▾", "ColorTextMuted", DetailFontSize - 2);
+        var g = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Height = FileRowFontSize + 8 };
+        var chev = Text(collapsed ? "▸" : "▾", "ColorTextMuted", FileRowFontSize - 2);
         chev.Margin = new Thickness(12 + depth * 14, 0, 0, 0);
         g.Children.Add(chev);
-        var label = Text(name + "/", "ColorTextMuted", DetailFontSize, FontWeight.SemiBold);
+        var label = Text(name + "/", "ColorTextMuted", FileRowFontSize, FontWeight.SemiBold);
         label.Margin = new Thickness(6, 0, 0, 0);
         Grid.SetColumn(label, 1);
         g.Children.Add(label);
@@ -451,11 +486,11 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
 
     private Control FileLeafRow(FileStatusEntry f, string display, int indent)
     {
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Height = DetailFontSize + 8 };
-        var kind = Text(KindGlyph(f.Kind), "ColorTextMuted", DetailFontSize);
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Height = FileRowFontSize + 8 };
+        var kind = Text(KindGlyph(f.Kind), "ColorTextMuted", FileRowFontSize);
         kind.Margin = new Thickness(12 + indent * 14 + (indent > 0 ? 14 : 0), 0, 0, 0);
         row.Children.Add(kind);
-        var p = Text(display, "ColorText", DetailFontSize);
+        var p = Text(display, "ColorText", FileRowFontSize);
         p.Margin = new Thickness(8, 0, 0, 0);
         Grid.SetColumn(p, 1);
         row.Children.Add(p);
@@ -506,6 +541,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
                 if (_disposed || _detail is null)
                     return;
                 _metaHost.Content = BuildMetaRow(_detail);
+                _parentsHost.Content = BuildParentsRow(_detail);
             });
         }
     }

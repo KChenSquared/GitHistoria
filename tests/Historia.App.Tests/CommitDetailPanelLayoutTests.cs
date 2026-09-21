@@ -53,7 +53,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task Author_line_is_16_and_uses_text_colour()
+    public async Task Author_row_is_author_16_and_hash_14()
     {
         var headId = _fixture.HeadCommitId;
         var view = new CommitDetailPanelView(_sp, _context, headId);
@@ -63,20 +63,92 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             await WaitForCommitLoadedAsync(view);
 
-            var metaRow = Assert.IsType<Grid>(view.MetaHostForTesting.Content);
-            var author = Assert.IsType<TextBlock>(metaRow.Children[0]);
-            var right = Assert.IsType<StackPanel>(metaRow.Children[1]);
-            var dateText = Assert.IsType<TextBlock>(right.Children[0]);
-            var hash = Assert.IsType<TextBlock>(right.Children[1]);
+            Assert.NotNull(view.AuthorTextForTesting);
+            Assert.NotNull(view.HashTextForTesting);
 
-            Assert.Equal(16, author.FontSize);
-            Assert.Equal(16, dateText.FontSize);
-            Assert.Equal(16, hash.FontSize);
-            Assert.NotNull(author.Foreground);
+            Assert.Equal(16, view.AuthorTextForTesting.FontSize);
+            Assert.Equal(14, view.HashTextForTesting.FontSize);
+            Assert.NotNull(view.AuthorTextForTesting.Foreground);
             if (Application.Current?.TryFindResource("ColorText", out var res) == true && res is IBrush expectedBrush)
             {
-                Assert.Equal(expectedBrush, author.Foreground);
+                Assert.Equal(expectedBrush, view.AuthorTextForTesting.Foreground);
             }
+            if (Application.Current?.TryFindResource("ColorAccent", out var accentRes) == true && accentRes is IBrush expectedAccent)
+            {
+                Assert.Equal(expectedAccent, view.HashTextForTesting.Foreground);
+            }
+
+            var metaRow = Assert.IsType<Grid>(view.MetaHostForTesting.Content);
+            var allTextBlocks = metaRow.GetVisualDescendants().OfType<TextBlock>().ToList();
+            Assert.Equal(2, allTextBlocks.Count);
+            Assert.Contains(view.AuthorTextForTesting, allTextBlocks);
+            Assert.Contains(view.HashTextForTesting, allTextBlocks);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Date_is_12_date_only_left_in_parents_row()
+    {
+        var headId = _fixture.HeadCommitId;
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+
+            var dateText = view.DateTextForTesting;
+            Assert.NotNull(dateText);
+            Assert.Equal(12, dateText.FontSize);
+            Assert.Matches(@"^\d{4}-\d{2}-\d{2}$", dateText.Text);
+
+            if (Application.Current?.TryFindResource("ColorTextMuted", out var mutedRes) == true && mutedRes is IBrush expectedMuted)
+            {
+                Assert.Equal(expectedMuted, dateText.Foreground);
+            }
+
+            var parentsRow = Assert.IsType<Grid>(view.ParentsHostForTesting.Content);
+            Assert.Equal(0, Grid.GetColumn(dateText));
+
+            var tip = ToolTip.GetTip(dateText)?.ToString();
+            Assert.NotNull(tip);
+            Assert.Contains("Committed", tip);
+            Assert.Contains("Authored", tip);
+            Assert.Matches(@"\d{2}:\d{2}", tip);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Parents_list_is_right_aligned()
+    {
+        var headId = _fixture.HeadCommitId;
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            Dispatcher.UIThread.RunJobs();
+
+            var parentsRow = Assert.IsType<Grid>(view.ParentsHostForTesting.Content);
+            var parentsList = view.ParentsListForTesting;
+            Assert.NotNull(parentsList);
+            Assert.Equal(Avalonia.Layout.HorizontalAlignment.Right, parentsList.HorizontalAlignment);
+
+            var rowBounds = parentsRow.Bounds;
+            var listOrigin = parentsList.TranslatePoint(new Point(0, 0), parentsRow);
+            Assert.NotNull(listOrigin);
+
+            var listRightEdge = listOrigin.Value.X + parentsList.Bounds.Width;
+            Assert.InRange(Math.Abs(rowBounds.Width - listRightEdge), 0, 1.01);
         }
         finally
         {
@@ -95,8 +167,9 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             await WaitForCommitLoadedAsync(view);
 
-            var parentsRow = Assert.IsType<StackPanel>(view.ParentsHostForTesting.Content);
-            var label = Assert.IsType<TextBlock>(parentsRow.Children[0]);
+            var parentsList = view.ParentsListForTesting;
+            Assert.NotNull(parentsList);
+            var label = Assert.IsType<TextBlock>(parentsList.Children[0]);
             Assert.Equal(12, label.FontSize);
             Assert.Equal("Parent(s):", label.Text);
             Assert.NotNull(label.Foreground);
@@ -105,7 +178,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
                 Assert.Equal(expectedMuted, label.Foreground);
             }
 
-            var hash = Assert.IsType<TextBlock>(parentsRow.Children[1]);
+            var hash = Assert.IsType<TextBlock>(parentsList.Children[1]);
             Assert.Equal(12, hash.FontSize);
             Assert.Equal(TextDecorations.Underline, hash.TextDecorations);
             Assert.NotNull(hash.Foreground);
@@ -131,9 +204,10 @@ public class CommitDetailPanelLayoutTests : IDisposable
         try
         {
             await WaitForCommitLoadedAsync(rootView);
-            var rootParentsRow = Assert.IsType<StackPanel>(rootView.ParentsHostForTesting.Content);
-            Assert.Equal(2, rootParentsRow.Children.Count);
-            var noneText = Assert.IsType<TextBlock>(rootParentsRow.Children[1]);
+            var rootParentsList = rootView.ParentsListForTesting;
+            Assert.NotNull(rootParentsList);
+            Assert.Equal(2, rootParentsList.Children.Count);
+            var noneText = Assert.IsType<TextBlock>(rootParentsList.Children[1]);
             Assert.Equal("none", noneText.Text);
         }
         finally
@@ -149,9 +223,10 @@ public class CommitDetailPanelLayoutTests : IDisposable
         try
         {
             await WaitForCommitLoadedAsync(normalView);
-            var normalParentsRow = Assert.IsType<StackPanel>(normalView.ParentsHostForTesting.Content);
-            Assert.Equal(2, normalParentsRow.Children.Count);
-            var parentHash = Assert.IsType<TextBlock>(normalParentsRow.Children[1]);
+            var normalParentsList = normalView.ParentsListForTesting;
+            Assert.NotNull(normalParentsList);
+            Assert.Equal(2, normalParentsList.Children.Count);
+            var parentHash = Assert.IsType<TextBlock>(normalParentsList.Children[1]);
             Assert.Equal(rootId.Sha[..10], parentHash.Text);
         }
         finally
@@ -167,10 +242,11 @@ public class CommitDetailPanelLayoutTests : IDisposable
         try
         {
             await WaitForCommitLoadedAsync(mergeView);
-            var mergeParentsRow = Assert.IsType<StackPanel>(mergeView.ParentsHostForTesting.Content);
-            Assert.Equal(3, mergeParentsRow.Children.Count);
-            var hash1 = Assert.IsType<TextBlock>(mergeParentsRow.Children[1]);
-            var hash2 = Assert.IsType<TextBlock>(mergeParentsRow.Children[2]);
+            var mergeParentsList = mergeView.ParentsListForTesting;
+            Assert.NotNull(mergeParentsList);
+            Assert.Equal(3, mergeParentsList.Children.Count);
+            var hash1 = Assert.IsType<TextBlock>(mergeParentsList.Children[1]);
+            var hash2 = Assert.IsType<TextBlock>(mergeParentsList.Children[2]);
             Assert.Equal(parent1Id.Sha[..10], hash1.Text);
             Assert.Equal(parent2Id.Sha[..10], hash2.Text);
         }
@@ -191,8 +267,9 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             await WaitForCommitLoadedAsync(view);
 
-            var parentsRow = Assert.IsType<StackPanel>(view.ParentsHostForTesting.Content);
-            var hash2 = Assert.IsType<TextBlock>(parentsRow.Children[2]);
+            var parentsList = view.ParentsListForTesting;
+            Assert.NotNull(parentsList);
+            var hash2 = Assert.IsType<TextBlock>(parentsList.Children[2]);
 
             LibGit2Sharp.ObjectId? revealed = null;
             _context.State.RevealCommitRequested += (_, e) => revealed = e.CommitId;
@@ -215,6 +292,94 @@ public class CommitDetailPanelLayoutTests : IDisposable
 
             Assert.Equal(parent2Id, _context.State.SelectedCommitId);
             Assert.Equal(parent2Id, revealed);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Author_block_gaps_and_rule()
+    {
+        var headId = _fixture.HeadCommitId;
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            Dispatcher.UIThread.RunJobs();
+
+            const double expectedAuthorGap = SectionFrame.HeaderGap + 4; // 6
+            Assert.Equal(6, expectedAuthorGap);
+
+            var topSection = view.TopSectionForTesting;
+            var author = view.AuthorTextForTesting;
+            Assert.NotNull(author);
+
+            var authorOrigin = author.TranslatePoint(new Point(0, 0), topSection);
+            Assert.NotNull(authorOrigin);
+            var sectionInnerTop = topSection.BorderThickness.Top;
+            var gapAboveAuthor = authorOrigin.Value.Y - sectionInnerTop;
+            Assert.InRange(Math.Abs(gapAboveAuthor - expectedAuthorGap), 0, 1.01);
+
+            var rule = view.AuthorRuleForTesting;
+            Assert.Equal(1, rule.Height);
+
+            var parentsHost = view.ParentsHostForTesting;
+            var parentsBottom = parentsHost.TranslatePoint(new Point(0, parentsHost.Bounds.Height), topSection);
+            var ruleTop = rule.TranslatePoint(new Point(0, 0), topSection);
+            var ruleBottom = rule.TranslatePoint(new Point(0, rule.Bounds.Height), topSection);
+            Assert.NotNull(parentsBottom);
+            Assert.NotNull(ruleTop);
+            Assert.NotNull(ruleBottom);
+
+            var gapAboveRule = ruleTop.Value.Y - parentsBottom.Value.Y;
+            Assert.InRange(Math.Abs(gapAboveRule - expectedAuthorGap), 0, 1.01);
+
+            var messageScroll = Assert.IsType<ScrollViewer>(view.MessageHostForTesting.Parent);
+            var messageTop = messageScroll.TranslatePoint(new Point(0, 0), topSection);
+            Assert.NotNull(messageTop);
+
+            var gapBelowRule = messageTop.Value.Y - ruleBottom.Value.Y;
+            Assert.InRange(Math.Abs(gapBelowRule - SectionFrame.DividerBottomGap), 0, 1.01);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Files_label_is_16_and_rows_are_14()
+    {
+        var headId = _fixture.HeadCommitId;
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(16, view.FilesLabelForTesting.FontSize);
+
+            // Path view (default)
+            var pathRowGrid = view.FilesHostForTesting.GetVisualDescendants().OfType<Grid>().First(g => g.Height == 22);
+            Assert.Equal(22, pathRowGrid.Height);
+            var pathTextBlock = pathRowGrid.Children.OfType<TextBlock>().First(tb => tb.Text == "f.txt");
+            Assert.Equal(14, pathTextBlock.FontSize);
+
+            // Switch to Tree view
+            var treeBtn = view.GetVisualDescendants().OfType<Button>().First(b => b.Content is "Tree");
+            treeBtn.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            var treeRowGrid = view.FilesHostForTesting.GetVisualDescendants().OfType<Grid>().First(g => g.Height == 22);
+            Assert.Equal(22, treeRowGrid.Height);
+            var treeTextBlock = treeRowGrid.Children.OfType<TextBlock>().First(tb => tb.Text == "f.txt");
+            Assert.Equal(14, treeTextBlock.FontSize);
         }
         finally
         {
