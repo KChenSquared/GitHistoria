@@ -16,9 +16,11 @@ public static class CloneValidation
     internal static readonly HashSet<string> AllowedCloneSchemes =
         new(StringComparer.OrdinalIgnoreCase) { "http", "https", "ssh", "git", "file" };
 
-    // scp-like syntax: user@host:path (no scheme, a ':' after a host, not "://").
+    // scp-like syntax: [user@]host:path (no scheme, a ':' after a host of >=2 chars, not "://").
+    // The host must be at least 2 characters and contain none of `/ \ @ :`, so Windows drive paths
+    // such as `C:\repo` and `C:foo` are never taken as scp (git treats a one-letter "host" as a drive on Windows).
     private static readonly Regex ScpLikeUrl =
-        new(@"^[^\s@/]+@[^\s@:/]+:.+$", RegexOptions.Compiled);
+        new(@"^(?:[^\s@/\\]+@)?[^\s@:/\\]{2,}:.+$", RegexOptions.Compiled);
 
     /// <summary>Rejects a pasted clone URL that would let Git parse it as something other than a
     /// repository address (a leading '-', a "&lt;transport&gt;::" remote-helper prefix, or an
@@ -91,8 +93,15 @@ public static class CloneValidation
             return "The destination path contains a character that isn't allowed in a file path.";
         }
 
-        if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any())
-            return "That destination already exists and is not empty.";
+        try
+        {
+            if (Directory.Exists(target) && Directory.EnumerateFileSystemEntries(target).Any())
+                return "That destination already exists and is not empty.";
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            return $"That destination can't be read: {ex.Message}";
+        }
 
         return null;
     }
