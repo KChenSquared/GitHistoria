@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>
 /// The repository detail pane (V4 port of Repository.razor). A toolbar with the current branch
@@ -16,8 +16,17 @@ public sealed class RepositoryView : UserControl, IDisposable
     private readonly Historia.Services.Settings.IRepoLayoutService _repoLayout;
     private readonly Historia.Services.Settings.ISettingsService _settings;
 
-    private readonly TextBlock _branch = Text("", "ColorText", 13, FontWeight.Bold);
+    private readonly TextBlock _branch = Text("", "ColorText", 16, FontWeight.Bold);
     private readonly TextBlock _ab = Text("", "ColorTextMuted", 12);
+    private readonly Panel _topBar;
+    private readonly Grid _branchBar;
+    private readonly Button _workingCopy;
+    private readonly TextBlock _workingCopyText = new()
+    {
+        VerticalAlignment = VerticalAlignment.Center,
+        FontSize = 16,
+        FontWeight = FontWeight.Bold,
+    };
     private readonly ContentControl _body = new();
     private readonly ContentControl _bannerHost = new();
     private readonly TextBlock _opBanner = Text("", "ColorText", 12);
@@ -30,6 +39,12 @@ public sealed class RepositoryView : UserControl, IDisposable
     private CommitDetailPanelView? _detailPanel;
     private ConflictResolverView? _conflictPanel;
 
+    internal Panel TopBarForTesting => _topBar;
+    internal Grid BranchBarForTesting => _branchBar;
+    internal Button WorkingCopyButtonForTesting => _workingCopy;
+    internal TextBlock BranchTextBlockForTesting => _branch;
+    internal TextBlock WorkingCopyTextBlockForTesting => _workingCopyText;
+
     public RepositoryView(IServiceProvider sp)
     {
         _sp = sp;
@@ -40,18 +55,42 @@ public sealed class RepositoryView : UserControl, IDisposable
         _repoLayout = sp.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
         _settings = sp.GetRequiredService<Historia.Services.Settings.ISettingsService>();
         _networkRunner = sp.GetRequiredService<Historia.Services.UI.IRepoNetworkActionRunner>();
-        _branch.FontSize = Math.Clamp(_settings.Current.CommitDetailFontSize, 10, 24) + 1;
 
-        // v8 M5: Fetch / Pull / Push, the network-mode button and the repo-terminal button moved
-        // to the window-wide shortcuts bar. This toolbar keeps only the branch name + ahead/behind;
-        // the network flow itself runs in the app-lifetime IRepoNetworkActionRunner (so it still
-        // works when this view isn't the mounted one) — this view just mirrors its progress into
-        // the inline box below while it's showing the repo that's running.
-        var toolbar = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*"), Height = 30, Margin = new Thickness(12, 6) };
-        toolbar.Children.Add(_branch);
+        _branchBar = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*"),
+            Margin = new Thickness(12, SectionFrame.HeaderGap),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _branchBar.Children.Add(_branch);
         Grid.SetColumn(_ab, 1);
         _ab.Margin = new Thickness(8, 0, 0, 0);
-        toolbar.Children.Add(_ab);
+        _branchBar.Children.Add(_ab);
+
+        _workingCopy = new Button
+        {
+            Content = _workingCopyText,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            CornerRadius = new CornerRadius(0),
+            Padding = new Thickness(12, 0),
+            FontSize = 16,
+            FontWeight = FontWeight.Bold,
+            IsVisible = false,
+        };
+        _workingCopy.Click += (_, _) => _repo?.State.SetSelectedCommit(null);
+
+        // Two-mode top bar (34 px tall): over staging/conflict pane, displays the branch
+        // name and ahead/behind count; over commit detail, displays the full-width
+        // Working Copy return button (highlighted primary when tracked changes exist).
+        _topBar = new Panel
+        {
+            Height = 30 + 2 * SectionFrame.HeaderGap,
+        };
+        _topBar.Children.Add(_branchBar);
+        _topBar.Children.Add(_workingCopy);
 
         _networkRunner.ProgressChanged += OnNetworkProgressChanged;
 
@@ -69,11 +108,11 @@ public sealed class RepositoryView : UserControl, IDisposable
         _netProgressBox.Child = pg;
 
         var root = new DockPanel { LastChildFill = true };
-        DockPanel.SetDock(toolbar, Dock.Top);
+        DockPanel.SetDock(_topBar, Dock.Top);
         DockPanel.SetDock(_bannerHost, Dock.Top);
         DockPanel.SetDock(_opBox, Dock.Top);
         DockPanel.SetDock(_netProgressBox, Dock.Top);
-        root.Children.Add(toolbar);
+        root.Children.Add(_topBar);
         root.Children.Add(_bannerHost);
         root.Children.Add(_opBox);
         root.Children.Add(_netProgressBox);
@@ -118,6 +157,15 @@ public sealed class RepositoryView : UserControl, IDisposable
     private void OnStateChanged2(object? s, RefsChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
     private void OnSelChanged(object? s, SelectionChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
 
+    internal static int TrackedChangeCount(RepositoryStatus s)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var f in s.Staged) set.Add(f.Path);
+        foreach (var f in s.Unstaged) set.Add(f.Path);
+        foreach (var f in s.Conflicted) set.Add(f.Path);
+        return set.Count;
+    }
+
     private void Refresh()
     {
         if (_repo is null)
@@ -125,6 +173,8 @@ public sealed class RepositoryView : UserControl, IDisposable
             _branch.Text = "No repository open";
             _ab.Text = "";
             _body.Content = null;
+            _branchBar.IsVisible = true;
+            _workingCopy.IsVisible = false;
             return;
         }
 
@@ -152,6 +202,9 @@ public sealed class RepositoryView : UserControl, IDisposable
             _conflictPanel ??= new ConflictResolverView(_sp, _repo);
             if (!ReferenceEquals(_body.Content, _conflictPanel))
                 _body.Content = _conflictPanel;
+
+            _workingCopy.IsVisible = false;
+            _branchBar.IsVisible = true;
         }
         else
         {
@@ -170,12 +223,33 @@ public sealed class RepositoryView : UserControl, IDisposable
 
                 if (!ReferenceEquals(_body.Content, _detailPanel))
                     _body.Content = _detailPanel;
+
+                var n = TrackedChangeCount(st);
+                _workingCopyText.Text = $"← Working Copy (Changes: {n})";
+                if (n > 0)
+                {
+                    _workingCopy.Classes.Remove("flat");
+                    _workingCopy.Classes.Add("primary");
+                    _workingCopy.ClearValue(Button.ForegroundProperty);
+                }
+                else
+                {
+                    _workingCopy.Classes.Remove("primary");
+                    _workingCopy.Classes.Add("flat");
+                    _workingCopy.Dyn(Button.ForegroundProperty, "ColorText");
+                }
+
+                _workingCopy.IsVisible = true;
+                _branchBar.IsVisible = false;
             }
             else
             {
                 _stagingPanel ??= new StagingPanelView(_sp, _repo);
                 if (!ReferenceEquals(_body.Content, _stagingPanel))
                     _body.Content = _stagingPanel;
+
+                _workingCopy.IsVisible = false;
+                _branchBar.IsVisible = true;
             }
         }
     }

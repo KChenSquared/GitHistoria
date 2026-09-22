@@ -19,6 +19,8 @@ public sealed record CommitSummary
 public sealed record CommitDetail
 {
     public required ObjectId Id { get; init; }
+    /// <summary>The full message exactly as committed (subject, blank line, body), trailing newline trimmed.</summary>
+    public string Message { get; init; } = "";
     public required string MessageShort { get; init; }
     /// <summary>The message body only — the subject line (<see cref="MessageShort"/>) is already stripped.</summary>
     public required string MessageBody { get; init; }

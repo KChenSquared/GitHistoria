@@ -27,6 +27,13 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private const double IndentStep = 14;
     private const double SectionMaxHeight = 240;
 
+    // Reserves space at the right of every row for the Fluent scroll bar's overlay hit area
+    // (ScrollBarSize = 16 DIU, verified in Avalonia 11.3.20's FluentControlResources.xaml —
+    // it's the ScrollBar control's own MinWidth/MinHeight, constant whether or not the bar is
+    // expanded; only the visual thumb scales via a RenderTransform) plus 2 DIU of breathing room,
+    // so trimmed text and row actions never sit under it.
+    internal const double RowRightGutter = 18;
+
     // Section defaults: Local Branches / Remotes start expanded; Tags / Stashes / Submodules /
     // Worktrees start collapsed. Session-only, like _expanded below — the state survives section
     // toggles and repo switches, but is reset to these defaults on every app launch and whenever
@@ -247,7 +254,6 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         // ── Local branches ──
         var localBody = Section($"Local Branches ({local.Count})", _localOpen,
             () => { _localOpen = !_localOpen; Rebuild(); },
-            add: () => _ = CreateBranchAsync(),
             filter: () =>
             {
                 _localFilterOpen = !_localFilterOpen;
@@ -277,7 +283,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                             current ? "ColorAccent" : "ColorText",
                             select: () => Select(b.TipCommitId),
                             action: null,
-                            current: current);
+                            current: current,
+                            tooltip: b.Name);
                         row.DoubleTapped += (_, e) => { e.Handled = true; _ = CheckoutAsync(b, isRemote: false); };
                         AttachBranchMenu(row, b, isRemote: false);
                         localBody.Children.Add(row);
@@ -321,7 +328,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                             "ColorText",
                             select: () => Select(b.TipCommitId),
                             action: null,
-                            current: false);
+                            current: false,
+                            tooltip: b.Name);
                         row.DoubleTapped += (_, e) => { e.Handled = true; _ = CheckoutAsync(b, isRemote: true); };
                         AttachBranchMenu(row, b, isRemote: true);
                         remoteBody.Children.Add(row);
@@ -456,13 +464,13 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 var busy = _submodulesBusy.Contains(sm.Path);
                 if (busy)
                 {
-                    subBody.Children.Add(Leaf(SubmoduleRowLabel(sm, busy: true), 0, "ColorTextFaint", null, null));
+                    subBody.Children.Add(Leaf(SubmoduleRowLabel(sm, busy: true), 0, "ColorTextFaint", null, null, tooltip: sm.Path));
                     continue;
                 }
 
                 var menuBtn = new Button { Content = "⋯", Padding = new Thickness(4, 0), Background = Brushes.Transparent, BorderThickness = default };
                 menuBtn.Flyout = new MenuFlyout { ItemsSource = BuildSubmoduleMenuItems(sm) };
-                var row = Leaf(SubmoduleRowLabel(sm, busy: false), 0, "ColorText", null, menuBtn);
+                var row = Leaf(SubmoduleRowLabel(sm, busy: false), 0, "ColorText", null, menuBtn, tooltip: sm.Path);
                 row.ContextMenu = new ContextMenu { ItemsSource = BuildSubmoduleMenuItems(sm) };
                 row.DoubleTapped += (_, e) => { e.Handled = true; _ = OpenSubmoduleTabAsync(sm); };
                 subBody.Children.Add(row);
@@ -546,12 +554,12 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private static string Count<T>(IReadOnlyList<T>? list) => list is null ? "" : $" ({list.Count})";
 
     /// <summary>Section header; returns the capped body panel when expanded, else null.</summary>
-    private StackPanel? Section(string title, bool open, Action toggle, Action? add = null, Action? filter = null, bool filterOpen = false, TextBox? filterBox = null)
+    private StackPanel? Section(string title, bool open, Action toggle, Action? filter = null, bool filterOpen = false, TextBox? filterBox = null)
     {
-        _root.Children.Add(SectionHeader(title, open, toggle, add, filter));
+        _root.Children.Add(SectionHeader(title, open, toggle, filter));
         if (open && filterOpen && filterBox is not null)
         {
-            filterBox.Margin = new Thickness(LeafIndent, 2, 8, 4);
+            filterBox.Margin = new Thickness(LeafIndent, 2, RowRightGutter, 4);
             _root.Children.Add(filterBox);
         }
         if (!open)
@@ -566,9 +574,9 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         return body;
     }
 
-    private Control SectionHeader(string title, bool open, Action toggle, Action? add, Action? filter = null)
+    private Control SectionHeader(string title, bool open, Action toggle, Action? filter = null)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), Height = 28 };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Height = 28 };
         var caret = Text(open ? "▾" : "▸", "ColorTextMuted", 10);
         caret.Margin = new Thickness(8, 0, 6, 0);
         grid.Children.Add(caret);
@@ -576,14 +584,6 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         label.LetterSpacing = 0.4;
         Grid.SetColumn(label, 1);
         grid.Children.Add(label);
-        if (add is not null)
-        {
-            var plus = new Button { Content = "＋", Padding = new Thickness(8, 0), Background = Brushes.Transparent, BorderThickness = default };
-            ToolTip.SetTip(plus, "New branch");
-            plus.Click += (_, e) => { e.Handled = true; add(); };
-            Grid.SetColumn(plus, 2);
-            grid.Children.Add(plus);
-        }
         if (filter is not null)
         {
             var filterBtn = IconButton("filter_alt", "Filter this section", () => filter());
@@ -592,10 +592,10 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 e.Handled = true;
                 filter();
             }, RoutingStrategies.Tunnel);
-            Grid.SetColumn(filterBtn, 3);
+            Grid.SetColumn(filterBtn, 2);
             grid.Children.Add(filterBtn);
         }
-        var b = new Border { Child = grid, Cursor = new Cursor(StandardCursorType.Hand) };
+        var b = new Border { Child = grid, Cursor = new Cursor(StandardCursorType.Hand), Padding = new Thickness(0, 0, RowRightGutter, 0) };
         b.Dyn(Border.BorderBrushProperty, "ColorBorder");
         b.BorderThickness = new Thickness(0, 1, 0, 0);
         b.PointerPressed += (_, e) =>
@@ -624,7 +624,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             current ? "ColorAccent" : "ColorText",
             select: () => Select(b.TipCommitId),
             action: null,
-            current: current);
+            current: current,
+            tooltip: b.Name);
         row.DoubleTapped += (_, e) => { e.Handled = true; _ = CheckoutAsync(b, isRemote); };
         AttachBranchMenu(row, b, isRemote);
         target.Children.Add(row);
@@ -640,12 +641,15 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         // Caret sits 12 DIU left of the shared leaf indent so its label lands on that edge.
         caret.Margin = new Thickness(LeafIndent + depth * IndentStep - 12, 0, 2, 0);
         var name = Text(segment, "ColorTextMuted", 12);
+        name.VerticalAlignment = VerticalAlignment.Center;
 
-        var stack = new StackPanel { Orientation = Orientation.Horizontal };
-        stack.Children.Add(caret);
-        stack.Children.Add(name);
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+        grid.Children.Add(caret);
+        Grid.SetColumn(name, 1);
+        grid.Children.Add(name);
 
-        var b = new Border { Child = stack, Height = 24, Cursor = new Cursor(StandardCursorType.Hand) };
+        var b = new Border { Child = grid, Height = 24, Cursor = new Cursor(StandardCursorType.Hand), Padding = new Thickness(0, 0, RowRightGutter, 0) };
+        ToolTip.SetTip(b, segment);
         b.PointerPressed += (_, e) =>
         {
             e.Handled = true;
@@ -699,29 +703,36 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         }
     }
 
-    private Border Leaf(string text, int depth, string fgKey, Action? select, Control? action, bool current = false)
+    private Border Leaf(string text, int depth, string fgKey, Action? select, Control? action, bool current = false, string? tooltip = null)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Height = 24 };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto"), Height = 24 };
 
-        var left = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
         // Fixed indent spacer, then a 7-DIU dot slot (always present so labels align with or
-        // without the checked-out marker), then the label.
-        left.Children.Add(new Border { Width = LeafIndent + depth * IndentStep - 11 });
+        // without the checked-out marker), then the label in the '*' column so it gets a finite
+        // width and CharacterEllipsis engages, then the row action.
+        var spacer = new Border { Width = LeafIndent + depth * IndentStep - 11 };
+        grid.Children.Add(spacer);
+
         var dot = new Ellipse { Width = 7, Height = 7, Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center };
         dot.Dyn(Shape.FillProperty, current ? "ColorSuccess" : "ColorChrome");
         if (!current) dot.Opacity = 0;
-        left.Children.Add(dot);
-        left.Children.Add(Text(text, fgKey, 12, current ? FontWeight.SemiBold : FontWeight.Normal));
-        grid.Children.Add(left);
+        Grid.SetColumn(dot, 1);
+        grid.Children.Add(dot);
+
+        var label = Text(text, fgKey, 12, current ? FontWeight.SemiBold : FontWeight.Normal);
+        label.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(label, 2);
+        grid.Children.Add(label);
 
         if (action is not null)
         {
-            Grid.SetColumn(action, 1);
+            Grid.SetColumn(action, 3);
             grid.Children.Add(action);
         }
-        var b = new Border { Child = grid, Height = 24, Cursor = new Cursor(StandardCursorType.Hand) };
+        var b = new Border { Child = grid, Height = 24, Cursor = new Cursor(StandardCursorType.Hand), Padding = new Thickness(0, 0, RowRightGutter, 0) };
         if (select is not null)
             b.PointerPressed += (_, e) => { e.Handled = true; select(); };
+        ToolTip.SetTip(b, tooltip ?? text);
         return b;
     }
 
@@ -817,24 +828,6 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         }, "Checkout");
     }
 
-    private async Task CreateBranchAsync()
-    {
-        if (_repo is null) return;
-        var name = await _dialogs.PromptAsync("New branch", "Branch name:");
-        if (string.IsNullOrWhiteSpace(name)) return;
-        try
-        {
-            var start = _repo.State.CurrentBranch?.CanonicalName ?? "HEAD";
-            await _repo.Gateway.CreateBranchAsync(name.Trim(), start, checkout: true, _repo.Lifetime);
-            await _repo.State.RefreshAllAsync(_repo.Lifetime);
-            _notifications.Publish(NotificationSeverity.Success, $"Created and checked out {name.Trim()}.");
-        }
-        catch (Exception ex)
-        {
-            _notifications.Publish(NotificationSeverity.Error, $"Could not create branch: {ex.Message}", ex.NotificationDetails());
-        }
-    }
-
     private async Task DeleteTagAsync(TagInfo tag)
     {
         if (_repo is null) return;
@@ -916,9 +909,23 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     }
 
     /// <summary>F7: the submodule row's label, busy or not — extracted so it can be unit tested
-    /// without constructing the view.</summary>
-    internal static string SubmoduleRowLabel(SubmoduleInfo sm, bool busy) =>
-        busy ? $"{sm.Name}  — Initializing…" : $"{sm.Name}  ({sm.Status})";
+    /// without constructing the view. Shows the leaf folder name only; the full path is
+    /// surfaced via the row's tooltip instead, since nested submodule paths get too long
+    /// to read comfortably in the panel.</summary>
+    internal static string SubmoduleRowLabel(SubmoduleInfo sm, bool busy)
+    {
+        var name = SubmoduleFolderName(sm.Name);
+        return busy ? $"{name}  — Initializing…" : $"{name}  ({sm.Status})";
+    }
+
+    /// <summary>Leaf folder name of a submodule path (which always uses '/' separators,
+    /// even on Windows, since it comes from .gitmodules / git plumbing).</summary>
+    internal static string SubmoduleFolderName(string path)
+    {
+        var trimmed = path.TrimEnd('/');
+        var i = trimmed.LastIndexOf('/');
+        return i >= 0 ? trimmed[(i + 1)..] : trimmed;
+    }
 
     /// <summary>F9: double-clicking a submodule row opens (or focuses) its linked tab.</summary>
     private async Task OpenSubmoduleTabAsync(SubmoduleInfo sm)

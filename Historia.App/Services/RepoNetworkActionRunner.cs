@@ -204,9 +204,9 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
 
         if (choice < 0)
         {
-            // Dismissed: keep a record of why the push didn't land, without recovery actions
-            // (the modal already offered them).
-            _notifications.Publish(NotificationSeverity.Warning, ex.Message, ex.Details);
+            // The modal already explained the rejection; Cancel means "leave it" — the record
+            // goes to the dev log, not a card the user didn't ask to see again.
+            AppLog.Write(AppLogLevel.Info, "declined", $"Push rejected modal cancelled: {ex.Message}", ex);
             return;
         }
 
@@ -244,7 +244,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         }
         catch (OperationCanceledException)
         {
-            _notifications.Publish(NotificationSeverity.Info, "Push cancelled.");
+            AppLog.Write(AppLogLevel.Info, "declined", "Push cancelled");
         }
         catch (HistoriaGitException retryEx) when (retryEx.Kind == GitErrorKind.MergeConflict)
         {
@@ -302,7 +302,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         }
         catch (OperationCanceledException)
         {
-            _notifications.Publish(NotificationSeverity.Info, $"{op} cancelled.");
+            AppLog.Write(AppLogLevel.Info, "declined", $"{op} cancelled");
         }
         catch (HistoriaGitException ex) when (ex.FallbackToLocalConfigAvailable)
         {
@@ -340,7 +340,9 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             }
             else
             {
-                _notifications.Publish(NotificationSeverity.Error, $"{op} failed: {ex.Message}", ex.Details);
+                // The user declined "Switch to Local config?" — nothing changed, so a card would
+                // just restate the choice they just made.
+                AppLog.Write(AppLogLevel.Info, "declined", $"{op}: switch to Local config declined: {ex.Message}", ex);
             }
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.UncommittedChanges && op == RepoNetworkAction.Pull && branch is not null)

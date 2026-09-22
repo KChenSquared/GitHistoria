@@ -27,4 +27,5 @@ global using Historia.Services.UI;
 global using Historia.Services.Workspace;
 global using Historia.Views;
 global using Microsoft.Extensions.DependencyInjection;
+global using System.Runtime.CompilerServices;
 global using Xunit;

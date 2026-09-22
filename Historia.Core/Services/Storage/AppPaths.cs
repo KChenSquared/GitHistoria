@@ -13,6 +13,7 @@ namespace Historia.Services.Storage;
 public static class AppPaths
 {
     private static readonly AsyncLocal<string?> _override = new();
+    private static volatile string? _processOverride;
     private static string? _cachedPortable;
     private static readonly object _sync = new();
 
@@ -27,12 +28,25 @@ public static class AppPaths
         }
     }
 
+    /// <summary>
+    /// Process-wide test seam for suites whose code runs on threads the <see cref="AsyncLocal{T}"/>
+    /// doesn't reach. The per-flow override (<see cref="OverrideForTesting"/>) wins when both are set.
+    /// </summary>
+    public static void OverrideProcessForTesting(string? directory)
+    {
+        _processOverride = directory;
+        lock (_sync)
+        {
+            _cachedPortable = null;
+        }
+    }
+
     /// <summary>Portable state — resolved once and cached for the process lifetime (§V3-9.1 Trap).</summary>
     public static string DataDirectory
     {
         get
         {
-            var ov = _override.Value;
+            var ov = _override.Value ?? _processOverride;
             if (ov is not null)
                 return ov;
 
@@ -50,7 +64,7 @@ public static class AppPaths
     /// no probe — <c>%APPDATA%</c> is writable on any machine that can run the app.
     /// </summary>
     public static string MachineDirectory =>
-        _override.Value ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Historia");
+        _override.Value ?? _processOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Historia");
 
     /// <summary>True when neither portable candidate was writable, so persistence is disabled for
     /// the session (rule 0.4). The last <see cref="ResolveFor"/> call sets this.</summary>
@@ -198,7 +212,7 @@ public static class AppPaths
     /// </summary>
     private static void MigratePortableFilesFromAppData()
     {
-        if (_override.Value is not null || PortableResolutionFailed)
+        if (_override.Value is not null || _processOverride is not null || PortableResolutionFailed)
             return;
 
         var portable = DataDirectory;

@@ -12,6 +12,7 @@ public sealed class AppPathsTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         AppPaths.OverrideForTesting(null); // ensure a clean, non-overridden state
+        AppPaths.OverrideProcessForTesting(null);
     }
 
     [Fact]
@@ -150,8 +151,49 @@ public sealed class AppPathsTests : IDisposable
         }
     }
 
+    [Fact]
+    public void ProcessOverride_RedirectsBothRoots_WhenNoFlowOverride()
+    {
+        var dir = Path.Combine(_root, "process-override");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            AppPaths.OverrideProcessForTesting(dir);
+            Assert.Equal(dir, AppPaths.DataDirectory);
+            Assert.Equal(dir, AppPaths.MachineDirectory);
+        }
+        finally
+        {
+            AppPaths.OverrideProcessForTesting(null);
+            AppPaths.OverrideForTesting(null);
+        }
+    }
+
+    [Fact]
+    public void FlowOverride_WinsOverProcessOverride()
+    {
+        var procDir = Path.Combine(_root, "proc-override");
+        var flowDir = Path.Combine(_root, "flow-override");
+        Directory.CreateDirectory(procDir);
+        Directory.CreateDirectory(flowDir);
+        try
+        {
+            AppPaths.OverrideProcessForTesting(procDir);
+            AppPaths.OverrideForTesting(flowDir);
+
+            Assert.Equal(flowDir, AppPaths.DataDirectory);
+            Assert.Equal(flowDir, AppPaths.MachineDirectory);
+        }
+        finally
+        {
+            AppPaths.OverrideProcessForTesting(null);
+            AppPaths.OverrideForTesting(null);
+        }
+    }
+
     public void Dispose()
     {
+        AppPaths.OverrideProcessForTesting(null);
         AppPaths.OverrideForTesting(null);
         try { Directory.Delete(_root, recursive: true); } catch { /* ignore */ }
     }

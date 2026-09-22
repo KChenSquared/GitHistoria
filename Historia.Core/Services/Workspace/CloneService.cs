@@ -111,7 +111,8 @@ public sealed class CloneService(
         }
         catch (OperationCanceledException)
         {
-            notifications.Publish(NotificationSeverity.Info, "Clone cancelled.");
+            // The user just cancelled; AppLog.Write redacts any userinfo in the URL.
+            AppLog.Write(AppLogLevel.Info, "declined", $"Clone cancelled: {request.Url}");
         }
         catch (Exception ex)
         {

@@ -165,8 +165,11 @@ public partial class MainWindow : Window
     public double LeftMin => _leftMin;
     public double RightMin => _rightMin;
 
-    private double _leftW = 264;
-    private double _rightW = 430;
+    // Side panes open at their minimum width and the centre gets the rest: an intent of 0 is
+    // floored to the effective minimum by BodyColumnLayout.Resolve, so it follows the shortcut
+    // bars' measured width until the user drags a divider.
+    private double _leftW;
+    private double _rightW;
 
     // Avalonia's XAML name generator does not emit fields for ColumnDefinition; index instead.
     private ColumnDefinition LeftCol => BodyGrid.ColumnDefinitions[0];

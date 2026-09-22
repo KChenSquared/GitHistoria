@@ -214,10 +214,6 @@ public sealed class SettingsView : UserControl, IDisposable
         _root.Children.Add(LabeledRow("Tab width", tabW));
         _root.Children.Add(Check("Word-wrap diff lines", c.DiffWordWrap,
             v => _ = _cfg.UpdateAsync(s => s with { DiffWordWrap = v })));
-        var commitFont = new NumericUpDown { Minimum = 10, Maximum = 24, Value = c.CommitDetailFontSize, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        WireNumericCommit(commitFont, c.CommitDetailFontSize, v => v,
-            next => _ = _cfg.UpdateAsync(s => s with { CommitDetailFontSize = next }));
-        _root.Children.Add(LabeledRow("Commit-detail font size", commitFont));
 
         // ── Issue autolinks ──
         _root.Children.Add(Section("Issue autolinks"));
