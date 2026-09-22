@@ -451,7 +451,36 @@ public sealed class RepositoryContext : IAsyncDisposable
         return string.IsNullOrEmpty(name) ? basis : name;
     }
 
-    public async ValueTask DisposeAsync()
+    private Task? _disposeTask;
+
+    public ValueTask DisposeAsync()
+    {
+        if (_disposeTask is { } existing)
+            return new ValueTask(existing);
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (Interlocked.CompareExchange(ref _disposeTask, tcs.Task, null) == null)
+        {
+            _ = RunDisposeCoreAsync(tcs);
+        }
+
+        return new ValueTask(_disposeTask);
+    }
+
+    private async Task RunDisposeCoreAsync(TaskCompletionSource tcs)
+    {
+        try
+        {
+            await DisposeCoreAsync().ConfigureAwait(false);
+            tcs.TrySetResult();
+        }
+        catch (Exception ex)
+        {
+            tcs.TrySetException(ex);
+        }
+    }
+
+    private async Task DisposeCoreAsync()
     {
         using var perfScope = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.DisposeAsync({DisplayName})");
         AppLog.Write(AppLogLevel.Info, "repo", $"Close({DisplayName})");

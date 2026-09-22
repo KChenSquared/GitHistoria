@@ -537,29 +537,39 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
     public async Task CloseAsync(RepositoryContext context)
     {
-        bool wasFocused;
+        bool removed;
+        bool wasFocused = false;
         RepositoryContext? nextFocus = null;
         lock (_sync)
         {
-            _open.Remove(context);
-            // §F9 (Decisions table): closing a group's owner detaches its children rather than
-            // closing them — no uncommitted work in a submodule tab is ever silently discarded.
-            foreach (var t in _open)
-                if (ReferenceEquals(t.LinkOwner, context))
-                    t.LinkOwner = null;
-            _deferredInit.Remove(context);
-            foreach (var item in _bgQueue.Where(x => ReferenceEquals(x.Context, context)))
+            removed = _open.Remove(context);
+            if (removed)
             {
-                foreach (var a in item.Awaiters)
-                    a.TrySetCanceled();
+                // §F9 (Decisions table): closing a group's owner detaches its children rather than
+                // closing them — no uncommitted work in a submodule tab is ever silently discarded.
+                foreach (var t in _open)
+                    if (ReferenceEquals(t.LinkOwner, context))
+                        t.LinkOwner = null;
+                _deferredInit.Remove(context);
+                foreach (var item in _bgQueue.Where(x => ReferenceEquals(x.Context, context)))
+                {
+                    foreach (var a in item.Awaiters)
+                        a.TrySetCanceled();
+                }
+                _bgQueue.RemoveAll(x => ReferenceEquals(x.Context, context));
+                wasFocused = ReferenceEquals(_focused, context);
+                if (wasFocused)
+                {
+                    _focused = null;
+                    nextFocus = _open.LastOrDefault();
+                }
             }
-            _bgQueue.RemoveAll(x => ReferenceEquals(x.Context, context));
-            wasFocused = ReferenceEquals(_focused, context);
-            if (wasFocused)
-            {
-                _focused = null;
-                nextFocus = _open.LastOrDefault();
-            }
+        }
+
+        if (!removed)
+        {
+            await context.DisposeAsync().ConfigureAwait(false);
+            return;
         }
 
         (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService)) as Historia.Services.Graph.IGraphLayoutService)
