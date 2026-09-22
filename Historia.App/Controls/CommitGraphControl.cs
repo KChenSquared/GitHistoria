@@ -1356,6 +1356,7 @@ public sealed partial class CommitGraphControl : Control
     {
         var ceilingTask = Task.Delay(ceiling, ct);
         var completed = await Task.WhenAny(context.FirstFullLoad, ceilingTask).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
         var firedCeiling = completed == ceilingTask && !context.FirstFullLoad.IsCompleted;
         if (firedCeiling && Historia.Diagnostics.PerfLog.Enabled)
             Historia.Diagnostics.PerfLog.Mark($"crawl stuck-guard ceiling fired after {ceiling.TotalSeconds:F0}s without FirstFullLoad ({context.DisplayName})");
