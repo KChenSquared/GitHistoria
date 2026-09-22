@@ -170,6 +170,8 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
 
+        // Drop the previous commit so a settings-driven rebuild can't render it over this one.
+        _detail = null;
         _metaHost.Content = null;
         _parentsHost.Content = null;
         _messageHost.Content = null;
