@@ -122,7 +122,7 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
         }
         else
         {
-            _fetchBtn = IconTextButton("pet_supplies", "Fetch", "Fetch from the remote",
+            _fetchBtn = IconTextButton("sync", "Fetch", "Fetch from the remote",
                 () => _actions?.RequestNetworkAction(RepoNetworkAction.Fetch));
             _pullBtn = IconTextButton("cloud_download", "Pull", "Pull from the remote",
                 () => _actions?.RequestNetworkAction(RepoNetworkAction.Pull));
