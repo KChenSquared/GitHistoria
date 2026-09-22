@@ -464,13 +464,13 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 var busy = _submodulesBusy.Contains(sm.Path);
                 if (busy)
                 {
-                    subBody.Children.Add(Leaf(SubmoduleRowLabel(sm, busy: true), 0, "ColorTextFaint", null, null));
+                    subBody.Children.Add(Leaf(SubmoduleRowLabel(sm, busy: true), 0, "ColorTextFaint", null, null, tooltip: sm.Path));
                     continue;
                 }
 
                 var menuBtn = new Button { Content = "⋯", Padding = new Thickness(4, 0), Background = Brushes.Transparent, BorderThickness = default };
                 menuBtn.Flyout = new MenuFlyout { ItemsSource = BuildSubmoduleMenuItems(sm) };
-                var row = Leaf(SubmoduleRowLabel(sm, busy: false), 0, "ColorText", null, menuBtn);
+                var row = Leaf(SubmoduleRowLabel(sm, busy: false), 0, "ColorText", null, menuBtn, tooltip: sm.Path);
                 row.ContextMenu = new ContextMenu { ItemsSource = BuildSubmoduleMenuItems(sm) };
                 row.DoubleTapped += (_, e) => { e.Handled = true; _ = OpenSubmoduleTabAsync(sm); };
                 subBody.Children.Add(row);
@@ -909,9 +909,23 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     }
 
     /// <summary>F7: the submodule row's label, busy or not — extracted so it can be unit tested
-    /// without constructing the view.</summary>
-    internal static string SubmoduleRowLabel(SubmoduleInfo sm, bool busy) =>
-        busy ? $"{sm.Name}  — Initializing…" : $"{sm.Name}  ({sm.Status})";
+    /// without constructing the view. Shows the leaf folder name only; the full path is
+    /// surfaced via the row's tooltip instead, since nested submodule paths get too long
+    /// to read comfortably in the panel.</summary>
+    internal static string SubmoduleRowLabel(SubmoduleInfo sm, bool busy)
+    {
+        var name = SubmoduleFolderName(sm.Name);
+        return busy ? $"{name}  — Initializing…" : $"{name}  ({sm.Status})";
+    }
+
+    /// <summary>Leaf folder name of a submodule path (which always uses '/' separators,
+    /// even on Windows, since it comes from .gitmodules / git plumbing).</summary>
+    internal static string SubmoduleFolderName(string path)
+    {
+        var trimmed = path.TrimEnd('/');
+        var i = trimmed.LastIndexOf('/');
+        return i >= 0 ? trimmed[(i + 1)..] : trimmed;
+    }
 
     /// <summary>F9: double-clicking a submodule row opens (or focuses) its linked tab.</summary>
     private async Task OpenSubmoduleTabAsync(SubmoduleInfo sm)
