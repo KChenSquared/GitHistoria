@@ -347,6 +347,11 @@ public sealed class HomeView : UserControl, IDisposable
             MaxHeight = 380,
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
             Padding = new Thickness(0, 0, RecentScrollerRightPadding, 0),
+            // Fluent's default overlay scrollbar floats above the content column and ignores
+            // Padding, so it still covers the row/remove-button area. Disabling auto-hide makes
+            // Avalonia reserve a dedicated track column instead, which the Padding above then
+            // keeps clear of the rows.
+            AllowAutoHide = false,
         };
 
     private sealed class UniformWidthStackPanel : StackPanel
