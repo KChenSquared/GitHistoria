@@ -1,11 +1,11 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IPatchService"/>
 public sealed partial class PatchService(IGitCliService cli) : IPatchService
 {
     private static readonly string[] ApplyFlags = ["--unidiff-zero", "--whitespace=nowarn", "--recount"];
 
-    public string GeneratePatch(FileDiff source, PatchScope scope, IReadOnlySet<DiffLineRef>? selectedLines = null)
+    public string GeneratePatch(FileDiff source, PatchScope scope, IReadOnlySet<DiffLineRef>? selectedLines = null, bool reverse = false)
     {
         if (source.IsBinary)
             throw new HistoriaGitException(GitErrorKind.Unknown, "Binary files cannot be partially staged (§8.2.3).");
@@ -32,7 +32,7 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
                 continue;
 
             var chunkText = scope == PatchScope.SelectedLines
-                ? RebuildChunk(chunks[h], h, selectedLines ?? new HashSet<DiffLineRef>())
+                ? RebuildChunk(chunks[h], h, selectedLines ?? new HashSet<DiffLineRef>(), reverse)
                 : chunks[h];
 
             if (chunkText is null)
@@ -105,7 +105,7 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
 
     private static (string Preamble, List<string> Chunks) Split(string raw)
     {
-        var text = raw.Replace("\r\n", "\n").TrimEnd('\n');
+        var text = raw.EndsWith('\n') ? raw[..^1] : raw;
         var lines = text.Split('\n');
         var preamble = new StringBuilder();
         var chunks = new List<string>();
@@ -137,8 +137,12 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
         return (preamble.ToString(), chunks);
     }
 
+    private enum LineSide { Old, New, Both }
+
+    private readonly record struct KeptLine(string Content, LineSide Side, bool HasNoNewline, string? MarkerText);
+
     /// <summary>Rebuilds one hunk chunk keeping only the selected +/- lines (§8.2.3, requirement 4).</summary>
-    private static string? RebuildChunk(string chunk, int hunkIndex, IReadOnlySet<DiffLineRef> selected)
+    private static string? RebuildChunk(string chunk, int hunkIndex, IReadOnlySet<DiffLineRef> selected, bool reverse)
     {
         var lines = chunk.Split('\n');
         var header = lines[0];
@@ -150,45 +154,123 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
         var newStart = int.Parse(m.Groups["ns"].Value, CultureInfo.InvariantCulture);
         var tail = m.Groups["tail"].Value;
 
-        var body = new StringBuilder();
+        var keptLines = new List<KeptLine>();
         int oldCount = 0, newCount = 0, added = 0, removed = 0, bodyIndex = 0;
+        bool lastLineWasKept = false;
 
         for (var i = 1; i < lines.Length; i++)
         {
             var l = lines[i];
             if (l.Length == 0)
                 continue; // trailing split artifact — real body lines always have a prefix char
+
             if (l.StartsWith("\\", StringComparison.Ordinal))
             {
                 // "\ No newline at end of file" — keep it if the line it qualifies was kept.
-                var kept = body.Length > 0;
-                if (kept) body.Append(l).Append('\n');
+                if (lastLineWasKept && keptLines.Count > 0)
+                {
+                    var idx = keptLines.Count - 1;
+                    keptLines[idx] = keptLines[idx] with { HasNoNewline = true, MarkerText = l };
+                }
+                lastLineWasKept = false;
                 continue;
             }
 
-            var prefix = l.Length > 0 ? l[0] : ' ';
+            var prefix = l[0];
             var isSel = selected.Contains(new DiffLineRef(hunkIndex, bodyIndex));
             bodyIndex++;
 
             switch (prefix)
             {
                 case '+':
-                    if (isSel) { body.Append(l).Append('\n'); newCount++; added++; }
+                    if (isSel)
+                    {
+                        keptLines.Add(new KeptLine(l, LineSide.New, false, null));
+                        newCount++;
+                        added++;
+                        lastLineWasKept = true;
+                    }
+                    else if (reverse)
+                    {
+                        // In reverse, an unselected addition is part of the current index state (context).
+                        keptLines.Add(new KeptLine(" " + l[1..], LineSide.Both, false, null));
+                        oldCount++;
+                        newCount++;
+                        lastLineWasKept = true;
+                    }
+                    else
+                    {
+                        // In forward, an unselected addition is dropped.
+                        lastLineWasKept = false;
+                    }
                     break;
+
                 case '-':
-                    if (isSel) { body.Append(l).Append('\n'); oldCount++; removed++; }
-                    else { body.Append(' ').Append(l.AsSpan(1)).Append('\n'); oldCount++; newCount++; }
+                    if (isSel)
+                    {
+                        keptLines.Add(new KeptLine(l, LineSide.Old, false, null));
+                        oldCount++;
+                        removed++;
+                        lastLineWasKept = true;
+                    }
+                    else if (!reverse)
+                    {
+                        // In forward, an unselected deletion is kept as context.
+                        keptLines.Add(new KeptLine(" " + l[1..], LineSide.Both, false, null));
+                        oldCount++;
+                        newCount++;
+                        lastLineWasKept = true;
+                    }
+                    else
+                    {
+                        // In reverse, an unselected deletion is dropped (already not in index).
+                        lastLineWasKept = false;
+                    }
                     break;
+
                 default:
-                    body.Append(l).Append('\n');
+                    keptLines.Add(new KeptLine(l, LineSide.Both, false, null));
                     oldCount++;
                     newCount++;
+                    lastLineWasKept = true;
                     break;
             }
         }
 
         if (added == 0 && removed == 0)
             return null;
+
+        // Refuse a line-joining selection (B16): a line carrying '\ No newline' must be the last line of its side.
+        for (var k = 0; k < keptLines.Count; k++)
+        {
+            var item = keptLines[k];
+            if (!item.HasNoNewline)
+                continue;
+
+            var appliesToOld = item.Side is LineSide.Old or LineSide.Both;
+            var appliesToNew = item.Side is LineSide.New or LineSide.Both;
+
+            for (var j = k + 1; j < keptLines.Count; j++)
+            {
+                var later = keptLines[j];
+                if ((appliesToOld && later.Side is LineSide.Old or LineSide.Both) ||
+                    (appliesToNew && later.Side is LineSide.New or LineSide.Both))
+                {
+                    throw new HistoriaGitException(GitErrorKind.Unknown,
+                        "This selection splits an end-of-file newline change. Include the file's last line, or stage the whole hunk.");
+                }
+            }
+        }
+
+        var body = new StringBuilder();
+        foreach (var item in keptLines)
+        {
+            body.Append(item.Content).Append('\n');
+            if (item.HasNoNewline && item.MarkerText is not null)
+            {
+                body.Append(item.MarkerText).Append('\n');
+            }
+        }
 
         var newHeader = $"@@ -{oldStart},{oldCount} +{newStart},{newCount} @@{tail}";
         return newHeader + "\n" + body;
