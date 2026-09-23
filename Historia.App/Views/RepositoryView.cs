@@ -31,9 +31,13 @@ public sealed class RepositoryView : UserControl, IDisposable
     private readonly ContentControl _bannerHost = new();
     private readonly TextBlock _opBanner = Text("", "ColorText", 12);
     private readonly Border _opBox;
+    private readonly Button _opContinueBtn;
+    private readonly Button _opAbortBtn;
+    private readonly StackPanel _opActions;
     private readonly TextBlock _netProgress = Text("", "ColorTextMuted", 12);
     private readonly Border _netProgressBox = new();
     private readonly Historia.Services.UI.IRepoNetworkActionRunner _networkRunner;
+    private readonly ConflictResolverHost? _conflictHost;
     private RepositoryContext? _repo;
     private StagingPanelView? _stagingPanel;
     private CommitDetailPanelView? _detailPanel;
@@ -44,6 +48,9 @@ public sealed class RepositoryView : UserControl, IDisposable
     internal Button WorkingCopyButtonForTesting => _workingCopy;
     internal TextBlock BranchTextBlockForTesting => _branch;
     internal TextBlock WorkingCopyTextBlockForTesting => _workingCopyText;
+    internal Border OpBoxForTesting => _opBox;
+    internal Button OpContinueButtonForTesting => _opContinueBtn;
+    internal Button OpAbortButtonForTesting => _opAbortBtn;
 
     public RepositoryView(IServiceProvider sp)
     {
@@ -55,6 +62,7 @@ public sealed class RepositoryView : UserControl, IDisposable
         _repoLayout = sp.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
         _settings = sp.GetRequiredService<Historia.Services.Settings.ISettingsService>();
         _networkRunner = sp.GetRequiredService<Historia.Services.UI.IRepoNetworkActionRunner>();
+        _conflictHost = sp.GetService(typeof(ConflictResolverHost)) as ConflictResolverHost;
 
         _branchBar = new Grid
         {
@@ -95,7 +103,22 @@ public sealed class RepositoryView : UserControl, IDisposable
         _networkRunner.ProgressChanged += OnNetworkProgressChanged;
 
         _opBanner.TextWrapping = TextWrapping.Wrap;
-        _opBox = new Border { Child = _opBanner, IsVisible = false, Padding = new Thickness(12, 6), BorderThickness = new Thickness(0, 0, 0, 1) }
+        _opContinueBtn = TextButton("Continue", () => _ = OnOpBannerContinueAsync(), primary: true);
+        _opAbortBtn = TextButton("Abort", () => _ = OnOpBannerAbortAsync());
+        _opActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        _opActions.Children.Add(_opContinueBtn);
+        _opActions.Children.Add(_opAbortBtn);
+
+        var opGrid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        opGrid.Children.Add(_opBanner);
+        Grid.SetColumn(_opActions, 1);
+        opGrid.Children.Add(_opActions);
+
+        _opBox = new Border { Child = opGrid, IsVisible = false, Padding = new Thickness(12, 6), BorderThickness = new Thickness(0, 0, 0, 1) }
             .Dyn(Border.BackgroundProperty, "ColorSurface2").Dyn(Border.BorderBrushProperty, "ColorBorder");
 
         _netProgressBox.IsVisible = false;
@@ -138,8 +161,15 @@ public sealed class RepositoryView : UserControl, IDisposable
             _stagingPanel = null;
             _detailPanel?.Dispose();
             _detailPanel = null;
-            _conflictPanel?.Dispose();
-            _conflictPanel = null;
+            if (_conflictPanel is not null)
+            {
+                _conflictPanel.KeepOpenChanged -= OnResolverKeepOpenChanged;
+                if (ReferenceEquals(_body.Content, _conflictPanel))
+                    _body.Content = null;
+                if (_conflictHost == null)
+                    _conflictPanel.Dispose();
+                _conflictPanel = null;
+            }
         }
         _repo = ctx;
         if (_repo is not null)
@@ -152,6 +182,9 @@ public sealed class RepositoryView : UserControl, IDisposable
         _bannerHost.Content = null;
         Refresh();
     }
+
+    private void OnResolverKeepOpenChanged(object? sender, EventArgs e)
+        => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
 
     private void OnStateChanged(object? s, StatusChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
     private void OnStateChanged2(object? s, RefsChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
@@ -175,6 +208,7 @@ public sealed class RepositoryView : UserControl, IDisposable
             _body.Content = null;
             _branchBar.IsVisible = true;
             _workingCopy.IsVisible = false;
+            _opBox.IsVisible = false;
             return;
         }
 
@@ -185,33 +219,75 @@ public sealed class RepositoryView : UserControl, IDisposable
         var st = _repo.State.Status;
         _ab.Text = (st.AheadBy > 0 ? $"↑{st.AheadBy} " : "") + (st.BehindBy > 0 ? $"↓{st.BehindBy}" : "");
 
-        // Operation-state banner (mid rebase/cherry-pick/merge with no conflicts).
         var op = _repo.State.PendingOperation;
-        if (op != OperationState.None && st.Conflicted.Count == 0)
-        {
-            _opBanner.Text = $"Repository is in {op} state with no conflicts — continue it from a terminal, or it may have completed.";
-            _opBox.IsVisible = true;
-        }
-        else
-        {
-            _opBox.IsVisible = false;
-        }
+        var existingResolver = _conflictHost?.TryGet(_repo) ?? _conflictPanel;
+        bool shouldShowResolver = st.Conflicted.Count > 0
+            || (existingResolver != null && existingResolver.KeepOpenForContinue && op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting)
+            || (existingResolver != null && existingResolver.HasUnsavedWork);
 
-        if (op != OperationState.None && st.Conflicted.Count > 0)
+        if (shouldShowResolver)
         {
-            _conflictPanel ??= new ConflictResolverView(_sp, _repo);
+            ConflictResolverView resolver;
+            if (_conflictHost != null)
+            {
+                resolver = _conflictHost.GetOrCreate(_repo);
+            }
+            else
+            {
+                _conflictPanel ??= new ConflictResolverView(_sp, _repo);
+                resolver = _conflictPanel;
+            }
+
+            if (!ReferenceEquals(_conflictPanel, resolver))
+            {
+                if (_conflictPanel != null)
+                    _conflictPanel.KeepOpenChanged -= OnResolverKeepOpenChanged;
+                _conflictPanel = resolver;
+                _conflictPanel.KeepOpenChanged += OnResolverKeepOpenChanged;
+            }
+
+            if (op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting)
+            {
+                _conflictPanel.KeepOpenForContinue = true;
+            }
+
             if (!ReferenceEquals(_body.Content, _conflictPanel))
                 _body.Content = _conflictPanel;
 
             _workingCopy.IsVisible = false;
             _branchBar.IsVisible = true;
+            _opBox.IsVisible = false;
         }
         else
         {
             if (_conflictPanel is not null)
             {
-                _conflictPanel.Dispose();
+                _conflictPanel.KeepOpenChanged -= OnResolverKeepOpenChanged;
+                if (ReferenceEquals(_body.Content, _conflictPanel))
+                    _body.Content = null;
+
+                if (_conflictHost != null)
+                {
+                    _conflictHost.Release(_repo);
+                }
+                else
+                {
+                    _conflictPanel.Dispose();
+                }
                 _conflictPanel = null;
+            }
+
+            // Operation-state banner (mid rebase/cherry-pick/merge with no conflicts).
+            if (op != OperationState.None && st.Conflicted.Count == 0)
+            {
+                _opBanner.Text = $"Repository is in {op} state with no conflicts.";
+                bool canContinue = op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
+                _opActions.IsVisible = canContinue;
+                _opBox.IsVisible = true;
+            }
+            else
+            {
+                _opBox.IsVisible = false;
             }
 
             if (_repo.State.SelectedCommitId is { } id)
@@ -251,6 +327,48 @@ public sealed class RepositoryView : UserControl, IDisposable
                 _workingCopy.IsVisible = false;
                 _branchBar.IsVisible = true;
             }
+        }
+    }
+
+    private async Task OnOpBannerContinueAsync()
+    {
+        if (_repo == null) return;
+        try
+        {
+            var conflicts = _sp.GetRequiredService<IConflictService>();
+            await conflicts.ContinueOperationAsync(_repo);
+            await _repo.State.RefreshAllAsync();
+        }
+        catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.MergeConflict)
+        {
+            _notifications.Publish(NotificationSeverity.Warning, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, $"Continue failed: {ex.Message}", ex.NotificationDetails());
+        }
+    }
+
+    private async Task OnOpBannerAbortAsync()
+    {
+        if (_repo == null) return;
+        if (!await _dialogs.ConfirmDestructiveAsync(
+                "Abort operation",
+                "Abort the in-progress merge / rebase / cherry-pick? Conflict resolutions made so far will be discarded.",
+                "Abort"))
+        {
+            return;
+        }
+
+        try
+        {
+            var conflicts = _sp.GetRequiredService<IConflictService>();
+            await conflicts.AbortOperationAsync(_repo);
+            await _repo.State.RefreshAllAsync();
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, $"Abort failed: {ex.Message}", ex.NotificationDetails());
         }
     }
 
