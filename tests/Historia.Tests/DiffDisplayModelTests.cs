@@ -1,0 +1,233 @@
+namespace Historia.Tests;
+
+public class DiffDisplayModelTests
+{
+    private static FileDiff CreateSampleDiff()
+    {
+        var hunk = new DiffHunk
+        {
+            OldStart = 1,
+            OldLineCount = 3,
+            NewStart = 1,
+            NewLineCount = 3,
+            Header = "@@ -1,3 +1,3 @@",
+            Lines =
+            [
+                new DiffLine
+                {
+                    Type = DiffLineType.Context,
+                    Content = "context before",
+                    OldLineNumber = 1,
+                    NewLineNumber = 1,
+                },
+                new DiffLine
+                {
+                    Type = DiffLineType.Deletion,
+                    Content = "hello old world",
+                    OldLineNumber = 2,
+                    NewLineNumber = null,
+                },
+                new DiffLine
+                {
+                    Type = DiffLineType.Addition,
+                    Content = "hello new world",
+                    OldLineNumber = null,
+                    NewLineNumber = 2,
+                },
+                new DiffLine
+                {
+                    Type = DiffLineType.Context,
+                    Content = "context after",
+                    OldLineNumber = 3,
+                    NewLineNumber = 3,
+                },
+            ],
+        };
+
+        return new FileDiff
+        {
+            Path = "test.txt",
+            Kind = DiffKind.Modified,
+            IsBinary = false,
+            IsTruncated = false,
+            Hunks = [hunk],
+            AddedLines = 1,
+            DeletedLines = 1,
+        };
+    }
+
+    [Fact]
+    public void Combined_row_count_equals_headers_plus_lines()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+
+        // 1 indicator (header) + 4 lines = 5 combined rows
+        Assert.Equal(5, model.CombinedRows.Count);
+        Assert.Equal(DiffDisplayLineType.Indicator, model.CombinedRows[0].Type);
+        Assert.Equal(DiffDisplayLineType.Context, model.CombinedRows[1].Type);
+        Assert.Equal(DiffDisplayLineType.Deletion, model.CombinedRows[2].Type);
+        Assert.Equal(DiffDisplayLineType.Addition, model.CombinedRows[3].Type);
+        Assert.Equal(DiffDisplayLineType.Context, model.CombinedRows[4].Type);
+    }
+
+    [Fact]
+    public void Side_by_side_sides_equal_length_with_padding_in_the_right_places()
+    {
+        var hunk = new DiffHunk
+        {
+            OldStart = 1,
+            OldLineCount = 3,
+            NewStart = 1,
+            NewLineCount = 4,
+            Header = "@@ -1,3 +1,4 @@",
+            Lines =
+            [
+                new DiffLine
+                {
+                    Type = DiffLineType.Deletion,
+                    Content = "del 1",
+                    OldLineNumber = 1,
+                    NewLineNumber = null,
+                },
+                new DiffLine
+                {
+                    Type = DiffLineType.Addition,
+                    Content = "add 1",
+                    OldLineNumber = null,
+                    NewLineNumber = 1,
+                },
+                new DiffLine
+                {
+                    Type = DiffLineType.Addition,
+                    Content = "add 2",
+                    OldLineNumber = null,
+                    NewLineNumber = 2,
+                },
+                new DiffLine
+                {
+                    Type = DiffLineType.Context,
+                    Content = "ctx",
+                    OldLineNumber = 2,
+                    NewLineNumber = 3,
+                },
+            ],
+        };
+
+        var diff = new FileDiff
+        {
+            Path = "asym.txt",
+            Kind = DiffKind.Modified,
+            IsBinary = false,
+            IsTruncated = false,
+            Hunks = [hunk],
+            AddedLines = 2,
+            DeletedLines = 1,
+        };
+
+        var model = DiffDisplayModel.Create(diff);
+
+        // Both sides must have equal length
+        Assert.Equal(model.SideBySideOldRows.Count, model.SideBySideNewRows.Count);
+
+        // Indicator at 0
+        Assert.Equal(DiffDisplayLineType.Indicator, model.SideBySideOldRows[0].Type);
+        Assert.Equal(DiffDisplayLineType.Indicator, model.SideBySideNewRows[0].Type);
+
+        // Row 1: del 1 on left, add 1 on right
+        Assert.Equal(DiffDisplayLineType.Deletion, model.SideBySideOldRows[1].Type);
+        Assert.Equal(DiffDisplayLineType.Addition, model.SideBySideNewRows[1].Type);
+
+        // Row 2: padding (None) on left, add 2 on right
+        Assert.Equal(DiffDisplayLineType.None, model.SideBySideOldRows[2].Type);
+        Assert.Equal(DiffDisplayLineType.Addition, model.SideBySideNewRows[2].Type);
+
+        // Row 3: ctx on both
+        Assert.Equal(DiffDisplayLineType.Context, model.SideBySideOldRows[3].Type);
+        Assert.Equal(DiffDisplayLineType.Context, model.SideBySideNewRows[3].Type);
+    }
+
+    [Fact]
+    public void Paired_lines_get_inline_spans_on_the_changed_word_only()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+
+        var delRow = model.CombinedRows[2];
+        var addRow = model.CombinedRows[3];
+
+        Assert.NotEmpty(delRow.Highlights);
+        Assert.NotEmpty(addRow.Highlights);
+
+        // "hello old world" vs "hello new world" -> "old" (pos 6, len 3) and "new" (pos 6, len 3)
+        var delHl = delRow.Highlights[0];
+        Assert.Equal(6, delHl.Start);
+        Assert.Equal(3, delHl.Length);
+        Assert.Equal("old", delRow.Content.Substring(delHl.Start, delHl.Length));
+
+        var addHl = addRow.Highlights[0];
+        Assert.Equal(6, addHl.Start);
+        Assert.Equal(3, addHl.Length);
+        Assert.Equal("new", addRow.Content.Substring(addHl.Start, addHl.Length));
+    }
+
+    [Fact]
+    public void Lone_carriage_return_replaced_and_unescaped()
+    {
+        var rawWithCr = "line with lone\rreturn";
+        var sanitized = DiffDisplayModel.SanitizeLoneCarriageReturn(rawWithCr);
+
+        Assert.DoesNotContain('\r', sanitized);
+        Assert.Contains(DiffDisplayModel.CarriageReturnSymbol, sanitized);
+        Assert.Equal("line with lone\u240Dreturn", sanitized);
+
+        var unescaped = DiffDisplayModel.UnescapeCarriageReturn(sanitized);
+        Assert.Equal(rawWithCr, unescaped);
+    }
+
+    [Fact]
+    public void Blocks_boundaries_correctly_identified()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+
+        // Combined lines: 1 (indicator), 2 (context), 3 (del), 4 (add), 5 (context)
+        // Change block is lines 3..4 (1-based)
+        Assert.Single(model.CombinedBlocks);
+        var block = model.CombinedBlocks[0];
+        Assert.Equal(3, block.StartLine);
+        Assert.Equal(4, block.EndLine);
+        Assert.True(block.Contains(3));
+        Assert.True(block.Contains(4));
+        Assert.False(block.Contains(2));
+        Assert.False(block.Contains(5));
+    }
+
+    [Fact]
+    public void Row_to_DiffLineRef_round_trip()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+
+        // CombinedRows[0] is Indicator (no line ref)
+        Assert.False(model.CombinedRowToRefMap.ContainsKey(0));
+
+        // CombinedRows[1] is context (hunk 0, line 0)
+        Assert.Equal(new DiffLineRef(0, 0), model.CombinedRowToRefMap[1]);
+
+        // CombinedRows[2] is deletion (hunk 0, line 1)
+        Assert.Equal(new DiffLineRef(0, 1), model.CombinedRowToRefMap[2]);
+
+        // CombinedRows[3] is addition (hunk 0, line 2)
+        Assert.Equal(new DiffLineRef(0, 2), model.CombinedRowToRefMap[3]);
+
+        // CombinedRows[4] is context (hunk 0, line 3)
+        Assert.Equal(new DiffLineRef(0, 3), model.CombinedRowToRefMap[4]);
+
+        // Selection mapping for combined: lines 2..4 (context + del + add) -> should return del and add refs only
+        var selected = model.GetSelectedLinesForCombined(2, 4);
+        Assert.Equal(2, selected.Count);
+        Assert.Equal(new DiffLineRef(0, 1), selected[0]);
+        Assert.Equal(new DiffLineRef(0, 2), selected[1]);
+    }
+}
