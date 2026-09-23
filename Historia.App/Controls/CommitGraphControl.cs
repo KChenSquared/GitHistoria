@@ -171,6 +171,9 @@ public sealed partial class CommitGraphControl : Control
     private readonly HashSet<int> _multiSelect = [];
     private readonly List<(Rect Rect, int Row, GraphDecoration Deco)> _pillRects = [];
     private readonly List<(Rect Rect, string Tip)> _iconRects = [];
+    private readonly GraphHoverDwell _hoverDwell = new();
+    private readonly DispatcherTimer _hoverDwellTimer;
+    private CancellationTokenSource? _hoverFetchCts;
 
     // v8 M16: LRU cache for commit message bodies, bounded with oldest-25% eviction.
     private readonly Dictionary<ObjectId, string> _msgBodyCache = new();
@@ -267,6 +270,12 @@ public sealed partial class CommitGraphControl : Control
     internal int RowCountForTesting => _layout?.Layout.RowCount ?? 0;
     internal IReadOnlyList<GraphColumn> ColumnsForTesting => _columns;
     internal ContextMenu? OpenMenuForTesting => _openMenu;
+    internal bool HoverDwellTimerRunningForTesting => _hoverDwellTimer.IsEnabled;
+    internal HoverTarget? PendingHoverTargetForTesting => _hoverDwell.Pending;
+    internal HoverTarget? ShownHoverTargetForTesting => _hoverDwell.Shown;
+    internal bool MsgFetchInFlightForTesting => _msgFetchInFlight is not null;
+    internal int MsgBodyCacheCountForTesting => _msgBodyCache.Count;
+    internal void FireHoverDwellTimerForTesting() => HandleHoverDwellElapsed();
 
     /// <summary>Test-only: simulates a horizontal scroll/pan without driving the real
     /// <see cref="ScrollBar"/> or lane-pan gestures.</summary>
@@ -287,6 +296,7 @@ public sealed partial class CommitGraphControl : Control
 
     private void OpenMenu(ContextMenu menu)
     {
+        CancelHoverDwell();
         if (_openMenu is { } prev)
         {
             _openMenu = null;
@@ -371,6 +381,9 @@ public sealed partial class CommitGraphControl : Control
             if (_refList.IsOpen && !RefListHovered && !RefListBadgeHovered())
                 CloseRefList();
         };
+
+        _hoverDwellTimer = new DispatcherTimer { Interval = GraphHoverDwell.Delay };
+        _hoverDwellTimer.Tick += (_, _) => HandleHoverDwellElapsed();
 
         _scrollBar = new ScrollBar { Orientation = Orientation.Vertical, Width = 12, IsVisible = false, [Grid.ColumnProperty] = 0 };
         // While the user is dragging the thumb, background row-loading keeps triggering
@@ -627,6 +640,7 @@ public sealed partial class CommitGraphControl : Control
         if (_context is { } leaving)
             _panByRepo[Historia.Services.Settings.IRepoLayoutService.KeyFor(leaving.RepositoryPath)] = _graphPanOffset;
 
+        CancelHoverDwell();
         CancelAndDisposeLayoutCts();
         SetLayout(null);               // release the commit-store lease before switching repos
         ClearReveal();                 // a running pump exits when it sees _revealTarget == null
@@ -1322,6 +1336,7 @@ public sealed partial class CommitGraphControl : Control
     {
         var ceilingTask = Task.Delay(ceiling, ct);
         var completed = await Task.WhenAny(context.FirstFullLoad, ceilingTask).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
         var firedCeiling = completed == ceilingTask && !context.FirstFullLoad.IsCompleted;
         if (firedCeiling && Historia.Diagnostics.PerfLog.Enabled)
             Historia.Diagnostics.PerfLog.Mark($"crawl stuck-guard ceiling fired after {ceiling.TotalSeconds:F0}s without FirstFullLoad ({context.DisplayName})");
@@ -1672,6 +1687,8 @@ public sealed partial class CommitGraphControl : Control
         _ = EnsureExtendedAsync(lastVisible);
         NoteViewportBottom();
         InvalidateVisual();
+        if (IsPointerOver)
+            UpdateHoverDwell(ResolveHoverTarget(_lastPointerPos));
     }
 
     protected override void OnPointerMoved(PointerEventArgs e)
@@ -1870,7 +1887,7 @@ public sealed partial class CommitGraphControl : Control
             _hoverRow = -1;
             InvalidateVisual();
         }
-        ToolTip.SetIsOpen(this, false);
+        CancelHoverDwell();
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -2359,56 +2376,117 @@ public sealed partial class CommitGraphControl : Control
 
     private void UpdateHoverTooltip(Point pos)
     {
-        // A context menu is a separate popup layer that doesn't suppress pointer-moved on the
-        // control underneath, and the pointer is typically still sitting right over the row that
-        // was just right-clicked — so without this guard, the very next hover tick reopens the
-        // message tooltip on top of the menu that was just opened for that same row.
         if (_openMenu is not null)
         {
-            ToolTip.SetIsOpen(this, false);
-            _lastTip = null;
-            _msgTipText = null;
+            CancelHoverDwell();
             return;
         }
 
-        string? tip = null;
+        var target = ResolveHoverTarget(pos);
 
-        // R7: an explicit hover on the small local/remote glyph is the more specific intent, so
-        // it must win over a sibling-ref-list popup on the same badge — check icons first.
-        foreach (var ic in _iconRects)
-            if (ic.Rect.Contains(pos)) { tip = ic.Tip; break; }
+        // The sibling-ref badge opens a popup, not a tooltip — R7 intent is to see the rest of
+        // the refs on this commit as soon as the badge is under the pointer, so it stays
+        // immediate rather than joining the 1s tooltip dwell below.
+        if (target is { Kind: HoverTargetKind.RefListBadge })
+        {
+            _hoverDwell.Reset();
+            _hoverDwellTimer.Stop();
+            ShowHoverTarget(target.Value);
+            return;
+        }
 
-        if (tip is null)
-            foreach (var p in _pillRects)
-                if (p.Rect.Contains(pos) && p.Deco.SiblingsOrNull is { Length: > 0 })
-                {
-                    OpenRefListFor(p.Deco, p.Rect);
-                    ToolTip.SetIsOpen(this, false);
-                    _lastTip = null;
-                    return;
-                }
+        UpdateHoverDwell(target);
+    }
 
-        if (tip is null)
-            foreach (var p in _pillRects)
-                if (p.Rect.Contains(pos))
-                {
-                    var d = p.Deco;
-                    tip = d.Type == DecorationType.Head ? "HEAD" : d.Label;
-                    break;
-                }
+    private void HandleHoverDwellElapsed()
+    {
+        _hoverDwellTimer.Stop();
+        if (_hoverDwell.Elapse() is { } target)
+        {
+            if (IsPointerOver && ResolveHoverTarget(_lastPointerPos) == target)
+            {
+                ShowHoverTarget(target);
+            }
+        }
+    }
 
-        if (tip is null)
-            foreach (var (rect, _, hidden) in _overflowChips)
-                if (rect.Contains(pos))
-                {
-                    tip = $"{hidden.Count} more:\n" + string.Join("\n", hidden.Select(d => d.Type == DecorationType.Head ? "HEAD" : d.Label));
-                    break;
-                }
+    private void UpdateHoverDwell(HoverTarget? target)
+    {
+        var step = _hoverDwell.Move(target);
+        switch (step)
+        {
+            case DwellStep.Keep:
+                break;
+            case DwellStep.Restart:
+                ToolTip.SetIsOpen(this, false);
+                _lastTip = null;
+                _msgTipText = null;
+                _hoverMsgId = null;
+                CancelHoverFetch();
+                _hoverDwellTimer.Stop();
+                _hoverDwellTimer.Start();
+                break;
+            case DwellStep.Clear:
+                ToolTip.SetIsOpen(this, false);
+                _lastTip = null;
+                _msgTipText = null;
+                _hoverMsgId = null;
+                CancelHoverFetch();
+                _hoverDwellTimer.Stop();
+                break;
+        }
+    }
 
-        // v8 M16: hovering the Message column shows the whole commit message (subject + body),
-        // wrapped, sized to content. Tooltip-only — OnPointerPressed / the context menu are
-        // untouched, so click and right-click on the message cell still work.
-        if (tip is null && _resolvedColumns is { Length: > 0 } cols)
+    private void CancelHoverDwell()
+    {
+        _hoverDwell.Reset();
+        _hoverDwellTimer.Stop();
+        ToolTip.SetIsOpen(this, false);
+        _lastTip = null;
+        _msgTipText = null;
+        _hoverMsgId = null;
+        CancelHoverFetch();
+    }
+
+    private void CancelHoverFetch()
+    {
+        if (_hoverFetchCts is { } cts)
+        {
+            _hoverFetchCts = null;
+            try { cts.Cancel(); } catch { }
+            cts.Dispose();
+        }
+    }
+
+    private HoverTarget? ResolveHoverTarget(Point pos)
+    {
+        for (var i = 0; i < _iconRects.Count; i++)
+        {
+            if (_iconRects[i].Rect.Contains(pos))
+                return new HoverTarget(HoverTargetKind.Icon, RowAt(pos.Y), i);
+        }
+
+        for (var i = 0; i < _pillRects.Count; i++)
+        {
+            var p = _pillRects[i];
+            if (p.Rect.Contains(pos) && p.Deco.SiblingsOrNull is { Length: > 0 })
+                return new HoverTarget(HoverTargetKind.RefListBadge, p.Row, i);
+        }
+
+        for (var i = 0; i < _pillRects.Count; i++)
+        {
+            var p = _pillRects[i];
+            if (p.Rect.Contains(pos))
+                return new HoverTarget(HoverTargetKind.Pill, p.Row, i);
+        }
+
+        for (var i = 0; i < _overflowChips.Count; i++)
+        {
+            if (_overflowChips[i].Rect.Contains(pos))
+                return new HoverTarget(HoverTargetKind.Overflow, _overflowChips[i].Row, i);
+        }
+
+        if (_resolvedColumns is { Length: > 0 } cols)
         {
             for (var i = 0; i < cols.Length; i++)
             {
@@ -2421,25 +2499,69 @@ public sealed partial class CommitGraphControl : Control
                         var row = (int)((pos.Y - RowsTop + _scrollOffset) / _rowHeight);
                         if (_layout is { } lay && row >= 0 && row < lay.Layout.Commits.Count)
                         {
-                            var meta = lay.Layout.Commits[row];
-                            ShowMessageTooltip(meta.Id, meta.MessageShort);
-                            return;
+                            return new HoverTarget(HoverTargetKind.Message, row, -1);
                         }
                     }
                     break;
                 }
             }
-            _hoverMsgId = null;
         }
 
-        if (tip is null)
-        {
-            ToolTip.SetIsOpen(this, false);
-            _lastTip = null;
-            _msgTipText = null;
+        return null;
+    }
+
+    private void ShowHoverTarget(HoverTarget target)
+    {
+        if (_openMenu is not null)
             return;
-        }
 
+        switch (target.Kind)
+        {
+            case HoverTargetKind.Icon:
+                if (target.Index >= 0 && target.Index < _iconRects.Count)
+                    ShowSimpleTooltip(_iconRects[target.Index].Tip);
+                break;
+
+            case HoverTargetKind.RefListBadge:
+                if (target.Index >= 0 && target.Index < _pillRects.Count)
+                {
+                    var p = _pillRects[target.Index];
+                    OpenRefListFor(p.Deco, p.Rect);
+                    ToolTip.SetIsOpen(this, false);
+                    _lastTip = null;
+                }
+                break;
+
+            case HoverTargetKind.Pill:
+                if (target.Index >= 0 && target.Index < _pillRects.Count)
+                {
+                    var d = _pillRects[target.Index].Deco;
+                    var tip = d.Type == DecorationType.Head ? "HEAD" : d.Label;
+                    ShowSimpleTooltip(tip);
+                }
+                break;
+
+            case HoverTargetKind.Overflow:
+                if (target.Index >= 0 && target.Index < _overflowChips.Count)
+                {
+                    var hidden = _overflowChips[target.Index].Hidden;
+                    var tip = $"{hidden.Count} more:\n" + string.Join("\n", hidden.Select(d => d.Type == DecorationType.Head ? "HEAD" : d.Label));
+                    ShowSimpleTooltip(tip);
+                }
+                break;
+
+            case HoverTargetKind.Message:
+                if (_layout is { } lay && target.Row >= 0 && target.Row < lay.Layout.Commits.Count)
+                {
+                    var meta = lay.Layout.Commits[target.Row];
+                    ShowMessageTooltip(meta.Id, meta.MessageShort);
+                }
+                break;
+        }
+    }
+
+    private void ShowSimpleTooltip(string tip)
+    {
         if (!string.Equals(_lastTip, tip, StringComparison.Ordinal))
         {
             _lastTip = tip;
@@ -2456,15 +2578,24 @@ public sealed partial class CommitGraphControl : Control
     }
 
     /// <summary>v8 M16: show the full commit message for a Message-column cell. The body is
-    /// fetched lazily (debounced) via <see cref="IGitGateway.GetCommitDetailAsync"/> and cached;
+    /// fetched lazily via <see cref="IGitGateway.GetCommitDetailAsync"/> and cached;
     /// until it resolves the subject alone is shown.</summary>
     private void ShowMessageTooltip(ObjectId id, string subject)
     {
         var text = subject;
         if (TryGetCachedBody(id, out var body))
+        {
             text = string.IsNullOrEmpty(body) ? subject : subject + "\n\n" + body;
+        }
         else
-            _ = FetchMessageBodyAsync(id, subject);
+        {
+            CancelHoverFetch();
+            if (_context is { } ctx)
+            {
+                _hoverFetchCts = CancellationTokenSource.CreateLinkedTokenSource(ctx.Lifetime);
+                _ = FetchMessageBodyAsync(id, subject, _hoverFetchCts.Token);
+            }
+        }
 
         _hoverMsgId = id;
         if (string.Equals(_msgTipText, text, StringComparison.Ordinal))
@@ -2485,20 +2616,18 @@ public sealed partial class CommitGraphControl : Control
         ToolTip.SetIsOpen(this, true);
     }
 
-    private async Task FetchMessageBodyAsync(ObjectId id, string subject)
+    private async Task FetchMessageBodyAsync(ObjectId id, string subject, CancellationToken ct)
     {
         if (_context is not { } ctx || _msgBodyCache.ContainsKey(id) || id.Equals(_msgFetchInFlight))
             return;
         _msgFetchInFlight = id;
         try
         {
-            await Task.Delay(180, ctx.Lifetime).ConfigureAwait(true); // debounce a scroll-past
-            if (!id.Equals(_hoverMsgId))
-                return;
-            var detail = await ctx.Gateway.GetCommitDetailAsync(id, ctx.Lifetime).ConfigureAwait(true);
+            ct.ThrowIfCancellationRequested();
+            var detail = await ctx.Gateway.GetCommitDetailAsync(id, ct).ConfigureAwait(true);
             CacheMessageBody(id, detail.MessageBody ?? "");
-            if (id.Equals(_hoverMsgId) && IsPointerOver)
-                ShowMessageTooltip(id, subject); // re-render now that the body is in
+            if (id.Equals(_hoverMsgId) && IsPointerOver && !ct.IsCancellationRequested)
+                ShowMessageTooltip(id, subject);
         }
         catch { /* best-effort tooltip */ }
         finally

@@ -6,13 +6,17 @@ public class WorkspaceServiceTests : IAsyncDisposable
     private readonly MiniHost _host = new();
     private RecentRepositoryService? _recents;
 
-    private WorkspaceService NewWorkspace(IRepoIdentityService? identity = null)
+    private WorkspaceService NewWorkspace(
+        IRepoIdentityService? identity = null,
+        IGitCliService? cli = null,
+        IServiceProvider? provider = null)
     {
-        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        cli ??= _host.Provider.GetRequiredService<IGitCliService>();
+        provider ??= _host.Provider;
         var recents = _recents = new RecentRepositoryService(_host.Settings);
         var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
         identity ??= new RepoIdentityService(cli);
-        return new WorkspaceService(_host.Provider, cli, recents, profiles, identity);
+        return new WorkspaceService(provider, cli, recents, profiles, identity);
     }
 
     private static string Norm(string p) =>
@@ -1134,6 +1138,149 @@ public class WorkspaceServiceTests : IAsyncDisposable
 
         Assert.Equal(2, ws.OpenRepositories.Count);
         Assert.All(ws.OpenRepositories, c => Assert.Null(c.LinkOwner));
+        await ws.DisposeAsync();
+    }
+
+    private sealed class StatusInterceptingGitCliService(IGitCliService inner) : IGitCliService
+    {
+        public bool IsGitAvailable => inner.IsGitAvailable;
+
+        public string? TargetRepoPath { get; set; }
+        public TaskCompletionSource StatusStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseStatus { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool FailStatus { get; set; }
+
+        public async Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default)
+        {
+            if (request.Arguments.Count > 0 && request.Arguments[0] == "status")
+            {
+                var match = TargetRepoPath is null ||
+                    (request.WorkingDirectory is not null &&
+                     string.Equals(Norm(request.WorkingDirectory), Norm(TargetRepoPath), StringComparison.OrdinalIgnoreCase));
+
+                if (match)
+                {
+                    StatusStarted.TrySetResult();
+                    if (FailStatus)
+                    {
+                        return new GitCliResult(
+                            ExitCode: 1,
+                            StandardOutput: "",
+                            StandardError: "fatal: simulated status failure",
+                            ErrorKind: GitErrorKind.Unknown,
+                            Duration: TimeSpan.FromMilliseconds(1));
+                    }
+
+                    using var reg = ct.Register(() => ReleaseStatus.TrySetCanceled());
+                    await ReleaseStatus.Task.ConfigureAwait(false);
+                }
+            }
+
+            return await inner.RunAsync(request, ct).ConfigureAwait(false);
+        }
+
+        public Task<GitCliResult> RunAsync(
+            GitCliRequest request,
+            IProgress<GitProgress>? progress,
+            Action<string>? onStdoutLine,
+            CancellationToken ct = default)
+            => inner.RunAsync(request, progress, onStdoutLine, ct);
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task Foreground_first_full_load_does_not_wait_for_a_slow_status_scan()
+    {
+        using var r = Repo("fg-slow-status.txt");
+        var realCli = _host.Provider.GetRequiredService<IGitCliService>();
+        var interceptor = new StatusInterceptingGitCliService(realCli) { TargetRepoPath = r.Path };
+        var provider = new OverrideServiceProvider(_host.Provider, typeof(IGitCliService), interceptor);
+        var ws = NewWorkspace(cli: interceptor, provider: provider);
+
+        var ctx = await ws.OpenAsync(r.Path);
+        ctx.MarkFirstGraphPaintDone();
+
+        // FirstFullLoad must complete while status is still blocked in the interceptor
+        await ctx.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(ctx.FirstFullLoad.IsCompleted);
+
+        // Status started after init
+        await interceptor.StatusStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Now release the status scan
+        interceptor.ReleaseStatus.SetResult();
+
+        // State.Status is populated within 10s
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (ctx.State.Status is null && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        Assert.NotNull(ctx.State.Status);
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task Background_init_still_waits_for_status()
+    {
+        using var r1 = Repo("bg-slow-status-1.txt");
+        using var r2 = Repo("bg-slow-status-2.txt");
+        File.WriteAllText(AppPaths.SessionFile, new JsonObject
+        {
+            ["schemaVersion"] = 3,
+            ["paths"] = new JsonArray(r1.Path, r2.Path),
+            ["focusedPath"] = r1.Path,
+        }.ToJsonString());
+
+        var realCli = _host.Provider.GetRequiredService<IGitCliService>();
+        var interceptor = new StatusInterceptingGitCliService(realCli) { TargetRepoPath = r2.Path };
+        var provider = new OverrideServiceProvider(_host.Provider, typeof(IGitCliService), interceptor);
+        var ws = NewWorkspace(cli: interceptor, provider: provider);
+
+        await ws.RestoreSessionAsync();
+        var ctx1 = ws.OpenRepositories.First(c => Norm(c.RepositoryPath) == Norm(r1.Path));
+        var ctx2 = ws.OpenRepositories.First(c => Norm(c.RepositoryPath) == Norm(r2.Path));
+
+        ctx1.MarkFirstGraphPaintDone();
+        await ctx1.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Start background init for ctx2
+        ws.EnsureInitialized(ctx2);
+
+        // Wait until status starts for ctx2
+        await interceptor.StatusStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Background-initialized tab stays incomplete while status is blocked
+        Assert.False(ctx2.FirstFullLoad.IsCompleted);
+
+        // Release status
+        interceptor.ReleaseStatus.SetResult();
+
+        // Completes after release
+        await ctx2.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(ctx2.FirstFullLoad.IsCompleted);
+
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task A_failed_status_after_init_does_not_fault_first_load()
+    {
+        using var r = Repo("failed-status.txt");
+        var realCli = _host.Provider.GetRequiredService<IGitCliService>();
+        var interceptor = new StatusInterceptingGitCliService(realCli)
+        {
+            TargetRepoPath = r.Path,
+            FailStatus = true,
+        };
+        var provider = new OverrideServiceProvider(_host.Provider, typeof(IGitCliService), interceptor);
+        var ws = NewWorkspace(cli: interceptor, provider: provider);
+
+        var ctx = await ws.OpenAsync(r.Path);
+        ctx.MarkFirstGraphPaintDone();
+
+        // FirstFullLoad completes despite failed status
+        await ctx.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(ctx.FirstFullLoad.IsCompleted);
+
         await ws.DisposeAsync();
     }
 

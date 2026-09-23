@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Git;
+namespace Historia.Services.Git;
 
 /// <summary>
 /// <inheritdoc cref="IGitGateway"/>
@@ -19,8 +19,70 @@ public sealed class GitGateway(
     public Task<RepositoryInfo> GetRepositoryInfoAsync(CancellationToken ct = default)
         => context.WithRepositoryAsync(lib.ProjectInfo, ct);
 
-    public Task<RepositoryStatus> GetStatusAsync(CancellationToken ct = default)
-        => context.WithRepositoryAsync(lib.ProjectStatus, ct);
+    public async Task<RepositoryStatus> GetStatusAsync(CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (!cli.IsGitAvailable)
+            return await context.WithRepositoryAsync(lib.ProjectStatus, ct).ConfigureAwait(false);
+
+        if (context.IsBare)
+            return RepositoryStatus.Empty with { ComputedAt = DateTimeOffset.Now };
+
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--renames"],
+            WorkingDirectory = context.RepositoryPath,
+            Timeout = Timeout.InfiniteTimeSpan,
+        }, ct).ConfigureAwait(false);
+
+        if (!result.IsSuccess)
+        {
+            ct.ThrowIfCancellationRequested();
+            throw HistoriaGitException.FromCli(result, "Status");
+        }
+
+        var parsed = GitStatusParser.Parse(result.StandardOutput);
+
+        IReadOnlyDictionary<string, string> untrackedHashes = ImmutableDictionary<string, string>.Empty;
+        if (GitStatusParser.ShouldHashUntracked(parsed))
+        {
+            var untrackedPaths = string.Join("\n", parsed.Untracked.Select(u => u.Path)) + "\n";
+            var hashResult = await cli.RunAsync(new GitCliRequest
+            {
+                Arguments = ["hash-object", "--stdin-paths"],
+                WorkingDirectory = context.RepositoryPath,
+                StandardInput = untrackedPaths,
+                Timeout = Timeout.InfiniteTimeSpan,
+            }, ct).ConfigureAwait(false);
+
+            if (hashResult.IsSuccess)
+            {
+                var lines = hashResult.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+                if (lines.Length == parsed.Untracked.Count)
+                {
+                    var dict = new Dictionary<string, string>(parsed.Untracked.Count, StringComparer.Ordinal);
+                    for (var i = 0; i < parsed.Untracked.Count; i++)
+                    {
+                        dict[parsed.Untracked[i].Path] = lines[i].Trim();
+                    }
+                    untrackedHashes = dict;
+                }
+                else
+                {
+                    PerfLog.Mark($"GetStatusAsync hash-object count mismatch: got {lines.Length}, expected {parsed.Untracked.Count}");
+                }
+            }
+            else
+            {
+                ct.ThrowIfCancellationRequested();
+                PerfLog.Mark($"GetStatusAsync hash-object failed: exit={hashResult.ExitCode}, kind={hashResult.ErrorKind}");
+            }
+        }
+
+        var status = GitStatusParser.PairExactMoves(parsed, untrackedHashes);
+        return PopulateSizes(status, context.RepositoryPath);
+    }
 
     public Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default)
         => context.WithRepositoryAsync(r => lib.ProjectCommits(r, query), ct);
@@ -553,5 +615,31 @@ public sealed class GitGateway(
         var name = repo.Config.Get<string>("user.name")?.Value ?? "Historia";
         var email = repo.Config.Get<string>("user.email")?.Value ?? "Historia@localhost";
         return new Signature(name, email, DateTimeOffset.Now);
+    }
+
+    private static RepositoryStatus PopulateSizes(RepositoryStatus status, string repoPath)
+    {
+        return status with
+        {
+            Staged = PopulateListSizes(status.Staged, repoPath),
+            Unstaged = PopulateListSizes(status.Unstaged, repoPath),
+            Untracked = PopulateListSizes(status.Untracked, repoPath),
+            Conflicted = PopulateListSizes(status.Conflicted, repoPath),
+            ComputedAt = DateTimeOffset.Now,
+        };
+    }
+
+    private static IReadOnlyList<FileStatusEntry> PopulateListSizes(IReadOnlyList<FileStatusEntry> entries, string repoPath)
+    {
+        if (entries.Count == 0)
+            return entries;
+
+        var list = new List<FileStatusEntry>(entries.Count);
+        foreach (var entry in entries)
+        {
+            var size = WorkingTreeFileSize.GetOrZero(Path.Combine(repoPath, entry.Path));
+            list.Add(entry.SizeBytes == size ? entry : entry with { SizeBytes = size });
+        }
+        return list;
     }
 }

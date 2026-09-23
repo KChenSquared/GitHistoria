@@ -246,12 +246,15 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         await Task.WhenAny(context.FirstGraphPaint, Task.Delay(ceiling, attemptToken)).ConfigureAwait(false);
 
         // Identity resolution and the first refs/status refresh don't depend on each
-        // other (refresh never reads the active profile identity sets) — run them concurrently
-        // so the changed/staged-files panel (which just reacts to RefreshAllAsync's StatusChanged)
-        // starts populating right after first paint instead of waiting on identity to finish
-        // first. Both use attemptToken so a focus-loss interrupt cancels both at once.
+        // other (refresh never reads the active profile identity sets) — run them concurrently.
+        // Foreground tabs refresh refs here to unlock FirstFullLoad immediately, then kick
+        // status refresh in the background once completed; background init runs RefreshAllAsync
+        // to fully hydrate before promotion. Both use attemptToken so a focus-loss interrupt
+        // cancels both at once.
         var identityTask = ResolveIdentityAsync(context, attemptToken);
-        var refreshTask = context.State.RefreshAllAsync(attemptToken);
+        var refreshTask = foreground
+            ? context.State.RefreshRefsAsync(attemptToken)
+            : context.State.RefreshAllAsync(attemptToken);
 
         try
         {
@@ -267,7 +270,27 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
         if (attemptToken.IsCancellationRequested)
             return context.Lifetime.IsCancellationRequested ? InitOutcome.Closed : InitOutcome.Interrupted;
+
+        if (foreground)
+            _ = RefreshStatusAfterInitAsync(context);
+
         return InitOutcome.Completed;
+    }
+
+    private static async Task RefreshStatusAfterInitAsync(RepositoryContext context)
+    {
+        try
+        {
+            await context.State.RefreshStatusAsync(context.Lifetime).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Tab closed or cancelled.
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(AppLogLevel.Warn, "workspace", $"Failed to refresh status after init: {context.DisplayName}", ex);
+        }
     }
 
     /// <summary>Repo→profile identity resolution and the cascading active-profile bind/touch/git-config
@@ -537,29 +560,39 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
     public async Task CloseAsync(RepositoryContext context)
     {
-        bool wasFocused;
+        bool removed;
+        bool wasFocused = false;
         RepositoryContext? nextFocus = null;
         lock (_sync)
         {
-            _open.Remove(context);
-            // §F9 (Decisions table): closing a group's owner detaches its children rather than
-            // closing them — no uncommitted work in a submodule tab is ever silently discarded.
-            foreach (var t in _open)
-                if (ReferenceEquals(t.LinkOwner, context))
-                    t.LinkOwner = null;
-            _deferredInit.Remove(context);
-            foreach (var item in _bgQueue.Where(x => ReferenceEquals(x.Context, context)))
+            removed = _open.Remove(context);
+            if (removed)
             {
-                foreach (var a in item.Awaiters)
-                    a.TrySetCanceled();
+                // §F9 (Decisions table): closing a group's owner detaches its children rather than
+                // closing them — no uncommitted work in a submodule tab is ever silently discarded.
+                foreach (var t in _open)
+                    if (ReferenceEquals(t.LinkOwner, context))
+                        t.LinkOwner = null;
+                _deferredInit.Remove(context);
+                foreach (var item in _bgQueue.Where(x => ReferenceEquals(x.Context, context)))
+                {
+                    foreach (var a in item.Awaiters)
+                        a.TrySetCanceled();
+                }
+                _bgQueue.RemoveAll(x => ReferenceEquals(x.Context, context));
+                wasFocused = ReferenceEquals(_focused, context);
+                if (wasFocused)
+                {
+                    _focused = null;
+                    nextFocus = _open.LastOrDefault();
+                }
             }
-            _bgQueue.RemoveAll(x => ReferenceEquals(x.Context, context));
-            wasFocused = ReferenceEquals(_focused, context);
-            if (wasFocused)
-            {
-                _focused = null;
-                nextFocus = _open.LastOrDefault();
-            }
+        }
+
+        if (!removed)
+        {
+            await context.DisposeAsync().ConfigureAwait(false);
+            return;
         }
 
         (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService)) as Historia.Services.Graph.IGraphLayoutService)

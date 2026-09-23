@@ -1,15 +1,5 @@
-using Avalonia.Headless.XUnit;
-using Historia.Controls;
-using Historia.Models;
-using Historia.Services.Git;
-using Historia.Services.Profiles;
-using Historia.Services.Settings;
-using Historia.Services.State;
-using Historia.Services.Workspace;
-using Microsoft.Extensions.DependencyInjection;
-using Xunit;
-
 namespace HistoriaApp.Tests;
+
 [Trait("tier", "ui")]
 
 public sealed class GraphCrawlGuardTests : IDisposable
@@ -102,6 +92,19 @@ public sealed class GraphCrawlGuardTests : IDisposable
 
         // First run + exactly ONE coalesced trailing run = 2 recomputes total (not 4)
         Assert.Equal(2, graph.RefsRecomputeCount);
+    }
+
+    [AvaloniaFact]
+    public async Task A_cancelled_wait_throws_instead_of_reporting_the_ceiling()
+    {
+        Assert.False(_context.FirstFullLoad.IsCompleted);
+
+        using var cts = new CancellationTokenSource();
+        var waitTask = CommitGraphControl.WaitForCrawlGuardAsync(_context, TimeSpan.FromSeconds(120), cts.Token);
+
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await waitTask);
     }
 
     private sealed class FakeVault : ICredentialVaultService
