@@ -16,7 +16,7 @@ public class ConflictServiceTests
         });
 
     [Fact]
-    public async Task Lists_and_loads_a_both_modified_conflict_from_index_stages()
+    public async Task Lists_conflicts_from_index_stages()
     {
         await using var host = new MiniHost();
         using var repoDir = ConflictedRepo();
@@ -27,11 +27,486 @@ public class ConflictServiceTests
         var file = Assert.Single(conflicts);
         Assert.Equal("f.txt", file.FilePath);
         Assert.Equal(ConflictStatus.BothModified, file.Status);
+    }
 
-        var loaded = await svc.LoadConflictContentAsync(ctx, "f.txt");
-        Assert.Contains("shared", loaded.BaseContent);
-        Assert.Contains("OURS", loaded.OursContent);
-        Assert.Contains("THEIRS", loaded.TheirsContent);
+    [Fact]
+    public async Task Load_working_copy_returns_markers_not_empty()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        Assert.NotNull(copy.Text);
+        Assert.Contains("<<<<<<<", copy.Text);
+        Assert.Contains("OURS", copy.Text);
+        Assert.Contains("THEIRS", copy.Text);
+        Assert.False(copy.IsBinary);
+        Assert.False(copy.ExceedsBudget);
+        Assert.Equal(7, copy.MarkerSize);
+        Assert.False(string.IsNullOrEmpty(copy.DiskHash));
+    }
+
+    [Fact]
+    public async Task Load_working_copy_utf16_bom_is_text_not_binary()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+        repoDir.WriteFile(".gitattributes", "*.txt text working-tree-encoding=UTF-16LE-BOM\n");
+        repoDir.Stage(".gitattributes").Commit("attributes");
+
+        var preamble = new byte[] { 0xFF, 0xFE };
+        byte[] Utf16(string s) => preamble.Concat(Encoding.Unicode.GetBytes(s)).ToArray();
+
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "f.txt"), Utf16("base\n"));
+        repoDir.Stage("f.txt").Commit("base");
+
+        repoDir.Checkout("feature", create: true);
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "f.txt"), Utf16("theirs\n"));
+        repoDir.Stage("f.txt").Commit("theirs");
+
+        repoDir.Checkout("main");
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "f.txt"), Utf16("ours\n"));
+        repoDir.Stage("f.txt").Commit("ours");
+
+        try { repoDir.Git("merge", "feature"); } catch { }
+
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        Assert.False(copy.IsBinary);
+        Assert.NotNull(copy.Text);
+        Assert.NotNull(copy.Format);
+        Assert.True(copy.Format.Value.HasBom);
+        Assert.Contains("<<<<<<<", copy.Text);
+    }
+
+    [Fact]
+    public async Task Load_working_copy_utf8_bom_region_on_first_line()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+
+        var preamble = new byte[] { 0xEF, 0xBB, 0xBF };
+        byte[] Utf8Bom(string s) => preamble.Concat(Encoding.UTF8.GetBytes(s)).ToArray();
+
+        // Write a conflict marker starting on byte 3 (line 1 of decoded text)
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "f.txt"), Utf8Bom("<<<<<<< HEAD\nOURS\n=======\nTHEIRS\n>>>>>>> feature\n"));
+
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        Assert.NotNull(copy.Text);
+        Assert.False(copy.Text.StartsWith('\uFEFF'));
+        Assert.StartsWith("<<<<<<<", copy.Text);
+        Assert.True(copy.Format?.HasBom);
+    }
+
+    [Fact]
+    public async Task Take_theirs_preserves_bom_and_crlf()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+        repoDir.Git("config", "core.autocrlf", "true");
+
+        var preamble = new byte[] { 0xEF, 0xBB, 0xBF };
+        byte[] Utf8Bom(string s) => preamble.Concat(Encoding.UTF8.GetBytes(s)).ToArray();
+
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "f.txt"), Utf8Bom("base\r\n"));
+        repoDir.Stage("f.txt").Commit("base");
+
+        repoDir.Checkout("feature", create: true);
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "f.txt"), Utf8Bom("theirs\r\n"));
+        repoDir.Stage("f.txt").Commit("theirs");
+
+        repoDir.Checkout("main");
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "f.txt"), Utf8Bom("ours\r\n"));
+        repoDir.Stage("f.txt").Commit("ours");
+
+        try { repoDir.Git("merge", "feature"); } catch { }
+
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        await svc.ResolveWithSideAsync(ctx, "f.txt", ConflictSide.Theirs);
+
+        var onDisk = await File.ReadAllBytesAsync(Path.Combine(repoDir.Path, "f.txt"));
+        Assert.Equal(preamble, onDisk[..preamble.Length]);
+        var text = Encoding.UTF8.GetString(onDisk[3..]);
+        Assert.Equal("theirs\r\n", text);
+    }
+
+    [Fact]
+    public async Task Save_resolution_preserves_bom_and_stages()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        var bomFormat = new TextFileFormat(new UTF8Encoding(true), HasBom: true);
+        var res = await svc.SaveResolutionAsync(ctx, "f.txt", "resolved content\r\n", bomFormat, copy.DiskHash, stage: true);
+
+        Assert.True(res.Saved);
+        var onDisk = await File.ReadAllBytesAsync(Path.Combine(repoDir.Path, "f.txt"));
+        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, onDisk[..3]);
+
+        var conflicts = await svc.GetConflictsAsync(ctx);
+        Assert.Empty(conflicts);
+    }
+
+    [Fact]
+    public async Task Save_resolution_refuses_when_file_changed_on_disk()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        var full = Path.Combine(repoDir.Path, "f.txt");
+
+        await File.WriteAllTextAsync(full, "external change\n");
+
+        var res = await svc.SaveResolutionAsync(ctx, "f.txt", "my edits", copy.Format ?? default, copy.DiskHash, stage: false);
+
+        Assert.False(res.Saved);
+        var currentText = await File.ReadAllTextAsync(full);
+        Assert.Equal("external change\n", currentText);
+        var externalHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("external change\n")));
+        Assert.Equal(externalHash, res.DiskHash);
+    }
+
+    [Fact]
+    public async Task Recreate_conflict_writes_zdiff3_base_section()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        await svc.RecreateConflictAsync(ctx, "f.txt");
+
+        var text = await File.ReadAllTextAsync(Path.Combine(repoDir.Path, "f.txt"));
+        Assert.Contains("|||||||", text);
+        Assert.Contains("shared", text);
+    }
+
+    [Fact]
+    public async Task Side_labels_merge_and_rebase()
+    {
+        // 1. Merge labels
+        {
+            await using var host = new MiniHost();
+            using var repoDir = ConflictedRepo();
+            await using var ctx = host.Open(repoDir.Path);
+            var svc = Make(host);
+
+            var labels = await svc.GetSideLabelsAsync(ctx);
+            Assert.Equal(OperationState.Merging, labels.Operation);
+            Assert.Equal("main", labels.OursTitle);
+            Assert.Contains("feature", labels.TheirsTitle, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // 2. Rebase labels
+        {
+            await using var host = new MiniHost();
+            using var repoDir = TestRepositoryBuilder.Create();
+            repoDir.WriteFile("f.txt", "base\n").Stage().Commit("base");
+            repoDir.Checkout("feature", create: true).WriteFile("f.txt", "feature\n").Stage().Commit("commit on feature");
+            repoDir.Checkout("main").WriteFile("f.txt", "main\n").Stage().Commit("commit on main");
+            repoDir.Checkout("feature");
+            try { repoDir.Git("rebase", "main"); } catch { }
+
+            await using var ctx = host.Open(repoDir.Path);
+            var svc = Make(host);
+
+            var labels = await svc.GetSideLabelsAsync(ctx);
+            Assert.Equal(OperationState.Rebasing, labels.Operation);
+            Assert.Contains("onto", labels.OursTitle);
+            Assert.Contains("feature", labels.TheirsTitle);
+        }
+    }
+
+    [Fact]
+    public async Task Stop_id_is_stable_across_staging_and_changes_at_next_stop()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+        repoDir.WriteFile("f1.txt", "base1\n").WriteFile("f2.txt", "base2\n").Stage().Commit("base");
+
+        repoDir.Checkout("feature", create: true);
+        repoDir.WriteFile("f1.txt", "feature1\n").Stage().Commit("conflict1");
+        repoDir.WriteFile("f2.txt", "feature2\n").Stage().Commit("conflict2");
+
+        repoDir.Checkout("main");
+        repoDir.WriteFile("f1.txt", "main1\n").WriteFile("f2.txt", "main2\n").Stage().Commit("main changes");
+
+        repoDir.Checkout("feature");
+        try { repoDir.Git("rebase", "main"); } catch { }
+
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var labelsStop1 = await svc.GetSideLabelsAsync(ctx);
+        var stop1Id = labelsStop1.StopId;
+
+        // Stage the first conflict
+        repoDir.WriteFile("f1.txt", "resolved1\n").Stage("f1.txt");
+
+        var labelsStop1AfterStage = await svc.GetSideLabelsAsync(ctx);
+        Assert.Equal(stop1Id, labelsStop1AfterStage.StopId);
+
+        // Continue rebase to reach second conflict
+        var env = new Dictionary<string, string> { ["GIT_EDITOR"] = "true" };
+        try { repoDir.Git(env, "rebase", "--continue"); } catch { }
+
+        var labelsStop2 = await svc.GetSideLabelsAsync(ctx);
+        Assert.NotEqual(stop1Id, labelsStop2.StopId);
+    }
+
+    [Fact]
+    public async Task Take_deleted_side_removes_path()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+        repoDir.WriteFile("f.txt", "base\n").Stage().Commit("base");
+
+        repoDir.Checkout("feature", create: true);
+        repoDir.Git("rm", "f.txt");
+        repoDir.Commit("deleted on feature");
+
+        repoDir.Checkout("main");
+        repoDir.WriteFile("f.txt", "modified on main\n").Stage().Commit("modified");
+
+        try { repoDir.Git("merge", "feature"); } catch { }
+
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var conflicts = await svc.GetConflictsAsync(ctx);
+        var c = Assert.Single(conflicts);
+        Assert.Equal(ConflictStatus.DeletedByThem, c.Status);
+
+        await svc.ResolveWithSideAsync(ctx, "f.txt", ConflictSide.Theirs);
+
+        Assert.False(File.Exists(Path.Combine(repoDir.Path, "f.txt")));
+        Assert.Empty(await svc.GetConflictsAsync(ctx));
+    }
+
+    [Fact]
+    public async Task Take_side_on_binary_conflict_keeps_file()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+
+        var baseBytes = new byte[] { 0x00, 0x01, 0x02 };
+        var theirsBytes = new byte[] { 0x00, 0x01, 0xAA };
+        var oursBytes = new byte[] { 0x00, 0x01, 0xBB };
+
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "bin.dat"), baseBytes);
+        repoDir.Stage("bin.dat").Commit("base");
+
+        repoDir.Checkout("feature", create: true);
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "bin.dat"), theirsBytes);
+        repoDir.Stage("bin.dat").Commit("theirs");
+
+        repoDir.Checkout("main");
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "bin.dat"), oursBytes);
+        repoDir.Stage("bin.dat").Commit("ours");
+
+        try { repoDir.Git("merge", "feature"); } catch { }
+
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var conflicts = await svc.GetConflictsAsync(ctx);
+        var c = Assert.Single(conflicts);
+        Assert.True(c.IsBinary);
+
+        await svc.ResolveWithSideAsync(ctx, "bin.dat", ConflictSide.Theirs);
+
+        Assert.True(File.Exists(Path.Combine(repoDir.Path, "bin.dat")));
+        var diskBytes = await File.ReadAllBytesAsync(Path.Combine(repoDir.Path, "bin.dat"));
+        Assert.Equal(theirsBytes, diskBytes);
+        Assert.Empty(await svc.GetConflictsAsync(ctx));
+    }
+
+    [Fact]
+    public async Task Take_absent_side_of_add_removes_path()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+        repoDir.WriteFile("init.txt", "init\n").Stage().Commit("init");
+
+        // Write a file directly into stage 2 (ours) using update-index --index-info
+        var hash = repoDir.Git("hash-object", "-w", "--stdin"); // empty or write
+        var blobSha = repoDir.Git("hash-object", "-w", "init.txt").Trim();
+        repoDir.FastImport($"commit refs/heads/main\nmark :1\nauthor Test User <test@example.com> 1000 +0000\ncommitter Test User <test@example.com> 1000 +0000\ndata 4\ntest\nM 100644 inline init.txt\ndata 5\ninit\n\n");
+
+        // Set up index conflict: AddedByUs (stage 2 present, stage 3 absent)
+        repoDir.WriteFile("added.txt", "content\n");
+        var sha = repoDir.Git("hash-object", "-w", "added.txt").Trim();
+        repoDir.Git("update-index", "--add", "--cacheinfo", $"100644,{sha},added.txt");
+        // Remove stage 0 and put into stage 2
+        var gitDir = Path.Combine(repoDir.Path, ".git");
+        using (var repo = new Repository(gitDir))
+        {
+            repo.Index.Remove("added.txt");
+            repo.Index.Write();
+        }
+        var psi = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = repoDir.Path,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        psi.ArgumentList.Add("update-index");
+        psi.ArgumentList.Add("--index-info");
+        using (var p = Process.Start(psi)!)
+        {
+            p.StandardInput.WriteLine($"100644 {sha} 2\tadded.txt");
+            p.StandardInput.Close();
+            p.WaitForExit();
+        }
+
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var conflicts = await svc.GetConflictsAsync(ctx);
+        var c = Assert.Single(conflicts);
+        Assert.Equal(ConflictStatus.AddedByUs, c.Status);
+
+        // Taking theirs on AddedByUs should remove the file
+        await svc.ResolveWithSideAsync(ctx, "added.txt", ConflictSide.Theirs);
+
+        Assert.False(File.Exists(Path.Combine(repoDir.Path, "added.txt")));
+        Assert.Empty(await svc.GetConflictsAsync(ctx));
+    }
+
+    [Fact]
+    public async Task Take_side_on_submodule_conflict_stages_that_commit()
+    {
+        await using var host = new MiniHost();
+
+        // 1. Create a child repo that will be used as a submodule
+        using var subRepo = TestRepositoryBuilder.Create();
+        subRepo.WriteFile("sub.txt", "v1\n").Stage().Commit("sub v1");
+        var subSha1 = subRepo.HeadSha;
+
+        // 2. Main repo
+        using var mainRepo = TestRepositoryBuilder.Create();
+        mainRepo.Git("-c", "protocol.file.allow=always", "submodule", "add", subRepo.Path, "mysub");
+        mainRepo.Commit("add submodule");
+
+        // Create two new commits in subRepo
+        subRepo.WriteFile("sub.txt", "v2\n").Stage().Commit("sub v2");
+        var subSha2 = subRepo.HeadSha;
+        subRepo.WriteFile("sub.txt", "v3\n").Stage().Commit("sub v3");
+        var subSha3 = subRepo.HeadSha;
+
+        // Feature branch points submodule to subSha2
+        mainRepo.Checkout("feature", create: true);
+        mainRepo.Git("update-index", "--cacheinfo", $"160000,{subSha2},mysub");
+        mainRepo.Commit("submodule sha2 on feature");
+
+        // Main branch points submodule to subSha3
+        mainRepo.Checkout("main");
+        mainRepo.Git("update-index", "--cacheinfo", $"160000,{subSha3},mysub");
+        mainRepo.Commit("submodule sha3 on main");
+
+        try { mainRepo.Git("merge", "feature"); } catch { }
+
+        await using var ctx = host.Open(mainRepo.Path);
+        var svc = Make(host);
+
+        var conflicts = await svc.GetConflictsAsync(ctx);
+        var c = Assert.Single(conflicts);
+        Assert.True(c.IsSubmodule);
+
+        // Take theirs (subSha2)
+        await svc.ResolveWithSideAsync(ctx, "mysub", ConflictSide.Theirs);
+
+        // Verify submodule folder still exists
+        Assert.True(Directory.Exists(Path.Combine(mainRepo.Path, "mysub")));
+
+        // Verify git ls-files -s shows stage 0 with subSha2
+        var ls = mainRepo.Git("ls-files", "-s", "mysub").Trim();
+        Assert.Contains(subSha2, ls);
+        Assert.StartsWith("160000", ls);
+        Assert.Empty(await svc.GetConflictsAsync(ctx));
+    }
+
+    [Fact]
+    public async Task External_tool_named_with_extension_preserves_bom_and_leaves_no_artifacts()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+
+        var preamble = new byte[] { 0xEF, 0xBB, 0xBF };
+        byte[] Utf8Bom(string s) => preamble.Concat(Encoding.UTF8.GetBytes(s)).ToArray();
+
+        Directory.CreateDirectory(Path.Combine(repoDir.Path, "sub"));
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "sub", "f.cs"), Utf8Bom("// base\n"));
+        repoDir.Stage().Commit("base");
+
+        repoDir.Checkout("feature", create: true);
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "sub", "f.cs"), Utf8Bom("// theirs\n"));
+        repoDir.Stage().Commit("theirs");
+
+        repoDir.Checkout("main");
+        File.WriteAllBytes(Path.Combine(repoDir.Path, "sub", "f.cs"), Utf8Bom("// ours\n"));
+        repoDir.Stage().Commit("ours");
+
+        try { repoDir.Git("merge", "feature"); } catch { }
+
+        await using var ctx = host.Open(repoDir.Path);
+
+        var script = Path.Combine(Path.GetTempPath(), $"historia-ext-tool-{Guid.NewGuid():N}.ps1");
+        var marker = Path.Combine(Path.GetTempPath(), $"historia-ext-marker-{Guid.NewGuid():N}.txt");
+        var copiedLocal = Path.Combine(Path.GetTempPath(), $"historia-ext-local-{Guid.NewGuid():N}.cs");
+
+        await File.WriteAllTextAsync(script,
+            "param([string]$Local, [string]$Merged)\n" +
+            "Set-Content -LiteralPath '" + marker.Replace("'", "''") + "' -Value $Local -Encoding utf8\n" +
+            "Copy-Item -LiteralPath $Local -Destination '" + copiedLocal.Replace("'", "''") + "'\n" +
+            "Copy-Item -LiteralPath $Local -Destination $Merged\n");
+
+        try
+        {
+            await host.Settings.UpdateAsync(s => s with
+            {
+                ExternalMergeTool = $"powershell -NoProfile -ExecutionPolicy Bypass -File \"{script}\" $LOCAL $MERGED",
+            });
+
+            var svc = Make(host);
+            var ok = await svc.LaunchExternalMergeToolAsync(ctx, "sub/f.cs");
+
+            Assert.True(ok);
+            Assert.True(File.Exists(marker));
+            var localPath = (await File.ReadAllTextAsync(marker)).Trim();
+            Assert.EndsWith(".cs", localPath, StringComparison.OrdinalIgnoreCase);
+
+            var copiedBytes = await File.ReadAllBytesAsync(copiedLocal);
+            Assert.Equal(preamble, copiedBytes[..preamble.Length]);
+
+            var status = repoDir.Git("status", "--porcelain", "--ignored");
+            // No extra untracked/ignored files created in the working tree
+            Assert.DoesNotContain(".merge_file", status);
+        }
+        finally
+        {
+            try { File.Delete(script); } catch { }
+            try { File.Delete(marker); } catch { }
+            try { File.Delete(copiedLocal); } catch { }
+        }
     }
 
     [Fact]
@@ -47,7 +522,6 @@ public class ConflictServiceTests
 
         await svc.ContinueOperationAsync(ctx);
 
-        // Merge commit created, working tree clean, "OURS" kept.
         var log = repoDir.Git("log", "--oneline", "-1");
         Assert.Contains("Merge", log, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("OURS", await File.ReadAllTextAsync(Path.Combine(repoDir.Path, "f.txt")));
@@ -69,57 +543,6 @@ public class ConflictServiceTests
                 ? ".git/MERGE_HEAD" : "");
         Assert.Contains("OURS", await File.ReadAllTextAsync(Path.Combine(repoDir.Path, "f.txt")));
     }
-
-    // A conflicted path containing
-    // shell metacharacters must reach the external merge tool as one literal argument, never as
-    // something a shell re-parses into extra commands.
-    [Fact]
-    public async Task LaunchExternalMergeTool_passes_a_metacharacter_laden_path_as_one_literal_argument()
-    {
-        const string conflictedName = "pwn&calc&file.txt";
-
-        await using var host = new MiniHost();
-        using var repoDir = TestRepositoryBuilder.FromTemplate("conflicted-metachar-path-repo", repo =>
-        {
-            repo.WriteFile(conflictedName, "line1\nshared\nline3\n").Stage().Commit("base");
-            repo.Checkout("feature", create: true).WriteFile(conflictedName, "line1\nTHEIRS\nline3\n").Stage().Commit("theirs");
-            repo.Checkout("main").WriteFile(conflictedName, "line1\nOURS\nline3\n").Stage().Commit("ours");
-            try { repo.Git("merge", "feature"); } catch { /* expected to conflict */ }
-        });
-
-        await using var ctx = host.Open(repoDir.Path);
-
-        // A "merge tool" that records the argv it actually received, one line per argument.
-        var script = Path.Combine(Path.GetTempPath(), $"historia-mergetool-test-{Guid.NewGuid():N}.ps1");
-        var marker = Path.Combine(Path.GetTempPath(), $"historia-mergetool-test-{Guid.NewGuid():N}.txt");
-        await File.WriteAllTextAsync(script,
-            "param([string]$Merged)\n" +
-            "Set-Content -LiteralPath '" + marker.Replace("'", "''") + "' -Value $Merged -Encoding utf8\n");
-
-        try
-        {
-            await host.Settings.UpdateAsync(s => s with
-            {
-                ExternalMergeTool = $"powershell -NoProfile -ExecutionPolicy Bypass -File \"{script}\" $MERGED",
-            });
-
-            var svc = Make(host);
-            await svc.LaunchExternalMergeToolAsync(ctx, conflictedName);
-
-            Assert.True(File.Exists(marker), "the configured merge tool never ran");
-            var received = (await File.ReadAllTextAsync(marker)).Trim();
-            // The whole "&calc&"-laden path arrived as PowerShell's single -Merged argument
-            // (i.e. it was never split or re-parsed by a shell along the way).
-            Assert.EndsWith(conflictedName, received, StringComparison.Ordinal);
-        }
-        finally
-        {
-            try { File.Delete(script); } catch { /* best effort */ }
-            try { File.Delete(marker); } catch { /* best effort */ }
-        }
-    }
-
-    // ── external merge tool command-line handling (§findings: cmd.exe /c double-escaping) ──
 
     [Fact]
     public void Tokenize_keeps_a_quoted_path_with_spaces_as_one_token()
@@ -143,26 +566,4 @@ public class ConflictServiceTests
     [Fact]
     public void Tokenize_of_blank_input_yields_no_tokens()
         => Assert.Empty(ConflictService.Tokenize("   "));
-
-    [Fact]
-    public async Task LaunchExternalMergeToolAsync_runs_the_configured_tool_directly_not_via_a_wrapping_shell()
-    {
-        // "cmd.exe" here plays the role of a user-configured external tool: each substituted
-        // token reaches it as its own argv entry via ArgumentList, exactly as production code
-        // launches whatever the user configures — not as one shell command string this service
-        // builds and hands to a nested "cmd.exe /c" (the old, double-escaping path).
-        await using var host = new MiniHost();
-        using var repoDir = ConflictedRepo();
-        await using var ctx = host.Open(repoDir.Path);
-        var svc = Make(host);
-
-        await host.Settings.UpdateAsync(s => s with { ExternalMergeTool = "cmd.exe /c copy /Y $LOCAL $MERGED" });
-
-        var ok = await svc.LaunchExternalMergeToolAsync(ctx, "f.txt");
-
-        Assert.True(ok);
-        var merged = await File.ReadAllTextAsync(Path.Combine(repoDir.Path, "f.txt"));
-        Assert.Contains("OURS", merged);
-        Assert.DoesNotContain("<<<<<<<", merged, StringComparison.Ordinal);
-    }
 }

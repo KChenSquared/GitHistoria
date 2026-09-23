@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>
 /// Merge / rebase / cherry-pick conflict resolver (§8.4) — V4 port of ConflictResolver.razor.
@@ -50,6 +50,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         try
         {
             var files = await _conflicts.GetConflictsAsync(_ctx, _ctx.Lifetime);
+            var labels = await _conflicts.GetSideLabelsAsync(_ctx, _ctx.Lifetime);
             _list.Children.Clear();
             _header.Text = files.Count == 0
                 ? "No conflicts — you can continue the operation."
@@ -60,22 +61,25 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 var card = new StackPanel { Spacing = 6 };
                 card.Children.Add(Text($"{f.FilePath}   ({f.Status})", "ColorText", 12, FontWeight.SemiBold));
 
+                var workingCopy = await _conflicts.LoadWorkingCopyAsync(_ctx, f.FilePath, _ctx.Lifetime);
+                var isEditable = !f.IsBinary && !f.IsSubmodule && !workingCopy.IsBinary && !workingCopy.UnsupportedEncoding && !workingCopy.ExceedsBudget && workingCopy.Text is not null;
+
                 var editor = new TextBox
                 {
                     AcceptsReturn = true,
                     MinHeight = 120,
                     FontFamily = new FontFamily("Consolas, monospace"),
                     FontSize = 12,
-                    Text = f.MergedContent,
-                    IsVisible = !f.IsBinary,
+                    Text = isEditable ? (workingCopy.Text ?? "") : "",
+                    IsVisible = isEditable,
                 };
                 card.Children.Add(editor);
 
                 var acts = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-                acts.Children.Add(TextButton("Take ours", () => _ = ResolveSideAsync(file.FilePath, ConflictSide.Ours)));
-                acts.Children.Add(TextButton("Take theirs", () => _ = ResolveSideAsync(file.FilePath, ConflictSide.Theirs)));
-                if (!f.IsBinary)
-                    acts.Children.Add(TextButton("Mark resolved (edited)", () => _ = MarkResolvedAsync(file.FilePath, editor.Text ?? "")));
+                acts.Children.Add(TextButton("Take ours", () => _ = TakeOursAsync(file.FilePath, labels.OursTitle)));
+                acts.Children.Add(TextButton("Take theirs", () => _ = TakeTheirsAsync(file.FilePath, labels.TheirsTitle)));
+                if (isEditable)
+                    acts.Children.Add(TextButton("Mark resolved (edited)", () => _ = MarkResolvedAsync(file.FilePath, editor.Text ?? "", workingCopy)));
                 acts.Children.Add(TextButton("External merge tool", () => _ = ExternalToolAsync(file.FilePath)));
                 card.Children.Add(acts);
 
@@ -86,11 +90,37 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails()); }
     }
 
-    private async Task ResolveSideAsync(string path, ConflictSide side)
-        => await Guard(() => _conflicts.ResolveWithSideAsync(_ctx, path, side, _ctx.Lifetime), $"Take {side}");
+    private async Task TakeOursAsync(string path, string oursTitle)
+    {
+        if (!await _dialogs.ConfirmDestructiveAsync("Take ours", $"Replace {path} with {oursTitle}'s version? Any edits to this file will be lost.", "Take ours"))
+            return;
+        await Guard(() => _conflicts.ResolveWithSideAsync(_ctx, path, ConflictSide.Ours, _ctx.Lifetime), "Take ours");
+    }
 
-    private async Task MarkResolvedAsync(string path, string content)
-        => await Guard(() => _conflicts.MarkResolvedAsync(_ctx, path, content, _ctx.Lifetime), "Mark resolved");
+    private async Task TakeTheirsAsync(string path, string theirsTitle)
+    {
+        if (!await _dialogs.ConfirmDestructiveAsync("Take theirs", $"Replace {path} with {theirsTitle}'s version? Any edits to this file will be lost.", "Take theirs"))
+            return;
+        await Guard(() => _conflicts.ResolveWithSideAsync(_ctx, path, ConflictSide.Theirs, _ctx.Lifetime), "Take theirs");
+    }
+
+    private async Task MarkResolvedAsync(string path, string content, ConflictWorkingCopy workingCopy)
+    {
+        try
+        {
+            var res = await _conflicts.SaveResolutionAsync(_ctx, path, content, workingCopy.Format ?? default, workingCopy.DiskHash, stage: true, _ctx.Lifetime);
+            if (!res.Saved)
+            {
+                _notifications.Publish(NotificationSeverity.Warning, $"{path} changed on disk — reload it before marking resolved.");
+                return;
+            }
+            await _ctx.State.RefreshAllAsync(_ctx.Lifetime);
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, $"Mark resolved failed: {ex.Message}", ex.NotificationDetails());
+        }
+    }
 
     private async Task ExternalToolAsync(string path)
     {

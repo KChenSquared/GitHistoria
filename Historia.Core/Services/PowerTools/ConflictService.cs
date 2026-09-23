@@ -3,33 +3,197 @@ namespace Historia.Services.PowerTools;
 /// <inheritdoc cref="IConflictService"/>
 public sealed class ConflictService(IGitCliService cli, ISettingsService settings) : IConflictService
 {
+    // 5 MB / 50 000 lines: budget twins of LibGit2Service's diff budgets.
+    private const long MaxWorkingCopyBytes = 5 * 1024 * 1024;
+    private const int MaxWorkingCopyLines = 50_000;
+
     public Task<IReadOnlyList<ConflictFile>> GetConflictsAsync(RepositoryContext context, CancellationToken ct = default)
         => context.WithRepositoryAsync(ListConflicts, ct);
 
-    public Task<ConflictFile> LoadConflictContentAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
-        => context.WithRepositoryAsync(repo => LoadContent(repo, filePath), ct);
+    public async Task<ConflictWorkingCopy> LoadWorkingCopyAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
+    {
+        var full = Path.Combine(context.RepositoryPath, filePath);
 
+        // Submodules (directories) are never read as text files.
+        if (Directory.Exists(full))
+        {
+            return new ConflictWorkingCopy
+            {
+                Path = filePath,
+                DiskHash = string.Empty,
+                IsBinary = true,
+            };
+        }
 
-    public async Task MarkResolvedAsync(RepositoryContext context, string filePath, string resolvedContent, CancellationToken ct = default)
+        if (!File.Exists(full))
+        {
+            return new ConflictWorkingCopy
+            {
+                Path = filePath,
+                DiskHash = string.Empty,
+            };
+        }
+
+        var info = new FileInfo(full);
+        if (info.Length > MaxWorkingCopyBytes)
+        {
+            var largeBytes = await File.ReadAllBytesAsync(full, ct).ConfigureAwait(false);
+            var largeHash = Convert.ToHexStringLower(SHA256.HashData(largeBytes));
+            return new ConflictWorkingCopy
+            {
+                Path = filePath,
+                DiskHash = largeHash,
+                ExceedsBudget = true,
+            };
+        }
+
+        var bytes = await File.ReadAllBytesAsync(full, ct).ConfigureAwait(false);
+        var diskHash = Convert.ToHexStringLower(SHA256.HashData(bytes));
+
+        if (!TextFileFormat.TryDetect(bytes, out var format, out var text))
+        {
+            var isBinary = bytes.Contains((byte)0);
+            return new ConflictWorkingCopy
+            {
+                Path = filePath,
+                DiskHash = diskHash,
+                IsBinary = isBinary,
+                UnsupportedEncoding = !isBinary,
+            };
+        }
+
+        if (CountLines(text) > MaxWorkingCopyLines)
+        {
+            return new ConflictWorkingCopy
+            {
+                Path = filePath,
+                DiskHash = diskHash,
+                Format = format,
+                ExceedsBudget = true,
+            };
+        }
+
+        var attrResult = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["check-attr", "conflict-marker-size", "--", filePath],
+            WorkingDirectory = context.RepositoryPath,
+        }, ct).ConfigureAwait(false);
+        var markerSize = ParseMarkerSize(attrResult.StandardOutput);
+
+        return new ConflictWorkingCopy
+        {
+            Path = filePath,
+            Text = text,
+            Format = format,
+            DiskHash = diskHash,
+            MarkerSize = markerSize,
+        };
+    }
+
+    public async Task<ResolutionSaveResult> SaveResolutionAsync(
+        RepositoryContext context,
+        string filePath,
+        string text,
+        TextFileFormat format,
+        string expectedDiskHash,
+        bool stage,
+        CancellationToken ct = default)
     {
         using var _ = context.BeginSelfOperation();
         var full = Path.Combine(context.RepositoryPath, filePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        await File.WriteAllTextAsync(full, resolvedContent, ct).ConfigureAwait(false);
 
-        await context.WithRepositoryAsync(repo => Commands.Stage(repo, filePath), ct).ConfigureAwait(false);
+        byte[] currentBytes = File.Exists(full)
+            ? await File.ReadAllBytesAsync(full, ct).ConfigureAwait(false)
+            : [];
+        var currentHash = Convert.ToHexStringLower(SHA256.HashData(currentBytes));
+
+        if (!string.Equals(currentHash, expectedDiskHash, StringComparison.OrdinalIgnoreCase))
+        {
+            return new ResolutionSaveResult { Saved = false, DiskHash = currentHash };
+        }
+
+        var encoded = format.Encode(text);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        await File.WriteAllBytesAsync(full, encoded, ct).ConfigureAwait(false);
+        var newHash = Convert.ToHexStringLower(SHA256.HashData(encoded));
+
+        if (stage)
+        {
+            var add = await cli.RunAsync(new GitCliRequest
+            {
+                Arguments = ["add", "--", filePath],
+                WorkingDirectory = context.RepositoryPath,
+            }, ct).ConfigureAwait(false);
+            if (!add.IsSuccess)
+                throw HistoriaGitException.FromCli(add, "Save resolution (stage)");
+        }
+
+        return new ResolutionSaveResult { Saved = true, DiskHash = newHash };
     }
 
     public async Task ResolveWithSideAsync(RepositoryContext context, string filePath, ConflictSide side, CancellationToken ct = default)
     {
         using var _ = context.BeginSelfOperation();
 
-        var conflict = await context.WithRepositoryAsync(repo => LoadContent(repo, filePath), ct).ConfigureAwait(false);
-        var keepContent = side == ConflictSide.Ours ? conflict.OursContent : conflict.TheirsContent;
-
-        if (keepContent is null)
+        var (isSubmodule, chosenStageSha, chosenStagePresent) = await context.WithRepositoryAsync(repo =>
         {
-            // The chosen side deleted the file.
+            var conflict = repo.Index.Conflicts[filePath]
+                ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"'{filePath}' is not a conflicted path.");
+
+            var isSub = (conflict.Ours?.Mode == Mode.GitLink)
+                     || (conflict.Theirs?.Mode == Mode.GitLink)
+                     || (conflict.Ancestor?.Mode == Mode.GitLink);
+
+            var chosenEntry = side == ConflictSide.Ours ? conflict.Ours : conflict.Theirs;
+            return (isSub, chosenEntry?.Id.Sha, chosenEntry is not null);
+        }, ct).ConfigureAwait(false);
+
+        if (isSubmodule)
+        {
+            if (chosenStagePresent && !string.IsNullOrEmpty(chosenStageSha))
+            {
+                var update = await cli.RunAsync(new GitCliRequest
+                {
+                    Arguments = ["update-index", "--cacheinfo", $"160000,{chosenStageSha},{filePath}"],
+                    WorkingDirectory = context.RepositoryPath,
+                }, ct).ConfigureAwait(false);
+                if (!update.IsSuccess)
+                    throw HistoriaGitException.FromCli(update, "Resolve submodule side");
+            }
+            else
+            {
+                var rm = await cli.RunAsync(new GitCliRequest
+                {
+                    Arguments = ["rm", "--cached", "--", filePath],
+                    WorkingDirectory = context.RepositoryPath,
+                }, ct).ConfigureAwait(false);
+                if (!rm.IsSuccess)
+                    throw HistoriaGitException.FromCli(rm, "Resolve submodule side (rm)");
+            }
+            return;
+        }
+
+        if (chosenStagePresent)
+        {
+            var sideArg = side == ConflictSide.Ours ? "--ours" : "--theirs";
+            var checkout = await cli.RunAsync(new GitCliRequest
+            {
+                Arguments = ["checkout", sideArg, "--", filePath],
+                WorkingDirectory = context.RepositoryPath,
+            }, ct).ConfigureAwait(false);
+            if (!checkout.IsSuccess)
+                throw HistoriaGitException.FromCli(checkout, $"Resolve ({sideArg})");
+
+            var add = await cli.RunAsync(new GitCliRequest
+            {
+                Arguments = ["add", "--", filePath],
+                WorkingDirectory = context.RepositoryPath,
+            }, ct).ConfigureAwait(false);
+            if (!add.IsSuccess)
+                throw HistoriaGitException.FromCli(add, "Resolve (stage)");
+        }
+        else
+        {
             var rm = await cli.RunAsync(new GitCliRequest
             {
                 Arguments = ["rm", "-f", "--", filePath],
@@ -37,22 +201,162 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             }, ct).ConfigureAwait(false);
             if (!rm.IsSuccess)
                 throw HistoriaGitException.FromCli(rm, "Resolve (delete)");
-            return;
         }
+    }
 
-        var full = Path.Combine(context.RepositoryPath, filePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        await File.WriteAllTextAsync(full, keepContent, ct).ConfigureAwait(false);
-        await context.WithRepositoryAsync(repo => Commands.Stage(repo, filePath), ct).ConfigureAwait(false);
+    public async Task RecreateConflictAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+
+        var res = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["checkout", "--conflict=zdiff3", "--", filePath],
+            WorkingDirectory = context.RepositoryPath,
+        }, ct).ConfigureAwait(false);
+
+        if (!res.IsSuccess)
+            throw HistoriaGitException.FromCli(res, "Recreate conflict");
+    }
+
+    public async Task<ConflictSideLabels> GetSideLabelsAsync(RepositoryContext context, CancellationToken ct = default)
+    {
+        var op = RepoOperation(context);
+        var gitDir = context.GitDirectory;
+
+        return await context.WithRepositoryAsync(repo =>
+        {
+            var headSha = repo.Head.Tip?.Sha ?? string.Empty;
+            var headBranch = repo.Head.FriendlyName;
+            var headShort = headSha.Length >= 7 ? headSha[..7] : headSha;
+            var headSubject = repo.Head.Tip?.MessageShort ?? string.Empty;
+            var oursTitle = headBranch;
+            var oursDetail = $"{headShort} {headSubject}".Trim();
+
+            string theirsTitle;
+            string theirsDetail;
+            string opHeadSha = string.Empty;
+            string msgNum = string.Empty;
+
+            switch (op)
+            {
+                case OperationState.Merging:
+                {
+                    var mergeHeadFile = Path.Combine(gitDir, "MERGE_HEAD");
+                    if (File.Exists(mergeHeadFile))
+                        opHeadSha = File.ReadAllText(mergeHeadFile).Trim();
+
+                    var mergeMsgFile = Path.Combine(gitDir, "MERGE_MSG");
+                    var firstMsgLine = File.Exists(mergeMsgFile)
+                        ? (File.ReadLines(mergeMsgFile).FirstOrDefault() ?? string.Empty).Trim()
+                        : string.Empty;
+
+                    var commit = !string.IsNullOrEmpty(opHeadSha) ? repo.Lookup<Commit>(opHeadSha) : null;
+                    var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+                    theirsTitle = !string.IsNullOrEmpty(firstMsgLine) ? firstMsgLine : (shortSha.Length > 0 ? shortSha : "Incoming merge");
+                    theirsDetail = commit is not null ? $"{shortSha} {commit.MessageShort}".Trim() : shortSha;
+                    break;
+                }
+
+                case OperationState.Rebasing:
+                {
+                    var rebaseMergeDir = Path.Combine(gitDir, "rebase-merge");
+                    var rebaseApplyDir = Path.Combine(gitDir, "rebase-apply");
+                    var rebaseDir = Directory.Exists(rebaseMergeDir) ? rebaseMergeDir : rebaseApplyDir;
+
+                    var ontoPath = Path.Combine(rebaseDir, "onto");
+                    var ontoSha = File.Exists(ontoPath) ? File.ReadAllText(ontoPath).Trim() : string.Empty;
+                    var ontoCommit = !string.IsNullOrEmpty(ontoSha) ? repo.Lookup<Commit>(ontoSha) : null;
+                    var ontoShort = ontoSha.Length >= 7 ? ontoSha[..7] : ontoSha;
+
+                    oursTitle = "the branch you are rebasing onto";
+                    oursDetail = ontoCommit is not null ? $"{ontoShort} {ontoCommit.MessageShort}".Trim() : ontoShort;
+
+                    var headNamePath = Path.Combine(rebaseDir, "head-name");
+                    var headName = File.Exists(headNamePath) ? File.ReadAllText(headNamePath).Trim() : string.Empty;
+                    if (headName.StartsWith("refs/heads/", StringComparison.Ordinal))
+                        headName = headName[11..];
+
+                    var stoppedShaPath = Path.Combine(rebaseDir, "stopped-sha");
+                    var stoppedSha = File.Exists(stoppedShaPath) ? File.ReadAllText(stoppedShaPath).Trim() : string.Empty;
+                    if (string.IsNullOrEmpty(stoppedSha))
+                    {
+                        var rebaseHeadFile = Path.Combine(gitDir, "REBASE_HEAD");
+                        if (File.Exists(rebaseHeadFile))
+                            stoppedSha = File.ReadAllText(rebaseHeadFile).Trim();
+                    }
+                    opHeadSha = stoppedSha;
+
+                    var stoppedCommit = !string.IsNullOrEmpty(stoppedSha) ? repo.Lookup<Commit>(stoppedSha) : null;
+                    var stoppedShort = stoppedSha.Length >= 7 ? stoppedSha[..7] : stoppedSha;
+
+                    theirsTitle = !string.IsNullOrEmpty(headName) ? $"{headName} (replaying)" : "your commit being replayed";
+                    theirsDetail = stoppedCommit is not null ? $"{stoppedShort} {stoppedCommit.MessageShort}".Trim() : stoppedShort;
+
+                    var msgNumFile = Path.Combine(rebaseMergeDir, "msgnum");
+                    if (File.Exists(msgNumFile))
+                        msgNum = File.ReadAllText(msgNumFile).Trim();
+                    else
+                    {
+                        var nextFile = Path.Combine(rebaseApplyDir, "next");
+                        if (File.Exists(nextFile))
+                            msgNum = File.ReadAllText(nextFile).Trim();
+                    }
+                    break;
+                }
+
+                case OperationState.CherryPicking:
+                {
+                    var cherryHeadFile = Path.Combine(gitDir, "CHERRY_PICK_HEAD");
+                    if (File.Exists(cherryHeadFile))
+                        opHeadSha = File.ReadAllText(cherryHeadFile).Trim();
+
+                    var commit = !string.IsNullOrEmpty(opHeadSha) ? repo.Lookup<Commit>(opHeadSha) : null;
+                    var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+                    theirsTitle = $"Cherry-pick {shortSha}".Trim();
+                    theirsDetail = commit is not null ? $"{shortSha} {commit.MessageShort}".Trim() : shortSha;
+                    break;
+                }
+
+                case OperationState.Reverting:
+                {
+                    var revertHeadFile = Path.Combine(gitDir, "REVERT_HEAD");
+                    if (File.Exists(revertHeadFile))
+                        opHeadSha = File.ReadAllText(revertHeadFile).Trim();
+
+                    var commit = !string.IsNullOrEmpty(opHeadSha) ? repo.Lookup<Commit>(opHeadSha) : null;
+                    var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+                    theirsTitle = $"Revert {shortSha}".Trim();
+                    theirsDetail = commit is not null ? $"{shortSha} {commit.MessageShort}".Trim() : shortSha;
+                    break;
+                }
+
+                default:
+                {
+                    theirsTitle = "Stashed / applied changes";
+                    theirsDetail = "Working tree changes";
+                    break;
+                }
+            }
+
+            var stopId = $"{headSha}:{opHeadSha}:{msgNum}";
+
+            return new ConflictSideLabels
+            {
+                OursTitle = oursTitle,
+                OursDetail = oursDetail,
+                TheirsTitle = theirsTitle,
+                TheirsDetail = theirsDetail,
+                Operation = op,
+                StopId = stopId,
+            };
+        }, ct).ConfigureAwait(false);
     }
 
     public async Task<bool> LaunchExternalMergeToolAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
     {
-        var conflict = await context.WithRepositoryAsync(repo => LoadContent(repo, filePath), ct).ConfigureAwait(false);
         var tool = settings.Current.ExternalMergeTool;
         if (string.IsNullOrWhiteSpace(tool))
         {
-            // Fall back to Git's own configured mergetool.
             var result = await cli.RunAsync(new GitCliRequest
             {
                 Arguments = ["mergetool", "--no-prompt", "--", filePath],
@@ -62,37 +366,30 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             return result.ExitCode == 0;
         }
 
-        // §8.4.5: write temp files from stages 1/2/3 + working tree; substitute $BASE/$LOCAL/$REMOTE/$MERGED.
-        var temp = Directory.CreateTempSubdirectory("Historia-merge-").FullName;
+        var temp = Directory.CreateTempSubdirectory("historia-merge-").FullName;
         try
         {
-            var basePath = WriteTemp(temp, "BASE", conflict.BaseContent);
-            var localPath = WriteTemp(temp, "LOCAL", conflict.OursContent);
-            var remotePath = WriteTemp(temp, "REMOTE", conflict.TheirsContent);
+            var ext = Path.GetExtension(filePath);
+            var (hasStage1, hasStage2, hasStage3) = await context.WithRepositoryAsync(repo =>
+            {
+                var conflict = repo.Index.Conflicts[filePath];
+                return (conflict?.Ancestor is not null, conflict?.Ours is not null, conflict?.Theirs is not null);
+            }, ct).ConfigureAwait(false);
+
+            var basePath = await CheckoutStageTempAsync(context, filePath, 1, hasStage1, temp, "BASE", ext, ct).ConfigureAwait(false);
+            var localPath = await CheckoutStageTempAsync(context, filePath, 2, hasStage2, temp, "LOCAL", ext, ct).ConfigureAwait(false);
+            var remotePath = await CheckoutStageTempAsync(context, filePath, 3, hasStage3, temp, "REMOTE", ext, ct).ConfigureAwait(false);
             var mergedPath = Path.Combine(context.RepositoryPath, filePath);
 
-            // Tokenize the configured command line ourselves and launch the executable directly
-            // — never through a shell. Routing the substituted command through "cmd.exe /c" used
-            // to double-escape any path with spaces: ArgumentList quotes an entry containing
-            // spaces and escapes its internal quotes as \", which cmd.exe does not understand
-            // (it uses ^ and its own /c quoting rule), so a path like the ones this substitutes
-            // — every one of which is pre-wrapped in quotes by the old Quote() helper — always
-            // reached cmd.exe mangled. Passing each token through ArgumentList against the real
-            // executable lets the runtime's own Win32 escaping do its job once, correctly, and
-            // needs no OS check either (no shell-specific syntax is involved).
-            //
-            // filePath (and therefore mergedPath) comes
-            // from the repository's own index and is attacker-controlled; a shell metacharacter in it
-            // (e.g. "pwn&calc") must never be interpreted as a command separator. Each substituted
-            // value becomes its own ArgumentList entry, so no quoting or escaping is needed
-            // regardless of its contents.
             var tokens = Tokenize(tool);
             if (tokens.Count == 0)
-                return false; // an empty/whitespace-only configured tool — nothing to launch
+                return false;
 
             string Expand(string token) => token
-                .Replace("$BASE", basePath).Replace("$LOCAL", localPath)
-                .Replace("$REMOTE", remotePath).Replace("$MERGED", mergedPath);
+                .Replace("$BASE", basePath)
+                .Replace("$LOCAL", localPath)
+                .Replace("$REMOTE", remotePath)
+                .Replace("$MERGED", mergedPath);
 
             var psi = new ProcessStartInfo(Expand(tokens[0])) { UseShellExecute = false, CreateNoWindow = true };
             foreach (var token in tokens.Skip(1))
@@ -105,13 +402,16 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             }
             catch (System.ComponentModel.Win32Exception)
             {
-                return false; // the configured tool's executable could not be found/started
+                return false;
             }
             if (process is null)
                 return false;
 
             using (process)
                 await process.WaitForExitAsync(ct).ConfigureAwait(false);
+
+            if (!File.Exists(mergedPath))
+                return true;
 
             var merged = await File.ReadAllTextAsync(mergedPath, ct).ConfigureAwait(false);
             return !merged.Contains("<<<<<<<", StringComparison.Ordinal);
@@ -120,6 +420,47 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         {
             try { Directory.Delete(temp, recursive: true); } catch { /* best effort */ }
         }
+    }
+
+    private async Task<string> CheckoutStageTempAsync(
+        RepositoryContext context,
+        string filePath,
+        int stage,
+        bool stagePresent,
+        string tempDir,
+        string label,
+        string ext,
+        CancellationToken ct)
+    {
+        var targetFile = Path.Combine(tempDir, $"{label}{ext}");
+        if (!stagePresent)
+        {
+            await File.WriteAllBytesAsync(targetFile, [], ct).ConfigureAwait(false);
+            return targetFile;
+        }
+
+        var stagePrefix = Path.Combine(tempDir, $"stage{stage}") + Path.DirectorySeparatorChar;
+        var subDir = Path.GetDirectoryName(Path.Combine(stagePrefix, filePath));
+        if (!string.IsNullOrEmpty(subDir))
+            Directory.CreateDirectory(subDir);
+
+        var res = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["checkout-index", $"--prefix={stagePrefix}", $"--stage={stage}", "--", filePath],
+            WorkingDirectory = context.RepositoryPath,
+        }, ct).ConfigureAwait(false);
+
+        var extracted = Path.Combine(stagePrefix, filePath);
+        if (File.Exists(extracted))
+        {
+            File.Move(extracted, targetFile, overwrite: true);
+        }
+        else
+        {
+            await File.WriteAllBytesAsync(targetFile, [], ct).ConfigureAwait(false);
+        }
+
+        return targetFile;
     }
 
     public async Task ContinueOperationAsync(RepositoryContext context, CancellationToken ct = default)
@@ -178,44 +519,34 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
 
     private static IReadOnlyList<ConflictFile> ListConflicts(Repository repo)
     {
+        repo.RetrieveStatus();
         var result = new List<ConflictFile>();
         foreach (var conflict in repo.Index.Conflicts)
         {
             var path = conflict.Ancestor?.Path ?? conflict.Ours?.Path ?? conflict.Theirs?.Path ?? "";
             var status = DeriveStatus(conflict);
             var isBinary = IsBinary(repo, conflict.Ours) || IsBinary(repo, conflict.Theirs) || IsBinary(repo, conflict.Ancestor);
+            var isSubmodule = (conflict.Ancestor?.Mode == Mode.GitLink)
+                           || (conflict.Ours?.Mode == Mode.GitLink)
+                           || (conflict.Theirs?.Mode == Mode.GitLink);
+
             result.Add(new ConflictFile
             {
                 FilePath = path,
                 Status = status,
                 IsBinary = isBinary,
-                BaseContent = null,
-                OursContent = null,
-                TheirsContent = null,
+                IsSubmodule = isSubmodule,
             });
         }
 
         return result;
     }
 
-    private static ConflictFile LoadContent(Repository repo, string filePath)
+    private static bool HasUnmergedPaths(Repository repo)
     {
-        var conflict = repo.Index.Conflicts[filePath]
-            ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"'{filePath}' is not a conflicted path.");
-
-        var isBinary = IsBinary(repo, conflict.Ours) || IsBinary(repo, conflict.Theirs);
-        return new ConflictFile
-        {
-            FilePath = filePath,
-            Status = DeriveStatus(conflict),
-            IsBinary = isBinary,
-            BaseContent = isBinary ? null : StageText(repo, conflict.Ancestor),
-            OursContent = isBinary ? null : StageText(repo, conflict.Ours),
-            TheirsContent = isBinary ? null : StageText(repo, conflict.Theirs),
-        };
+        repo.RetrieveStatus();
+        return repo.Index.Conflicts.Any();
     }
-
-    private static bool HasUnmergedPaths(Repository repo) => repo.Index.Conflicts.Any();
 
     private static ConflictStatus DeriveStatus(Conflict c)
     {
@@ -235,33 +566,41 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         };
     }
 
-    private static string? StageText(Repository repo, IndexEntry? entry)
-    {
-        if (entry is null)
-            return null;
-        var blob = repo.Lookup<Blob>(entry.Id);
-        return blob?.GetContentText();
-    }
-
     private static bool IsBinary(Repository repo, IndexEntry? entry)
         => entry is not null && (repo.Lookup<Blob>(entry.Id)?.IsBinary ?? false);
 
-    private static string WriteTemp(string dir, string name, string? content)
+    private static int CountLines(string text)
     {
-        var path = Path.Combine(dir, name);
-        File.WriteAllText(path, content ?? string.Empty);
-        return path;
+        var count = 1;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\r')
+            {
+                count++;
+                if (i + 1 < text.Length && text[i + 1] == '\n')
+                    i++;
+            }
+            else if (text[i] == '\n')
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static int ParseMarkerSize(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return 7;
+        var parts = output.Trim().Split(':');
+        if (parts.Length >= 3 && int.TryParse(parts[^1].Trim(), out var size) && size > 0)
+            return size;
+        return 7;
     }
 
     /// <summary>
-    /// Splits a user-configured external-tool command line ("<c>"C:\Tool\t.exe" $LOCAL
-    /// $REMOTE</c>") into its executable and argument tokens, honouring double-quoted segments
-    /// (the quotes are consumed, not kept) so a quoted path with spaces stays one token. This is
-    /// deliberately simpler than full Win32 command-line parsing (no escaped-quote handling) —
-    /// good enough for the tool strings users actually type, and paired with
-    /// <see cref="ProcessStartInfo.ArgumentList"/> at the call site so the runtime's own,
-    /// correct escaping is what the child process actually sees — never a shell's.
-    /// Also ensures metacharacters in substituted paths cannot act as command separators
+    /// Splits a user-configured external-tool command line into its executable and argument tokens,
+    /// honouring double-quoted segments.
     /// </summary>
     internal static List<string> Tokenize(string commandLine)
     {
