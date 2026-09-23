@@ -18,6 +18,7 @@ public class DestructiveConfirmationTests
     {
         "Historia.Core/Services/UI/IDialogService.cs",
         "Historia.App/Platform/AvaloniaDialogService.cs",
+        "Historia.App/Services/UnsavedWorkPrompt.cs", // M2.2: the multi-remedy form IDialogService.ChooseAsync documents; this file is its one caller
     };
 
     private static readonly (Regex pattern, string what)[] Forbidden =

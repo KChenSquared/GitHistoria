@@ -97,6 +97,8 @@ public partial class MainWindow : Window
         ApplyBodyLayout();
     }
 
+    private bool _closeConfirmed;
+
     protected override void OnClosed(EventArgs e)
     {
         if (_theme is not null)
@@ -401,10 +403,32 @@ public partial class MainWindow : Window
         };
     }
 
-    protected override void OnClosing(WindowClosingEventArgs e)
+    protected override async void OnClosing(WindowClosingEventArgs e)
     {
         Historia.Diagnostics.PerfLog.Mark("MainWindow.OnClosing start");
         base.OnClosing(e);
+
+        if (!_closeConfirmed)
+        {
+            var registry = _services?.GetService<IUnsavedWorkRegistry>();
+            var dialogs = _services?.GetService<IDialogService>();
+            if (registry is not null && dialogs is not null)
+            {
+                var work = registry.For(null);
+                if (work.Count > 0)
+                {
+                    e.Cancel = true;
+                    var proceed = await UnsavedWorkPrompt.ResolveAsync(work, dialogs).ConfigureAwait(true);
+                    if (proceed)
+                    {
+                        _closeConfirmed = true;
+                        Close();
+                    }
+                    return;
+                }
+            }
+        }
+
         using (Historia.Diagnostics.PerfLog.Scope("MainWindow.OnClosing terminalDock.Dispose"))
             _terminalDock?.Dispose();
     }

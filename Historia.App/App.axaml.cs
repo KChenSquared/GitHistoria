@@ -232,6 +232,7 @@ public sealed class App : Application
         services.AddSingleton<ICloneService, CloneService>();
         services.AddSingleton<IKeyboardCommandRouter, KeyboardCommandRouter>();
         services.AddSingleton<INavigationBus, NavigationBus>();
+        services.AddSingleton<IUnsavedWorkRegistry, UnsavedWorkRegistry>();
 
         // ── Terminal (V5 §3.3). Singletons — never AddScoped (rule 20). ──
         services.AddSingleton<Historia.Services.Terminal.ITerminalBackend, Historia.Services.Terminal.PortaPtyBackend>();

@@ -27,6 +27,8 @@ public sealed class AppBandControl : UserControl, IDisposable
     private Historia.Services.UI.IExternalLauncher _launcher = default!;
     private Historia.Services.UI.IScrollDirectionProbe _scrollProbe = default!;
     private ICloneService _cloneService = default!;
+    private IUnsavedWorkRegistry? _unsavedWork;
+    private IDialogService? _dialogs;
 
     private EventHandler<OpenRepositoriesChangedEventArgs>? _onOpenChanged;
     private EventHandler<FocusedRepositoryChangedEventArgs>? _onFocusChanged;
@@ -272,6 +274,8 @@ public sealed class AppBandControl : UserControl, IDisposable
         _launcher = services.GetRequiredService<Historia.Services.UI.IExternalLauncher>();
         _scrollProbe = services.GetRequiredService<Historia.Services.UI.IScrollDirectionProbe>();
         _cloneService = services.GetRequiredService<ICloneService>();
+        _unsavedWork = services.GetService<IUnsavedWorkRegistry>();
+        _dialogs = services.GetService<IDialogService>();
 
         Historia.Views.ViewKit.BindThemedMark(_brandMark, services.GetRequiredService<Historia.Services.Theming.IThemeService>());
 
@@ -445,7 +449,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         items.Add(new Separator());
         items.Add(MenuLeaf("About Historia", () => _nav.RequestNavigate("settings")));
         items.Add(MenuLeaf("Exit", () =>
-            (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.Shutdown()));
+            (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.TryShutdown()));
 
         _appMenu.ItemsSource = items;
     }
@@ -1012,6 +1016,17 @@ public sealed class AppBandControl : UserControl, IDisposable
 
     private async Task CloseAsync(RepositoryContext ctx)
     {
+        if (_unsavedWork is not null && _dialogs is not null)
+        {
+            var work = _unsavedWork.For(ctx);
+            if (work.Count > 0)
+            {
+                var proceed = await UnsavedWorkPrompt.ResolveAsync(work, _dialogs).ConfigureAwait(true);
+                if (!proceed)
+                    return;
+            }
+        }
+
         await _workspace.CloseAsync(ctx);
         if (_workspace.Focused is null)
             _nav.RequestNavigate("");
