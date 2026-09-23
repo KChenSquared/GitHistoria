@@ -26,5 +26,12 @@ public sealed class TestAppBuilder
 /// <summary>The throwaway <see cref="Application"/> headless tests run inside.</summary>
 public sealed class HeadlessTestApp : Application
 {
-    public override void Initialize() => Styles.Add(new FluentTheme());
+    public override void Initialize()
+    {
+        Styles.Add(new FluentTheme());
+        Styles.Add(new StyleInclude(new Uri("avares://Historia.App.Tests/"))
+        {
+            Source = new Uri("avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml")
+        });
+    }
 }

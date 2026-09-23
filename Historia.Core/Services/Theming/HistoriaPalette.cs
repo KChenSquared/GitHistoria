@@ -1,4 +1,4 @@
-﻿
+
 namespace Historia.Services.Theming;
 
 /// <summary>
@@ -31,6 +31,12 @@ public static class HistoriaPalette
         "git-added", "git-deleted", "git-modified", "git-untracked", "git-conflict", "git-ignored",
         // diff line backgrounds
         "diff-add-bg", "diff-del-bg",
+        // diff intra-line highlights & padding (M1.3)
+        "diff-add-hl", "diff-del-hl", "diff-empty-bg",
+        // conflict resolver washes (M1.3)
+        "conflict-ours-bg", "conflict-theirs-bg", "conflict-base-bg", "conflict-marker-bg", "conflict-resolved-bg",
+        // code editor selection (M1.3)
+        "code-selection",
         // graph ref badge label (§V3-4.3) — white in dark/HC, near-black in light. The web
         // layer never consumes it, but parity keeps the two copies honest (rule 26).
         "ref-label",
@@ -81,6 +87,15 @@ public static class HistoriaPalette
         ("git-ignored",   "#9D9D9D"),   // B: = text-muted
         ("diff-add-bg",   "#2EA04326"), // B: git-added @ 15% alpha
         ("diff-del-bg",   "#F8514926"), // B: git-deleted @ 15% alpha
+        ("diff-add-hl",   "#2EA04359"), // B: git-added @ 35% alpha (stronger intra-line wash)
+        ("diff-del-hl",   "#F8514959"), // B: git-deleted @ 35% alpha (stronger intra-line wash)
+        ("diff-empty-bg", "#80808014"), // B: neutral padding row wash
+        ("conflict-ours-bg",     "#0078D433"), // B: primary @ 20% alpha
+        ("conflict-theirs-bg",   "#BB800933"), // B: warning @ 20% alpha
+        ("conflict-base-bg",     "#9D9D9D26"), // B: text-muted @ 15% alpha
+        ("conflict-marker-bg",   "#3C3C3C4D"), // B: border-strong @ 30% alpha
+        ("conflict-resolved-bg", "#2EA04326"), // B: success @ 15% alpha
+        ("code-selection",       "#264F78"),   // A: editor.selectionBackground
         ("ref-label",     "#FFFFFF"),  // §V3-4.3: graph ref badge label
         // V5 §8 — terminal. term-* are role aliases (B); the ANSI set is VS Code dark_vs
         // terminal.ansi* verbatim (A).
@@ -135,6 +150,15 @@ public static class HistoriaPalette
         ("git-ignored",   "#616161"),   // B: = text-muted
         ("diff-add-bg",   "#2EA04326"), // B: git-added @ 15% alpha
         ("diff-del-bg",   "#F8514926"), // B: git-deleted @ 15% alpha
+        ("diff-add-hl",   "#2EA0434D"), // B: git-added @ 30% alpha (stronger intra-line wash)
+        ("diff-del-hl",   "#F851494D"), // B: git-deleted @ 30% alpha (stronger intra-line wash)
+        ("diff-empty-bg", "#80808014"), // B: neutral padding row wash
+        ("conflict-ours-bg",     "#005FB826"), // B: primary @ 15% alpha
+        ("conflict-theirs-bg",   "#BB800926"), // B: warning @ 15% alpha
+        ("conflict-base-bg",     "#61616126"), // B: text-muted @ 15% alpha
+        ("conflict-marker-bg",   "#CECECE4D"), // B: border-strong @ 30% alpha
+        ("conflict-resolved-bg", "#2EA04326"), // B: success @ 15% alpha
+        ("code-selection",       "#ADD6FF"),   // A: editor.selectionBackground
         ("ref-label",     "#1F1F1F"),  // §V3-4.3: near-black on the light field
         // V5 §8 — terminal. term-* are role aliases (B); the ANSI set is VS Code light_vs
         // terminal.ansi* verbatim (A).
@@ -193,6 +217,15 @@ public static class HistoriaPalette
         ("git-ignored",   "#cccccc"),   // = text-muted
         ("diff-add-bg",   "#44ff4433"),
         ("diff-del-bg",   "#ff444433"),
+        ("diff-add-hl",   "#44ff4466"), // = git-added @ 40% alpha
+        ("diff-del-hl",   "#ff444466"), // = git-deleted @ 40% alpha
+        ("diff-empty-bg", "#00000000"), // = transparent on black ground
+        ("conflict-ours-bg",     "#00ffff33"), // = accent cyan @ 20% alpha
+        ("conflict-theirs-bg",   "#ffff0033"), // = primary yellow @ 20% alpha
+        ("conflict-base-bg",     "#ffffff26"), // = text white @ 15% alpha
+        ("conflict-marker-bg",   "#ffffff4d"), // = border @ 30% alpha
+        ("conflict-resolved-bg", "#44ff4433"), // = success @ 20% alpha
+        ("code-selection",       "#ffff00"),   // = selection yellow at full opacity
         ("ref-label",     "#ffffff"), // §V3-4.3
         // V5 §8 — terminal. HC has no VS Code counterpart. term-bg/fg come from the HC
         // structure tokens; the ANSI set is the dark_vs hues lifted toward #ffffff until each

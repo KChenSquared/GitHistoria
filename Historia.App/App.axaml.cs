@@ -209,6 +209,7 @@ public sealed class App : Application
         services.AddSingleton<INotificationService, NotificationService>();
         services.AddSingleton<ICustomThemeService, CustomThemeService>();
         services.AddSingleton<IThemeService, ThemeService>();
+        services.AddSingleton<SyntaxThemeHost>();
         services.AddSingleton<IGitExecutableLocator, GitExecutableLocator>();
         services.AddSingleton<IGitCliService, GitCliService>();
         services.AddSingleton<LibGit2Service>();
