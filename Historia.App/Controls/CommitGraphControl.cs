@@ -275,17 +275,7 @@ public sealed partial class CommitGraphControl : Control
     internal HoverTarget? ShownHoverTargetForTesting => _hoverDwell.Shown;
     internal bool MsgFetchInFlightForTesting => _msgFetchInFlight is not null;
     internal int MsgBodyCacheCountForTesting => _msgBodyCache.Count;
-    internal void FireHoverDwellTimerForTesting()
-    {
-        _hoverDwellTimer.Stop();
-        if (_hoverDwell.Elapse() is { } target)
-        {
-            if (IsPointerOver && ResolveHoverTarget(_lastPointerPos) == target)
-            {
-                ShowHoverTarget(target);
-            }
-        }
-    }
+    internal void FireHoverDwellTimerForTesting() => HandleHoverDwellElapsed();
 
     /// <summary>Test-only: simulates a horizontal scroll/pan without driving the real
     /// <see cref="ScrollBar"/> or lane-pan gestures.</summary>
@@ -393,17 +383,7 @@ public sealed partial class CommitGraphControl : Control
         };
 
         _hoverDwellTimer = new DispatcherTimer { Interval = GraphHoverDwell.Delay };
-        _hoverDwellTimer.Tick += (_, _) =>
-        {
-            _hoverDwellTimer.Stop();
-            if (_hoverDwell.Elapse() is { } target)
-            {
-                if (IsPointerOver && ResolveHoverTarget(_lastPointerPos) == target)
-                {
-                    ShowHoverTarget(target);
-                }
-            }
-        };
+        _hoverDwellTimer.Tick += (_, _) => HandleHoverDwellElapsed();
 
         _scrollBar = new ScrollBar { Orientation = Orientation.Vertical, Width = 12, IsVisible = false, [Grid.ColumnProperty] = 0 };
         // While the user is dragging the thumb, background row-loading keeps triggering
@@ -2403,7 +2383,31 @@ public sealed partial class CommitGraphControl : Control
         }
 
         var target = ResolveHoverTarget(pos);
+
+        // The sibling-ref badge opens a popup, not a tooltip — R7 intent is to see the rest of
+        // the refs on this commit as soon as the badge is under the pointer, so it stays
+        // immediate rather than joining the 1s tooltip dwell below.
+        if (target is { Kind: HoverTargetKind.RefListBadge })
+        {
+            _hoverDwell.Reset();
+            _hoverDwellTimer.Stop();
+            ShowHoverTarget(target.Value);
+            return;
+        }
+
         UpdateHoverDwell(target);
+    }
+
+    private void HandleHoverDwellElapsed()
+    {
+        _hoverDwellTimer.Stop();
+        if (_hoverDwell.Elapse() is { } target)
+        {
+            if (IsPointerOver && ResolveHoverTarget(_lastPointerPos) == target)
+            {
+                ShowHoverTarget(target);
+            }
+        }
     }
 
     private void UpdateHoverDwell(HoverTarget? target)

@@ -734,17 +734,9 @@ public sealed class LibGit2Service
 
     private static FileStatusEntry Make(Repository repo, string path, FileChangeKind kind, string? oldPath, bool isSubmodule)
     {
-        long size = 0;
-        try
-        {
-            if (repo.Info.WorkingDirectory is { } wd)
-            {
-                var full = Path.Combine(wd, path);
-                if (File.Exists(full))
-                    size = new FileInfo(full).Length;
-            }
-        }
-        catch (IOException) { /* size is best-effort */ }
+        var size = repo.Info.WorkingDirectory is { } wd
+            ? WorkingTreeFileSize.GetOrZero(Path.Combine(wd, path))
+            : 0;
 
         return new FileStatusEntry
         {

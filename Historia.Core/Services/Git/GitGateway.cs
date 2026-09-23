@@ -637,18 +637,7 @@ public sealed class GitGateway(
         var list = new List<FileStatusEntry>(entries.Count);
         foreach (var entry in entries)
         {
-            long size = 0;
-            try
-            {
-                var full = Path.Combine(repoPath, entry.Path);
-                if (File.Exists(full))
-                    size = new FileInfo(full).Length;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // size is best-effort
-            }
-
+            var size = WorkingTreeFileSize.GetOrZero(Path.Combine(repoPath, entry.Path));
             list.Add(entry.SizeBytes == size ? entry : entry with { SizeBytes = size });
         }
         return list;
