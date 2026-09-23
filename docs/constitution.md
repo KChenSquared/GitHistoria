@@ -213,6 +213,18 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     `AvaloniaThemeApplier` generates the resource dictionary from it, and `PaletteParityTests`
     checks that every theme defines exactly the declared token set. **No colour literal
     anywhere else.** *(§V2-3)*
+
+    **Exception — syntax token colours.** The diff viewer and conflict resolver take code-token
+    foregrounds (and a rule's bold / italic / underline, never a token background) from TextMateSharp's
+    bundled Dark+ / Light+ / High Contrast Dark themes, chosen by `EffectiveTheme` and switched live
+    (Rule 28). Everything else in those editors (editor background, foreground text, selection, line
+    numbers, diff and conflict washes) continues to come strictly from `HistoriaPalette`. Custom
+    themes do not recolour syntax tokens — they inherit the syntax theme of their underlying base
+    theme (`Dark`, `Light`, or `HighContrast`), which means a custom theme whose `bg` contradicts its
+    base theme (e.g., a light `bg` authored on a Dark base) will produce poorly readable syntax tokens.
+    This exception was adopted by user decision (2026-09-23) to provide VS Code-grade syntax grammars
+    and high-fidelity token highlighting across 100+ programming languages without requiring the manual
+    definition and maintenance of thousands of language-specific token rules in `HistoriaPalette`.
 27. *(Removed.)*
 28. **Theme changes are live.** No restart, no control rebuild, no flash —
     `AvaloniaThemeApplier` swaps the merged resource dictionary in place. *(§I-11.3)*
