@@ -1420,6 +1420,196 @@ public class ConflictResolverViewTests : IDisposable
         Assert.All(view.ActionButtonsForTesting, btn => Assert.True(btn.IsEnabled));
     }
 
+    [AvaloniaFact]
+    public async Task External_change_check_uses_GetDiskHash_not_LoadWorkingCopy()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        _conflicts.GetDiskHashCalls = 0;
+        _conflicts.LoadWorkingCopyCalls = 0;
+
+        await _context.State.RefreshStatusAsync();
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(_conflicts.GetDiskHashCalls >= 1);
+        Assert.Equal(0, _conflicts.LoadWorkingCopyCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task Overlapping_status_changes_run_refresh_at_most_twice()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var tcs = new TaskCompletionSource<IReadOnlyList<ConflictFile>>();
+        int callCount = 0;
+        _conflicts.OnGetConflictsAsync = () =>
+        {
+            callCount++;
+            if (callCount == 1)
+            {
+                return tcs.Task;
+            }
+            return Task.FromResult(_conflicts.Conflicts);
+        };
+
+        // Fire status change 1 and wait for coalesce timer (50ms)
+        await _context.State.RefreshStatusAsync();
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+
+        // Refresh 1 is now in-flight, awaiting tcs.Task in GetConflictsAsync
+        Assert.Equal(1, callCount);
+
+        // Fire status changes 2 and 3 while 1 is in-flight
+        await _context.State.RefreshStatusAsync();
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+
+        await _context.State.RefreshStatusAsync();
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+
+        // Still only 1 call to GetConflictsAsync because refresh is in flight and extra ones folded into pending
+        Assert.Equal(1, callCount);
+
+        // Complete the in-flight refresh 1
+        tcs.SetResult(_conflicts.Conflicts);
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(50);
+        Dispatcher.UIThread.RunJobs();
+
+        // Now the second (pending) refresh should have run and finished
+        Assert.Equal(2, callCount);
+    }
+
+    [AvaloniaFact]
+    public async Task SwitchToFile_builds_panes_once()
+    {
+        _conflicts.Conflicts = [
+            new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false },
+            new ConflictFile { FilePath = "g.txt", Status = ConflictStatus.BothModified, IsBinary = false }
+        ];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.WorkingCopies["g.txt"] = new ConflictWorkingCopy { Path = "g.txt", Text = TwoConflictText, DiskHash = "hash2" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        await Task.Delay(250);
+        Dispatcher.UIThread.RunJobs();
+
+        int initialCount = ConflictPaneBuilder.BuildCallCount;
+
+        _context.State.SetSelectedConflictPath("g.txt");
+        Dispatcher.UIThread.RunJobs();
+
+        // Wait well past debounce (150ms)
+        await Task.Delay(300);
+        Dispatcher.UIThread.RunJobs();
+
+        int finalCount = ConflictPaneBuilder.BuildCallCount;
+        Assert.Equal(2, finalCount - initialCount);
+    }
+
+    [AvaloniaFact]
+    public async Task Region_analysis_arrives_after_switch_and_is_dropped_if_document_changed()
+    {
+        _conflicts.Conflicts = [
+            new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false },
+            new ConflictFile { FilePath = "g.txt", Status = ConflictStatus.BothModified, IsBinary = false }
+        ];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.WorkingCopies["g.txt"] = new ConflictWorkingCopy { Path = "g.txt", Text = TwoConflictText, DiskHash = "hash2" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        // Immediately after load, carried analyses is empty
+        Assert.NotNull(view.SnapshotForTesting);
+        Assert.Empty(view.SnapshotForTesting.Analyses);
+
+        // Part 1: Region analysis arrives after switch
+        for (int i = 0; i < 50 && (view.SnapshotForTesting?.Analyses.Count ?? 0) == 0; i++)
+        {
+            await Task.Delay(20);
+            Dispatcher.UIThread.RunJobs();
+        }
+        Assert.Equal(2, view.SnapshotForTesting!.Analyses.Count);
+
+        // Part 2: Switch to g.txt and immediately change document so version moves
+        _context.State.SetSelectedConflictPath("g.txt");
+        Dispatcher.UIThread.RunJobs();
+
+        var versionAtSwitch = view.ResultEditorForTesting.Document.Version;
+        // Right after switch, snapshot version is versionAtSwitch with 0 analyses
+        Assert.Empty(view.SnapshotForTesting!.Analyses);
+
+        // Move document version before background analysis posts back
+        view.ResultEditorForTesting.Document.Insert(0, "immediate change\n");
+
+        // Wait a short time for the switch background task to finish and post to dispatcher
+        await Task.Delay(30);
+        Dispatcher.UIThread.RunJobs();
+
+        // The background analysis that targeted versionAtSwitch was dropped (version moved),
+        // and debounce (150ms) hasn't fired yet, so snapshot analyses is still empty!
+        Assert.Empty(view.SnapshotForTesting!.Analyses);
+
+        // After waiting past debounce (150ms), the debounced analysis arrives
+        await Task.Delay(200);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(2, view.SnapshotForTesting!.Analyses.Count);
+        Assert.True(view.ResultEditorForTesting.Document.Version.CompareAge(versionAtSwitch) > 0);
+    }
+
+    [AvaloniaFact]
+    public async Task Region_action_keeps_highlights_of_untouched_regions()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        for (int i = 0; i < 50 && (view.SnapshotForTesting?.Analyses.Count ?? 0) < 2; i++)
+        {
+            await Task.Delay(20);
+            Dispatcher.UIThread.RunJobs();
+        }
+
+        Assert.NotNull(view.SnapshotForTesting);
+        Assert.Equal(2, view.SnapshotForTesting.Analyses.Count);
+
+        var parse = view.CurrentParseForTesting!;
+        Assert.Equal(2, parse.Regions.Count);
+
+        // Apply "Use ours" on Region 1
+        view.ApplyRegionAction(parse.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+
+        // Immediately after ApplyRegionAction (before any background parse finishes)
+        var snapshot = view.SnapshotForTesting;
+        Assert.NotNull(snapshot);
+        Assert.Single(snapshot.Analyses);
+        Assert.Equal("theirs 2", snapshot.Analyses[0].Region.TheirsLines[0]);
+        Assert.NotEmpty(snapshot.Analyses[0].OursHighlights);
+    }
+
     #region Fakes
 
     internal sealed class FakeConflictService : IConflictService
@@ -1439,6 +1629,8 @@ public class ConflictResolverViewTests : IDisposable
         public Func<Task>? OnBeforeSaveAsync { get; set; }
         public Func<Task>? OnContinueAsync { get; set; }
         public Func<string, CancellationToken, Task>? OnLoadWorkingCopyAsync { get; set; }
+        public Func<Task<IReadOnlyList<ConflictFile>>>? OnGetConflictsAsync { get; set; }
+        public int GetConflictsCalls { get; set; }
         public bool AutoRemoveResolvedConflicts { get; set; } = true;
         public List<(string FilePath, string Text, bool Stage)> SaveResolutionCalls { get; } = [];
         public int ContinueCalls { get; set; }
@@ -1447,11 +1639,17 @@ public class ConflictResolverViewTests : IDisposable
         public List<string> RecreatedCalls { get; } = [];
         public List<string> ExternalToolCalls { get; } = [];
 
-        public Task<IReadOnlyList<ConflictFile>> GetConflictsAsync(RepositoryContext context, CancellationToken ct = default)
-            => Task.FromResult(Conflicts);
+        public async Task<IReadOnlyList<ConflictFile>> GetConflictsAsync(RepositoryContext context, CancellationToken ct = default)
+        {
+            GetConflictsCalls++;
+            if (OnGetConflictsAsync != null)
+                return await OnGetConflictsAsync();
+            return Conflicts;
+        }
 
         public string? DiskHash { get; set; }
         public int GetDiskHashCalls { get; set; }
+        public int LoadWorkingCopyCalls { get; set; }
 
         public Task<string> GetDiskHashAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
         {
@@ -1465,6 +1663,7 @@ public class ConflictResolverViewTests : IDisposable
 
         public async Task<ConflictWorkingCopy> LoadWorkingCopyAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
         {
+            LoadWorkingCopyCalls++;
             if (OnLoadWorkingCopyAsync != null)
                 await OnLoadWorkingCopyAsync(filePath, ct);
 

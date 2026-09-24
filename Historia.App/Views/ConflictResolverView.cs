@@ -72,6 +72,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private string? _stopId;
     private bool _disposed;
     private bool _isSyncingScroll;
+    private bool _statusRefreshRunning;
+    private bool _statusRefreshPending;
+    private bool _suppressTextChanged;
 
     // Controls
     private readonly TextBlock _headerTitle = Text("", "ColorText", 13, FontWeight.SemiBold);
@@ -168,6 +171,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     internal Border ExternalEndedBannerForTesting => _externalEndedBanner;
     internal Border ChangedOnDiskBannerForTesting => _changedOnDiskBanner;
     internal ConflictParse? CurrentParseForTesting => _parse;
+    internal ConflictParseSnapshot? SnapshotForTesting => _snapshot;
     internal ConflictFile? CurrentFileForTesting => _currentFile;
     internal IReadOnlyList<ConflictFile> ConflictedFilesForTesting => _conflictedFiles;
     internal ContentControl EditorAreaForTesting => _editorArea;
@@ -359,83 +363,106 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 return;
             }
 
+            if (_statusRefreshRunning)
+            {
+                _statusRefreshPending = true;
+                return;
+            }
+
+            _statusRefreshRunning = true;
             try
             {
-                var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
-                bool stopChanged = _stopId != null && labels.StopId != _stopId;
-                _stopId = labels.StopId;
-                _headerOurs.Text = $"Ours: {labels.OursTitle}";
-                _headerTheirs.Text = $"Theirs: {labels.TheirsTitle}";
-                ToolTip.SetTip(_headerOurs, labels.OursDetail);
-                ToolTip.SetTip(_headerTheirs, labels.TheirsDetail);
-
-                var op = _ctx.State.PendingOperation;
-                if (op == OperationState.None)
+                do
                 {
-                    _opBar.IsVisible = false;
-                    _externalEndedBanner.IsVisible = HasUnsavedWork;
+                    _statusRefreshPending = false;
+                    await ProcessStatusChangeAsync();
+                } while (_statusRefreshPending && !_disposed);
+            }
+            finally
+            {
+                _statusRefreshRunning = false;
+            }
+        });
+    }
+
+    private async Task ProcessStatusChangeAsync()
+    {
+        try
+        {
+            var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
+            bool stopChanged = _stopId != null && labels.StopId != _stopId;
+            _stopId = labels.StopId;
+            _headerOurs.Text = $"Ours: {labels.OursTitle}";
+            _headerTheirs.Text = $"Theirs: {labels.TheirsTitle}";
+            ToolTip.SetTip(_headerOurs, labels.OursDetail);
+            ToolTip.SetTip(_headerTheirs, labels.TheirsDetail);
+
+            var op = _ctx.State.PendingOperation;
+            if (op == OperationState.None)
+            {
+                _opBar.IsVisible = false;
+                _externalEndedBanner.IsVisible = HasUnsavedWork;
+            }
+            else
+            {
+                _externalEndedBanner.IsVisible = false;
+                _opBar.IsVisible = true;
+                _skipBtn.IsVisible = op is OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
+            }
+
+            await RefreshConflictsAsync();
+            await CheckExternalDiskChangeAsync();
+
+            bool currentStillConflicted = _currentFile != null &&
+                _conflictedFiles.Any(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
+
+            if (stopChanged)
+            {
+                if (HasUnsavedWork)
+                {
+                    _changedOnDiskBanner.IsVisible = true;
                 }
                 else
                 {
-                    _externalEndedBanner.IsVisible = false;
-                    _opBar.IsVisible = true;
-                    _skipBtn.IsVisible = op is OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
-                }
-
-                await RefreshConflictsAsync();
-                await CheckExternalDiskChangeAsync();
-
-                bool currentStillConflicted = _currentFile != null &&
-                    _conflictedFiles.Any(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
-
-                if (stopChanged)
-                {
-                    if (HasUnsavedWork)
+                    if (currentStillConflicted)
                     {
-                        _changedOnDiskBanner.IsVisible = true;
+                        var matching = _conflictedFiles.First(f => string.Equals(f.FilePath, _currentFile!.FilePath, StringComparison.Ordinal));
+                        await SwitchToFileAsync(matching);
+                    }
+                    else if (_conflictedFiles.Count > 0)
+                    {
+                        await SwitchToFileAsync(_conflictedFiles[0]);
                     }
                     else
                     {
-                        if (currentStillConflicted)
-                        {
-                            var matching = _conflictedFiles.First(f => string.Equals(f.FilePath, _currentFile!.FilePath, StringComparison.Ordinal));
-                            await SwitchToFileAsync(matching);
-                        }
-                        else if (_conflictedFiles.Count > 0)
-                        {
-                            await SwitchToFileAsync(_conflictedFiles[0]);
-                        }
-                        else
-                        {
-                            ShowAllConflictsResolvedCard();
-                        }
-                    }
-                }
-                else if (!currentStillConflicted)
-                {
-                    if (HasUnsavedWork)
-                    {
-                        _changedOnDiskBanner.IsVisible = true;
-                    }
-                    else
-                    {
-                        if (_conflictedFiles.Count > 0)
-                        {
-                            await SwitchToFileAsync(_conflictedFiles[0]);
-                        }
-                        else
-                        {
-                            ShowAllConflictsResolvedCard();
-                        }
+                        ShowAllConflictsResolvedCard();
                     }
                 }
             }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
+            else if (!currentStillConflicted)
             {
-                _notifications.Publish(NotificationSeverity.Error, ex.Message);
+                if (HasUnsavedWork)
+                {
+                    _changedOnDiskBanner.IsVisible = true;
+                }
+                else
+                {
+                    if (_conflictedFiles.Count > 0)
+                    {
+                        await SwitchToFileAsync(_conflictedFiles[0]);
+                    }
+                    else
+                    {
+                        ShowAllConflictsResolvedCard();
+                    }
+                }
             }
-        });
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, ex.Message);
+        }
     }
 
     private void OnSelectedConflictPathChanged(object? sender, SelectedConflictPathChangedEventArgs e)
@@ -556,7 +583,16 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _currentFile = null;
         _workingCopy = null;
         _diskHash = null;
-        _resultEditor.Text = string.Empty;
+        _snapshot = null;
+        _suppressTextChanged = true;
+        try
+        {
+            _resultEditor.Text = string.Empty;
+        }
+        finally
+        {
+            _suppressTextChanged = false;
+        }
         _oursEditor.Text = string.Empty;
         _theirsEditor.Text = string.Empty;
         _headerTitle.Text = "All conflicts resolved — you can continue the operation.";
@@ -597,11 +633,20 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _currentFile = file;
         _workingCopy = copy;
         _diskHash = copy.DiskHash;
+        _snapshot = null;
         _oursEditor.FilePath = file.FilePath;
         _theirsEditor.FilePath = file.FilePath;
         _resultEditor.FilePath = file.FilePath;
 
-        _resultEditor.Text = copy.Text ?? string.Empty;
+        _suppressTextChanged = true;
+        try
+        {
+            _resultEditor.Text = copy.Text ?? string.Empty;
+        }
+        finally
+        {
+            _suppressTextChanged = false;
+        }
         _resultEditor.Document.UndoStack.MarkAsOriginalFile();
         _parseVersion = _resultEditor.Document.Version;
         UnregisterUnsavedWork();
@@ -663,7 +708,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private void OnResultDocumentTextChanged(object? sender, EventArgs e)
     {
-        if (_currentFile == null)
+        if (_suppressTextChanged || _currentFile == null)
         {
             return;
         }
@@ -722,13 +767,113 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         int markerSize = _workingCopy?.MarkerSize ?? 7;
         var text = _resultEditor.Text;
         _parse = ConflictMarkerParser.Parse(text, markerSize);
-        var oursLines = ConflictPaneBuilder.Build(_parse, ConflictSide.Ours);
-        var theirsLines = ConflictPaneBuilder.Build(_parse, ConflictSide.Theirs);
-        var analyses = ConflictRegionAnalyzer.AnalyzeAll(_parse);
-        _snapshot = new ConflictParseSnapshot(_parse, oursLines, theirsLines, analyses, _resultEditor.Document.Version);
-        _parseVersion = _resultEditor.Document.Version;
-        _minimap.Parse = _parse;
+        var parse = _parse;
+        var oursLines = ConflictPaneBuilder.Build(parse, ConflictSide.Ours);
+        var theirsLines = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs);
+        var version = _resultEditor.Document.Version;
+        _parseVersion = version;
+
+        // No-blink carryover: retain analyses for regions whose text is unchanged
+        var prevAnalyses = _snapshot?.Analyses;
+        var carriedAnalyses = new List<ConflictRegionAnalysis>();
+        if (prevAnalyses != null && prevAnalyses.Count > 0)
+        {
+            foreach (var r in parse.Regions)
+            {
+                var match = prevAnalyses.FirstOrDefault(a => RegionLinesEqual(r, a.Region));
+                if (match != null)
+                {
+                    carriedAnalyses.Add(RemapAnalysis(match, r));
+                }
+            }
+        }
+
+        _snapshot = new ConflictParseSnapshot(parse, oursLines, theirsLines, carriedAnalyses, version);
+        _minimap.Parse = parse;
         UpdateConflictsCount();
+
+        Task.Run(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            var fullAnalyses = ConflictRegionAnalyzer.AnalyzeAll(parse);
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                if (_resultEditor.Document.Version.CompareAge(version) == 0)
+                {
+                    _snapshot = new ConflictParseSnapshot(parse, oursLines, theirsLines, fullAnalyses, version);
+                    _oursEditor.TextArea.TextView.Redraw();
+                    _theirsEditor.TextArea.TextView.Redraw();
+                    _resultEditor.TextArea.TextView.Redraw();
+                }
+            });
+        });
+    }
+
+    private static bool RegionLinesEqual(ConflictRegion a, ConflictRegion b)
+    {
+        if (a.OursLines.Count != b.OursLines.Count || a.TheirsLines.Count != b.TheirsLines.Count)
+            return false;
+        for (int i = 0; i < a.OursLines.Count; i++)
+            if (a.OursLines[i] != b.OursLines[i]) return false;
+        for (int i = 0; i < a.TheirsLines.Count; i++)
+            if (a.TheirsLines[i] != b.TheirsLines[i]) return false;
+
+        if (a.HasBase != b.HasBase) return false;
+        if (a.HasBase)
+        {
+            if (a.BaseLines == null || b.BaseLines == null || a.BaseLines.Count != b.BaseLines.Count)
+                return false;
+            for (int i = 0; i < a.BaseLines.Count; i++)
+                if (a.BaseLines[i] != b.BaseLines[i]) return false;
+        }
+
+        return true;
+    }
+
+    private static ConflictRegionAnalysis RemapAnalysis(ConflictRegionAnalysis prev, ConflictRegion newRegion)
+    {
+        if (prev.Region.OursStartLine == newRegion.OursStartLine &&
+            prev.Region.TheirsStartLine == newRegion.TheirsStartLine &&
+            prev.Region.BaseStartLine == newRegion.BaseStartLine)
+        {
+            return new ConflictRegionAnalysis(newRegion, prev.OursHighlights, prev.TheirsHighlights, prev.BaseHighlights);
+        }
+
+        var oursHl = new List<RegionLineHighlight>(prev.OursHighlights.Count);
+        for (int i = 0; i < prev.OursHighlights.Count; i++)
+        {
+            var h = prev.OursHighlights[i];
+            oursHl.Add(new RegionLineHighlight(h.LineIndex, newRegion.OursStartLine + i, h.Spans, h.ChangedFromBase));
+        }
+
+        var theirsHl = new List<RegionLineHighlight>(prev.TheirsHighlights.Count);
+        for (int i = 0; i < prev.TheirsHighlights.Count; i++)
+        {
+            var h = prev.TheirsHighlights[i];
+            theirsHl.Add(new RegionLineHighlight(h.LineIndex, newRegion.TheirsStartLine + i, h.Spans, h.ChangedFromBase));
+        }
+
+        List<RegionLineHighlight>? baseHl = null;
+        if (prev.BaseHighlights != null)
+        {
+            baseHl = new List<RegionLineHighlight>(prev.BaseHighlights.Count);
+            for (int i = 0; i < prev.BaseHighlights.Count; i++)
+            {
+                var h = prev.BaseHighlights[i];
+                baseHl.Add(new RegionLineHighlight(h.LineIndex, newRegion.BaseStartLine + i, h.Spans, h.ChangedFromBase));
+            }
+        }
+
+        return new ConflictRegionAnalysis(newRegion, oursHl, theirsHl, baseHl);
     }
 
     private void UpdateEditorsFromParse()
@@ -1387,8 +1532,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
-        var currentCopy = await _conflicts.LoadWorkingCopyAsync(_ctx, _currentFile.FilePath, _viewCts.Token);
-        if (currentCopy.DiskHash != _diskHash)
+        var currentHash = await _conflicts.GetDiskHashAsync(_ctx, _currentFile.FilePath, _viewCts.Token);
+        if (currentHash != _diskHash)
         {
             if (!HasUnsavedWork)
             {
