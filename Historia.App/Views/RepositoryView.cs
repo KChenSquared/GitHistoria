@@ -40,6 +40,7 @@ public sealed class RepositoryView : UserControl, IDisposable
     private RepositoryContext? _repo;
     private StagingPanelView? _stagingPanel;
     private CommitDetailPanelView? _detailPanel;
+    private bool _opBusy;
 
     internal Panel TopBarForTesting => _topBar;
     internal Grid BranchBarForTesting => _branchBar;
@@ -258,12 +259,13 @@ public sealed class RepositoryView : UserControl, IDisposable
 
     private async Task OnOpBannerContinueAsync()
     {
-        if (_repo == null) return;
+        if (_repo == null || _opBusy) return;
+        _opBusy = true;
+        _opContinueBtn.IsEnabled = _opAbortBtn.IsEnabled = false;
         try
         {
             var conflicts = _sp.GetRequiredService<IConflictService>();
             await conflicts.ContinueOperationAsync(_repo);
-            await _repo.State.RefreshAllAsync();
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.MergeConflict)
         {
@@ -273,11 +275,16 @@ public sealed class RepositoryView : UserControl, IDisposable
         {
             _notifications.Publish(NotificationSeverity.Error, $"Continue failed: {ex.Message}", ex.NotificationDetails());
         }
+        finally
+        {
+            _opBusy = false;
+            _opContinueBtn.IsEnabled = _opAbortBtn.IsEnabled = true;
+        }
     }
 
     private async Task OnOpBannerAbortAsync()
     {
-        if (_repo == null) return;
+        if (_repo == null || _opBusy) return;
         if (!await _dialogs.ConfirmDestructiveAsync(
                 "Abort operation",
                 "Abort the in-progress merge / rebase / cherry-pick? Conflict resolutions made so far will be discarded.",
@@ -286,15 +293,22 @@ public sealed class RepositoryView : UserControl, IDisposable
             return;
         }
 
+        if (_opBusy) return;
+        _opBusy = true;
+        _opContinueBtn.IsEnabled = _opAbortBtn.IsEnabled = false;
         try
         {
             var conflicts = _sp.GetRequiredService<IConflictService>();
             await conflicts.AbortOperationAsync(_repo);
-            await _repo.State.RefreshAllAsync();
         }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Abort failed: {ex.Message}", ex.NotificationDetails());
+        }
+        finally
+        {
+            _opBusy = false;
+            _opContinueBtn.IsEnabled = _opAbortBtn.IsEnabled = true;
         }
     }
 
