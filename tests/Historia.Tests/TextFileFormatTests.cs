@@ -84,4 +84,29 @@ public class TextFileFormatTests
         Assert.False(detected);
         Assert.Equal(string.Empty, text);
     }
+
+    [Fact]
+    public void Utf32_bom_is_reported_unsupported()
+    {
+        var utf32Le = new byte[] { 0xFF, 0xFE, 0x00, 0x00, 0x61, 0x00, 0x00, 0x00 };
+        Assert.False(TextFileFormat.TryDetect(utf32Le, out _, out _));
+
+        var utf32Be = new byte[] { 0x00, 0x00, 0xFE, 0xFF, 0x00, 0x00, 0x00, 0x61 };
+        Assert.False(TextFileFormat.TryDetect(utf32Be, out _, out _));
+    }
+
+    [Fact]
+    public void Encode_lone_surrogate_does_not_crash_save()
+    {
+        var originalBytes = "test"u8.ToArray();
+        var detected = TextFileFormat.TryDetect(originalBytes, out var format, out _);
+        Assert.True(detected);
+
+        // Lone surrogate character
+        string textWithLoneSurrogate = "hello \uD800 world";
+        var encoded = format.Encode(textWithLoneSurrogate);
+        Assert.NotNull(encoded);
+        Assert.NotEmpty(encoded);
+    }
 }
+

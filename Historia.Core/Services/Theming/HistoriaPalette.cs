@@ -31,11 +31,13 @@ public static class HistoriaPalette
         "git-added", "git-deleted", "git-modified", "git-untracked", "git-conflict", "git-ignored",
         // diff line backgrounds
         "diff-add-bg", "diff-del-bg",
-        // diff intra-line highlights & padding (M1.3)
+        // diff intra-line highlights & padding
         "diff-add-hl", "diff-del-hl", "diff-empty-bg",
-        // conflict resolver washes (M1.3)
+        // conflict resolver washes
         "conflict-ours-bg", "conflict-theirs-bg", "conflict-base-bg", "conflict-marker-bg", "conflict-resolved-bg",
-        // code editor selection (M1.3)
+        // conflict intra-line highlights
+        "conflict-ours-hl", "conflict-theirs-hl",
+        // code editor selection
         "code-selection",
         // graph ref badge label (§V3-4.3) — white in dark/HC, near-black in light. The web
         // layer never consumes it, but parity keeps the two copies honest (rule 26).
@@ -95,6 +97,8 @@ public static class HistoriaPalette
         ("conflict-base-bg",     "#9D9D9D26"), // B: text-muted @ 15% alpha
         ("conflict-marker-bg",   "#3C3C3C4D"), // B: border-strong @ 30% alpha
         ("conflict-resolved-bg", "#2EA04326"), // B: success @ 15% alpha
+        ("conflict-ours-hl",     "#0078D466"), // B: primary @ 40% alpha
+        ("conflict-theirs-hl",   "#BB800966"), // B: warning @ 40% alpha
         ("code-selection",       "#264F78"),   // A: editor.selectionBackground
         ("ref-label",     "#FFFFFF"),  // §V3-4.3: graph ref badge label
         // V5 §8 — terminal. term-* are role aliases (B); the ANSI set is VS Code dark_vs
@@ -158,6 +162,8 @@ public static class HistoriaPalette
         ("conflict-base-bg",     "#61616126"), // B: text-muted @ 15% alpha
         ("conflict-marker-bg",   "#CECECE4D"), // B: border-strong @ 30% alpha
         ("conflict-resolved-bg", "#2EA04326"), // B: success @ 15% alpha
+        ("conflict-ours-hl",     "#005FB84D"), // B: primary @ 30% alpha
+        ("conflict-theirs-hl",   "#BB80094D"), // B: warning @ 30% alpha
         ("code-selection",       "#ADD6FF"),   // A: editor.selectionBackground
         ("ref-label",     "#1F1F1F"),  // §V3-4.3: near-black on the light field
         // V5 §8 — terminal. term-* are role aliases (B); the ANSI set is VS Code light_vs
@@ -225,6 +231,8 @@ public static class HistoriaPalette
         ("conflict-base-bg",     "#ffffff26"), // = text white @ 15% alpha
         ("conflict-marker-bg",   "#ffffff4d"), // = border @ 30% alpha
         ("conflict-resolved-bg", "#44ff4433"), // = success @ 20% alpha
+        ("conflict-ours-hl",     "#00ffff66"), // = accent cyan @ 40% alpha
+        ("conflict-theirs-hl",   "#ffff0066"), // = primary yellow @ 40% alpha
         ("code-selection",       "#ffff00"),   // = selection yellow at full opacity
         ("ref-label",     "#ffffff"), // §V3-4.3
         // V5 §8 — terminal. HC has no VS Code counterpart. term-bg/fg come from the HC

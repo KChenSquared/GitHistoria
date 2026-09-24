@@ -428,7 +428,7 @@ SOFTWARE.
 
 ## DiffPlex
 
-Line diffing and intra-line difference calculation are provided by the `DiffPlex` package, licensed under the Apache License 2.0 (reproduced above). Upstream carries no `NOTICE` file; §4(d) does not apply.
+DiffPlex pairs lines inside conflict regions; intra-line diffing is `InlineDiff`, ported from SourceGit. `DiffPlex` is licensed under the Apache License 2.0 (reproduced above). Upstream carries no `NOTICE` file; §4(d) does not apply.
 
 Copyright Matthew Manela.
 

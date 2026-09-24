@@ -30,6 +30,17 @@ public readonly record struct TextFileFormat(Encoding Encoding, bool HasBom)
             }
         }
 
+        // UTF-32 LE (FF FE 00 00) and UTF-32 BE (00 00 FE FF) BOMs are unsupported.
+        // Must be checked before UTF-16 LE (FF FE) so UTF-32 LE is not misidentified.
+        if (bytes.Length >= 4 &&
+            ((bytes[0] == 0xFF && bytes[1] == 0xFE && bytes[2] == 0x00 && bytes[3] == 0x00) ||
+             (bytes[0] == 0x00 && bytes[1] == 0x00 && bytes[2] == 0xFE && bytes[3] == 0xFF)))
+        {
+            format = default;
+            text = string.Empty;
+            return false;
+        }
+
         if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
         {
             try
@@ -65,7 +76,7 @@ public readonly record struct TextFileFormat(Encoding Encoding, bool HasBom)
         try
         {
             text = StrictUtf8.GetString(bytes);
-            format = new TextFileFormat(StrictUtf8, HasBom: false);
+            format = new TextFileFormat(new UTF8Encoding(false, false), HasBom: false);
             return true;
         }
         catch (DecoderFallbackException)
@@ -79,7 +90,16 @@ public readonly record struct TextFileFormat(Encoding Encoding, bool HasBom)
     public byte[] Encode(string text)
     {
         var preamble = HasBom ? Encoding.GetPreamble() : [];
-        var body = Encoding.GetBytes(text);
+        byte[] body;
+        try
+        {
+            body = Encoding.GetBytes(text);
+        }
+        catch (EncoderFallbackException)
+        {
+            body = Encoding.UTF8.GetBytes(text);
+        }
+
         if (preamble.Length == 0)
             return body;
 
