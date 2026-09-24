@@ -10,6 +10,7 @@ public sealed record RefsChangedEventArgs(
 public sealed record ProfileChangedEventArgs(GitProfile? Profile);
 public sealed record OperationStateChangedEventArgs(OperationState State);
 public sealed record OpenDiffChangedEventArgs(DiffRequest? Request);
+public sealed record SelectedConflictPathChangedEventArgs(string? Path);
 
 /// <summary>
 /// The contract between every producer (Git services, watcher, profile service) and every
@@ -40,11 +41,15 @@ public interface IRepositoryStateService
     /// <summary>True when conflicted files exist or an in-progress operation has keep-open set.</summary>
     bool IsConflictSessionActive { get; }
 
+    /// <summary>Which conflicted file the resolver shows; written by the staging panel on click and by the resolver when it switches on its own; raised on the UI dispatcher.</summary>
+    string? SelectedConflictPath { get; }
+
     /// <summary>The diff currently occupying the center panel, or null when the graph is shown (§V2-8.2).</summary>
     DiffRequest? OpenDiff { get; }
 
     // ── Mutations: safe to call from any thread ──
     void SetKeepConflictResolverOpen(bool keep);
+    void SetSelectedConflictPath(string? path);
     void SetSelectedCommit(ObjectId? id);
     void SetSelectedPaths(IReadOnlyList<string> paths);
 
@@ -82,4 +87,7 @@ public interface IRepositoryStateService
 
     /// <summary>Raised on the UI dispatcher whenever IsConflictSessionActive flips value.</summary>
     event EventHandler? ConflictSessionChanged;
+
+    /// <summary>Raised on the UI dispatcher whenever SelectedConflictPath changes.</summary>
+    event EventHandler<SelectedConflictPathChangedEventArgs>? SelectedConflictPathChanged;
 }

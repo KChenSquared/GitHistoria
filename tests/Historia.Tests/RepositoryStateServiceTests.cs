@@ -214,6 +214,213 @@ public class RepositoryStateServiceTests : IAsyncDisposable
         }
     }
 
+    [Fact]
+    public void SetSelectedConflictPath_raises_once_per_change_and_not_for_same_value()
+    {
+        var state = NewState();
+        int raises = 0;
+        string? lastPath = null;
+        state.SelectedConflictPathChanged += (_, e) =>
+        {
+            raises++;
+            lastPath = e.Path;
+        };
+
+        state.SetSelectedConflictPath("f1.txt");
+        Assert.Equal(1, raises);
+        Assert.Equal("f1.txt", lastPath);
+        Assert.Equal("f1.txt", state.SelectedConflictPath);
+
+        // Same value does not raise
+        state.SetSelectedConflictPath("f1.txt");
+        Assert.Equal(1, raises);
+
+        // Change value raises
+        state.SetSelectedConflictPath("f2.txt");
+        Assert.Equal(2, raises);
+        Assert.Equal("f2.txt", lastPath);
+        Assert.Equal("f2.txt", state.SelectedConflictPath);
+
+        // Setting null raises
+        state.SetSelectedConflictPath(null);
+        Assert.Equal(3, raises);
+        Assert.Null(lastPath);
+        Assert.Null(state.SelectedConflictPath);
+    }
+
+    [Fact]
+    public async Task SelectedConflictPath_clears_when_conflict_session_ends_via_status()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var gateway = new FakeGateway();
+        var state = new RepositoryStateService(ctx, ui: null, repoCache: null, gateway: gateway);
+
+        var mergeHead = Path.Combine(ctx.GitDirectory, "MERGE_HEAD");
+        await File.WriteAllTextAsync(mergeHead, "1234567890123456789012345678901234567890\n");
+
+        try
+        {
+            gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty with
+            {
+                Conflicted = [new FileStatusEntry { Path = "f.txt", Kind = FileChangeKind.Conflicted, IsBinary = false, IsSubmodule = false }],
+            };
+
+            await state.RefreshStatusAsync();
+            Assert.True(state.IsConflictSessionActive);
+
+            state.SetSelectedConflictPath("f.txt");
+            Assert.Equal("f.txt", state.SelectedConflictPath);
+
+            bool pathChangedRaised = false;
+            string? clearedPath = "not-cleared";
+            state.SelectedConflictPathChanged += (_, e) =>
+            {
+                pathChangedRaised = true;
+                clearedPath = e.Path;
+            };
+
+            // Operation completes and merge head is removed
+            File.Delete(mergeHead);
+            gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty with
+            {
+                Conflicted = [],
+            };
+
+            await state.RefreshStatusAsync();
+
+            Assert.False(state.IsConflictSessionActive);
+            Assert.Null(state.SelectedConflictPath);
+            Assert.True(pathChangedRaised);
+            Assert.Null(clearedPath);
+        }
+        finally
+        {
+            if (File.Exists(mergeHead)) File.Delete(mergeHead);
+        }
+    }
+
+    [Fact]
+    public async Task SelectedConflictPath_clears_when_keep_open_is_released()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var gateway = new FakeGateway();
+        var state = new RepositoryStateService(ctx, ui: null, repoCache: null, gateway: gateway);
+
+        var mergeHead = Path.Combine(ctx.GitDirectory, "MERGE_HEAD");
+        await File.WriteAllTextAsync(mergeHead, "1234567890123456789012345678901234567890\n");
+
+        try
+        {
+            // In-progress merge, 0 conflicts left, keep-open was set
+            gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty;
+            await state.RefreshStatusAsync();
+
+            state.SetKeepConflictResolverOpen(true);
+            Assert.True(state.IsConflictSessionActive);
+
+            state.SetSelectedConflictPath("f.txt");
+            Assert.Equal("f.txt", state.SelectedConflictPath);
+
+            bool pathChangedRaised = false;
+            string? clearedPath = "not-cleared";
+            state.SelectedConflictPathChanged += (_, e) =>
+            {
+                pathChangedRaised = true;
+                clearedPath = e.Path;
+            };
+
+            state.SetKeepConflictResolverOpen(false);
+
+            Assert.False(state.IsConflictSessionActive);
+            Assert.Null(state.SelectedConflictPath);
+            Assert.True(pathChangedRaised);
+            Assert.Null(clearedPath);
+        }
+        finally
+        {
+            if (File.Exists(mergeHead)) File.Delete(mergeHead);
+        }
+    }
+
+    [Fact]
+    public async Task Conflict_session_start_clears_selected_commit()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var gateway = new FakeGateway();
+        var state = new RepositoryStateService(ctx, ui: null, repoCache: null, gateway: gateway);
+
+        var commitId = new LibGit2Sharp.ObjectId("1234567890123456789012345678901234567890");
+        state.SetSelectedCommit(commitId);
+        Assert.Equal(commitId, state.SelectedCommitId);
+
+        int commitChangedRaises = 0;
+        ObjectId? finalSelectedCommit = commitId;
+        state.SelectedCommitChanged += (_, e) =>
+        {
+            commitChangedRaises++;
+            finalSelectedCommit = e.CommitId;
+        };
+
+        var mergeHead = Path.Combine(ctx.GitDirectory, "MERGE_HEAD");
+        await File.WriteAllTextAsync(mergeHead, "1234567890123456789012345678901234567890\n");
+
+        try
+        {
+            gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty with
+            {
+                Conflicted = [new FileStatusEntry { Path = "f.txt", Kind = FileChangeKind.Conflicted, IsBinary = false, IsSubmodule = false }],
+            };
+
+            await state.RefreshStatusAsync();
+
+            Assert.True(state.IsConflictSessionActive);
+            Assert.Null(state.SelectedCommitId);
+            Assert.Equal(1, commitChangedRaises);
+            Assert.Null(finalSelectedCommit);
+        }
+        finally
+        {
+            if (File.Exists(mergeHead)) File.Delete(mergeHead);
+        }
+    }
+
+    [Fact]
+    public async Task Selecting_a_commit_during_the_session_is_not_undone()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var gateway = new FakeGateway();
+        var state = new RepositoryStateService(ctx, ui: null, repoCache: null, gateway: gateway);
+
+        var mergeHead = Path.Combine(ctx.GitDirectory, "MERGE_HEAD");
+        await File.WriteAllTextAsync(mergeHead, "1234567890123456789012345678901234567890\n");
+
+        try
+        {
+            gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty with
+            {
+                Conflicted = [new FileStatusEntry { Path = "f.txt", Kind = FileChangeKind.Conflicted, IsBinary = false, IsSubmodule = false }],
+            };
+
+            await state.RefreshStatusAsync();
+            Assert.True(state.IsConflictSessionActive);
+            Assert.Null(state.SelectedCommitId);
+
+            // User selects a commit to browse during the active conflict session
+            var browseCommitId = new LibGit2Sharp.ObjectId("abcdefabcdefabcdefabcdefabcdefabcdefabcd");
+            state.SetSelectedCommit(browseCommitId);
+            Assert.Equal(browseCommitId, state.SelectedCommitId);
+
+            // Later status refresh with session still active leaves selected commit alone
+            await state.RefreshStatusAsync();
+            Assert.True(state.IsConflictSessionActive);
+            Assert.Equal(browseCommitId, state.SelectedCommitId);
+        }
+        finally
+        {
+            if (File.Exists(mergeHead)) File.Delete(mergeHead);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _host.DisposeAsync();
