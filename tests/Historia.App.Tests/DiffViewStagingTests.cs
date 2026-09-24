@@ -327,6 +327,158 @@ public class DiffViewStagingTests : IDisposable
         Dispatcher.UIThread.RunJobs();
     }
 
+    [AvaloniaFact]
+    public async Task Hunk_row_button_stages_hunk_in_unified()
+    {
+        var window = new Window { Width = 800, Height = 600 };
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
+        window.Content = view;
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            var presenter = await WaitForPresenterAsync(view);
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var button = view.GetVisualDescendants()
+                .OfType<Button>()
+                .FirstOrDefault(b => b.Content?.ToString() == "Stage hunk");
+            Assert.NotNull(button);
+
+            button.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(PatchScope.SingleHunk, _patchService.LastScope);
+            Assert.False(_patchService.LastReverse);
+            Assert.Equal(1, _patchService.ApplyPatchCount);
+        }
+        finally
+        {
+            window.Close();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Hunk_row_button_unstages_in_staged_diff()
+    {
+        using (var repo = new LibGit2Sharp.Repository(_repoDir))
+        {
+            LibGit2Sharp.Commands.Stage(repo, "test.txt");
+        }
+
+        var window = new Window { Width = 800, Height = 600 };
+        var req = new DiffRequest { Source = DiffSource.StagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
+        window.Content = view;
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            var presenter = await WaitForPresenterAsync(view);
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var button = view.GetVisualDescendants()
+                .OfType<Button>()
+                .FirstOrDefault(b => b.Content?.ToString() == "Unstage hunk");
+            Assert.NotNull(button);
+
+            button.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(PatchScope.SingleHunk, _patchService.LastScope);
+            Assert.True(_patchService.LastReverse);
+            Assert.Equal(1, _patchService.ApplyPatchCount);
+        }
+        finally
+        {
+            window.Close();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Commit_diff_has_no_row_buttons_or_menu_items()
+    {
+        using var repo = new LibGit2Sharp.Repository(_repoDir);
+        var headId = repo.Head.Tip.Id;
+        var window = new Window { Width = 800, Height = 600 };
+        var req = new DiffRequest { Source = DiffSource.Commit, CommitId = headId, Path = "test.txt" };
+        var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
+        window.Content = view;
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            var presenter = await WaitForPresenterAsync(view);
+            var combined = Assert.IsType<CombinedDiffPresenter>(presenter);
+
+            Assert.False(combined.AllowStaging);
+            Assert.Null(combined.TextArea.ContextMenu);
+            Assert.DoesNotContain(combined.TextArea.TextView.ElementGenerators, g => g is DiffHunkActionGenerator);
+
+            var buttons = view.GetVisualDescendants()
+                .OfType<Button>()
+                .Where(b => b.Content?.ToString()?.Contains("hunk") == true);
+            Assert.Empty(buttons);
+        }
+        finally
+        {
+            window.Close();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Context_menu_stage_selected_lines_sends_selected_refs()
+    {
+        var window = new Window { Width = 800, Height = 600 };
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
+        window.Content = view;
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            var presenter = await WaitForPresenterAsync(view);
+            var combined = Assert.IsType<CombinedDiffPresenter>(presenter);
+
+            var line2 = combined.Document.GetLineByNumber(2);
+            var line3 = combined.Document.GetLineByNumber(3);
+            combined.TextArea.Selection = Selection.Create(combined.TextArea, line2.Offset, line3.EndOffset);
+
+            var selectedRefs = combined.GetSelectedLineRefs();
+            Assert.NotEmpty(selectedRefs);
+
+            Assert.NotNull(combined.TextArea.ContextMenu);
+            var item = combined.TextArea.ContextMenu.Items
+                .OfType<MenuItem>()
+                .FirstOrDefault(m => m.Header?.ToString()?.Contains("selected lines") == true);
+            Assert.NotNull(item);
+            Assert.True(item.IsEnabled);
+
+            item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(PatchScope.SelectedLines, _patchService.LastScope);
+            Assert.NotNull(_patchService.LastSelectedLines);
+            Assert.NotEmpty(_patchService.LastSelectedLines);
+            Assert.Equal(1, _patchService.ApplyPatchCount);
+        }
+        finally
+        {
+            window.Close();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
     private static async Task<Control> WaitForPresenterAsync(DiffView view)
     {
         for (var i = 0; i < 50; i++)

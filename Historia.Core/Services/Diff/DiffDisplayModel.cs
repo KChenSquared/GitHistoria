@@ -370,7 +370,7 @@ public sealed class DiffDisplayModel
         return result;
     }
 
-    public IReadOnlyList<DiffLineRef> GetSelectedLinesForSideBySide(int startLine, int endLine)
+    public IReadOnlyList<DiffLineRef> GetSelectedLinesForSideBySide(int startLine, int endLine, bool oldSide)
     {
         var result = new List<DiffLineRef>();
         int min = Math.Min(startLine, endLine);
@@ -379,26 +379,31 @@ public sealed class DiffDisplayModel
         for (int line = min; line <= max; line++)
         {
             int idx = line - 1;
-            if (idx >= 0 && idx < SideBySideOldRows.Count)
+            if (oldSide)
             {
-                var oldRow = SideBySideOldRows[idx];
-                if (oldRow.Type == DiffDisplayLineType.Deletion && oldRow.LineRef is { } oldRef)
+                if (idx >= 0 && idx < SideBySideOldRows.Count)
                 {
-                    if (!result.Contains(oldRef))
+                    var oldRow = SideBySideOldRows[idx];
+                    if (oldRow.Type == DiffDisplayLineType.Deletion && oldRow.LineRef is { } oldRef)
                     {
-                        result.Add(oldRef);
+                        if (!result.Contains(oldRef))
+                        {
+                            result.Add(oldRef);
+                        }
                     }
                 }
             }
-
-            if (idx >= 0 && idx < SideBySideNewRows.Count)
+            else
             {
-                var newRow = SideBySideNewRows[idx];
-                if (newRow.Type == DiffDisplayLineType.Addition && newRow.LineRef is { } newRef)
+                if (idx >= 0 && idx < SideBySideNewRows.Count)
                 {
-                    if (!result.Contains(newRef))
+                    var newRow = SideBySideNewRows[idx];
+                    if (newRow.Type == DiffDisplayLineType.Addition && newRow.LineRef is { } newRef)
                     {
-                        result.Add(newRef);
+                        if (!result.Contains(newRef))
+                        {
+                            result.Add(newRef);
+                        }
                     }
                 }
             }
@@ -406,4 +411,7 @@ public sealed class DiffDisplayModel
 
         return result;
     }
+
+    public IReadOnlyList<DiffLineRef> GetSelectedLinesForSideBySide(int startLine, int endLine)
+        => GetSelectedLinesForSideBySide(startLine, endLine, oldSide: true);
 }

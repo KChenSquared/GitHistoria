@@ -184,7 +184,7 @@ public class DiffPresenterTests
     }
 
     [AvaloniaFact]
-    public void In_side_by_side_selecting_a_replaced_line_row_on_the_right_yields_both_plus_ref_and_paired_minus_ref()
+    public void In_side_by_side_selecting_a_replaced_line_row_on_the_right_yields_addition_ref_only()
     {
         var diff = CreateSampleDiff();
         var model = DiffDisplayModel.Create(diff);
@@ -200,9 +200,8 @@ public class DiffPresenterTests
         sbs.RightPresenter.TextArea.Selection = Selection.Create(sbs.RightPresenter.TextArea, startOffset, endOffset);
 
         var refs = sbs.GetSelectedLineRefs();
-        Assert.Equal(2, refs.Count);
-        Assert.Contains(new DiffLineRef(0, 1), refs);
-        Assert.Contains(new DiffLineRef(0, 2), refs);
+        Assert.Single(refs);
+        Assert.Equal(new DiffLineRef(0, 2), refs[0]);
     }
 
     [AvaloniaFact]
@@ -437,6 +436,117 @@ public class DiffPresenterTests
             theme.Effective = EffectiveTheme.Dark;
             applier.Apply(EffectiveTheme.Dark);
             window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Sbs_row_button_only_in_left_pane()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+
+        var sbs = new SideBySideDiffPresenter
+        {
+            Model = model,
+            AllowStaging = true,
+            StageVerb = "Stage",
+        };
+
+        var window = new Window { Width = 800, Height = 600, Content = sbs };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Contains(sbs.LeftPresenter.TextArea.TextView.ElementGenerators, g => g is DiffHunkActionGenerator);
+            Assert.DoesNotContain(sbs.RightPresenter.TextArea.TextView.ElementGenerators, g => g is DiffHunkActionGenerator);
+
+            var leftButtons = sbs.LeftPresenter.GetVisualDescendants()
+                .OfType<Button>()
+                .Where(b => b.Content?.ToString() == "Stage hunk");
+            Assert.NotEmpty(leftButtons);
+
+            var rightButtons = sbs.RightPresenter.GetVisualDescendants()
+                .OfType<Button>()
+                .Where(b => b.Content?.ToString() == "Stage hunk");
+            Assert.Empty(rightButtons);
+        }
+        finally
+        {
+            window.Close();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Minimap_range_tracks_viewport()
+    {
+        var lines = Enumerable.Range(1, 100).Select(i => new DiffLine
+        {
+            Type = DiffLineType.Context,
+            Content = $"line {i}",
+            OldLineNumber = i,
+            NewLineNumber = i,
+        }).ToList();
+        var hunk = new DiffHunk
+        {
+            OldStart = 1,
+            OldLineCount = 100,
+            NewStart = 1,
+            NewLineCount = 100,
+            Header = "@@ -1,100 +1,100 @@",
+            Lines = lines,
+        };
+        var diff = new FileDiff
+        {
+            Path = "many.txt",
+            Kind = DiffKind.Modified,
+            IsBinary = false,
+            IsTruncated = false,
+            AddedLines = 0,
+            DeletedLines = 0,
+            Hunks = [hunk],
+        };
+        var model = DiffDisplayModel.Create(diff);
+
+        var presenter = new CombinedDiffPresenter { Model = model };
+        var minimap = new DiffMinimap { Model = model, Width = 12 };
+        presenter.VisibleLineRangeChanged += (_, range) => minimap.DisplayRange = range;
+
+        var panel = new DockPanel();
+        panel.Children.Add(minimap);
+        panel.Children.Add(presenter);
+
+        var window = new Window { Width = 800, Height = 400, Content = panel };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.NotNull(minimap.DisplayRange);
+            var initialRange = minimap.DisplayRange.Value;
+            Assert.True(initialRange.Start >= 1);
+            Assert.True(initialRange.End > initialRange.Start);
+
+            // Scroll down
+            presenter.SetScrollOffset(new Vector(0, 300));
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.NotNull(minimap.DisplayRange);
+            var scrolledRange = minimap.DisplayRange.Value;
+            Assert.True(scrolledRange.Start > initialRange.Start);
+        }
+        finally
+        {
+            window.Close();
+            Dispatcher.UIThread.RunJobs();
         }
     }
 }

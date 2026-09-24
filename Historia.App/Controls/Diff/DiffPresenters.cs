@@ -13,6 +13,10 @@ public abstract class DiffPresenterBase : CodeEditor
     private int _currentBlockIndex = -1;
     private bool _allowStaging = true;
     private string _stageVerb = "Stage";
+    private bool _enableRowButtons = true;
+    private DiffHunkActionGenerator? _hunkActionGenerator;
+    private int? _pointerLine;
+    private (int Start, int End)? _visibleLineRange;
     private ScrollViewer? _scrollViewer;
     private readonly DiffLineBackgroundRenderer _backgroundRenderer;
     private readonly DiffIndicatorTransformer _indicatorTransformer;
@@ -27,6 +31,7 @@ public abstract class DiffPresenterBase : CodeEditor
             _model = value;
             _currentBlockIndex = -1;
             OnModelChanged();
+            UpdateVisibleLineRange();
         }
     }
 
@@ -50,16 +55,58 @@ public abstract class DiffPresenterBase : CodeEditor
         }
     }
 
+    public bool EnableRowButtons
+    {
+        get => _enableRowButtons;
+        set
+        {
+            if (_enableRowButtons != value)
+            {
+                _enableRowButtons = value;
+                UpdateStagingControls();
+            }
+        }
+    }
+
+    public (int Start, int End)? VisibleLineRange
+    {
+        get => _visibleLineRange;
+        private set
+        {
+            if (_visibleLineRange != value)
+            {
+                _visibleLineRange = value;
+                VisibleLineRangeChanged?.Invoke(this, _visibleLineRange);
+            }
+        }
+    }
+
+    public event EventHandler<(int Start, int End)?>? VisibleLineRangeChanged;
+
     public bool AllowStaging
     {
         get => _allowStaging;
-        set => _allowStaging = value;
+        set
+        {
+            if (_allowStaging != value)
+            {
+                _allowStaging = value;
+                UpdateStagingControls();
+            }
+        }
     }
 
     public string StageVerb
     {
         get => _stageVerb;
-        set => _stageVerb = value;
+        set
+        {
+            if (_stageVerb != value)
+            {
+                _stageVerb = value;
+                UpdateStagingControls();
+            }
+        }
     }
 
     public virtual IReadOnlyList<DiffBlock> Blocks => Model?.CombinedBlocks ?? [];
@@ -104,8 +151,13 @@ public abstract class DiffPresenterBase : CodeEditor
         TextArea.TextView.BackgroundRenderers.Add(_backgroundRenderer);
         TextArea.TextView.LineTransformers.Add(_indicatorTransformer);
 
+        TextArea.TextView.VisualLinesChanged += OnTextViewVisualLinesChanged;
+        TextArea.AddHandler(PointerPressedEvent, OnTextAreaPointerPressed, RoutingStrategies.Tunnel);
+        TextArea.SelectionChanged += (_, _) => UpdateContextMenu();
         TextArea.Caret.PositionChanged += OnCaretPositionChanged;
         TextArea.AddHandler(KeyDownEvent, OnPresenterKeyDown, RoutingStrategies.Tunnel);
+
+        UpdateStagingControls();
     }
 
     protected abstract void OnModelChanged();
@@ -172,6 +224,7 @@ public abstract class DiffPresenterBase : CodeEditor
         {
             _scrollOffset = _scrollViewer.Offset;
             ScrollOffsetChanged?.Invoke(this, _scrollOffset);
+            UpdateVisibleLineRange();
         }
     }
 
@@ -190,6 +243,7 @@ public abstract class DiffPresenterBase : CodeEditor
             ScrollToVerticalOffset(offset.Y);
         }
         ScrollOffsetChanged?.Invoke(this, offset);
+        UpdateVisibleLineRange();
     }
 
     private void AttachSyntaxHighlighting()
@@ -312,6 +366,130 @@ public abstract class DiffPresenterBase : CodeEditor
             SelectionActionRequested?.Invoke(this, refs);
         }
     }
+
+    private void OnTextViewVisualLinesChanged(object? sender, EventArgs e)
+    {
+        UpdateVisibleLineRange();
+    }
+
+    public void UpdateVisibleLineRange()
+    {
+        var tv = TextArea.TextView;
+        if (tv is { VisualLinesValid: true } && tv.VisualLines.Count > 0)
+        {
+            var first = tv.VisualLines[0].FirstDocumentLine.LineNumber;
+            var last = tv.VisualLines[^1].LastDocumentLine.LineNumber;
+            VisibleLineRange = (first, last);
+        }
+        else
+        {
+            VisibleLineRange = null;
+        }
+    }
+
+    private void OnTextAreaPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        var pt = e.GetCurrentPoint(this);
+        if (pt.Properties.IsRightButtonPressed)
+        {
+            var pos = e.GetPosition(TextArea.TextView);
+            var visualY = pos.Y + TextArea.TextView.VerticalOffset;
+            var vl = TextArea.TextView.GetVisualLineFromVisualTop(visualY);
+            if (vl != null)
+            {
+                _pointerLine = vl.FirstDocumentLine.LineNumber;
+            }
+            else
+            {
+                _pointerLine = null;
+            }
+        }
+    }
+
+    protected void UpdateStagingControls()
+    {
+        UpdateHunkActionGenerator();
+        UpdateContextMenu();
+    }
+
+    private void UpdateHunkActionGenerator()
+    {
+        var generators = TextArea.TextView.ElementGenerators;
+        if (_allowStaging && _enableRowButtons)
+        {
+            if (_hunkActionGenerator == null)
+            {
+                _hunkActionGenerator = new DiffHunkActionGenerator(this);
+                generators.Add(_hunkActionGenerator);
+                TextArea.TextView.Redraw();
+            }
+        }
+        else
+        {
+            if (_hunkActionGenerator != null)
+            {
+                generators.Remove(_hunkActionGenerator);
+                _hunkActionGenerator = null;
+                TextArea.TextView.Redraw();
+            }
+        }
+    }
+
+    private void UpdateContextMenu()
+    {
+        if (!_allowStaging)
+        {
+            TextArea.ContextMenu = null;
+            return;
+        }
+
+        var menu = new ContextMenu();
+        void PopulateItems()
+        {
+            menu.Items.Clear();
+            var selectedRefs = GetSelectedLineRefs();
+            var stageLinesItem = new MenuItem
+            {
+                Header = $"{StageVerb} selected lines",
+                IsEnabled = selectedRefs.Count > 0,
+            };
+            stageLinesItem.Click += (_, _) => RequestSelectionAction();
+            menu.Items.Add(stageLinesItem);
+
+            int hunkIndex = -1;
+            if (_pointerLine is { } pl && pl - 1 >= 0 && pl - 1 < Rows.Count)
+            {
+                hunkIndex = Rows[pl - 1].HunkIndex;
+            }
+            if (hunkIndex < 0)
+            {
+                int caretLine = TextArea.Caret.Line;
+                if (caretLine - 1 >= 0 && caretLine - 1 < Rows.Count)
+                {
+                    hunkIndex = Rows[caretLine - 1].HunkIndex;
+                }
+            }
+
+            var stageHunkItem = new MenuItem
+            {
+                Header = $"{StageVerb} hunk",
+                IsEnabled = hunkIndex >= 0,
+            };
+            var capturedHunk = hunkIndex;
+            stageHunkItem.Click += (_, _) =>
+            {
+                if (capturedHunk >= 0)
+                {
+                    RequestHunkAction(capturedHunk);
+                }
+            };
+            menu.Items.Add(stageHunkItem);
+        }
+
+        PopulateItems();
+        menu.Opening += (s, e) => PopulateItems();
+        TextArea.ContextMenu = menu;
+    }
 }
 
 /// <summary>
@@ -363,10 +541,24 @@ public sealed class SingleSideDiffPresenter : DiffPresenterBase
     {
         _isOld = isOld;
         WordWrap = false;
+        EnableRowButtons = isOld;
 
         TextArea.LeftMargins.Add(new DiffLineNumberMargin(this, isOld: _isOld));
         TextArea.LeftMargins.Add(new DiffVerticalSeparatorMargin());
         TextArea.LeftMargins.Add(new DiffLineModifyTypeMargin(this));
+    }
+
+    public override IReadOnlyList<DiffLineRef> GetSelectedLineRefs()
+    {
+        var sel = TextArea.Selection;
+        if (sel.IsEmpty || Model == null)
+        {
+            return [];
+        }
+
+        int start = sel.StartPosition.Line;
+        int end = sel.EndPosition.Line;
+        return Model.GetSelectedLinesForSideBySide(start, end, oldSide: _isOld);
     }
 
     protected override void OnModelChanged()
@@ -458,10 +650,21 @@ public sealed class SideBySideDiffPresenter : Control
     public event EventHandler<int>? HunkActionRequested;
     public event EventHandler<IReadOnlyList<DiffLineRef>>? SelectionActionRequested;
 
+    public (int Start, int End)? VisibleLineRange => _leftPresenter.VisibleLineRange;
+    public event EventHandler<(int Start, int End)?>? VisibleLineRangeChanged;
+
+    public void ScrollToLine(int line)
+    {
+        _leftPresenter.ScrollToLine(line);
+        _rightPresenter.ScrollToLine(line);
+    }
+
     public SideBySideDiffPresenter()
     {
         _leftPresenter = new SingleSideDiffPresenter(isOld: true);
         _rightPresenter = new SingleSideDiffPresenter(isOld: false);
+
+        _leftPresenter.VisibleLineRangeChanged += (_, r) => VisibleLineRangeChanged?.Invoke(this, r);
 
         _leftPresenter.ScrollOffsetChanged += OnLeftScrollChanged;
         _rightPresenter.ScrollOffsetChanged += OnRightScrollChanged;
@@ -546,7 +749,7 @@ public sealed class SideBySideDiffPresenter : Control
         {
             int start = rightSel.StartPosition.Line;
             int end = rightSel.EndPosition.Line;
-            return Model.GetSelectedLinesForSideBySide(start, end);
+            return Model.GetSelectedLinesForSideBySide(start, end, oldSide: false);
         }
 
         // Check left selection
@@ -555,7 +758,7 @@ public sealed class SideBySideDiffPresenter : Control
         {
             int start = leftSel.StartPosition.Line;
             int end = leftSel.EndPosition.Line;
-            return Model.GetSelectedLinesForSideBySide(start, end);
+            return Model.GetSelectedLinesForSideBySide(start, end, oldSide: true);
         }
 
         return [];

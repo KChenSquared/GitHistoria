@@ -230,4 +230,26 @@ public class DiffDisplayModelTests
         Assert.Equal(new DiffLineRef(0, 1), selected[0]);
         Assert.Equal(new DiffLineRef(0, 2), selected[1]);
     }
+
+    [Fact]
+    public void Sbs_right_pane_selection_returns_additions_only()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+
+        var selected = model.GetSelectedLinesForSideBySide(1, model.SideBySideNewRows.Count, oldSide: false);
+        Assert.Single(selected);
+        Assert.Equal(new DiffLineRef(0, 2), selected[0]);
+    }
+
+    [Fact]
+    public void Sbs_left_pane_selection_returns_deletions_only()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+
+        var selected = model.GetSelectedLinesForSideBySide(1, model.SideBySideOldRows.Count, oldSide: true);
+        Assert.Single(selected);
+        Assert.Equal(new DiffLineRef(0, 1), selected[0]);
+    }
 }

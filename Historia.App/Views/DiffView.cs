@@ -11,6 +11,7 @@ public sealed class DiffView : UserControl, IDisposable
     private readonly ISettingsService? _settings;
     private readonly IServiceProvider? _sp;
     private readonly ContentControl _host = new();
+    private readonly DiffMinimap _minimap;
     private readonly IPatchService? _patches;
     private readonly INotificationService? _notifications;
     private readonly Button _toggleButton;
@@ -25,6 +26,7 @@ public sealed class DiffView : UserControl, IDisposable
     private SideBySideDiffPresenter? _sideBySidePresenter;
 
     public Control? PresenterForTesting => _host.Content as Control;
+    public DiffMinimap MinimapForTesting => _minimap;
     public FileDiff? DiffForTesting => _diff;
     public Button ToggleButtonForTesting => _toggleButton;
     public void ToggleModeForTesting() => OnToggleMode();
@@ -67,13 +69,46 @@ public sealed class DiffView : UserControl, IDisposable
         Grid.SetColumn(close, 4);
         header.Children.Add(close);
 
+        _minimap = new DiffMinimap
+        {
+            Width = 12,
+            IsVisible = false,
+        };
+        _minimap.LineNavigationRequested += OnMinimapLineNavigationRequested;
+
+        var body = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+        };
+        Grid.SetColumn(_host, 0);
+        body.Children.Add(_host);
+        Grid.SetColumn(_minimap, 1);
+        body.Children.Add(_minimap);
+
         var root = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
-        root.Children.Add(_host);
+        root.Children.Add(body);
         Content = root;
 
         _ = LoadAsync();
+    }
+
+    private void OnMinimapLineNavigationRequested(object? sender, int line)
+    {
+        if (_sideBySide)
+        {
+            _sideBySidePresenter?.ScrollToLine(line);
+        }
+        else
+        {
+            _combinedPresenter?.ScrollToLine(line);
+        }
+    }
+
+    private void OnPresenterVisibleLineRangeChanged(object? sender, (int Start, int End)? range)
+    {
+        _minimap.DisplayRange = range;
     }
 
     private void OnToggleMode()
@@ -185,6 +220,8 @@ public sealed class DiffView : UserControl, IDisposable
         {
             _combinedPresenter = null;
             _sideBySidePresenter = null;
+            _minimap.IsVisible = false;
+            _minimap.Model = null;
             _host.Content = new TextBlock
             {
                 Text = "Binary file — no textual diff.",
@@ -197,6 +234,8 @@ public sealed class DiffView : UserControl, IDisposable
         {
             _combinedPresenter = null;
             _sideBySidePresenter = null;
+            _minimap.IsVisible = false;
+            _minimap.Model = null;
             _host.Content = new TextBlock
             {
                 Text = "File too large to diff inline",
@@ -209,6 +248,8 @@ public sealed class DiffView : UserControl, IDisposable
         {
             _combinedPresenter = null;
             _sideBySidePresenter = null;
+            _minimap.IsVisible = false;
+            _minimap.Model = null;
             _host.Content = new TextBlock
             {
                 Text = "No changes.",
@@ -218,6 +259,10 @@ public sealed class DiffView : UserControl, IDisposable
         }
 
         _model ??= DiffDisplayModel.Create(_diff);
+        _minimap.IsVisible = true;
+        _minimap.Model = _model;
+        _minimap.IsSideBySide = _sideBySide;
+
         var canStage = _patches is not null && !_diff.IsBinary
             && _request.Source is DiffSource.UnstagedChanges or DiffSource.StagedChanges;
         var stageVerb = _request.Source == DiffSource.UnstagedChanges ? "Stage" : "Unstage";
@@ -233,11 +278,13 @@ public sealed class DiffView : UserControl, IDisposable
                 AllowStaging = canStage,
                 StageVerb = stageVerb,
             };
-            sbs.LeftPresenter.WordWrap = _wordWrap;
-            sbs.RightPresenter.WordWrap = _wordWrap;
+            sbs.LeftPresenter.WordWrap = false;
+            sbs.RightPresenter.WordWrap = false;
             sbs.HunkActionRequested += OnHunkActionRequested;
             sbs.SelectionActionRequested += OnSelectionActionRequested;
+            sbs.VisibleLineRangeChanged += OnPresenterVisibleLineRangeChanged;
             _sideBySidePresenter = sbs;
+            _minimap.DisplayRange = sbs.VisibleLineRange;
             _host.Content = sbs;
         }
         else
@@ -254,7 +301,9 @@ public sealed class DiffView : UserControl, IDisposable
             };
             combined.HunkActionRequested += OnHunkActionRequested;
             combined.SelectionActionRequested += OnSelectionActionRequested;
+            combined.VisibleLineRangeChanged += OnPresenterVisibleLineRangeChanged;
             _combinedPresenter = combined;
+            _minimap.DisplayRange = combined.VisibleLineRange;
             _host.Content = combined;
         }
     }
@@ -386,6 +435,19 @@ public sealed class DiffView : UserControl, IDisposable
         _loadingCts?.Cancel();
         _loadingCts?.Dispose();
         _loadingCts = null;
+        _minimap.LineNavigationRequested -= OnMinimapLineNavigationRequested;
+        if (_sideBySidePresenter != null)
+        {
+            _sideBySidePresenter.VisibleLineRangeChanged -= OnPresenterVisibleLineRangeChanged;
+            _sideBySidePresenter.HunkActionRequested -= OnHunkActionRequested;
+            _sideBySidePresenter.SelectionActionRequested -= OnSelectionActionRequested;
+        }
+        if (_combinedPresenter != null)
+        {
+            _combinedPresenter.VisibleLineRangeChanged -= OnPresenterVisibleLineRangeChanged;
+            _combinedPresenter.HunkActionRequested -= OnHunkActionRequested;
+            _combinedPresenter.SelectionActionRequested -= OnSelectionActionRequested;
+        }
         _host.Content = null;
         _combinedPresenter = null;
         _sideBySidePresenter = null;
