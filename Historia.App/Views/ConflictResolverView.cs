@@ -6,6 +6,29 @@ namespace Historia.Views;
 /// </summary>
 public sealed class ConflictResolverView : UserControl, IDisposable
 {
+    internal sealed class ConflictParseSnapshot
+    {
+        public ConflictParse Parse { get; }
+        public IReadOnlyList<ConflictPaneLine> OursLines { get; }
+        public IReadOnlyList<ConflictPaneLine> TheirsLines { get; }
+        public IReadOnlyList<ConflictRegionAnalysis> Analyses { get; }
+        public ITextSourceVersion Version { get; }
+
+        public ConflictParseSnapshot(
+            ConflictParse parse,
+            IReadOnlyList<ConflictPaneLine> oursLines,
+            IReadOnlyList<ConflictPaneLine> theirsLines,
+            IReadOnlyList<ConflictRegionAnalysis> analyses,
+            ITextSourceVersion version)
+        {
+            Parse = parse;
+            OursLines = oursLines;
+            TheirsLines = theirsLines;
+            Analyses = analyses;
+            Version = version;
+        }
+    }
+
     private sealed class ConflictUnsavedWork : IUnsavedWork
     {
         private readonly ConflictResolverView _owner;
@@ -31,7 +54,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private readonly IDialogService _dialogs;
     private readonly INotificationService _notifications;
     private readonly IUnsavedWorkRegistry? _unsavedRegistry;
-    private readonly SyntaxThemeHost? _syntaxHost;
 
     private readonly CancellationTokenSource _viewCts = new();
     private CancellationTokenSource? _debounceCts;
@@ -42,6 +64,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private ConflictFile? _currentFile;
     private ConflictWorkingCopy? _workingCopy;
     private string? _diskHash;
+    private ConflictParseSnapshot? _snapshot;
     private ConflictParse? _parse;
     private ITextSourceVersion? _parseVersion;
     private IDisposable? _unsavedRegistration;
@@ -50,9 +73,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private string? _stopId;
     private bool _disposed;
     private bool _isSyncingScroll;
-    private IDisposable? _oursSyntaxHandle;
-    private IDisposable? _theirsSyntaxHandle;
-    private IDisposable? _resultSyntaxHandle;
 
     // Controls
     private readonly TextBlock _headerTitle = Text("", "ColorText", 13, FontWeight.SemiBold);
@@ -127,8 +147,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _dialogs = sp.GetRequiredService<IDialogService>();
         _notifications = sp.GetRequiredService<INotificationService>();
         _unsavedRegistry = sp.GetService(typeof(IUnsavedWorkRegistry)) as IUnsavedWorkRegistry;
-        _syntaxHost = sp.GetService(typeof(SyntaxThemeHost)) as SyntaxThemeHost;
-
         _oursEditor.ServicesProvider = sp;
         _theirsEditor.ServicesProvider = sp;
         _resultEditor.ServicesProvider = sp;
@@ -136,11 +154,11 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         // Margins and Renderers
         _oursEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_oursEditor, () => GetPaneLines(ConflictSide.Ours)));
         _oursEditor.TextArea.TextView.BackgroundRenderers.Add(
-            new ConflictBackgroundRenderer(_oursEditor, () => ConflictSide.Ours, () => _parse, () => GetPaneLines(ConflictSide.Ours)));
+            new ConflictBackgroundRenderer(_oursEditor, () => ConflictSide.Ours, () => _parse, () => GetPaneLines(ConflictSide.Ours), () => _snapshot?.Analyses));
 
         _theirsEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_theirsEditor, () => GetPaneLines(ConflictSide.Theirs)));
         _theirsEditor.TextArea.TextView.BackgroundRenderers.Add(
-            new ConflictBackgroundRenderer(_theirsEditor, () => ConflictSide.Theirs, () => _parse, () => GetPaneLines(ConflictSide.Theirs)));
+            new ConflictBackgroundRenderer(_theirsEditor, () => ConflictSide.Theirs, () => _parse, () => GetPaneLines(ConflictSide.Theirs), () => _snapshot?.Analyses));
 
         _resultEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_resultEditor));
         _resultEditor.TextArea.TextView.BackgroundRenderers.Add(
@@ -494,10 +512,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         UnregisterUnsavedWork();
         UpdateConflictParseSync();
         UpdateEditorsFromParse();
-        if (VisualRoot != null)
-        {
-            AttachSyntaxHandles();
-        }
     }
 
     private void ShowFileLevelCard(ConflictFile file, ConflictWorkingCopy copy)
@@ -549,8 +563,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _debounceCts = new CancellationTokenSource();
         var ct = _debounceCts.Token;
 
-        var textSnapshot = _resultEditor.Text;
+        var docSnapshot = _resultEditor.Document.CreateSnapshot();
         var versionSnapshot = _resultEditor.Document.Version;
+        int markerSize = _workingCopy?.MarkerSize ?? 7;
 
         Task.Delay(150, ct).ContinueWith(_ =>
         {
@@ -559,9 +574,12 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 return;
             }
 
-            var parse = ConflictMarkerParser.Parse(textSnapshot);
-            var oursLines = ConflictPaneBuilder.Build(parse, textSnapshot, ConflictSide.Ours);
-            var theirsLines = ConflictPaneBuilder.Build(parse, textSnapshot, ConflictSide.Theirs);
+            var text = docSnapshot.Text;
+            var parse = ConflictMarkerParser.Parse(text, markerSize);
+            var oursLines = ConflictPaneBuilder.Build(parse, ConflictSide.Ours);
+            var theirsLines = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs);
+            var analyses = ConflictRegionAnalyzer.AnalyzeAll(parse);
+            var snapshot = new ConflictParseSnapshot(parse, oursLines, theirsLines, analyses, versionSnapshot);
 
             Dispatcher.UIThread.Post(() =>
             {
@@ -572,6 +590,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
                 if (_resultEditor.Document.Version.CompareAge(versionSnapshot) == 0)
                 {
+                    _snapshot = snapshot;
                     _parse = parse;
                     _parseVersion = versionSnapshot;
 
@@ -588,8 +607,13 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private void UpdateConflictParseSync()
     {
+        int markerSize = _workingCopy?.MarkerSize ?? 7;
         var text = _resultEditor.Text;
-        _parse = ConflictMarkerParser.Parse(text);
+        _parse = ConflictMarkerParser.Parse(text, markerSize);
+        var oursLines = ConflictPaneBuilder.Build(_parse, ConflictSide.Ours);
+        var theirsLines = ConflictPaneBuilder.Build(_parse, ConflictSide.Theirs);
+        var analyses = ConflictRegionAnalyzer.AnalyzeAll(_parse);
+        _snapshot = new ConflictParseSnapshot(_parse, oursLines, theirsLines, analyses, _resultEditor.Document.Version);
         _parseVersion = _resultEditor.Document.Version;
         _minimap.Parse = _parse;
         UpdateConflictsCount();
@@ -597,17 +621,13 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private void UpdateEditorsFromParse()
     {
-        if (_parse == null)
+        if (_snapshot == null)
         {
             return;
         }
 
-        var text = _resultEditor.Text;
-        var oursLines = ConflictPaneBuilder.Build(_parse, text, ConflictSide.Ours);
-        var theirsLines = ConflictPaneBuilder.Build(_parse, text, ConflictSide.Theirs);
-
-        _oursEditor.Text = string.Join('\n', oursLines.Select(l => l.Text));
-        _theirsEditor.Text = string.Join('\n', theirsLines.Select(l => l.Text));
+        _oursEditor.Text = string.Join('\n', _snapshot.OursLines.Select(l => l.Text));
+        _theirsEditor.Text = string.Join('\n', _snapshot.TheirsLines.Select(l => l.Text));
 
         _oursEditor.TextArea.TextView.Redraw();
         _theirsEditor.TextArea.TextView.Redraw();
@@ -616,12 +636,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private IReadOnlyList<ConflictPaneLine>? GetPaneLines(ConflictSide side)
     {
-        if (_parse == null)
-        {
-            return null;
-        }
-
-        return ConflictPaneBuilder.Build(_parse, _resultEditor.Text, side);
+        return side == ConflictSide.Ours ? _snapshot?.OursLines : _snapshot?.TheirsLines;
     }
 
     private void UpdateConflictsCount()
@@ -713,18 +728,32 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             _ => freshRegion.OursLines,
         };
 
+        var linesToUse = replacementLines ?? freshRegion.OursLines;
+
+        int endLineIdx = freshRegion.EndLine;
+        string delim = (endLineIdx >= 0 && endLineIdx < _parse.Delimiters.Count && !string.IsNullOrEmpty(_parse.Delimiters[endLineIdx]))
+            ? _parse.Delimiters[endLineIdx]
+            : (_parse.Delimiters.FirstOrDefault(d => !string.IsNullOrEmpty(d)) ?? "\n");
+
         var doc = _resultEditor.Document;
         var startDocLine = doc.GetLineByNumber(freshRegion.StartLine + 1);
         var endDocLine = doc.GetLineByNumber(freshRegion.EndLine + 1);
 
         int startOffset = startDocLine.Offset;
-        int endOffset = endDocLine.EndOffset;
-
-        string replacement = string.Join('\n', replacementLines ?? freshRegion.OursLines);
 
         using (doc.RunUpdate())
         {
-            doc.Replace(startOffset, endOffset - startOffset, replacement);
+            if (linesToUse.Count == 0)
+            {
+                int endOffset = endDocLine.Offset + endDocLine.TotalLength;
+                doc.Replace(startOffset, endOffset - startOffset, string.Empty);
+            }
+            else
+            {
+                int endOffset = endDocLine.EndOffset;
+                string replacement = string.Join(delim, linesToUse);
+                doc.Replace(startOffset, endOffset - startOffset, replacement);
+            }
         }
 
         RegisterUnsavedWork();
@@ -1123,38 +1152,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _resultEditor.Document.UndoStack.MarkAsOriginalFile();
     }
 
-    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        base.OnAttachedToVisualTree(e);
-        AttachSyntaxHandles();
-    }
-
-    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        base.OnDetachedFromVisualTree(e);
-        DetachSyntaxHandles();
-    }
-
-    private void AttachSyntaxHandles()
-    {
-        if (_syntaxHost == null) return;
-        DetachSyntaxHandles();
-        var ext = _currentFile != null ? System.IO.Path.GetExtension(_currentFile.FilePath) : ".txt";
-        _oursSyntaxHandle = _syntaxHost.Attach(_oursEditor, ext);
-        _theirsSyntaxHandle = _syntaxHost.Attach(_theirsEditor, ext);
-        _resultSyntaxHandle = _syntaxHost.Attach(_resultEditor, ext);
-    }
-
-    private void DetachSyntaxHandles()
-    {
-        _oursSyntaxHandle?.Dispose();
-        _oursSyntaxHandle = null;
-        _theirsSyntaxHandle?.Dispose();
-        _theirsSyntaxHandle = null;
-        _resultSyntaxHandle?.Dispose();
-        _resultSyntaxHandle = null;
-    }
-
     public void Dispose()
     {
         if (_disposed)
@@ -1164,7 +1161,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
         _disposed = true;
         _ctx.State.StatusChanged -= OnStatusChanged;
-        DetachSyntaxHandles();
         _viewCts.Cancel();
         _viewCts.Dispose();
         _debounceCts?.Cancel();

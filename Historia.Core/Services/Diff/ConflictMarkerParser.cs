@@ -137,17 +137,23 @@ public sealed class ConflictParse
     public int LineCount { get; }
     public bool IsMalformed { get; }
     public IReadOnlyList<int> MalformedAt { get; }
+    public IReadOnlyList<string> Lines { get; }
+    public IReadOnlyList<string> Delimiters { get; }
 
     public ConflictParse(
         IReadOnlyList<ConflictRegion> regions,
         int lineCount,
         bool isMalformed,
-        IReadOnlyList<int> malformedAt)
+        IReadOnlyList<int> malformedAt,
+        IReadOnlyList<string> lines,
+        IReadOnlyList<string> delimiters)
     {
         Regions = regions;
         LineCount = lineCount;
         IsMalformed = isMalformed;
         MalformedAt = malformedAt;
+        Lines = lines;
+        Delimiters = delimiters;
     }
 }
 
@@ -384,8 +390,16 @@ public static class ConflictMarkerParser
                 i = endLine + 1;
             }
         }
+        var parsedLines = new string[lineCount];
+        var parsedDelimiters = new string[lineCount];
+        for (int k = 0; k < lineCount; k++)
+        {
+            var l = lines[k];
+            parsedLines[k] = text.Substring(l.Offset, l.Length);
+            parsedDelimiters[k] = l.DelimiterLength > 0 ? text.Substring(l.Offset + l.Length, l.DelimiterLength) : string.Empty;
+        }
 
-        return new ConflictParse(regions, lineCount, malformedAt.Count > 0, malformedAt);
+        return new ConflictParse(regions, lineCount, malformedAt.Count > 0, malformedAt, parsedLines, parsedDelimiters);
     }
 
     private static (MarkerKind Kind, string Label) IdentifyMarker(string text, LineInfo line, int markerSize)

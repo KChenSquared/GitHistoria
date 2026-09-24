@@ -8,8 +8,8 @@ public class ConflictPaneBuilderTests
         string conflictText = "common top\n<<<<<<< HEAD\nours line 1\nours line 2\n=======\ntheirs line 1\n>>>>>>> feature\ncommon bottom";
         var parse = ConflictMarkerParser.Parse(conflictText);
 
-        var oursLines = ConflictPaneBuilder.Build(parse, conflictText, ConflictSide.Ours);
-        var theirsLines = ConflictPaneBuilder.Build(parse, conflictText, ConflictSide.Theirs);
+        var oursLines = ConflictPaneBuilder.Build(parse, ConflictSide.Ours);
+        var theirsLines = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs);
 
         // Build 1 and Build 2 have exact document line count (8 lines)
         Assert.Equal(parse.LineCount, oursLines.Count);
@@ -77,10 +77,27 @@ public class ConflictPaneBuilderTests
         // Build 3: After replacing region with plain lines, region disappears and lines become Common
         string resolvedText = "common top\nresolved line\ncommon bottom";
         var resolvedParse = ConflictMarkerParser.Parse(resolvedText);
-        var resolvedPane = ConflictPaneBuilder.Build(resolvedParse, resolvedText, ConflictSide.Ours);
+        var resolvedPane = ConflictPaneBuilder.Build(resolvedParse, ConflictSide.Ours);
 
         Assert.Equal(resolvedParse.LineCount, resolvedPane.Count);
         Assert.All(resolvedPane, line => Assert.Equal(ConflictPaneLineType.Common, line.Type));
         Assert.Equal("resolved line", resolvedPane[1].Text);
     }
+
+    [Fact]
+    public void Build_uses_parse_lines_without_text()
+    {
+        string text = "top\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nbottom";
+        var parse = ConflictMarkerParser.Parse(text);
+
+        var ours = ConflictPaneBuilder.Build(parse, ConflictSide.Ours);
+        var theirs = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs);
+
+        Assert.Equal(parse.Lines.Count, ours.Count);
+        Assert.Equal("top", ours[0].Text);
+        Assert.Equal("ours", ours[2].Text);
+        Assert.Equal("", ours[4].Text); // theirs line padded in ours
+        Assert.Equal("theirs", theirs[4].Text);
+    }
 }
+

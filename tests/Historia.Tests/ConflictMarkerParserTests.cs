@@ -147,4 +147,37 @@ public class ConflictMarkerParserTests
         Assert.Equal("good", parse.Regions[0].OursLabel);
         Assert.Equal(3, parse.Regions[0].StartLine);
     }
+
+    [Fact]
+    public void Lines_and_delimiters_round_trip_crlf_lf_and_lone_cr()
+    {
+        string text = "first line\r\nsecond line\nthird line\rlast line without newline";
+        var parse = ConflictMarkerParser.Parse(text);
+
+        Assert.Equal(4, parse.LineCount);
+        Assert.Equal(["first line", "second line", "third line", "last line without newline"], parse.Lines);
+        Assert.Equal(["\r\n", "\n", "\r", ""], parse.Delimiters);
+
+        var reconstructed = string.Concat(parse.Lines.Zip(parse.Delimiters, (line, delim) => line + delim));
+        Assert.Equal(text, reconstructed);
+
+        // Also test with trailing newline
+        string textWithTrailing = "a\r\nb\n";
+        var parseTrailing = ConflictMarkerParser.Parse(textWithTrailing);
+        var reconstructedTrailing = string.Concat(parseTrailing.Lines.Zip(parseTrailing.Delimiters, (line, delim) => line + delim));
+        Assert.Equal(textWithTrailing, reconstructedTrailing);
+    }
+
+    [Fact]
+    public void Parse_honours_marker_size_9()
+    {
+        string text = "<<<<<<<<< HEAD\nours\n=========\ntheirs\n>>>>>>>>> branch\n";
+        var parse7 = ConflictMarkerParser.Parse(text, markerSize: 7);
+        Assert.Empty(parse7.Regions);
+
+        var parse9 = ConflictMarkerParser.Parse(text, markerSize: 9);
+        Assert.Single(parse9.Regions);
+        Assert.Equal("HEAD", parse9.Regions[0].OursLabel);
+        Assert.Equal("branch", parse9.Regions[0].TheirsLabel);
+    }
 }

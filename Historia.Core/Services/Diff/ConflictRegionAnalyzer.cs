@@ -58,9 +58,23 @@ public sealed class ConflictRegionAnalysis
 public static class ConflictRegionAnalyzer
 {
     /// <summary>
+    /// Analyzes all conflict regions in a parse.
+    /// </summary>
+    public static IReadOnlyList<ConflictRegionAnalysis> AnalyzeAll(ConflictParse parse)
+    {
+        if (parse.Regions.Count == 0) return [];
+        var list = new List<ConflictRegionAnalysis>(parse.Regions.Count);
+        foreach (var r in parse.Regions)
+        {
+            list.Add(Analyze(r));
+        }
+        return list;
+    }
+
+    /// <summary>
     /// Analyzes the specified conflict region and computes per-line highlight spans.
     /// </summary>
-    public static ConflictRegionAnalysis Analyze(ConflictRegion region, string? text)
+    public static ConflictRegionAnalysis Analyze(ConflictRegion region)
     {
         var oursLines = region.OursLines;
         var theirsLines = region.TheirsLines;

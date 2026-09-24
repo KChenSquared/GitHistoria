@@ -9,8 +9,9 @@ public enum ConflictPaneLineType
     Marker,
     Ours,
     Theirs,
-    Base,
-    Padding
+    Padding,
+    [Obsolete("Never produced")]
+    Base
 }
 
 /// <summary>
@@ -29,19 +30,18 @@ public readonly record struct ConflictPaneLine(
 public static class ConflictPaneBuilder
 {
     /// <summary>
+    /// Counter incremented on every Build call, used to verify pane lines are not rebuilt per render.
+    /// </summary>
+    public static int BuildCallCount;
+
+    /// <summary>
     /// Builds aligned pane lines for the specified side.
     /// </summary>
-    public static IReadOnlyList<ConflictPaneLine> Build(ConflictParse parse, string? text, ConflictSide side)
+    public static IReadOnlyList<ConflictPaneLine> Build(ConflictParse parse, ConflictSide side)
     {
-        text ??= string.Empty;
-        var documentLines = ExtractLineStrings(text);
+        Interlocked.Increment(ref BuildCallCount);
+        var documentLines = parse.Lines;
         int lineCount = parse.LineCount;
-
-        // Guarantee documentLines has at least lineCount entries
-        while (documentLines.Count < lineCount)
-        {
-            documentLines.Add(string.Empty);
-        }
 
         var result = new List<ConflictPaneLine>(lineCount);
         int regionIndex = 0;
@@ -118,60 +118,5 @@ public static class ConflictPaneBuilder
         }
 
         return result;
-    }
-
-    private static List<string> ExtractLineStrings(string text)
-    {
-        var lines = new List<string>();
-        if (string.IsNullOrEmpty(text))
-        {
-            lines.Add(string.Empty);
-            return lines;
-        }
-
-        int offset = 0;
-        int length = text.Length;
-
-        while (offset < length)
-        {
-            int lineStart = offset;
-            int nextBreak = -1;
-            int delimLen = 0;
-
-            for (int i = offset; i < length; i++)
-            {
-                char c = text[i];
-                if (c == '\r')
-                {
-                    nextBreak = i;
-                    delimLen = (i + 1 < length && text[i + 1] == '\n') ? 2 : 1;
-                    break;
-                }
-                if (c == '\n')
-                {
-                    nextBreak = i;
-                    delimLen = 1;
-                    break;
-                }
-            }
-
-            if (nextBreak >= 0)
-            {
-                lines.Add(text.Substring(lineStart, nextBreak - lineStart));
-                offset = nextBreak + delimLen;
-                if (offset == length)
-                {
-                    lines.Add(string.Empty);
-                    break;
-                }
-            }
-            else
-            {
-                lines.Add(text.Substring(lineStart, length - lineStart));
-                break;
-            }
-        }
-
-        return lines;
     }
 }

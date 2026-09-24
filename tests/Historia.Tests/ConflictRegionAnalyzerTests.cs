@@ -9,7 +9,7 @@ public class ConflictRegionAnalyzerTests
         var parse = ConflictMarkerParser.Parse(text);
         Assert.Single(parse.Regions);
 
-        var analysis = ConflictRegionAnalyzer.Analyze(parse.Regions[0], text);
+        var analysis = ConflictRegionAnalyzer.Analyze(parse.Regions[0]);
 
         Assert.Single(analysis.OursHighlights);
         Assert.Single(analysis.TheirsHighlights);
@@ -24,7 +24,7 @@ public class ConflictRegionAnalyzerTests
         var parse = ConflictMarkerParser.Parse(text);
         Assert.Single(parse.Regions);
 
-        var analysis = ConflictRegionAnalyzer.Analyze(parse.Regions[0], text);
+        var analysis = ConflictRegionAnalyzer.Analyze(parse.Regions[0]);
 
         Assert.Single(analysis.OursHighlights);
         Assert.Single(analysis.TheirsHighlights);
@@ -49,7 +49,7 @@ public class ConflictRegionAnalyzerTests
         var region = parse.Regions[0];
         Assert.True(region.HasBase);
 
-        var analysis = ConflictRegionAnalyzer.Analyze(region, text);
+        var analysis = ConflictRegionAnalyzer.Analyze(region);
 
         // Ours changed line 0 ("int a = 99;"), kept line 1 ("int b = 2;")
         Assert.Equal(2, analysis.OursHighlights.Count);
@@ -60,5 +60,19 @@ public class ConflictRegionAnalyzerTests
         Assert.Equal(2, analysis.TheirsHighlights.Count);
         Assert.False(analysis.TheirsHighlights[0].ChangedFromBase);
         Assert.True(analysis.TheirsHighlights[1].ChangedFromBase);
+    }
+
+    [Fact]
+    public void AnalyzeAll_returns_one_analysis_per_region()
+    {
+        string text = "<<<<<<< HEAD\na1\n=======\na2\n>>>>>>> f1\nmid\n<<<<<<< HEAD\nb1\n=======\nb2\n>>>>>>> f2";
+        var parse = ConflictMarkerParser.Parse(text);
+        Assert.Equal(2, parse.Regions.Count);
+
+        var analyses = ConflictRegionAnalyzer.AnalyzeAll(parse);
+
+        Assert.Equal(2, analyses.Count);
+        Assert.Same(parse.Regions[0], analyses[0].Region);
+        Assert.Same(parse.Regions[1], analyses[1].Region);
     }
 }

@@ -694,7 +694,7 @@ public class ConflictResolverViewTests : IDisposable
         Assert.Contains("✓", view.FileListBoxForTesting.Items.Cast<object>().First().ToString());
     }
 
-    [AvaloniaFact(Skip = "Defect F11 — un-skipped by M2.1")]
+    [AvaloniaFact]
     public void Showing_resolver_raises_SyntaxThemeHost_LiveCount_and_detaching_brings_it_down()
     {
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
@@ -713,6 +713,110 @@ public class ConflictResolverViewTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(0, _syntaxHost.LiveCount);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task Region_action_in_crlf_file_keeps_crlf()
+    {
+        string crlfConflict = "<<<<<<< HEAD\r\nours\r\n=======\r\ntheirs\r\n>>>>>>> branch\r\n";
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f.txt",
+            Text = crlfConflict,
+            DiskHash = "hash1"
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var r0 = view.CurrentParseForTesting!.Regions[0];
+        view.ApplyRegionAction(r0, ConflictResolverView.RegionActionChoice.Ours);
+
+        string result = view.ResultEditorForTesting.Text;
+        Assert.Equal("ours\r\n", result);
+        Assert.DoesNotContain("\r\r\n", result);
+        Assert.DoesNotContain("\n\r\n", result);
+    }
+
+    [AvaloniaFact]
+    public async Task Use_empty_side_leaves_no_blank_line()
+    {
+        string text = "before\n<<<<<<< HEAD\n=======\ntheirs line\n>>>>>>> branch\nafter\n";
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f.txt",
+            Text = text,
+            DiskHash = "hash1"
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var r0 = view.CurrentParseForTesting!.Regions[0];
+        view.ApplyRegionAction(r0, ConflictResolverView.RegionActionChoice.Ours);
+
+        string result = view.ResultEditorForTesting.Text;
+        Assert.Equal("before\nafter\n", result);
+    }
+
+    [AvaloniaFact]
+    public async Task Marker_size_attribute_is_used_for_parsing()
+    {
+        string textWith9Markers = "<<<<<<<<< HEAD\nours line\n=========\ntheirs line\n>>>>>>>>> branch\n";
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f.txt",
+            Text = textWith9Markers,
+            MarkerSize = 9,
+            DiskHash = "hash1"
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(view.CurrentParseForTesting);
+        Assert.Single(view.CurrentParseForTesting.Regions);
+        Assert.Empty(view.CurrentParseForTesting.MalformedAt);
+    }
+
+    [AvaloniaFact]
+    public async Task Pane_lines_are_not_rebuilt_per_render()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f.txt",
+            Text = TwoConflictText,
+            DiskHash = "hash1"
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        var window = new Window { Content = view, Width = 800, Height = 600 };
+        window.Show();
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        int countAfterLoad = ConflictPaneBuilder.BuildCallCount;
+        Assert.True(countAfterLoad > 0);
+
+        // Render twice
+        view.OursEditorForTesting.TextArea.TextView.Redraw();
+        view.TheirsEditorForTesting.TextArea.TextView.Redraw();
+        Dispatcher.UIThread.RunJobs();
+
+        view.OursEditorForTesting.TextArea.TextView.Redraw();
+        view.TheirsEditorForTesting.TextArea.TextView.Redraw();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(countAfterLoad, ConflictPaneBuilder.BuildCallCount);
 
         window.Close();
     }
