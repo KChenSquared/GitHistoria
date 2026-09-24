@@ -90,15 +90,7 @@ public readonly record struct TextFileFormat(Encoding Encoding, bool HasBom)
     public byte[] Encode(string text)
     {
         var preamble = HasBom ? Encoding.GetPreamble() : [];
-        byte[] body;
-        try
-        {
-            body = Encoding.GetBytes(text);
-        }
-        catch (EncoderFallbackException)
-        {
-            body = Encoding.UTF8.GetBytes(text);
-        }
+        var body = Encoding.GetBytes(text);
 
         if (preamble.Length == 0)
             return body;

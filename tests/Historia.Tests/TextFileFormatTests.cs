@@ -108,5 +108,47 @@ public class TextFileFormatTests
         Assert.NotNull(encoded);
         Assert.NotEmpty(encoded);
     }
+
+    [Fact]
+    public void Encode_utf16le_with_lone_surrogate_stays_utf16()
+    {
+        var preamble = new byte[] { 0xFF, 0xFE };
+        var sample = preamble.Concat(Encoding.Unicode.GetBytes("valid text")).ToArray();
+        var detected = TextFileFormat.TryDetect(sample, out var format, out _);
+        Assert.True(detected);
+        Assert.True(format.HasBom);
+
+        string textWithLoneSurrogate = "hello \uD800 world";
+        var encoded = format.Encode(textWithLoneSurrogate);
+
+        Assert.Equal(0xFF, encoded[0]);
+        Assert.Equal(0xFE, encoded[1]);
+        Assert.True(encoded.Length % 2 == 0);
+
+        var decoded = Encoding.Unicode.GetString(encoded.AsSpan(2));
+        Assert.Equal("hello \uFFFD world", decoded);
+    }
+
+    [Fact]
+    public void Encode_utf8_bom_and_utf16be_roundtrip()
+    {
+        // UTF-8 with BOM
+        {
+            var preamble = new byte[] { 0xEF, 0xBB, 0xBF };
+            var original = preamble.Concat("Hello UTF8"u8.ToArray()).ToArray();
+            Assert.True(TextFileFormat.TryDetect(original, out var format, out var text));
+            var encoded = format.Encode(text);
+            Assert.Equal(original, encoded);
+        }
+
+        // UTF-16 BE with BOM
+        {
+            var preamble = new byte[] { 0xFE, 0xFF };
+            var original = preamble.Concat(Encoding.BigEndianUnicode.GetBytes("Hello UTF16BE")).ToArray();
+            Assert.True(TextFileFormat.TryDetect(original, out var format, out var text));
+            var encoded = format.Encode(text);
+            Assert.Equal(original, encoded);
+        }
+    }
 }
 
