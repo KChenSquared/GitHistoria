@@ -359,10 +359,7 @@ public sealed class DiffDisplayModel
                 var row = CombinedRows[idx];
                 if (row.Type is DiffDisplayLineType.Addition or DiffDisplayLineType.Deletion && row.LineRef is { } r)
                 {
-                    if (!result.Contains(r))
-                    {
-                        result.Add(r);
-                    }
+                    result.Add(r);
                 }
             }
         }
@@ -386,10 +383,7 @@ public sealed class DiffDisplayModel
                     var oldRow = SideBySideOldRows[idx];
                     if (oldRow.Type == DiffDisplayLineType.Deletion && oldRow.LineRef is { } oldRef)
                     {
-                        if (!result.Contains(oldRef))
-                        {
-                            result.Add(oldRef);
-                        }
+                        result.Add(oldRef);
                     }
                 }
             }
@@ -400,10 +394,7 @@ public sealed class DiffDisplayModel
                     var newRow = SideBySideNewRows[idx];
                     if (newRow.Type == DiffDisplayLineType.Addition && newRow.LineRef is { } newRef)
                     {
-                        if (!result.Contains(newRef))
-                        {
-                            result.Add(newRef);
-                        }
+                        result.Add(newRef);
                     }
                 }
             }

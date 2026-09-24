@@ -549,4 +549,66 @@ public class DiffPresenterTests
             Dispatcher.UIThread.RunJobs();
         }
     }
+
+    [AvaloniaFact]
+    public void Selection_change_keeps_the_same_context_menu_instance()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+        var presenter = new CombinedDiffPresenter { Model = model, AllowStaging = true };
+
+        var initialMenu = presenter.TextArea.ContextMenu;
+        Assert.NotNull(initialMenu);
+
+        // Select text
+        presenter.TextArea.Selection = AvaloniaEdit.Editing.Selection.Create(presenter.TextArea, 0, 5);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(initialMenu, presenter.TextArea.ContextMenu);
+    }
+
+    [AvaloniaFact]
+    public void Context_menu_reflects_selection_when_opened()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+        var presenter = new CombinedDiffPresenter { Model = model, AllowStaging = true };
+
+        var window = new Window { Width = 800, Height = 400, Content = presenter };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            var menu = presenter.TextArea.ContextMenu;
+            Assert.NotNull(menu);
+
+            // Initially no selection
+            var stageLinesItem = menu.Items.OfType<MenuItem>().First(i => ((string)i.Header!).Contains("selected lines"));
+            Assert.False(stageLinesItem.IsEnabled);
+
+            // Select changed row (row 3 is deletion, 1-based line 3)
+            var line3 = presenter.Document.GetLineByNumber(3);
+            presenter.TextArea.Selection = AvaloniaEdit.Editing.Selection.Create(presenter.TextArea, line3.Offset, line3.EndOffset);
+            Dispatcher.UIThread.RunJobs();
+
+            // Raise Opening
+            RaiseOpening(menu);
+
+            stageLinesItem = menu.Items.OfType<MenuItem>().First(i => ((string)i.Header!).Contains("selected lines"));
+            Assert.True(stageLinesItem.IsEnabled);
+        }
+        finally
+        {
+            window.Close();
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    private static void RaiseOpening(ContextMenu menu)
+    {
+        var field = typeof(ContextMenu).GetField("Opening", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var handler = (System.ComponentModel.CancelEventHandler?)field?.GetValue(menu);
+        handler?.Invoke(menu, new System.ComponentModel.CancelEventArgs());
+    }
 }

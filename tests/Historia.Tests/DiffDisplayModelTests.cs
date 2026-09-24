@@ -252,4 +252,71 @@ public class DiffDisplayModelTests
         Assert.Single(selected);
         Assert.Equal(new DiffLineRef(0, 1), selected[0]);
     }
+
+    [Fact]
+    public void SelectedLines_are_unique_and_in_row_order()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+
+        // Combined selection spanning indicator (line 1), context (line 2), del (3), add (4), context (5)
+        var combined = model.GetSelectedLinesForCombined(1, 5);
+        Assert.Equal(2, combined.Count);
+        Assert.Equal(new DiffLineRef(0, 1), combined[0]);
+        Assert.Equal(new DiffLineRef(0, 2), combined[1]);
+
+        // SBS old side spanning context, deletion, padding, context
+        var sbsOld = model.GetSelectedLinesForSideBySide(1, model.SideBySideOldRows.Count, oldSide: true);
+        Assert.Single(sbsOld);
+        Assert.Equal(new DiffLineRef(0, 1), sbsOld[0]);
+
+        // SBS new side spanning context, padding, addition, context
+        var sbsNew = model.GetSelectedLinesForSideBySide(1, model.SideBySideNewRows.Count, oldSide: false);
+        Assert.Single(sbsNew);
+        Assert.Equal(new DiffLineRef(0, 2), sbsNew[0]);
+    }
+
+    [Fact]
+    public void SelectedLines_over_20k_changed_rows_is_linear()
+    {
+        int lineCount = 20_000;
+        var lines = new List<DiffLine>(lineCount);
+        for (int i = 0; i < lineCount; i++)
+        {
+            lines.Add(new DiffLine
+            {
+                Type = DiffLineType.Addition,
+                Content = $"line {i}",
+                OldLineNumber = null,
+                NewLineNumber = i + 1,
+            });
+        }
+        var hunk = new DiffHunk
+        {
+            OldStart = 0,
+            OldLineCount = 0,
+            NewStart = 1,
+            NewLineCount = lineCount,
+            Header = $"@@ -0,0 +1,{lineCount} @@",
+            Lines = lines,
+        };
+        var diff = new FileDiff
+        {
+            Path = "large.txt",
+            Kind = DiffKind.Added,
+            IsBinary = false,
+            IsTruncated = false,
+            AddedLines = lineCount,
+            DeletedLines = 0,
+            Hunks = [hunk],
+        };
+        var model = DiffDisplayModel.Create(diff);
+
+        var sw = Stopwatch.StartNew();
+        var selected = model.GetSelectedLinesForCombined(1, model.CombinedRows.Count);
+        sw.Stop();
+
+        Assert.Equal(lineCount, selected.Count);
+        Assert.True(sw.ElapsedMilliseconds < 250, $"Tripwire triggered: selection took {sw.ElapsedMilliseconds} ms (bound: 250 ms)");
+    }
 }

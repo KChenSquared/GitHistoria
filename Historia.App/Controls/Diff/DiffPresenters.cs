@@ -153,8 +153,8 @@ public abstract class DiffPresenterBase : CodeEditor
 
         TextArea.TextView.VisualLinesChanged += OnTextViewVisualLinesChanged;
         TextArea.AddHandler(PointerPressedEvent, OnTextAreaPointerPressed, RoutingStrategies.Tunnel);
-        TextArea.SelectionChanged += (_, _) => UpdateContextMenu();
         TextArea.Caret.PositionChanged += OnCaretPositionChanged;
+        TextArea.SelectionChanged += (_, _) => UpdateSelectionItem();
         TextArea.AddHandler(KeyDownEvent, OnPresenterKeyDown, RoutingStrategies.Tunnel);
 
         UpdateStagingControls();
@@ -435,15 +435,35 @@ public abstract class DiffPresenterBase : CodeEditor
         }
     }
 
+    private ContextMenu? _presenterMenu;
+    private MenuItem? _stageLinesMenuItem;
+
+    private void UpdateSelectionItem()
+    {
+        if (_stageLinesMenuItem != null)
+        {
+            var selectedRefs = GetSelectedLineRefs();
+            _stageLinesMenuItem.IsEnabled = selectedRefs.Count > 0;
+        }
+    }
+
     private void UpdateContextMenu()
     {
         if (!_allowStaging)
         {
+            _stageLinesMenuItem = null;
+            _presenterMenu = null;
             TextArea.ContextMenu = null;
             return;
         }
 
+        if (TextArea.ContextMenu == _presenterMenu && _presenterMenu != null)
+        {
+            return;
+        }
+
         var menu = new ContextMenu();
+        _presenterMenu = menu;
         void PopulateItems()
         {
             menu.Items.Clear();
@@ -454,6 +474,7 @@ public abstract class DiffPresenterBase : CodeEditor
                 IsEnabled = selectedRefs.Count > 0,
             };
             stageLinesItem.Click += (_, _) => RequestSelectionAction();
+            _stageLinesMenuItem = stageLinesItem;
             menu.Items.Add(stageLinesItem);
 
             int hunkIndex = -1;
