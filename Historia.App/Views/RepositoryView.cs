@@ -37,11 +37,9 @@ public sealed class RepositoryView : UserControl, IDisposable
     private readonly TextBlock _netProgress = Text("", "ColorTextMuted", 12);
     private readonly Border _netProgressBox = new();
     private readonly Historia.Services.UI.IRepoNetworkActionRunner _networkRunner;
-    private readonly ConflictResolverHost? _conflictHost;
     private RepositoryContext? _repo;
     private StagingPanelView? _stagingPanel;
     private CommitDetailPanelView? _detailPanel;
-    private ConflictResolverView? _conflictPanel;
 
     internal Panel TopBarForTesting => _topBar;
     internal Grid BranchBarForTesting => _branchBar;
@@ -62,7 +60,6 @@ public sealed class RepositoryView : UserControl, IDisposable
         _repoLayout = sp.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
         _settings = sp.GetRequiredService<Historia.Services.Settings.ISettingsService>();
         _networkRunner = sp.GetRequiredService<Historia.Services.UI.IRepoNetworkActionRunner>();
-        _conflictHost = sp.GetService(typeof(ConflictResolverHost)) as ConflictResolverHost;
 
         _branchBar = new Grid
         {
@@ -161,15 +158,6 @@ public sealed class RepositoryView : UserControl, IDisposable
             _stagingPanel = null;
             _detailPanel?.Dispose();
             _detailPanel = null;
-            if (_conflictPanel is not null)
-            {
-                _conflictPanel.KeepOpenChanged -= OnResolverKeepOpenChanged;
-                if (ReferenceEquals(_body.Content, _conflictPanel))
-                    _body.Content = null;
-                if (_conflictHost == null)
-                    _conflictPanel.Dispose();
-                _conflictPanel = null;
-            }
         }
         _repo = ctx;
         if (_repo is not null)
@@ -182,9 +170,6 @@ public sealed class RepositoryView : UserControl, IDisposable
         _bannerHost.Content = null;
         Refresh();
     }
-
-    private void OnResolverKeepOpenChanged(object? sender, EventArgs e)
-        => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
 
     private void OnStateChanged(object? s, StatusChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
     private void OnStateChanged2(object? s, RefsChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
@@ -220,113 +205,54 @@ public sealed class RepositoryView : UserControl, IDisposable
         _ab.Text = (st.AheadBy > 0 ? $"↑{st.AheadBy} " : "") + (st.BehindBy > 0 ? $"↓{st.BehindBy}" : "");
 
         var op = _repo.State.PendingOperation;
-        var existingResolver = _conflictHost?.TryGet(_repo) ?? _conflictPanel;
-        bool shouldShowResolver = st.Conflicted.Count > 0
-            || (existingResolver != null && existingResolver.KeepOpenForContinue && op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting)
-            || (existingResolver != null && existingResolver.HasUnsavedWork);
-
-        if (shouldShowResolver)
+        if (op != OperationState.None && !_repo.State.IsConflictSessionActive)
         {
-            ConflictResolverView resolver;
-            if (_conflictHost != null)
-            {
-                resolver = _conflictHost.GetOrCreate(_repo);
-            }
-            else
-            {
-                _conflictPanel ??= new ConflictResolverView(_sp, _repo);
-                resolver = _conflictPanel;
-            }
-
-            if (!ReferenceEquals(_conflictPanel, resolver))
-            {
-                if (_conflictPanel != null)
-                    _conflictPanel.KeepOpenChanged -= OnResolverKeepOpenChanged;
-                _conflictPanel = resolver;
-                _conflictPanel.KeepOpenChanged += OnResolverKeepOpenChanged;
-            }
-
-            if (op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting)
-            {
-                _conflictPanel.KeepOpenForContinue = true;
-            }
-
-            if (!ReferenceEquals(_body.Content, _conflictPanel))
-                _body.Content = _conflictPanel;
-
-            _workingCopy.IsVisible = false;
-            _branchBar.IsVisible = true;
-            _opBox.IsVisible = false;
+            _opBanner.Text = $"Repository is in {op} state with no conflicts.";
+            bool canContinue = op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
+            _opActions.IsVisible = canContinue;
+            _opBox.IsVisible = true;
         }
         else
         {
-            if (_conflictPanel is not null)
-            {
-                _conflictPanel.KeepOpenChanged -= OnResolverKeepOpenChanged;
-                if (ReferenceEquals(_body.Content, _conflictPanel))
-                    _body.Content = null;
+            _opBox.IsVisible = false;
+        }
 
-                if (_conflictHost != null)
-                {
-                    _conflictHost.Release(_repo);
-                }
-                else
-                {
-                    _conflictPanel.Dispose();
-                }
-                _conflictPanel = null;
-            }
+        if (_repo.State.SelectedCommitId is { } id)
+        {
+            if (_detailPanel is null)
+                _detailPanel = new CommitDetailPanelView(_sp, _repo, id);
+            else
+                _detailPanel.SetCommit(id);
 
-            // Operation-state banner (mid rebase/cherry-pick/merge with no conflicts).
-            if (op != OperationState.None && st.Conflicted.Count == 0)
+            if (!ReferenceEquals(_body.Content, _detailPanel))
+                _body.Content = _detailPanel;
+
+            var n = TrackedChangeCount(st);
+            _workingCopyText.Text = $"← Working Copy (Changes: {n})";
+            if (n > 0)
             {
-                _opBanner.Text = $"Repository is in {op} state with no conflicts.";
-                bool canContinue = op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
-                _opActions.IsVisible = canContinue;
-                _opBox.IsVisible = true;
+                _workingCopy.Classes.Remove("flat");
+                _workingCopy.Classes.Add("primary");
+                _workingCopy.ClearValue(Button.ForegroundProperty);
             }
             else
             {
-                _opBox.IsVisible = false;
+                _workingCopy.Classes.Remove("primary");
+                _workingCopy.Classes.Add("flat");
+                _workingCopy.Dyn(Button.ForegroundProperty, "ColorText");
             }
 
-            if (_repo.State.SelectedCommitId is { } id)
-            {
-                if (_detailPanel is null)
-                    _detailPanel = new CommitDetailPanelView(_sp, _repo, id);
-                else
-                    _detailPanel.SetCommit(id);
+            _workingCopy.IsVisible = true;
+            _branchBar.IsVisible = false;
+        }
+        else
+        {
+            _stagingPanel ??= new StagingPanelView(_sp, _repo);
+            if (!ReferenceEquals(_body.Content, _stagingPanel))
+                _body.Content = _stagingPanel;
 
-                if (!ReferenceEquals(_body.Content, _detailPanel))
-                    _body.Content = _detailPanel;
-
-                var n = TrackedChangeCount(st);
-                _workingCopyText.Text = $"← Working Copy (Changes: {n})";
-                if (n > 0)
-                {
-                    _workingCopy.Classes.Remove("flat");
-                    _workingCopy.Classes.Add("primary");
-                    _workingCopy.ClearValue(Button.ForegroundProperty);
-                }
-                else
-                {
-                    _workingCopy.Classes.Remove("primary");
-                    _workingCopy.Classes.Add("flat");
-                    _workingCopy.Dyn(Button.ForegroundProperty, "ColorText");
-                }
-
-                _workingCopy.IsVisible = true;
-                _branchBar.IsVisible = false;
-            }
-            else
-            {
-                _stagingPanel ??= new StagingPanelView(_sp, _repo);
-                if (!ReferenceEquals(_body.Content, _stagingPanel))
-                    _body.Content = _stagingPanel;
-
-                _workingCopy.IsVisible = false;
-                _branchBar.IsVisible = true;
-            }
+            _workingCopy.IsVisible = false;
+            _branchBar.IsVisible = true;
         }
     }
 

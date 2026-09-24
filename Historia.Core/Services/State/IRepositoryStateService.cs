@@ -34,10 +34,17 @@ public interface IRepositoryStateService
     GitProfile? ActiveProfile { get; }
     OperationState PendingOperation { get; }
 
+    /// <summary>True when the conflict resolver should stay open despite 0 conflicts remaining until the operation completes.</summary>
+    bool KeepConflictResolverOpen { get; }
+
+    /// <summary>True when conflicted files exist or an in-progress operation has keep-open set.</summary>
+    bool IsConflictSessionActive { get; }
+
     /// <summary>The diff currently occupying the center panel, or null when the graph is shown (§V2-8.2).</summary>
     DiffRequest? OpenDiff { get; }
 
     // ── Mutations: safe to call from any thread ──
+    void SetKeepConflictResolverOpen(bool keep);
     void SetSelectedCommit(ObjectId? id);
     void SetSelectedPaths(IReadOnlyList<string> paths);
 
@@ -72,4 +79,7 @@ public interface IRepositoryStateService
 
     /// <summary>Raised on the UI dispatcher, like every other event on this service (§V2-8.2).</summary>
     event EventHandler<OpenDiffChangedEventArgs>? OpenDiffChanged;
+
+    /// <summary>Raised on the UI dispatcher whenever IsConflictSessionActive flips value.</summary>
+    event EventHandler? ConflictSessionChanged;
 }

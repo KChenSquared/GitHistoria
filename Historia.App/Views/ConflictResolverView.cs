@@ -69,7 +69,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private ITextSourceVersion? _parseVersion;
     private IDisposable? _unsavedRegistration;
     private bool _saving;
-    private bool _keepOpenForContinue;
     private string? _stopId;
     private bool _disposed;
     private bool _isSyncingScroll;
@@ -102,22 +101,23 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private readonly StackPanel _floatingRegionStrip = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
     private readonly Border _floatingRegionBox;
 
-    public bool KeepOpenForContinue
+    private bool _isBusy;
+    public bool IsBusy
     {
-        get => _keepOpenForContinue;
-        set
+        get => _isBusy;
+        private set
         {
-            if (_keepOpenForContinue != value)
+            if (_isBusy != value)
             {
-                _keepOpenForContinue = value;
-                KeepOpenChanged?.Invoke(this, EventArgs.Empty);
+                _isBusy = value;
+                BusyChanged?.Invoke(this, EventArgs.Empty);
             }
         }
     }
 
     public bool HasUnsavedWork => _unsavedRegistration != null;
 
-    public event EventHandler? KeepOpenChanged;
+    public event EventHandler? BusyChanged;
 
     internal ConflictPaneEditor ResultEditorForTesting => _resultEditor;
     internal ConflictPaneEditor OursEditorForTesting => _oursEditor;
@@ -204,7 +204,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         var diskMsgPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
         diskMsgPanel.Children.Add(Text("This file changed on disk outside Historia.", "ColorWarning", 12));
         diskMsgPanel.Children.Add(TextButton("Reload", () => _ = ReloadFromDiskAsync(), primary: true));
-        diskMsgPanel.Children.Add(TextButton("Keep mine", () => KeepMine()));
+        diskMsgPanel.Children.Add(TextButton("Keep mine", () => _ = KeepMineAsync()));
         _changedOnDiskBanner.Child = diskMsgPanel;
 
         // Toolbar
@@ -357,12 +357,17 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             try
             {
                 var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
-                if (_stopId != null && labels.StopId != _stopId && _ctx.State.Status.Conflicted.Count == 0)
-                {
-                    _keepOpenForContinue = false;
-                    KeepOpenChanged?.Invoke(this, EventArgs.Empty);
-                }
+                bool stopChanged = _stopId != null && labels.StopId != _stopId;
                 _stopId = labels.StopId;
+                _headerOurs.Text = $"Ours: {labels.OursTitle}";
+                _headerTheirs.Text = $"Theirs: {labels.TheirsTitle}";
+                ToolTip.SetTip(_headerOurs, labels.OursDetail);
+                ToolTip.SetTip(_headerTheirs, labels.TheirsDetail);
+
+                if (stopChanged)
+                {
+                    _resolvedPaths.Clear();
+                }
 
                 var op = _ctx.State.PendingOperation;
                 if (op == OperationState.None)
@@ -379,6 +384,19 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
                 await RefreshFileListAsync();
                 await CheckExternalDiskChangeAsync();
+
+                if (stopChanged)
+                {
+                    if (_currentFile != null && _conflictedFiles.Any(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal)))
+                    {
+                        var matching = _conflictedFiles.First(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
+                        await SwitchToFileAsync(matching);
+                    }
+                    else if (_conflictedFiles.Count > 0)
+                    {
+                        await SwitchToFileAsync(_conflictedFiles[0]);
+                    }
+                }
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
@@ -431,8 +449,26 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private async Task RefreshFileListAsync()
     {
         var files = await _conflicts.GetConflictsAsync(_ctx, _viewCts.Token);
+        var fileDict = files.ToDictionary(f => f.FilePath, StringComparer.Ordinal);
+        var previousDict = _conflictedFiles.ToDictionary(f => f.FilePath, StringComparer.Ordinal);
+        var merged = new List<ConflictFile>(files);
+        foreach (var path in _resolvedPaths)
+        {
+            if (!fileDict.ContainsKey(path))
+            {
+                if (previousDict.TryGetValue(path, out var prev))
+                {
+                    merged.Add(prev);
+                }
+                else
+                {
+                    merged.Add(new ConflictFile { FilePath = path, Status = ConflictStatus.BothModified, IsBinary = false });
+                }
+            }
+        }
+
         _conflictedFiles.Clear();
-        _conflictedFiles.AddRange(files);
+        _conflictedFiles.AddRange(merged);
 
         var listItems = new List<Control>();
         foreach (var file in _conflictedFiles)
@@ -444,9 +480,24 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
 
         _fileListBox.ItemsSource = listItems;
-        _headerTitle.Text = _conflictedFiles.Count == 0
+
+        var selectedIndex = -1;
+        if (_currentFile != null)
+        {
+            selectedIndex = _conflictedFiles.FindIndex(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
+        }
+        if (selectedIndex >= 0)
+        {
+            _fileListBox.SelectedIndex = selectedIndex;
+        }
+        else if (_conflictedFiles.Count > 0)
+        {
+            _fileListBox.SelectedIndex = 0;
+        }
+
+        _headerTitle.Text = _conflictedFiles.Count == 0 || _conflictedFiles.All(f => _resolvedPaths.Contains(f.FilePath))
             ? "All conflicts resolved — you can continue the operation."
-            : $"{_conflictedFiles.Count} conflicted file(s)";
+            : $"{_conflictedFiles.Count(f => !_resolvedPaths.Contains(f.FilePath))} conflicted file(s)";
     }
 
     private async void OnFileListSelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
@@ -458,7 +509,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
 
         var nextFile = _conflictedFiles[index];
-        if (ReferenceEquals(_currentFile, nextFile))
+        if (_currentFile != null && string.Equals(_currentFile.FilePath, nextFile.FilePath, StringComparison.Ordinal))
         {
             return;
         }
@@ -470,7 +521,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             if (!proceed)
             {
                 // Revert selection
-                _fileListBox.SelectedIndex = _conflictedFiles.IndexOf(_currentFile!);
+                _fileListBox.SelectedIndex = _conflictedFiles.FindIndex(f => string.Equals(f.FilePath, _currentFile?.FilePath, StringComparison.Ordinal));
                 return;
             }
         }
@@ -785,8 +836,17 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 _resultEditor.SetScrollOffset(offset);
             }
 
-            int line = _resultEditor.TextArea.Caret.Line;
-            _minimap.DisplayRange = (line, line + 20);
+            if (_resultEditor.TextArea.TextView is { VisualLinesValid: true } tv && tv.VisualLines.Count > 0)
+            {
+                var first = tv.VisualLines[0].FirstDocumentLine.LineNumber;
+                var last = tv.VisualLines[^1].LastDocumentLine.LineNumber;
+                _minimap.DisplayRange = (first, last);
+            }
+            else
+            {
+                int line = _resultEditor.TextArea.Caret.Line;
+                _minimap.DisplayRange = (line, line + 20);
+            }
         }
         finally
         {
@@ -828,6 +888,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
 
         _saving = true;
+        IsBusy = true;
         try
         {
             var res = await _conflicts.SaveResolutionAsync(
@@ -866,6 +927,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         finally
         {
             _saving = false;
+            IsBusy = false;
         }
     }
 
@@ -903,24 +965,35 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
-        var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
         var path = _currentFile.FilePath;
-
-        if (!await _dialogs.ConfirmDestructiveAsync(
-                "Take ours",
-                $"Replace {path} with {labels.OursTitle}'s version? Any edits to this file will be lost.",
-                "Take ours"))
-        {
-            return;
-        }
-
         try
         {
-            await _conflicts.ResolveWithSideAsync(_ctx, path, ConflictSide.Ours, _viewCts.Token);
-            _resolvedPaths.Add(path);
-            UnregisterUnsavedWork();
-            await RefreshFileListAsync();
-            await SwitchToFileAsync(_currentFile);
+            var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
+            bool isAbsent = _currentFile.Status is ConflictStatus.DeletedByUs or ConflictStatus.AddedByThem;
+            string title = isAbsent ? $"Delete {path}" : "Take ours";
+            string message = isAbsent
+                ? $"Delete {path} — {labels.OursTitle} deleted it. Any edits to this file will be lost."
+                : $"Replace {path} with {labels.OursTitle}'s version? Any edits to this file will be lost.";
+            string verb = isAbsent ? "Delete" : "Take ours";
+
+            if (!await _dialogs.ConfirmDestructiveAsync(title, message, verb))
+            {
+                return;
+            }
+
+            IsBusy = true;
+            try
+            {
+                await _conflicts.ResolveWithSideAsync(_ctx, path, ConflictSide.Ours, _viewCts.Token);
+                _resolvedPaths.Add(path);
+                UnregisterUnsavedWork();
+                await RefreshFileListAsync();
+                await SwitchToFileAsync(_currentFile);
+            }
+            finally
+            {
+                IsBusy = false;
+            }
         }
         catch (Exception ex)
         {
@@ -935,24 +1008,35 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
-        var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
         var path = _currentFile.FilePath;
-
-        if (!await _dialogs.ConfirmDestructiveAsync(
-                "Take theirs",
-                $"Replace {path} with {labels.TheirsTitle}'s version? Any edits to this file will be lost.",
-                "Take theirs"))
-        {
-            return;
-        }
-
         try
         {
-            await _conflicts.ResolveWithSideAsync(_ctx, path, ConflictSide.Theirs, _viewCts.Token);
-            _resolvedPaths.Add(path);
-            UnregisterUnsavedWork();
-            await RefreshFileListAsync();
-            await SwitchToFileAsync(_currentFile);
+            var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
+            bool isAbsent = _currentFile.Status is ConflictStatus.DeletedByThem or ConflictStatus.AddedByUs;
+            string title = isAbsent ? $"Delete {path}" : "Take theirs";
+            string message = isAbsent
+                ? $"Delete {path} — {labels.TheirsTitle} deleted it. Any edits to this file will be lost."
+                : $"Replace {path} with {labels.TheirsTitle}'s version? Any edits to this file will be lost.";
+            string verb = isAbsent ? "Delete" : "Take theirs";
+
+            if (!await _dialogs.ConfirmDestructiveAsync(title, message, verb))
+            {
+                return;
+            }
+
+            IsBusy = true;
+            try
+            {
+                await _conflicts.ResolveWithSideAsync(_ctx, path, ConflictSide.Theirs, _viewCts.Token);
+                _resolvedPaths.Add(path);
+                UnregisterUnsavedWork();
+                await RefreshFileListAsync();
+                await SwitchToFileAsync(_currentFile);
+            }
+            finally
+            {
+                IsBusy = false;
+            }
         }
         catch (Exception ex)
         {
@@ -976,15 +1060,22 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
+        IsBusy = true;
         try
         {
             await _conflicts.RecreateConflictAsync(_ctx, path, _viewCts.Token);
+            _resolvedPaths.Remove(path);
             UnregisterUnsavedWork();
+            await RefreshFileListAsync();
             await SwitchToFileAsync(_currentFile);
         }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Re-create conflict failed: {ex.Message}", ex.NotificationDetails());
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
@@ -1010,7 +1101,16 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             var launched = await _conflicts.LaunchExternalMergeToolAsync(_ctx, _currentFile.FilePath, _viewCts.Token);
             if (!launched)
             {
-                _notifications.Publish(NotificationSeverity.Warning, "No external merge tool is configured (git config merge.tool).");
+                var settings = _sp.GetService(typeof(ISettingsService)) as ISettingsService;
+                var tool = settings?.Current.ExternalMergeTool;
+                if (!string.IsNullOrWhiteSpace(tool))
+                {
+                    _notifications.Publish(NotificationSeverity.Warning, $"The merge tool exited with conflict markers still in {_currentFile.FilePath}.");
+                }
+                else
+                {
+                    _notifications.Publish(NotificationSeverity.Warning, "No external merge tool is configured (git config merge.tool).");
+                }
                 return;
             }
 
@@ -1024,11 +1124,15 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     public async Task ContinueAsync()
     {
+        IsBusy = true;
         try
         {
-            KeepOpenForContinue = false;
-            await _conflicts.ContinueOperationAsync(_ctx, _viewCts.Token);
-            await _ctx.State.RefreshAllAsync(_viewCts.Token);
+            await _conflicts.ContinueOperationAsync(_ctx, _ctx.Lifetime);
+            await _ctx.State.RefreshAllAsync(_ctx.Lifetime);
+            if (_ctx.State.PendingOperation == OperationState.None)
+            {
+                _ctx.State.SetKeepConflictResolverOpen(false);
+            }
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.MergeConflict)
         {
@@ -1038,19 +1142,41 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         {
             _notifications.Publish(NotificationSeverity.Error, $"Continue failed: {ex.Message}", ex.NotificationDetails());
         }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     public async Task SkipAsync()
     {
+        var labels = await _conflicts.GetSideLabelsAsync(_ctx, _ctx.Lifetime);
+        var commitInfo = string.IsNullOrWhiteSpace(labels.TheirsDetail) ? "the current commit" : labels.TheirsDetail;
+        if (!await _dialogs.ConfirmDestructiveAsync(
+                "Skip commit",
+                $"Skip {commitInfo}? Resolutions and unsaved edits in this stop will be discarded.",
+                "Skip"))
+        {
+            return;
+        }
+
+        IsBusy = true;
         try
         {
-            KeepOpenForContinue = false;
-            await _conflicts.SkipCurrentAsync(_ctx, _viewCts.Token);
-            await _ctx.State.RefreshAllAsync(_viewCts.Token);
+            await _conflicts.SkipCurrentAsync(_ctx, _ctx.Lifetime);
+            await _ctx.State.RefreshAllAsync(_ctx.Lifetime);
+            if (_ctx.State.PendingOperation == OperationState.None)
+            {
+                _ctx.State.SetKeepConflictResolverOpen(false);
+            }
         }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Skip failed: {ex.Message}", ex.NotificationDetails());
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
@@ -1064,14 +1190,23 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
+        IsBusy = true;
         try
         {
-            await _conflicts.AbortOperationAsync(_ctx, _viewCts.Token);
-            await _ctx.State.RefreshAllAsync(_viewCts.Token);
+            await _conflicts.AbortOperationAsync(_ctx, _ctx.Lifetime);
+            await _ctx.State.RefreshAllAsync(_ctx.Lifetime);
+            if (_ctx.State.PendingOperation == OperationState.None)
+            {
+                _ctx.State.SetKeepConflictResolverOpen(false);
+            }
         }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Abort failed: {ex.Message}", ex.NotificationDetails());
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
@@ -1116,18 +1251,37 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         await SwitchToFileAsync(_currentFile);
     }
 
-    internal void KeepMine()
+    internal async Task KeepMineAsync()
     {
-        _changedOnDiskBanner.IsVisible = false;
-        // Adopt current disk hash so subsequent Save deliberately overwrites disk
-        _ = Task.Run(async () =>
+        if (_currentFile == null)
         {
-            if (_currentFile != null)
-            {
-                var copy = await _conflicts.LoadWorkingCopyAsync(_ctx, _currentFile.FilePath, _viewCts.Token);
-                Dispatcher.UIThread.Post(() => _diskHash = copy.DiskHash);
-            }
-        });
+            return;
+        }
+
+        var path = _currentFile.FilePath;
+        if (!await _dialogs.ConfirmDestructiveAsync(
+                "Keep my version",
+                $"Your next save will overwrite {path} on disk, which changed outside Historia.",
+                "Keep mine"))
+        {
+            return;
+        }
+
+        _changedOnDiskBanner.IsVisible = false;
+        IsBusy = true;
+        try
+        {
+            var copy = await _conflicts.LoadWorkingCopyAsync(_ctx, path, _ctx.Lifetime);
+            _diskHash = copy.DiskHash;
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, $"Keep mine failed: {ex.Message}", ex.NotificationDetails());
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private void RegisterUnsavedWork()

@@ -69,7 +69,26 @@ public sealed class ConflictResolverHost : IDisposable
             }
         }
 
-        view?.Dispose();
+        if (view != null)
+        {
+            if (view.IsBusy)
+            {
+                EventHandler? handler = null;
+                handler = (s, e) =>
+                {
+                    if (!view.IsBusy)
+                    {
+                        view.BusyChanged -= handler;
+                        view.Dispose();
+                    }
+                };
+                view.BusyChanged += handler;
+            }
+            else
+            {
+                view.Dispose();
+            }
+        }
     }
 
     private void OnOpenRepositoriesChanged(object? sender, OpenRepositoriesChangedEventArgs e)
@@ -124,7 +143,23 @@ public sealed class ConflictResolverHost : IDisposable
 
         foreach (var view in views)
         {
-            view.Dispose();
+            if (view.IsBusy)
+            {
+                EventHandler? handler = null;
+                handler = (s, e) =>
+                {
+                    if (!view.IsBusy)
+                    {
+                        view.BusyChanged -= handler;
+                        view.Dispose();
+                    }
+                };
+                view.BusyChanged += handler;
+            }
+            else
+            {
+                view.Dispose();
+            }
         }
     }
 }

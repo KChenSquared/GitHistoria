@@ -116,10 +116,166 @@ public class RepositoryStateServiceTests : IAsyncDisposable
         Assert.Contains(branches, b => b.IsCurrent);
     }
 
+    [Fact]
+    public async Task Conflict_session_active_while_conflicted()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var gateway = new FakeGateway();
+        var state = new RepositoryStateService(ctx, ui: null, repoCache: null, gateway: gateway);
+
+        gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty with
+        {
+            Conflicted = [new FileStatusEntry { Path = "f.txt", Kind = FileChangeKind.Conflicted, IsBinary = false, IsSubmodule = false }],
+        };
+
+        await state.RefreshStatusAsync();
+
+        Assert.True(state.IsConflictSessionActive);
+    }
+
+    [Fact]
+    public async Task Keep_open_keeps_session_active_after_last_file_resolved()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var gateway = new FakeGateway();
+        var state = new RepositoryStateService(ctx, ui: null, repoCache: null, gateway: gateway);
+
+        var mergeHead = Path.Combine(ctx.GitDirectory, "MERGE_HEAD");
+        await File.WriteAllTextAsync(mergeHead, "1234567890123456789012345678901234567890\n");
+
+        try
+        {
+            gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty with
+            {
+                Conflicted = [new FileStatusEntry { Path = "f.txt", Kind = FileChangeKind.Conflicted, IsBinary = false, IsSubmodule = false }],
+            };
+
+            await state.RefreshStatusAsync();
+            Assert.True(state.KeepConflictResolverOpen);
+            Assert.True(state.IsConflictSessionActive);
+
+            // Last file resolved
+            gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty with
+            {
+                Conflicted = [],
+            };
+
+            await state.RefreshStatusAsync();
+
+            Assert.Empty(state.Status.Conflicted);
+            Assert.True(state.KeepConflictResolverOpen);
+            Assert.True(state.IsConflictSessionActive);
+        }
+        finally
+        {
+            if (File.Exists(mergeHead)) File.Delete(mergeHead);
+        }
+    }
+
+    [Fact]
+    public async Task Session_ends_and_raises_changed_when_operation_ends()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var gateway = new FakeGateway();
+        var state = new RepositoryStateService(ctx, ui: null, repoCache: null, gateway: gateway);
+
+        var mergeHead = Path.Combine(ctx.GitDirectory, "MERGE_HEAD");
+        await File.WriteAllTextAsync(mergeHead, "1234567890123456789012345678901234567890\n");
+
+        try
+        {
+            gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty with
+            {
+                Conflicted = [new FileStatusEntry { Path = "f.txt", Kind = FileChangeKind.Conflicted, IsBinary = false, IsSubmodule = false }],
+            };
+
+            await state.RefreshStatusAsync();
+            Assert.True(state.IsConflictSessionActive);
+
+            // Operation completes and merge head is removed
+            File.Delete(mergeHead);
+            gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty with
+            {
+                Conflicted = [],
+            };
+
+            bool changedRaised = false;
+            state.ConflictSessionChanged += (_, _) => changedRaised = true;
+
+            await state.RefreshStatusAsync();
+
+            Assert.True(changedRaised);
+            Assert.False(state.KeepConflictResolverOpen);
+            Assert.False(state.IsConflictSessionActive);
+        }
+        finally
+        {
+            if (File.Exists(mergeHead)) File.Delete(mergeHead);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _host.DisposeAsync();
         _repo.Dispose();
+    }
+
+    private sealed class FakeGateway : IGitGateway
+    {
+        public string RepositoryPath => "C:\\fake\\repo";
+
+        public Historia.Models.RepositoryStatus StatusToReturn { get; set; } = Historia.Models.RepositoryStatus.Empty;
+        public RepositoryInfo InfoToReturn { get; set; } = new()
+        {
+            WorkingDirectory = "C:\\fake\\repo",
+            GitDirectory = "C:\\fake\\repo\\.git",
+            DisplayName = "fake",
+            IsBare = false,
+            IsHeadDetached = false,
+            IsHeadUnborn = false,
+            CurrentBranchName = "main",
+        };
+
+        public Task<Historia.Models.RepositoryStatus> GetStatusAsync(CancellationToken ct = default) => Task.FromResult(StatusToReturn);
+        public Task<RepositoryInfo> GetRepositoryInfoAsync(CancellationToken ct = default) => Task.FromResult(InfoToReturn);
+        public Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<BranchInfo>>([]);
+        public Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<TagInfo>>([]);
+        public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<RemoteInfo>>([]);
+
+        public Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default) => Task.FromResult<AheadBehind?>(null);
+        public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default) => Task.FromResult<AheadBehind?>(null);
+        public Task<CommitDetail> GetCommitDetailAsync(ObjectId id, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(ObjectId id, int parentIndex, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default) => Task.FromResult<(string?, string?)>((null, null));
+        public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<(string? Name, string? Email)> GetGlobalIdentityAsync(CancellationToken ct = default) => Task.FromResult<(string?, string?)>((null, null));
+        public Task<bool> GetGpgSignConfiguredAsync(CancellationToken ct = default) => Task.FromResult(false);
+
+        public Task StageAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task UnstageAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task DiscardAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<ObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task MergeAsync(string refish, bool noFastForward, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task ResetAsync(string target, GitResetMode mode, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<int> CountCommitsLeavingAsync(string target, CancellationToken ct = default) => throw new NotImplementedException();
+
+        public Task CheckoutAsync(string refName, GitCheckoutOptions options, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<BranchInfo> CreateBranchAsync(string name, string startPoint, bool checkout, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task DeleteBranchAsync(string name, bool force, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task RenameBranchAsync(string oldName, string newName, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task SetUpstreamAsync(string branchName, string upstreamRef, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<TagInfo> CreateTagAsync(string name, string target, string? message, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task DeleteTagAsync(string name, CancellationToken ct = default) => throw new NotImplementedException();
+
+        public Task AddRemoteAsync(string name, string url, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task RemoveRemoteAsync(string name, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default) => throw new NotImplementedException();
+
+        public Task FetchAsync(string remote, GitFetchOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task PullAsync(string remote, string branch, GitPullOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task PushAsync(string remote, PushSpec spec, IProgress<GitProgress>? progress, CancellationToken ct = default) => throw new NotImplementedException();
     }
 
     private sealed class RecordingRepoStateCache : IRepoStateCache
