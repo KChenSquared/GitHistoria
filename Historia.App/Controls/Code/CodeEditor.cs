@@ -25,4 +25,25 @@ public class CodeEditor : TextEditor
         this[!ForegroundProperty] = new DynamicResourceExtension("ColorText");
         TextArea[!TextArea.SelectionBrushProperty] = new DynamicResourceExtension("ColorCodeSelection");
     }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        PaletteBrushes.Changed += OnPaletteBrushesChanged;
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        PaletteBrushes.Changed -= OnPaletteBrushesChanged;
+    }
+
+    private void OnPaletteBrushesChanged(object? sender, EventArgs e)
+    {
+        TextArea.TextView.Redraw();
+        foreach (var margin in TextArea.LeftMargins)
+        {
+            margin.InvalidateVisual();
+        }
+    }
 }

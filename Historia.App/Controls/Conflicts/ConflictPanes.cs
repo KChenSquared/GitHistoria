@@ -38,11 +38,29 @@ public class ConflictPaneEditor : CodeEditor
         Options.AllowScrollBelowDocument = false;
     }
 
+    protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
+    {
+        base.OnApplyTemplate(e);
+        UnhookScrollViewer();
+        _scrollViewer = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") ?? this.FindDescendantOfType<ScrollViewer>();
+        if (_scrollViewer != null)
+        {
+            _scrollViewer.ScrollChanged += OnScrollViewerScrollChanged;
+            if (_scrollOffset != Vector.Zero)
+            {
+                _scrollViewer.Offset = _scrollOffset;
+            }
+        }
+    }
+
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
         AttachSyntaxHighlighting();
-        HookScrollViewer();
+        if (_scrollViewer == null)
+        {
+            HookScrollViewer();
+        }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -138,14 +156,16 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
 {
     private readonly TextEditor _editor;
     private readonly Func<IReadOnlyList<ConflictPaneLine>?>? _getLines;
-    private IBrush? _foregroundBrush;
+    private readonly Dictionary<string, FormattedText> _textCache = new(StringComparer.Ordinal);
     private Typeface _typeface;
+    private double _lastFontSize;
 
     public ConflictLineNumberMargin(TextEditor editor, Func<IReadOnlyList<ConflictPaneLine>?>? getLines = null)
     {
         _editor = editor;
         _getLines = getLines;
         _typeface = new Typeface(_editor.FontFamily, _editor.FontStyle, _editor.FontWeight);
+        _lastFontSize = _editor.FontSize;
         Margin = new Thickness(8, 0);
         ClipToBounds = true;
     }
@@ -153,43 +173,39 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        RefreshResources();
-        if (VisualRoot is TopLevel top)
-        {
-            top.ActualThemeVariantChanged += OnThemeVariantChanged;
-        }
+        PaletteBrushes.Changed += OnPaletteChanged;
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        if (VisualRoot is TopLevel top)
-        {
-            top.ActualThemeVariantChanged -= OnThemeVariantChanged;
-        }
+        PaletteBrushes.Changed -= OnPaletteChanged;
+        _textCache.Clear();
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void OnThemeVariantChanged(object? sender, EventArgs e)
+    private void OnPaletteChanged(object? sender, EventArgs e)
     {
-        RefreshResources();
+        _textCache.Clear();
         InvalidateVisual();
-    }
-
-    public void RefreshResources()
-    {
-        _foregroundBrush = this.FindResource("ColorTextFaint") as IBrush ?? Brushes.Gray;
-        _typeface = new Typeface(_editor.FontFamily, _editor.FontStyle, _editor.FontWeight);
     }
 
     public override void Render(DrawingContext context)
     {
         var view = TextView;
-        if (view is not { VisualLinesValid: true } || _foregroundBrush == null)
+        if (view is not { VisualLinesValid: true })
         {
             return;
         }
 
+        if (_editor.FontSize != _lastFontSize)
+        {
+            _lastFontSize = _editor.FontSize;
+            _typeface = new Typeface(_editor.FontFamily, _editor.FontStyle, _editor.FontWeight);
+            _textCache.Clear();
+        }
+
         var lines = _getLines?.Invoke();
+        var foregroundBrush = PaletteBrushes.Get("ColorTextFaint");
 
         foreach (var line in view.VisualLines)
         {
@@ -221,13 +237,21 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
             }
 
             var y = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineMiddle) - view.VerticalOffset;
-            var txt = new FormattedText(
-                numText,
-                CultureInfo.InvariantCulture,
-                FlowDirection.LeftToRight,
-                _typeface,
-                _editor.FontSize,
-                _foregroundBrush);
+
+            if (!_textCache.TryGetValue(numText, out var txt))
+            {
+                txt = new FormattedText(
+                    numText,
+                    CultureInfo.InvariantCulture,
+                    FlowDirection.LeftToRight,
+                    _typeface,
+                    _editor.FontSize,
+                    foregroundBrush);
+                if (_textCache.Count < 5000)
+                {
+                    _textCache[numText] = txt;
+                }
+            }
 
             context.DrawText(txt, new Point(Bounds.Width - txt.Width, y - (txt.Height * 0.5)));
         }
@@ -248,7 +272,7 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
 }
 
 /// <summary>
-/// Background renderer painting conflict region washes, base sections, marker bars, and intra-line highlights.
+/// Background renderer painting conflict region washes, marker bars, and intra-line highlights.
 /// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
 /// </summary>
 public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
@@ -258,15 +282,6 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
     private readonly Func<ConflictParse?> _getParse;
     private readonly Func<IReadOnlyList<ConflictPaneLine>?>? _getLines;
     private readonly Func<IReadOnlyList<ConflictRegionAnalysis>?>? _getAnalysis;
-
-    private IBrush? _oursBg;
-    private IBrush? _theirsBg;
-    private IBrush? _baseBg;
-    private IBrush? _markerBg;
-    private IBrush? _resolvedBg;
-    private IBrush? _oursHl;
-    private IBrush? _theirsHl;
-    private IPen? _blockBorderPen;
 
     public override KnownLayer Layer => KnownLayer.Background;
 
@@ -282,22 +297,6 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
         _getParse = getParse;
         _getLines = getLines;
         _getAnalysis = getAnalysis;
-        RefreshResources();
-    }
-
-    public void RefreshResources()
-    {
-        _oursBg = _editor.FindResource("ColorConflictOursBg") as IBrush ?? Brushes.Transparent;
-        _theirsBg = _editor.FindResource("ColorConflictTheirsBg") as IBrush ?? Brushes.Transparent;
-        _baseBg = _editor.FindResource("ColorConflictBaseBg") as IBrush ?? Brushes.Transparent;
-        _markerBg = _editor.FindResource("ColorConflictMarkerBg") as IBrush ?? Brushes.Transparent;
-        _resolvedBg = _editor.FindResource("ColorConflictResolvedBg") as IBrush ?? Brushes.Transparent;
-
-        _oursHl = _editor.FindResource("ColorDiffAddHl") as IBrush ?? Brushes.Transparent;
-        _theirsHl = _editor.FindResource("ColorDiffDelHl") as IBrush ?? Brushes.Transparent;
-
-        var accent = _editor.FindResource("ColorAccent") as IBrush ?? Brushes.DodgerBlue;
-        _blockBorderPen = new Pen(accent, 1);
     }
 
     protected override void DrawCore(TextView textView, DrawingContext drawingContext)
@@ -313,6 +312,28 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
             if (lines == null || lines.Count == 0)
             {
                 return;
+            }
+
+            var oursBg = PaletteBrushes.Get("ColorConflictOursBg");
+            var theirsBg = PaletteBrushes.Get("ColorConflictTheirsBg");
+            var markerBg = PaletteBrushes.Get("ColorConflictMarkerBg");
+
+            var analyses = _getAnalysis?.Invoke();
+            Dictionary<int, RegionLineHighlight>? hlMap = null;
+            if (analyses != null && analyses.Count > 0)
+            {
+                hlMap = new Dictionary<int, RegionLineHighlight>();
+                foreach (var a in analyses)
+                {
+                    var list = currentSide == ConflictSide.Ours ? a.OursHighlights : a.TheirsHighlights;
+                    foreach (var h in list)
+                    {
+                        if (h.Spans.Count > 0)
+                        {
+                            hlMap[h.DocumentLineIndex] = h;
+                        }
+                    }
+                }
             }
 
             foreach (var line in textView.VisualLines)
@@ -335,16 +356,65 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
 
                 IBrush? bg = paneLine.Type switch
                 {
-                    ConflictPaneLineType.Ours => _oursBg,
-                    ConflictPaneLineType.Theirs => _theirsBg,
-                    ConflictPaneLineType.Base => _baseBg,
-                    ConflictPaneLineType.Marker => _markerBg,
+                    ConflictPaneLineType.Ours => oursBg,
+                    ConflictPaneLineType.Theirs => theirsBg,
+                    ConflictPaneLineType.Marker => markerBg,
                     _ => null,
                 };
 
                 if (bg != null)
                 {
                     drawingContext.DrawRectangle(bg, null, new Rect(0, startY, width, endY - startY));
+                }
+
+                if (hlMap != null && hlMap.TryGetValue(paneLine.DocumentLineIndex, out var hl) && hl.Spans.Count > 0)
+                {
+                    var hlBrush = currentSide == ConflictSide.Ours
+                        ? PaletteBrushes.Get("ColorConflictOursHl")
+                        : PaletteBrushes.Get("ColorConflictTheirsHl");
+
+                    int processingIdxStart = 0;
+                    int processingIdxEnd = 0;
+                    int nextHighlight = 0;
+
+                    foreach (var tl in line.TextLines)
+                    {
+                        processingIdxEnd += tl.Length;
+                        var y = line.GetTextLineVisualYPosition(tl, VisualYPosition.LineTop) - textView.VerticalOffset;
+                        var h = line.GetTextLineVisualYPosition(tl, VisualYPosition.LineBottom) - textView.VerticalOffset - y;
+
+                        while (nextHighlight < hl.Spans.Count)
+                        {
+                            var highlight = hl.Spans[nextHighlight];
+                            int hlStart = highlight.Start;
+                            int hlEnd = highlight.Start + highlight.Length - 1;
+
+                            if (hlStart >= processingIdxEnd)
+                            {
+                                break;
+                            }
+
+                            var startCol = line.GetVisualColumn(hlStart < processingIdxStart ? processingIdxStart : hlStart);
+                            var endCol = line.GetVisualColumn(hlEnd >= processingIdxEnd ? processingIdxEnd : hlEnd + 1);
+
+                            var x = line.GetTextLineVisualXPosition(tl, startCol) - textView.HorizontalOffset;
+                            var w = line.GetTextLineVisualXPosition(tl, endCol) - textView.HorizontalOffset - x;
+
+                            if (w > 0 && h > 0)
+                            {
+                                drawingContext.DrawRectangle(hlBrush, null, new Rect(x, y, w, h));
+                            }
+
+                            if (hlEnd >= processingIdxEnd)
+                            {
+                                break;
+                            }
+
+                            nextHighlight++;
+                        }
+
+                        processingIdxStart = processingIdxEnd;
+                    }
                 }
             }
         }
@@ -355,6 +425,12 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
             {
                 return;
             }
+
+            var markerBg = PaletteBrushes.Get("ColorConflictMarkerBg");
+            var oursBg = PaletteBrushes.Get("ColorConflictOursBg");
+            var baseBg = PaletteBrushes.Get("ColorConflictBaseBg");
+            var theirsBg = PaletteBrushes.Get("ColorConflictTheirsBg");
+            var blockBorderPen = PaletteBrushes.Pen("ColorAccent", 1);
 
             foreach (var line in textView.VisualLines)
             {
@@ -379,44 +455,29 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
                 if (lineIdx == region.StartLine || lineIdx == region.SeparatorLine || lineIdx == region.EndLine
                     || (region.HasBase && lineIdx == region.BaseMarkerLine))
                 {
-                    if (_markerBg != null)
-                    {
-                        drawingContext.DrawRectangle(_markerBg, null, rect);
-                    }
+                    drawingContext.DrawRectangle(markerBg, null, rect);
                 }
                 else if (lineIdx >= region.OursStartLine && lineIdx <= region.OursEndLine)
                 {
-                    if (_oursBg != null)
-                    {
-                        drawingContext.DrawRectangle(_oursBg, null, rect);
-                    }
+                    drawingContext.DrawRectangle(oursBg, null, rect);
                 }
                 else if (region.HasBase && lineIdx >= region.BaseStartLine && lineIdx <= region.BaseEndLine)
                 {
-                    if (_baseBg != null)
-                    {
-                        drawingContext.DrawRectangle(_baseBg, null, rect);
-                    }
+                    drawingContext.DrawRectangle(baseBg, null, rect);
                 }
                 else if (lineIdx >= region.TheirsStartLine && lineIdx <= region.TheirsEndLine)
                 {
-                    if (_theirsBg != null)
-                    {
-                        drawingContext.DrawRectangle(_theirsBg, null, rect);
-                    }
+                    drawingContext.DrawRectangle(theirsBg, null, rect);
                 }
 
                 // Region border
-                if (_blockBorderPen != null)
+                if (lineIdx == region.StartLine)
                 {
-                    if (lineIdx == region.StartLine)
-                    {
-                        drawingContext.DrawLine(_blockBorderPen, new Point(0, startY), new Point(width, startY));
-                    }
-                    if (lineIdx == region.EndLine)
-                    {
-                        drawingContext.DrawLine(_blockBorderPen, new Point(0, endY), new Point(width, endY));
-                    }
+                    drawingContext.DrawLine(blockBorderPen, new Point(0, startY), new Point(width, startY));
+                }
+                if (lineIdx == region.EndLine)
+                {
+                    drawingContext.DrawLine(blockBorderPen, new Point(0, endY), new Point(width, endY));
                 }
             }
         }
@@ -431,9 +492,6 @@ public sealed class ConflictResolverMinimap : Control
 {
     private ConflictParse? _parse;
     private (int Start, int End)? _displayRange;
-    private IBrush? _conflictBrush;
-    private IBrush? _rangeBrush;
-    private IPen? _rangePen;
 
     public ConflictParse? Parse
     {
@@ -465,34 +523,18 @@ public sealed class ConflictResolverMinimap : Control
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        RefreshResources();
-        if (VisualRoot is TopLevel top)
-        {
-            top.ActualThemeVariantChanged += OnThemeVariantChanged;
-        }
+        PaletteBrushes.Changed += OnPaletteChanged;
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        if (VisualRoot is TopLevel top)
-        {
-            top.ActualThemeVariantChanged -= OnThemeVariantChanged;
-        }
+        PaletteBrushes.Changed -= OnPaletteChanged;
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void OnThemeVariantChanged(object? sender, EventArgs e)
+    private void OnPaletteChanged(object? sender, EventArgs e)
     {
-        RefreshResources();
         InvalidateVisual();
-    }
-
-    public void RefreshResources()
-    {
-        _conflictBrush = this.FindResource("ColorWarning") as IBrush ?? Brushes.Orange;
-        var accent = this.FindResource("ColorAccent") as IBrush ?? Brushes.RoyalBlue;
-        _rangeBrush = accent;
-        _rangePen = new Pen(accent, 1);
     }
 
     public override void Render(DrawingContext context)
@@ -505,15 +547,13 @@ public sealed class ConflictResolverMinimap : Control
         }
 
         int total = _parse.LineCount;
+        var conflictBrush = PaletteBrushes.Get("ColorWarning");
 
-        if (_conflictBrush != null)
+        foreach (var region in _parse.Regions)
         {
-            foreach (var region in _parse.Regions)
-            {
-                double startY = region.StartLine / (double)total * Bounds.Height;
-                double h = Math.Max(2.0, (region.EndLine - region.StartLine + 1) / (double)total * Bounds.Height);
-                context.DrawRectangle(_conflictBrush, null, new Rect(0, startY, Bounds.Width, h));
-            }
+            double startY = region.StartLine / (double)total * Bounds.Height;
+            double h = Math.Max(2.0, (region.EndLine - region.StartLine + 1) / (double)total * Bounds.Height);
+            context.DrawRectangle(conflictBrush, null, new Rect(0, startY, Bounds.Width, h));
         }
 
         if (_displayRange is { } range && range.End > range.Start && total > 0)
@@ -522,14 +562,9 @@ public sealed class ConflictResolverMinimap : Control
             double endY = range.End / (double)total * Bounds.Height;
             var rect = new Rect(0, startY, Bounds.Width, Math.Max(2.0, endY - startY));
 
-            if (_rangeBrush != null)
-            {
-                context.DrawRectangle(_rangeBrush, null, rect);
-            }
-            if (_rangePen != null)
-            {
-                context.DrawRectangle(null, _rangePen, rect);
-            }
+            var rangeBrush = PaletteBrushes.GetTranslucent("ColorAccent", 0x30);
+            var rangePen = PaletteBrushes.Pen("ColorAccent", 1);
+            context.DrawRectangle(rangeBrush, rangePen, rect);
         }
     }
 

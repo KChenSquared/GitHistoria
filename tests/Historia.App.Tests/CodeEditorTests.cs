@@ -51,4 +51,37 @@ public class CodeEditorTests
         renderer.Draw(null!, null!);
         Assert.False(renderer.DrawCoreCalled);
     }
+
+    [AvaloniaFact]
+    public void Conflict_pane_scrollviewer_is_hooked_after_show()
+    {
+        var editor = new ConflictPaneEditor();
+        editor.Document = new TextDocument(string.Join("\n", Enumerable.Range(1, 100).Select(i => $"Line {i}")));
+
+        var window = new Window { Width = 400, Height = 300, Content = editor };
+        window.Show();
+
+        try
+        {
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var sv = editor.FindDescendantOfType<ScrollViewer>();
+            Assert.NotNull(sv);
+
+            bool scrollChangedFired = false;
+            editor.ScrollOffsetChanged += (_, _) => scrollChangedFired = true;
+
+            sv.Offset = new Vector(0, 40);
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(scrollChangedFired);
+            Assert.Equal(new Vector(0, 40), editor.GetScrollOffset());
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }

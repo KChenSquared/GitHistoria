@@ -110,35 +110,36 @@ public abstract class DiffPresenterBase : CodeEditor
 
     protected abstract void OnModelChanged();
 
+    protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
+    {
+        base.OnApplyTemplate(e);
+        UnhookScrollViewer();
+        _scrollViewer = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") ?? this.FindDescendantOfType<ScrollViewer>();
+        if (_scrollViewer != null)
+        {
+            _scrollViewer.ScrollChanged += OnScrollViewerScrollChanged;
+            if (_scrollOffset != Vector.Zero)
+            {
+                _scrollViewer.Offset = _scrollOffset;
+            }
+        }
+    }
+
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
         AttachSyntaxHighlighting();
-        HookScrollViewer();
-
-        if (VisualRoot is TopLevel top)
+        if (_scrollViewer == null)
         {
-            top.ActualThemeVariantChanged += OnThemeVariantChanged;
+            HookScrollViewer();
         }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        if (VisualRoot is TopLevel top)
-        {
-            top.ActualThemeVariantChanged -= OnThemeVariantChanged;
-        }
-
         UnhookScrollViewer();
         DetachSyntaxHighlighting();
         base.OnDetachedFromVisualTree(e);
-    }
-
-    private void OnThemeVariantChanged(object? sender, EventArgs e)
-    {
-        _backgroundRenderer.RefreshResources();
-        _indicatorTransformer.RefreshResources();
-        TextArea.TextView.Redraw();
     }
 
     private Vector _scrollOffset = Vector.Zero;

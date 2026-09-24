@@ -319,4 +319,124 @@ public class DiffPresenterTests
         Assert.Equal(0, host.LiveCount);
         window2.Close();
     }
+
+    [AvaloniaFact]
+    public void Background_renderer_uses_palette_add_brush_after_show()
+    {
+        var theme = new StubThemeService { Effective = EffectiveTheme.Dark };
+        using var applier = new AvaloniaThemeApplier(theme);
+
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+
+        var presenter = new CombinedDiffPresenter { Model = model };
+        var window = new Window { Width = 800, Height = 600, Content = presenter };
+        window.Show();
+
+        try
+        {
+            var brush = PaletteBrushes.Get("ColorDiffAddBg");
+            Assert.NotNull(brush);
+            Assert.NotEqual(Brushes.Transparent, brush);
+
+            var expected = HistoriaPalette.Get(EffectiveTheme.Dark, "diff-add-bg").ToAvalonia();
+            Assert.Equal(expected, ((ISolidColorBrush)brush).Color);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void User_scroll_on_left_pane_scrolls_right_pane()
+    {
+        var lines = Enumerable.Range(1, 100).Select(i => new DiffLine
+        {
+            Type = DiffLineType.Context,
+            Content = $"line {i}",
+            OldLineNumber = i,
+            NewLineNumber = i,
+        }).ToList();
+        var hunk = new DiffHunk
+        {
+            OldStart = 1,
+            OldLineCount = 100,
+            NewStart = 1,
+            NewLineCount = 100,
+            Header = "@@ -1,100 +1,100 @@",
+            Lines = lines,
+        };
+        var diff = new FileDiff
+        {
+            Path = "many.txt",
+            Kind = DiffKind.Modified,
+            IsBinary = false,
+            IsTruncated = false,
+            AddedLines = 0,
+            DeletedLines = 0,
+            Hunks = [hunk],
+        };
+        var model = DiffDisplayModel.Create(diff);
+
+        var sbs = new SideBySideDiffPresenter();
+        sbs.Model = model;
+
+        var window = new Window { Width = 800, Height = 600, Content = sbs };
+        window.Show();
+
+        try
+        {
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            var leftSv = sbs.LeftPresenter.FindDescendantOfType<ScrollViewer>();
+            Assert.NotNull(leftSv);
+
+            leftSv.Offset = new Vector(0, 50);
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(new Vector(0, 50), sbs.RightPresenter.GetScrollOffset());
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Theme_change_between_same_variant_themes_redraws_washes()
+    {
+        var theme = new StubThemeService { Effective = EffectiveTheme.Dark };
+        using var applier = new AvaloniaThemeApplier(theme);
+
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+
+        var presenter = new CombinedDiffPresenter { Model = model };
+        var window = new Window { Width = 800, Height = 600, Content = presenter };
+        window.Show();
+
+        try
+        {
+            var darkBg = ((ISolidColorBrush)PaletteBrushes.Get("ColorDiffAddBg")).Color;
+
+            // Switch to HighContrast (same Avalonia ThemeVariant.Dark variant!)
+            theme.Effective = EffectiveTheme.HighContrast;
+            applier.Apply(EffectiveTheme.HighContrast);
+
+            var hcBg = ((ISolidColorBrush)PaletteBrushes.Get("ColorDiffAddBg")).Color;
+            var expectedHc = HistoriaPalette.Get(EffectiveTheme.HighContrast, "diff-add-bg").ToAvalonia();
+
+            Assert.Equal(expectedHc, hcBg);
+            Assert.NotEqual(darkBg, hcBg);
+        }
+        finally
+        {
+            theme.Effective = EffectiveTheme.Dark;
+            applier.Apply(EffectiveTheme.Dark);
+            window.Close();
+        }
+    }
 }

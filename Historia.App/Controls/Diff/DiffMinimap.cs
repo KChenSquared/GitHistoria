@@ -10,11 +10,6 @@ public sealed class DiffMinimap : Control
     private (int Start, int End)? _displayRange;
     private bool _isSideBySide;
 
-    private IBrush? _addBrush;
-    private IBrush? _delBrush;
-    private IBrush? _rangeBrush;
-    private IPen? _rangePen;
-
     public DiffDisplayModel? Model
     {
         get => _model;
@@ -64,37 +59,18 @@ public sealed class DiffMinimap : Control
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        RefreshResources();
-
-        if (VisualRoot is TopLevel top)
-        {
-            top.ActualThemeVariantChanged += OnThemeVariantChanged;
-        }
+        PaletteBrushes.Changed += OnPaletteBrushesChanged;
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        if (VisualRoot is TopLevel top)
-        {
-            top.ActualThemeVariantChanged -= OnThemeVariantChanged;
-        }
+        PaletteBrushes.Changed -= OnPaletteBrushesChanged;
         base.OnDetachedFromVisualTree(e);
     }
 
-    private void OnThemeVariantChanged(object? sender, EventArgs e)
+    private void OnPaletteBrushesChanged(object? sender, EventArgs e)
     {
-        RefreshResources();
         InvalidateVisual();
-    }
-
-    public void RefreshResources()
-    {
-        _addBrush = this.FindResource("ColorDiffAddBg") as IBrush ?? Brushes.Green;
-        _delBrush = this.FindResource("ColorDiffDelBg") as IBrush ?? Brushes.Red;
-
-        var accent = this.FindResource("ColorAccent") as IBrush ?? Brushes.RoyalBlue;
-        _rangeBrush = accent;
-        _rangePen = new Pen(accent, 1);
     }
 
     public override void Render(DrawingContext context)
@@ -136,15 +112,9 @@ public sealed class DiffMinimap : Control
             double endY = range.End / (double)total * Bounds.Height;
             var rect = new Rect(0, startY, Bounds.Width, Math.Max(2.0, endY - startY));
 
-            if (_rangeBrush != null)
-            {
-                context.DrawRectangle(_rangeBrush, null, rect);
-            }
-
-            if (_rangePen != null)
-            {
-                context.DrawRectangle(null, _rangePen, rect);
-            }
+            var rangeBrush = PaletteBrushes.GetTranslucent("ColorAccent", 0x30);
+            var rangePen = PaletteBrushes.Pen("ColorAccent", 1);
+            context.DrawRectangle(rangeBrush, rangePen, rect);
         }
     }
 
@@ -181,8 +151,8 @@ public sealed class DiffMinimap : Control
 
         IBrush? brush = type switch
         {
-            DiffDisplayLineType.Addition => _addBrush,
-            DiffDisplayLineType.Deletion => _delBrush,
+            DiffDisplayLineType.Addition => PaletteBrushes.Get("ColorDiffAddBg"),
+            DiffDisplayLineType.Deletion => PaletteBrushes.Get("ColorDiffDelBg"),
             _ => null,
         };
 
