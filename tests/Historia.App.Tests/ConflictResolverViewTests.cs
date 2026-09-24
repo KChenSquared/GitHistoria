@@ -1011,6 +1011,19 @@ public class ConflictResolverViewTests : IDisposable
         public Task<IReadOnlyList<ConflictFile>> GetConflictsAsync(RepositoryContext context, CancellationToken ct = default)
             => Task.FromResult(Conflicts);
 
+        public string? DiskHash { get; set; }
+        public int GetDiskHashCalls { get; set; }
+
+        public Task<string> GetDiskHashAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
+        {
+            GetDiskHashCalls++;
+            if (DiskHash != null)
+                return Task.FromResult(DiskHash);
+            if (WorkingCopies.TryGetValue(filePath, out var copy))
+                return Task.FromResult(copy.DiskHash);
+            return Task.FromResult("default-hash");
+        }
+
         public Task<ConflictWorkingCopy> LoadWorkingCopyAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
         {
             if (WorkingCopies.TryGetValue(filePath, out var copy))

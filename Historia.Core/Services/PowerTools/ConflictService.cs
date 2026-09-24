@@ -37,9 +37,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         var info = new FileInfo(full);
         if (info.Length > MaxWorkingCopyBytes)
         {
-            await using var stream = File.OpenRead(full);
-            var hashBytes = await SHA256.HashDataAsync(stream, ct).ConfigureAwait(false);
-            var largeHash = Convert.ToHexStringLower(hashBytes);
+            var largeHash = await HashFileAsync(full, ct).ConfigureAwait(false);
             return new ConflictWorkingCopy
             {
                 Path = filePath,
@@ -91,6 +89,9 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         };
     }
 
+    public Task<string> GetDiskHashAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
+        => HashFileAsync(Path.Combine(context.RepositoryPath, filePath), ct);
+
     public async Task<ResolutionSaveResult> SaveResolutionAsync(
         RepositoryContext context,
         string filePath,
@@ -103,10 +104,14 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         using var _ = context.BeginSelfOperation();
         var full = Path.Combine(context.RepositoryPath, filePath);
 
-        byte[] currentBytes = File.Exists(full)
-            ? await File.ReadAllBytesAsync(full, ct).ConfigureAwait(false)
-            : [];
-        var currentHash = Convert.ToHexStringLower(SHA256.HashData(currentBytes));
+        if (Directory.Exists(full))
+        {
+            throw new HistoriaGitException(GitErrorKind.Unknown, $"'{filePath}' is a directory (submodule) and cannot be saved as text.");
+        }
+
+        var currentHash = File.Exists(full)
+            ? Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(full, ct).ConfigureAwait(false)))
+            : string.Empty;
 
         if (!string.Equals(currentHash, expectedDiskHash, StringComparison.OrdinalIgnoreCase))
         {
@@ -130,6 +135,16 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         }
 
         return new ResolutionSaveResult { Saved = true, DiskHash = newHash };
+    }
+
+    private static async Task<string> HashFileAsync(string fullPath, CancellationToken ct)
+    {
+        if (!File.Exists(fullPath) || Directory.Exists(fullPath))
+            return string.Empty;
+
+        await using var stream = File.OpenRead(fullPath);
+        var hashBytes = await SHA256.HashDataAsync(stream, ct).ConfigureAwait(false);
+        return Convert.ToHexStringLower(hashBytes);
     }
 
     public async Task ResolveWithSideAsync(RepositoryContext context, string filePath, ConflictSide side, CancellationToken ct = default)
@@ -514,7 +529,11 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             ExtraEnvironment = env,
         }, ct).ConfigureAwait(false);
 
-        if (!result.IsSuccess && result.ErrorKind != GitErrorKind.MergeConflict)
+        var isConflict = result.ErrorKind == GitErrorKind.MergeConflict
+            || GitErrorClassifier.Classify(result.ExitCode, $"{result.StandardOutput}\n{result.StandardError}") == GitErrorKind.MergeConflict
+            || await context.WithRepositoryAsync(HasUnmergedPaths, ct).ConfigureAwait(false);
+
+        if (!result.IsSuccess && !isConflict)
             throw HistoriaGitException.FromCli(result, $"{verb} {action}");
 
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);

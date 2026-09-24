@@ -15,8 +15,15 @@ public interface IConflictService
     /// and inspecting conflict-marker-size attribute.</summary>
     Task<ConflictWorkingCopy> LoadWorkingCopyAsync(RepositoryContext context, string filePath, CancellationToken ct = default);
 
+    /// <summary>Computes the on-disk SHA-256 hash for a working-tree path without loading or decoding content.
+    /// Returns <see cref="string.Empty"/> if the file is missing or is a directory (matching the
+    /// <see cref="ConflictWorkingCopy.DiskHash"/> convention). Equals the hash returned by
+    /// <see cref="LoadWorkingCopyAsync"/> for the same bytes.</summary>
+    Task<string> GetDiskHashAsync(RepositoryContext context, string filePath, CancellationToken ct = default);
+
     /// <summary>Writes resolved content and optionally stages it, verifying the current on-disk hash
-    /// against <paramref name="expectedDiskHash"/> before writing (compare-before-write).</summary>
+    /// against <paramref name="expectedDiskHash"/> before writing (compare-before-write).
+    /// If the file was missing when loaded, <paramref name="expectedDiskHash"/> should be <see cref="string.Empty"/>.</summary>
     Task<ResolutionSaveResult> SaveResolutionAsync(RepositoryContext context, string filePath, string text, TextFileFormat format, string expectedDiskHash, bool stage, CancellationToken ct = default);
 
     /// <summary>Resolves a path by taking one side wholesale, including submodule and delete cases.</summary>

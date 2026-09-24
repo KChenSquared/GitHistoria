@@ -736,5 +736,160 @@ public class ConflictServiceTests
         Assert.True(copy.ExceedsBudget);
         Assert.Equal(expectedHash, copy.DiskHash);
     }
+
+    [Fact]
+    public async Task SaveResolution_recreates_missing_file_when_expected_hash_is_empty()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var fullPath = Path.Combine(repoDir.Path, "f.txt");
+        File.Delete(fullPath);
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        Assert.Equal(string.Empty, copy.DiskHash);
+
+        var res = await svc.SaveResolutionAsync(ctx, "f.txt", "recreated content\n", new TextFileFormat(Encoding.UTF8, false), expectedDiskHash: "", stage: false);
+        Assert.True(res.Saved);
+        Assert.True(File.Exists(fullPath));
+        Assert.Equal("recreated content\n", await File.ReadAllTextAsync(fullPath));
+    }
+
+    [Fact]
+    public async Task SaveResolution_refuses_when_file_appeared_after_load_as_missing()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var fullPath = Path.Combine(repoDir.Path, "f.txt");
+        File.Delete(fullPath);
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        Assert.Equal(string.Empty, copy.DiskHash);
+
+        await File.WriteAllTextAsync(fullPath, "appeared externally\n");
+
+        var res = await svc.SaveResolutionAsync(ctx, "f.txt", "resolution\n", new TextFileFormat(Encoding.UTF8, false), expectedDiskHash: "", stage: false);
+        Assert.False(res.Saved);
+        Assert.NotEqual(string.Empty, res.DiskHash);
+    }
+
+    [Fact]
+    public async Task SaveResolution_refuses_directory_path()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var subDir = Path.Combine(repoDir.Path, "sub");
+        Directory.CreateDirectory(subDir);
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() =>
+            svc.SaveResolutionAsync(ctx, "sub", "content", new TextFileFormat(Encoding.UTF8, false), "", stage: false));
+        Assert.Equal(GitErrorKind.Unknown, ex.Kind);
+        Assert.Contains("is a directory (submodule) and cannot be saved as text.", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetDiskHash_matches_LoadWorkingCopy_DiskHash()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        // 1. Existing file
+        var existingCopy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        var existingHash = await svc.GetDiskHashAsync(ctx, "f.txt");
+        Assert.False(string.IsNullOrEmpty(existingHash));
+        Assert.Equal(existingCopy.DiskHash, existingHash);
+
+        // 2. Missing file
+        var missingCopy = await svc.LoadWorkingCopyAsync(ctx, "nonexistent.txt");
+        var missingHash = await svc.GetDiskHashAsync(ctx, "nonexistent.txt");
+        Assert.Equal(string.Empty, missingCopy.DiskHash);
+        Assert.Equal(string.Empty, missingHash);
+
+        // 3. Over-budget file (> 5MB)
+        int size = (5 * 1024 * 1024) + 1024;
+        var bytes = new byte[size];
+        for (int i = 0; i < bytes.Length; i++)
+            bytes[i] = (byte)(i % 251);
+        await File.WriteAllBytesAsync(Path.Combine(repoDir.Path, "large.txt"), bytes);
+
+        var largeCopy = await svc.LoadWorkingCopyAsync(ctx, "large.txt");
+        var largeHash = await svc.GetDiskHashAsync(ctx, "large.txt");
+        Assert.True(largeCopy.ExceedsBudget);
+        Assert.Equal(largeCopy.DiskHash, largeHash);
+    }
+
+    [Fact]
+    public async Task Continue_Skip_Abort_refresh_state_themselves()
+    {
+        await using var host = new MiniHost();
+        var svc = Make(host);
+
+        // 1. Rebase fixture for Skip and Continue
+        {
+            using var repoDir = TestRepositoryBuilder.Create();
+            repoDir.WriteFile("f1.txt", "base1\n").WriteFile("f2.txt", "base2\n").Stage().Commit("base");
+
+            repoDir.Checkout("feature", create: true);
+            repoDir.WriteFile("f1.txt", "feature1\n").Stage().Commit("conflict1");
+            repoDir.WriteFile("f2.txt", "feature2\n").Stage().Commit("conflict2");
+
+            repoDir.Checkout("main");
+            repoDir.WriteFile("f1.txt", "main1\n").WriteFile("f2.txt", "main2\n").Stage().Commit("main changes");
+
+            repoDir.Checkout("feature");
+            try { repoDir.Git("rebase", "main"); } catch { }
+
+            await using var ctx = host.Open(repoDir.Path);
+            ctx.MarkFirstGraphPaintDone();
+            ctx.MarkFirstFullLoadDone();
+            await ctx.State.RefreshAllAsync(ctx.Lifetime);
+
+            Assert.Equal(OperationState.Rebasing, ctx.State.PendingOperation);
+            Assert.Contains(ctx.State.Status.Conflicted, c => c.Path == "f1.txt");
+
+            // Skip current commit (conflict1). Must refresh state automatically.
+            await svc.SkipCurrentAsync(ctx);
+
+            Assert.Equal(OperationState.Rebasing, ctx.State.PendingOperation);
+            Assert.Contains(ctx.State.Status.Conflicted, c => c.Path == "f2.txt");
+
+            // Resolve f2.txt and Continue. Must refresh state automatically.
+            var copy = await svc.LoadWorkingCopyAsync(ctx, "f2.txt");
+            await svc.SaveResolutionAsync(ctx, "f2.txt", "resolved f2\n", copy.Format ?? default, copy.DiskHash, stage: true);
+
+            await svc.ContinueOperationAsync(ctx);
+
+            Assert.Equal(OperationState.None, ctx.State.PendingOperation);
+            Assert.Empty(ctx.State.Status.Conflicted);
+        }
+
+        // 2. Merge fixture for Abort
+        {
+            using var repoDir = ConflictedRepo();
+            await using var ctx = host.Open(repoDir.Path);
+            ctx.MarkFirstGraphPaintDone();
+            ctx.MarkFirstFullLoadDone();
+            await ctx.State.RefreshAllAsync(ctx.Lifetime);
+
+            Assert.Equal(OperationState.Merging, ctx.State.PendingOperation);
+            Assert.NotEmpty(ctx.State.Status.Conflicted);
+
+            // Abort. Must refresh state automatically.
+            await svc.AbortOperationAsync(ctx);
+
+            Assert.Equal(OperationState.None, ctx.State.PendingOperation);
+            Assert.Empty(ctx.State.Status.Conflicted);
+        }
+    }
 }
 
