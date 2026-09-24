@@ -575,8 +575,12 @@ public class ConflictResolverViewTests : IDisposable
     [AvaloniaFact]
     public async Task Take_theirs_confirmed_on_dirty_buffer_reloads_and_unregisters_unsaved()
     {
-        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.Conflicts = [
+            new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false },
+            new ConflictFile { FilePath = "g.txt", Status = ConflictStatus.BothModified, IsBinary = false }
+        ];
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.WorkingCopies["g.txt"] = new ConflictWorkingCopy { Path = "g.txt", Text = "g text", DiskHash = "hash-g" };
 
         var view = new ConflictResolverView(_sp, _context);
         await view.LoadAsync();
@@ -586,13 +590,13 @@ public class ConflictResolverViewTests : IDisposable
         Assert.True(view.HasUnsavedWork);
 
         _dialogs.ConfirmDestructiveResult = true;
-        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "reloaded text", DiskHash = "hash-reloaded" };
 
         await view.TakeTheirsCurrentAsync();
         Dispatcher.UIThread.RunJobs();
 
         Assert.False(view.HasUnsavedWork);
-        Assert.Equal("reloaded text", view.ResultEditorForTesting.Text);
+        Assert.Equal("g.txt", view.CurrentFileForTesting?.FilePath);
+        Assert.Equal("g text", view.ResultEditorForTesting.Text);
     }
 
     [AvaloniaFact]
@@ -689,7 +693,7 @@ public class ConflictResolverViewTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task Resolved_file_stays_in_list_with_checkmark()
+    public async Task Resolver_has_no_file_list()
     {
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
@@ -698,10 +702,150 @@ public class ConflictResolverViewTests : IDisposable
         await view.LoadAsync();
         Dispatcher.UIThread.RunJobs();
 
+        Assert.Empty(view.GetLogicalDescendants().OfType<ListBox>());
+    }
+
+    [AvaloniaFact]
+    public async Task Setting_SelectedConflictPath_switches_file()
+    {
+        _conflicts.Conflicts = [
+            new ConflictFile { FilePath = "fileA.txt", Status = ConflictStatus.BothModified, IsBinary = false },
+            new ConflictFile { FilePath = "fileB.txt", Status = ConflictStatus.BothModified, IsBinary = false }
+        ];
+        _conflicts.WorkingCopies["fileA.txt"] = new ConflictWorkingCopy { Path = "fileA.txt", Text = "TEXT A", DiskHash = "hashA" };
+        _conflicts.WorkingCopies["fileB.txt"] = new ConflictWorkingCopy { Path = "fileB.txt", Text = "TEXT B", DiskHash = "hashB" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("fileA.txt", view.CurrentFileForTesting?.FilePath);
+        Assert.Equal("TEXT A", view.ResultEditorForTesting.Text);
+
+        _context.State.SetSelectedConflictPath("fileB.txt");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("fileB.txt", view.CurrentFileForTesting?.FilePath);
+        Assert.Equal("TEXT B", view.ResultEditorForTesting.Text);
+    }
+
+    [AvaloniaFact]
+    public async Task Selecting_other_path_with_unsaved_edits_prompts_and_cancel_restores_selection()
+    {
+        _conflicts.Conflicts = [
+            new ConflictFile { FilePath = "fileA.txt", Status = ConflictStatus.BothModified, IsBinary = false },
+            new ConflictFile { FilePath = "fileB.txt", Status = ConflictStatus.BothModified, IsBinary = false }
+        ];
+        _conflicts.WorkingCopies["fileA.txt"] = new ConflictWorkingCopy { Path = "fileA.txt", Text = "TEXT A", DiskHash = "hashA" };
+        _conflicts.WorkingCopies["fileB.txt"] = new ConflictWorkingCopy { Path = "fileB.txt", Text = "TEXT B", DiskHash = "hashB" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("fileA.txt", view.CurrentFileForTesting?.FilePath);
+
+        view.ResultEditorForTesting.Text = "unsaved edits";
+        Assert.True(view.HasUnsavedWork);
+
+        _dialogs.ChooseResult = -1; // Cancel
+
+        _context.State.SetSelectedConflictPath("fileB.txt");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(_dialogs.ChooseCalls);
+        Assert.Equal("fileA.txt", view.CurrentFileForTesting?.FilePath);
+        Assert.Equal("fileA.txt", _context.State.SelectedConflictPath);
+    }
+
+    [AvaloniaFact]
+    public async Task Resolving_a_file_advances_to_next_conflict_and_publishes_its_path()
+    {
+        _conflicts.Conflicts = [
+            new ConflictFile { FilePath = "fileA.txt", Status = ConflictStatus.BothModified, IsBinary = false },
+            new ConflictFile { FilePath = "fileB.txt", Status = ConflictStatus.BothModified, IsBinary = false }
+        ];
+        _conflicts.WorkingCopies["fileA.txt"] = new ConflictWorkingCopy { Path = "fileA.txt", Text = "TEXT A", DiskHash = "hashA" };
+        _conflicts.WorkingCopies["fileB.txt"] = new ConflictWorkingCopy { Path = "fileB.txt", Text = "TEXT B", DiskHash = "hashB" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("fileA.txt", view.CurrentFileForTesting?.FilePath);
+        Assert.Equal("fileA.txt", _context.State.SelectedConflictPath);
+
         await view.SaveCurrentFileAsync(stage: true);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Contains("✓", view.FileListBoxForTesting.Items.Cast<object>().First().ToString());
+        Assert.Equal("fileB.txt", view.CurrentFileForTesting?.FilePath);
+        Assert.Equal("fileB.txt", _context.State.SelectedConflictPath);
+    }
+
+    [AvaloniaFact]
+    public async Task Resolving_last_file_shows_all_resolved_card_not_editor()
+    {
+        _conflicts.Conflicts = [
+            new ConflictFile { FilePath = "fileA.txt", Status = ConflictStatus.BothModified, IsBinary = false }
+        ];
+        _conflicts.WorkingCopies["fileA.txt"] = new ConflictWorkingCopy { Path = "fileA.txt", Text = "TEXT A", DiskHash = "hashA" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("fileA.txt", view.CurrentFileForTesting?.FilePath);
+
+        await view.SaveCurrentFileAsync(stage: true);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(view.CurrentFileForTesting);
+        Assert.Null(_context.State.SelectedConflictPath);
+        Assert.IsType<StackPanel>(view.EditorAreaForTesting.Content);
+        var card = (StackPanel)view.EditorAreaForTesting.Content;
+        Assert.Contains(card.Children.OfType<TextBlock>(), tb => tb.Text?.Contains("All conflicts resolved") == true);
+    }
+
+    [AvaloniaFact]
+    public async Task Rapid_switch_A_then_B_ends_on_B()
+    {
+        var tcsA = new TaskCompletionSource<bool>();
+        _conflicts.Conflicts = [
+            new ConflictFile { FilePath = "a.txt", Status = ConflictStatus.BothModified, IsBinary = false },
+            new ConflictFile { FilePath = "b.txt", Status = ConflictStatus.BothModified, IsBinary = false }
+        ];
+        _conflicts.WorkingCopies["a.txt"] = new ConflictWorkingCopy { Path = "a.txt", Text = "TEXT A", DiskHash = "hashA" };
+        _conflicts.WorkingCopies["b.txt"] = new ConflictWorkingCopy { Path = "b.txt", Text = "TEXT B", DiskHash = "hashB" };
+
+        _conflicts.OnLoadWorkingCopyAsync = async (path, ct) =>
+        {
+            if (path == "a.txt")
+            {
+                await tcsA.Task;
+            }
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        // Start switch to A
+        _context.State.SetSelectedConflictPath("a.txt");
+        Dispatcher.UIThread.RunJobs();
+
+        // While A is waiting on tcsA, switch to B
+        _context.State.SetSelectedConflictPath("b.txt");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("b.txt", view.CurrentFileForTesting?.FilePath);
+        Assert.Equal("TEXT B", view.ResultEditorForTesting.Text);
+        Assert.Equal("b.txt", _context.State.SelectedConflictPath);
+
+        // Now release A
+        tcsA.SetResult(true);
+        Dispatcher.UIThread.RunJobs();
+
+        // State remains B!
+        Assert.Equal("b.txt", view.CurrentFileForTesting?.FilePath);
+        Assert.Equal("TEXT B", view.ResultEditorForTesting.Text);
+        Assert.Equal("b.txt", _context.State.SelectedConflictPath);
     }
 
     [AvaloniaFact]
@@ -859,7 +1003,7 @@ public class ConflictResolverViewTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task Next_stop_resets_resolved_paths_and_labels()
+    public async Task Next_stop_updates_labels()
     {
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
@@ -869,18 +1013,13 @@ public class ConflictResolverViewTests : IDisposable
         await view.LoadAsync();
         Dispatcher.UIThread.RunJobs();
 
-        await view.SaveCurrentFileAsync(stage: true);
-        Dispatcher.UIThread.RunJobs();
-        Assert.Contains("✓", view.FileListBoxForTesting.Items.Cast<object>().First().ToString());
-
         // Advance stop
         _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-2", OursTitle = "Ours2", TheirsTitle = "Theirs2" };
         await _context.State.RefreshStatusAsync();
         await Task.Delay(50);
         Dispatcher.UIThread.RunJobs();
 
-        // Checkmark should be cleared since _resolvedPaths was reset
-        Assert.DoesNotContain("✓", view.FileListBoxForTesting.Items.Cast<object>().First().ToString());
+        Assert.Equal("Ours: Ours2", view.GetLogicalDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Text?.StartsWith("Ours:") == true)?.Text);
     }
 
     [AvaloniaFact]
@@ -900,6 +1039,7 @@ public class ConflictResolverViewTests : IDisposable
 
         // Advance to stop 2, where f.txt is conflicted again
         _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-2" };
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash2" };
         await _context.State.RefreshStatusAsync();
         await Task.Delay(50);
@@ -1298,6 +1438,8 @@ public class ConflictResolverViewTests : IDisposable
         public ResolutionSaveResult SaveResult { get; set; } = new() { Saved = true, DiskHash = "saved-hash" };
         public Func<Task>? OnBeforeSaveAsync { get; set; }
         public Func<Task>? OnContinueAsync { get; set; }
+        public Func<string, CancellationToken, Task>? OnLoadWorkingCopyAsync { get; set; }
+        public bool AutoRemoveResolvedConflicts { get; set; } = true;
         public List<(string FilePath, string Text, bool Stage)> SaveResolutionCalls { get; } = [];
         public int ContinueCalls { get; set; }
         public int AbortCalls { get; set; }
@@ -1321,17 +1463,20 @@ public class ConflictResolverViewTests : IDisposable
             return Task.FromResult("default-hash");
         }
 
-        public Task<ConflictWorkingCopy> LoadWorkingCopyAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
+        public async Task<ConflictWorkingCopy> LoadWorkingCopyAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
         {
-            if (WorkingCopies.TryGetValue(filePath, out var copy))
-                return Task.FromResult(copy);
+            if (OnLoadWorkingCopyAsync != null)
+                await OnLoadWorkingCopyAsync(filePath, ct);
 
-            return Task.FromResult(new ConflictWorkingCopy
+            if (WorkingCopies.TryGetValue(filePath, out var copy))
+                return copy;
+
+            return new ConflictWorkingCopy
             {
                 Path = filePath,
                 Text = "",
                 DiskHash = "default-hash"
-            });
+            };
         }
 
         public async Task<ResolutionSaveResult> SaveResolutionAsync(RepositoryContext context, string filePath, string text, TextFileFormat format, string expectedDiskHash, bool stage, CancellationToken ct = default)
@@ -1340,18 +1485,33 @@ public class ConflictResolverViewTests : IDisposable
             if (OnBeforeSaveAsync != null)
                 await OnBeforeSaveAsync();
 
+            if (stage && AutoRemoveResolvedConflicts && SaveResult.Saved)
+            {
+                Conflicts = Conflicts.Where(c => !string.Equals(c.FilePath, filePath, StringComparison.Ordinal)).ToList();
+            }
+
             return SaveResult;
         }
 
         public Task ResolveWithSideAsync(RepositoryContext context, string filePath, ConflictSide side, CancellationToken ct = default)
         {
             ResolvedWithSideCalls.Add((filePath, side));
+            if (AutoRemoveResolvedConflicts)
+            {
+                Conflicts = Conflicts.Where(c => !string.Equals(c.FilePath, filePath, StringComparison.Ordinal)).ToList();
+            }
             return Task.CompletedTask;
         }
 
         public Task RecreateConflictAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
         {
             RecreatedCalls.Add(filePath);
+            if (AutoRemoveResolvedConflicts && !Conflicts.Any(c => string.Equals(c.FilePath, filePath, StringComparison.Ordinal)))
+            {
+                var list = Conflicts.ToList();
+                list.Add(new ConflictFile { FilePath = filePath, Status = ConflictStatus.BothModified, IsBinary = false });
+                Conflicts = list;
+            }
             return Task.CompletedTask;
         }
 

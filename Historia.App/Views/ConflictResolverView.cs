@@ -29,22 +29,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
     }
 
-    internal sealed class ConflictFileListItem
-    {
-        public string Title { get; }
-        public ConflictFile File { get; }
-        public bool IsResolved { get; }
-
-        public ConflictFileListItem(string title, ConflictFile file, bool isResolved)
-        {
-            Title = title;
-            File = file;
-            IsResolved = isResolved;
-        }
-
-        public override string ToString() => Title;
-    }
-
     private sealed class ConflictUnsavedWork : IUnsavedWork
     {
         private readonly ConflictResolverView _owner;
@@ -73,10 +57,10 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private readonly CancellationTokenSource _viewCts = new();
     private CancellationTokenSource? _debounceCts;
+    private CancellationTokenSource? _switchCts;
+    private int _switchGeneration;
 
-    private readonly ListBox _fileListBox = new();
     private readonly List<ConflictFile> _conflictedFiles = [];
-    private readonly HashSet<string> _resolvedPaths = new(StringComparer.Ordinal);
     private ConflictFile? _currentFile;
     private ConflictWorkingCopy? _workingCopy;
     private string? _diskHash;
@@ -119,7 +103,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private readonly List<Button> _actionButtons = [];
     private readonly List<Button> _dynamicActionButtons = [];
-    private bool _syncingListSelection;
 
     private Button ActionButton(string text, Action onClick, bool primary = false)
     {
@@ -186,7 +169,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     internal Border ChangedOnDiskBannerForTesting => _changedOnDiskBanner;
     internal ConflictParse? CurrentParseForTesting => _parse;
     internal ConflictFile? CurrentFileForTesting => _currentFile;
-    internal ListBox FileListBoxForTesting => _fileListBox;
     internal IReadOnlyList<ConflictFile> ConflictedFilesForTesting => _conflictedFiles;
     internal ContentControl EditorAreaForTesting => _editorArea;
 
@@ -340,19 +322,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _editorOverlay.Children.Add(_floatingRegionBox);
         _editorArea.Content = _editorOverlay;
 
-        // File list on left
-        _fileListBox.ItemTemplate = new FuncDataTemplate<ConflictFileListItem>((item, _) =>
-        {
-            if (item == null) return null;
-            return Text($"{item.Title} ({item.File.Status})", item.IsResolved ? "ColorSuccess" : "ColorText", 12);
-        });
-        _fileListBox.SelectionChanged += OnFileListSelectionChanged;
-        var leftPanel = new DockPanel { Width = 260, Margin = new Thickness(6) };
-        var leftHeader = Text("Conflicted Files", "ColorText", 12, FontWeight.SemiBold);
-        DockPanel.SetDock(leftHeader, Dock.Top);
-        leftPanel.Children.Add(leftHeader);
-        leftPanel.Children.Add(_fileListBox);
-
         // Main header & banner container
         var rightTop = new StackPanel { Spacing = 4, Margin = new Thickness(12, 6) };
         var labelsGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*") };
@@ -373,31 +342,11 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         rightDock.Children.Add(rightTop);
         rightDock.Children.Add(_editorArea);
 
-        var rootGrid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*"),
-        };
-        Grid.SetColumn(leftPanel, 0);
-        var vSplitter = new GridSplitter
-        {
-            Width = 3,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            Background = Brushes.Transparent,
-            Focusable = false,
-        };
-        vSplitter.Dyn(Border.BorderBrushProperty, "ColorBorder");
-        Grid.SetColumn(vSplitter, 1);
-        Grid.SetColumn(rightDock, 2);
-
-        rootGrid.Children.Add(leftPanel);
-        rootGrid.Children.Add(vSplitter);
-        rootGrid.Children.Add(rightDock);
-
-        Content = rootGrid;
+        Content = rightDock;
         this.Dyn(BackgroundProperty, "ColorBg");
 
         _ctx.State.StatusChanged += OnStatusChanged;
+        _ctx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
         _ = LoadAsync();
     }
 
@@ -420,11 +369,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 ToolTip.SetTip(_headerOurs, labels.OursDetail);
                 ToolTip.SetTip(_headerTheirs, labels.TheirsDetail);
 
-                if (stopChanged)
-                {
-                    _resolvedPaths.Clear();
-                }
-
                 var op = _ctx.State.PendingOperation;
                 if (op == OperationState.None)
                 {
@@ -438,8 +382,11 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                     _skipBtn.IsVisible = op is OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
                 }
 
-                await RefreshFileListAsync();
+                await RefreshConflictsAsync();
                 await CheckExternalDiskChangeAsync();
+
+                bool currentStillConflicted = _currentFile != null &&
+                    _conflictedFiles.Any(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
 
                 if (stopChanged)
                 {
@@ -449,14 +396,36 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                     }
                     else
                     {
-                        if (_currentFile != null && _conflictedFiles.Any(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal)))
+                        if (currentStillConflicted)
                         {
-                            var matching = _conflictedFiles.First(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
+                            var matching = _conflictedFiles.First(f => string.Equals(f.FilePath, _currentFile!.FilePath, StringComparison.Ordinal));
                             await SwitchToFileAsync(matching);
                         }
                         else if (_conflictedFiles.Count > 0)
                         {
                             await SwitchToFileAsync(_conflictedFiles[0]);
+                        }
+                        else
+                        {
+                            ShowAllConflictsResolvedCard();
+                        }
+                    }
+                }
+                else if (!currentStillConflicted)
+                {
+                    if (HasUnsavedWork)
+                    {
+                        _changedOnDiskBanner.IsVisible = true;
+                    }
+                    else
+                    {
+                        if (_conflictedFiles.Count > 0)
+                        {
+                            await SwitchToFileAsync(_conflictedFiles[0]);
+                        }
+                        else
+                        {
+                            ShowAllConflictsResolvedCard();
                         }
                     }
                 }
@@ -466,6 +435,52 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             {
                 _notifications.Publish(NotificationSeverity.Error, ex.Message);
             }
+        });
+    }
+
+    private void OnSelectedConflictPathChanged(object? sender, SelectedConflictPathChangedEventArgs e)
+    {
+        Dispatcher.UIThread.Post(async () =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            var path = e.Path;
+            if (string.IsNullOrEmpty(path))
+            {
+                return;
+            }
+
+            if (_currentFile != null && string.Equals(_currentFile.FilePath, path, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
+            if (target == null)
+            {
+                await RefreshConflictsAsync();
+                target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
+                if (target == null)
+                {
+                    return;
+                }
+            }
+
+            if (HasUnsavedWork)
+            {
+                var work = _unsavedRegistry?.For(_ctx) ?? [new ConflictUnsavedWork(this, _ctx, _currentFile?.FilePath ?? "")];
+                var proceed = await UnsavedWorkPrompt.ResolveAsync(work, _dialogs);
+                if (!proceed)
+                {
+                    _ctx.State.SetSelectedConflictPath(_currentFile?.FilePath);
+                    return;
+                }
+            }
+
+            await SwitchToFileAsync(target);
         });
     }
 
@@ -495,16 +510,24 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 _skipBtn.IsVisible = op is OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
             }
 
-            await RefreshFileListAsync();
+            await RefreshConflictsAsync();
 
-            if (_conflictedFiles.Count > 0 && (_currentFile == null || !_conflictedFiles.Any(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal))))
+            if (_conflictedFiles.Count == 0)
+            {
+                ShowAllConflictsResolvedCard();
+            }
+            else if (_currentFile == null || !_conflictedFiles.Any(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal)))
             {
                 if (!HasUnsavedWork)
                 {
-                    await SwitchToFileAsync(_conflictedFiles[0]);
+                    var initialPath = _ctx.State.SelectedConflictPath;
+                    var initialFile = initialPath != null
+                        ? _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, initialPath, StringComparison.Ordinal)) ?? _conflictedFiles[0]
+                        : _conflictedFiles[0];
+                    await SwitchToFileAsync(initialFile);
                 }
             }
-            else if (_currentFile != null && _conflictedFiles.Any(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal)))
+            else
             {
                 _currentFile = _conflictedFiles.First(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
             }
@@ -516,100 +539,32 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
     }
 
-    private async Task RefreshFileListAsync()
+    private async Task RefreshConflictsAsync()
     {
         var files = await _conflicts.GetConflictsAsync(_ctx, _viewCts.Token);
-        var fileDict = files.ToDictionary(f => f.FilePath, StringComparer.Ordinal);
-        var previousDict = _conflictedFiles.ToDictionary(f => f.FilePath, StringComparer.Ordinal);
-        var merged = new List<ConflictFile>(files);
-        foreach (var path in _resolvedPaths)
-        {
-            if (!fileDict.ContainsKey(path))
-            {
-                if (previousDict.TryGetValue(path, out var prev))
-                {
-                    merged.Add(prev);
-                }
-                else
-                {
-                    merged.Add(new ConflictFile { FilePath = path, Status = ConflictStatus.BothModified, IsBinary = false });
-                }
-            }
-        }
-
         _conflictedFiles.Clear();
-        _conflictedFiles.AddRange(merged);
+        _conflictedFiles.AddRange(files);
 
-        var listItems = new List<ConflictFileListItem>();
-        foreach (var file in _conflictedFiles)
-        {
-            var isResolved = _resolvedPaths.Contains(file.FilePath);
-            var title = isResolved ? $"✓ {file.FilePath}" : file.FilePath;
-            listItems.Add(new ConflictFileListItem(title, file, isResolved));
-        }
-
-        _fileListBox.ItemsSource = listItems;
-
-        _syncingListSelection = true;
-        try
-        {
-            var selectedIndex = -1;
-            if (_currentFile != null)
-            {
-                selectedIndex = _conflictedFiles.FindIndex(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
-            }
-            _fileListBox.SelectedIndex = selectedIndex;
-        }
-        finally
-        {
-            _syncingListSelection = false;
-        }
-
-        _headerTitle.Text = _conflictedFiles.Count == 0 || _conflictedFiles.All(f => _resolvedPaths.Contains(f.FilePath))
+        _headerTitle.Text = _conflictedFiles.Count == 0
             ? "All conflicts resolved — you can continue the operation."
-            : $"{_conflictedFiles.Count(f => !_resolvedPaths.Contains(f.FilePath))} conflicted file(s)";
+            : $"{_conflictedFiles.Count} conflicted file(s)";
     }
 
-    private async void OnFileListSelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
+    private void ShowAllConflictsResolvedCard()
     {
-        if (_syncingListSelection)
-        {
-            return;
-        }
-
-        int index = _fileListBox.SelectedIndex;
-        if (index < 0 || index >= _conflictedFiles.Count)
-        {
-            return;
-        }
-
-        var nextFile = _conflictedFiles[index];
-        if (_currentFile != null && string.Equals(_currentFile.FilePath, nextFile.FilePath, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        if (HasUnsavedWork)
-        {
-            var work = _unsavedRegistry?.For(_ctx) ?? [new ConflictUnsavedWork(this, _ctx, _currentFile?.FilePath ?? "")];
-            var proceed = await UnsavedWorkPrompt.ResolveAsync(work, _dialogs);
-            if (!proceed)
-            {
-                // Revert selection
-                _syncingListSelection = true;
-                try
-                {
-                    _fileListBox.SelectedIndex = _conflictedFiles.FindIndex(f => string.Equals(f.FilePath, _currentFile?.FilePath, StringComparison.Ordinal));
-                }
-                finally
-                {
-                    _syncingListSelection = false;
-                }
-                return;
-            }
-        }
-
-        await SwitchToFileAsync(nextFile);
+        _dynamicActionButtons.Clear();
+        _currentFile = null;
+        _workingCopy = null;
+        _diskHash = null;
+        _resultEditor.Text = string.Empty;
+        _oursEditor.Text = string.Empty;
+        _theirsEditor.Text = string.Empty;
+        _headerTitle.Text = "All conflicts resolved — you can continue the operation.";
+        var card = new StackPanel { Spacing = 10, Margin = new Thickness(24) };
+        card.Children.Add(Text("✓ All conflicts resolved", "ColorSuccess", 14, FontWeight.Bold));
+        card.Children.Add(Text("You can continue the operation using the Continue button above.", "ColorTextMuted", 12));
+        _editorArea.Content = card;
+        _ctx.State.SetSelectedConflictPath(null);
     }
 
     /// <summary>
@@ -618,38 +573,60 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     /// </summary>
     private async Task SwitchToFileAsync(ConflictFile file)
     {
+        int gen = ++_switchGeneration;
+        _switchCts?.Cancel();
+        _switchCts?.Dispose();
+        _switchCts = CancellationTokenSource.CreateLinkedTokenSource(_viewCts.Token);
+        var ct = _switchCts.Token;
+
+        ConflictWorkingCopy copy;
+        try
+        {
+            copy = await _conflicts.LoadWorkingCopyAsync(_ctx, file.FilePath, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (gen != _switchGeneration || _disposed)
+        {
+            return;
+        }
+
         _currentFile = file;
-        _workingCopy = await _conflicts.LoadWorkingCopyAsync(_ctx, file.FilePath, _viewCts.Token);
-        _diskHash = _workingCopy.DiskHash;
+        _workingCopy = copy;
+        _diskHash = copy.DiskHash;
         _oursEditor.FilePath = file.FilePath;
         _theirsEditor.FilePath = file.FilePath;
         _resultEditor.FilePath = file.FilePath;
 
-        _resultEditor.Text = _workingCopy.Text ?? string.Empty;
+        _resultEditor.Text = copy.Text ?? string.Empty;
         _resultEditor.Document.UndoStack.MarkAsOriginalFile();
         _parseVersion = _resultEditor.Document.Version;
         UnregisterUnsavedWork();
 
         bool isEditable = !file.IsBinary && !file.IsSubmodule &&
-                          !_workingCopy.IsBinary && !_workingCopy.UnsupportedEncoding &&
-                          !_workingCopy.ExceedsBudget && _workingCopy.Text != null &&
-                          !_resolvedPaths.Contains(file.FilePath);
+                          !copy.IsBinary && !copy.UnsupportedEncoding &&
+                          !copy.ExceedsBudget && copy.Text != null;
 
         if (!isEditable)
         {
-            // Show file card only
-            ShowFileLevelCard(file, _workingCopy);
-            return;
+            ShowFileLevelCard(file, copy);
         }
-
-        if (!ReferenceEquals(_editorArea.Content, _editorOverlay))
+        else
         {
-            _editorArea.Content = _editorOverlay;
+            if (!ReferenceEquals(_editorArea.Content, _editorOverlay))
+            {
+                _editorArea.Content = _editorOverlay;
+            }
+
+            _resultEditor.IsReadOnly = false;
+            UpdateConflictParseSync();
+            UpdateEditorsFromParse();
         }
 
-        _resultEditor.IsReadOnly = false;
-        UpdateConflictParseSync();
-        UpdateEditorsFromParse();
+        _ctx.State.SetSelectedConflictPath(file.FilePath);
     }
 
     private void ShowFileLevelCard(ConflictFile file, ConflictWorkingCopy copy)
@@ -670,10 +647,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         else if (copy.ExceedsBudget)
         {
             card.Children.Add(Text("File exceeds merge size budget (5 MB / 50 000 lines).", "ColorWarning", 12));
-        }
-        else if (_resolvedPaths.Contains(file.FilePath))
-        {
-            card.Children.Add(Text("✓ Marked resolved.", "ColorSuccess", 12));
         }
 
         var acts = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
@@ -1002,8 +975,17 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
             if (stage)
             {
-                _resolvedPaths.Add(_currentFile.FilePath);
-                await RefreshFileListAsync();
+                await RefreshConflictsAsync();
+                if (_conflictedFiles.Count > 0)
+                {
+                    var next = _conflictedFiles.FirstOrDefault(f => !string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal))
+                               ?? _conflictedFiles[0];
+                    await SwitchToFileAsync(next);
+                }
+                else
+                {
+                    ShowAllConflictsResolvedCard();
+                }
             }
 
             return true;
@@ -1040,16 +1022,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             }
         }
 
-        var saved = await SaveCurrentFileAsync(stage: true);
-        if (saved)
-        {
-            // Move to next conflicted file
-            var next = _conflictedFiles.FirstOrDefault(f => !_resolvedPaths.Contains(f.FilePath));
-            if (next != null)
-            {
-                await SwitchToFileAsync(next);
-            }
-        }
+        await SaveCurrentFileAsync(stage: true);
     }
 
     public async Task TakeOursCurrentAsync()
@@ -1079,10 +1052,18 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             try
             {
                 await _conflicts.ResolveWithSideAsync(_ctx, path, ConflictSide.Ours, _viewCts.Token);
-                _resolvedPaths.Add(path);
                 UnregisterUnsavedWork();
-                await RefreshFileListAsync();
-                await SwitchToFileAsync(_currentFile);
+                await RefreshConflictsAsync();
+                if (_conflictedFiles.Count > 0)
+                {
+                    var next = _conflictedFiles.FirstOrDefault(f => !string.Equals(f.FilePath, path, StringComparison.Ordinal))
+                               ?? _conflictedFiles[0];
+                    await SwitchToFileAsync(next);
+                }
+                else
+                {
+                    ShowAllConflictsResolvedCard();
+                }
             }
             finally
             {
@@ -1122,10 +1103,18 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             try
             {
                 await _conflicts.ResolveWithSideAsync(_ctx, path, ConflictSide.Theirs, _viewCts.Token);
-                _resolvedPaths.Add(path);
                 UnregisterUnsavedWork();
-                await RefreshFileListAsync();
-                await SwitchToFileAsync(_currentFile);
+                await RefreshConflictsAsync();
+                if (_conflictedFiles.Count > 0)
+                {
+                    var next = _conflictedFiles.FirstOrDefault(f => !string.Equals(f.FilePath, path, StringComparison.Ordinal))
+                               ?? _conflictedFiles[0];
+                    await SwitchToFileAsync(next);
+                }
+                else
+                {
+                    ShowAllConflictsResolvedCard();
+                }
             }
             finally
             {
@@ -1158,10 +1147,21 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         try
         {
             await _conflicts.RecreateConflictAsync(_ctx, path, _viewCts.Token);
-            _resolvedPaths.Remove(path);
             UnregisterUnsavedWork();
-            await RefreshFileListAsync();
-            await SwitchToFileAsync(_currentFile);
+            await RefreshConflictsAsync();
+            var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
+            if (target != null)
+            {
+                await SwitchToFileAsync(target);
+            }
+            else if (_conflictedFiles.Count > 0)
+            {
+                await SwitchToFileAsync(_conflictedFiles[0]);
+            }
+            else
+            {
+                ShowAllConflictsResolvedCard();
+            }
         }
         catch (Exception ex)
         {
@@ -1209,7 +1209,21 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 return;
             }
 
-            await SwitchToFileAsync(_currentFile);
+            UnregisterUnsavedWork();
+            await RefreshConflictsAsync();
+            var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
+            if (target != null)
+            {
+                await SwitchToFileAsync(target);
+            }
+            else if (_conflictedFiles.Count > 0)
+            {
+                await SwitchToFileAsync(_conflictedFiles[0]);
+            }
+            else
+            {
+                ShowAllConflictsResolvedCard();
+            }
         }
         catch (Exception ex)
         {
@@ -1471,8 +1485,11 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
         _disposed = true;
         _ctx.State.StatusChanged -= OnStatusChanged;
+        _ctx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
         _viewCts.Cancel();
         _viewCts.Dispose();
+        _switchCts?.Cancel();
+        _switchCts?.Dispose();
         _debounceCts?.Cancel();
         _debounceCts?.Dispose();
         UnregisterUnsavedWork();
