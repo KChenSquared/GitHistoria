@@ -401,10 +401,11 @@ public class ConflictResolverViewTests : IDisposable
 
         _fixture.SetOperation(OperationState.Bisecting);
         await _context.State.RefreshStatusAsync();
+        await Task.Delay(100);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(repoView.OpBoxForTesting.IsVisible);
-        Assert.False(repoView.OpContinueButtonForTesting.IsVisible);
+        Assert.False(repoView.OpContinueButtonForTesting.IsEffectivelyVisible);
 
         window.Close();
     }
@@ -603,6 +604,9 @@ public class ConflictResolverViewTests : IDisposable
         _fixture.CreateConflict();
         await _context.State.RefreshStatusAsync();
 
+        var centerHost = new ContentControl();
+        var graph = new Border();
+        var controller1 = new CenterPaneController(centerHost, graph, _conflictHost, _workspace, _sp);
         var repoView1 = new RepositoryView(_sp);
         var window = new Window { Content = repoView1 };
         window.Show();
@@ -615,6 +619,7 @@ public class ConflictResolverViewTests : IDisposable
 
         // Dispose first RepositoryView (e.g. Settings navigation)
         repoView1.Dispose();
+        controller1.Dispose();
         window.Content = null;
         Dispatcher.UIThread.RunJobs();
 
@@ -625,6 +630,7 @@ public class ConflictResolverViewTests : IDisposable
         Assert.True(cachedResolver.HasUnsavedWork);
 
         // Mount second RepositoryView
+        var controller2 = new CenterPaneController(centerHost, graph, _conflictHost, _workspace, _sp);
         var repoView2 = new RepositoryView(_sp);
         window.Content = repoView2;
         Dispatcher.UIThread.RunJobs();
@@ -632,6 +638,7 @@ public class ConflictResolverViewTests : IDisposable
         Assert.Contains("preserved edit", cachedResolver.ResultEditorForTesting.Text);
         Assert.True(cachedResolver.HasUnsavedWork);
 
+        controller2.Dispose();
         window.Close();
     }
 
@@ -986,6 +993,293 @@ public class ConflictResolverViewTests : IDisposable
         Assert.Equal("Keep mine", _dialogs.ConfirmDestructiveCalls[0].ConfirmLabel);
     }
 
+    [AvaloniaFact]
+    public async Task StopChange_with_unsaved_edits_keeps_text_and_shows_banner()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        view.ResultEditorForTesting.Document.Insert(0, "unsaved edit\n");
+        Assert.True(view.HasUnsavedWork);
+
+        _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-2" };
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "different disk text", DiskHash = "hash2" };
+
+        await _context.State.RefreshStatusAsync();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains("unsaved edit", view.ResultEditorForTesting.Text);
+        Assert.True(view.ChangedOnDiskBannerForTesting.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public async Task StopChange_with_unsaved_edits_to_other_file_keeps_text()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        view.ResultEditorForTesting.Document.Insert(0, "unsaved edit in f\n");
+        Assert.True(view.HasUnsavedWork);
+
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "g.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["g.txt"] = new ConflictWorkingCopy { Path = "g.txt", Text = "g content", DiskHash = "hash-g" };
+        _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-2" };
+
+        await _context.State.RefreshStatusAsync();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains("unsaved edit in f", view.ResultEditorForTesting.Text);
+        Assert.Equal("f.txt", view.CurrentFileForTesting?.FilePath);
+        Assert.True(view.ChangedOnDiskBannerForTesting.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public async Task StopChange_without_unsaved_edits_reloads()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(view.HasUnsavedWork);
+
+        _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-2" };
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "reloaded stop 2 text", DiskHash = "hash2" };
+
+        await _context.State.RefreshStatusAsync();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("reloaded stop 2 text", view.ResultEditorForTesting.Text);
+        Assert.False(view.ChangedOnDiskBannerForTesting.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public async Task Continue_with_unsaved_edits_prompts_choice_0_saves_and_continues()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        view.ResultEditorForTesting.Document.Insert(0, "dirty\n");
+        Assert.True(view.HasUnsavedWork);
+
+        _dialogs.ChooseResult = 0; // Save & mark resolved
+        _dialogs.ConfirmResult = true; // Confirm remaining conflicts if prompted
+        _conflicts.SaveResolutionCalls.Clear();
+        _conflicts.ContinueCalls = 0;
+
+        await view.ContinueAsync();
+
+        Assert.Single(_dialogs.ChooseCalls);
+        Assert.Single(_conflicts.SaveResolutionCalls);
+        Assert.True(_conflicts.SaveResolutionCalls[0].Stage);
+        Assert.Equal(1, _conflicts.ContinueCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task Continue_with_unsaved_edits_prompts_choice_1_discards_reloads_disk_text_and_continues()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "clean disk text", DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        view.ResultEditorForTesting.Document.Insert(0, "dirty\n");
+        Assert.True(view.HasUnsavedWork);
+
+        _dialogs.ChooseResult = 1; // Discard changes
+        _conflicts.SaveResolutionCalls.Clear();
+        _conflicts.ContinueCalls = 0;
+
+        await view.ContinueAsync();
+
+        Assert.Single(_dialogs.ChooseCalls);
+        Assert.Empty(_conflicts.SaveResolutionCalls);
+        Assert.Equal("clean disk text", view.ResultEditorForTesting.Text);
+        Assert.False(view.HasUnsavedWork);
+        Assert.Equal(1, _conflicts.ContinueCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task Continue_with_unsaved_edits_prompts_choice_negative_1_cancels()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "disk text", DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        view.ResultEditorForTesting.Document.Insert(0, "dirty\n");
+        Assert.True(view.HasUnsavedWork);
+
+        _dialogs.ChooseResult = -1; // Cancel
+        _conflicts.ContinueCalls = 0;
+
+        await view.ContinueAsync();
+
+        Assert.Single(_dialogs.ChooseCalls);
+        Assert.Equal(0, _conflicts.ContinueCalls);
+        Assert.True(view.HasUnsavedWork);
+        Assert.Contains("dirty", view.ResultEditorForTesting.Text);
+    }
+
+    [AvaloniaFact]
+    public async Task Continue_discard_then_failed_continue_leaves_disk_text_in_editor()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "clean disk text", DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        view.ResultEditorForTesting.Document.Insert(0, "dirty\n");
+        Assert.True(view.HasUnsavedWork);
+
+        _dialogs.ChooseResult = 1; // Discard
+        _conflicts.OnContinueAsync = () => throw new Exception("Continue failed on git error");
+
+        await view.ContinueAsync();
+
+        Assert.Equal("clean disk text", view.ResultEditorForTesting.Text);
+        Assert.False(view.HasUnsavedWork);
+    }
+
+    [AvaloniaFact]
+    public async Task StopChange_refresh_does_not_prompt()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        view.ResultEditorForTesting.Document.Insert(0, "dirty edits\n");
+        Assert.True(view.HasUnsavedWork);
+
+        _dialogs.ChooseCalls.Clear();
+
+        // Stop change where current file drops out of the list
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "other.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["other.txt"] = new ConflictWorkingCopy { Path = "other.txt", Text = "other text", DiskHash = "hash-other" };
+        _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-2" };
+
+        await _context.State.RefreshStatusAsync();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(_dialogs.ChooseCalls);
+        Assert.Contains("dirty edits", view.ResultEditorForTesting.Text);
+        Assert.True(view.HasUnsavedWork);
+    }
+
+    [AvaloniaFact]
+    public async Task Skip_clears_unsaved_registration_on_success()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        view.ResultEditorForTesting.Document.Insert(0, "dirty\n");
+        Assert.True(view.HasUnsavedWork);
+
+        _dialogs.ConfirmDestructiveResult = true;
+        await view.SkipAsync();
+
+        Assert.False(view.HasUnsavedWork);
+        Assert.False(view.ChangedOnDiskBannerForTesting.IsVisible);
+        Assert.Equal(1, _conflicts.SkipCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task Abort_clears_unsaved_registration_on_success()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        view.ResultEditorForTesting.Document.Insert(0, "dirty\n");
+        Assert.True(view.HasUnsavedWork);
+
+        _dialogs.ConfirmDestructiveCalls.Clear();
+        _dialogs.ConfirmDestructiveResult = true;
+        _conflicts.AbortCalls = 0;
+
+        await view.AbortAsync();
+
+        Assert.False(view.HasUnsavedWork);
+        Assert.False(view.ChangedOnDiskBannerForTesting.IsVisible);
+        Assert.Equal(1, _conflicts.AbortCalls);
+        Assert.Single(_dialogs.ConfirmDestructiveCalls);
+        Assert.Contains("Conflict resolutions and unsaved edits made so far will be discarded.", _dialogs.ConfirmDestructiveCalls[0].Effect);
+    }
+
+    [AvaloniaFact]
+    public async Task Busy_disables_action_buttons_and_ignores_reentry()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var tcs = new TaskCompletionSource<bool>();
+        _conflicts.OnContinueAsync = () => tcs.Task;
+        _conflicts.ContinueCalls = 0;
+
+        var continueTask = view.ContinueAsync();
+
+        Assert.True(view.IsBusy);
+        Assert.NotEmpty(view.ActionButtonsForTesting);
+        Assert.All(view.ActionButtonsForTesting, btn => Assert.False(btn.IsEnabled));
+
+        // Re-entry calls should be ignored while busy
+        await view.ContinueAsync();
+        await view.SkipAsync();
+        await view.AbortAsync();
+        var saveResult = await view.SaveCurrentFileAsync(false);
+        Assert.False(saveResult);
+
+        Assert.Equal(1, _conflicts.ContinueCalls);
+
+        tcs.SetResult(true);
+        await continueTask;
+
+        Assert.False(view.IsBusy);
+        Assert.All(view.ActionButtonsForTesting, btn => Assert.True(btn.IsEnabled));
+    }
+
     #region Fakes
 
     internal sealed class FakeConflictService : IConflictService
@@ -1004,6 +1298,9 @@ public class ConflictResolverViewTests : IDisposable
         public ResolutionSaveResult SaveResult { get; set; } = new() { Saved = true, DiskHash = "saved-hash" };
         public Func<Task>? OnBeforeSaveAsync { get; set; }
         public Func<Task>? OnContinueAsync { get; set; }
+        public List<(string FilePath, string Text, bool Stage)> SaveResolutionCalls { get; } = [];
+        public int ContinueCalls { get; set; }
+        public int AbortCalls { get; set; }
         public List<(string Path, ConflictSide Side)> ResolvedWithSideCalls { get; } = [];
         public List<string> RecreatedCalls { get; } = [];
         public List<string> ExternalToolCalls { get; } = [];
@@ -1039,6 +1336,7 @@ public class ConflictResolverViewTests : IDisposable
 
         public async Task<ResolutionSaveResult> SaveResolutionAsync(RepositoryContext context, string filePath, string text, TextFileFormat format, string expectedDiskHash, bool stage, CancellationToken ct = default)
         {
+            SaveResolutionCalls.Add((filePath, text, stage));
             if (OnBeforeSaveAsync != null)
                 await OnBeforeSaveAsync();
 
@@ -1071,6 +1369,7 @@ public class ConflictResolverViewTests : IDisposable
 
         public async Task ContinueOperationAsync(RepositoryContext context, CancellationToken ct = default)
         {
+            ContinueCalls++;
             if (OnContinueWithTokenAsync != null)
                 await OnContinueWithTokenAsync(ct);
             else if (OnContinueAsync != null)
@@ -1084,7 +1383,10 @@ public class ConflictResolverViewTests : IDisposable
         }
 
         public Task AbortOperationAsync(RepositoryContext context, CancellationToken ct = default)
-            => Task.CompletedTask;
+        {
+            AbortCalls++;
+            return Task.CompletedTask;
+        }
     }
 
     internal sealed class FakeDialogService : IDialogService
@@ -1093,6 +1395,7 @@ public class ConflictResolverViewTests : IDisposable
         public bool ConfirmDestructiveResult { get; set; } = true;
         public int ChooseResult { get; set; } = 0;
         public List<(string Title, string Effect, string ConfirmLabel)> ConfirmDestructiveCalls { get; } = [];
+        public List<(string Title, string Message, IReadOnlyList<string> Options)> ChooseCalls { get; } = [];
 
         public Task<string?> PickFolderAsync(string title, string? initialDirectory = null) => Task.FromResult<string?>(null);
         public Task<string?> PickFileAsync(string title, string filter, string? initialDirectory = null) => Task.FromResult<string?>(null);
@@ -1107,7 +1410,10 @@ public class ConflictResolverViewTests : IDisposable
         }
 
         public Task<int> ChooseAsync(string title, string message, IReadOnlyList<string> options, int defaultIndex = 0, int destructiveIndex = -1, DialogIcon icon = DialogIcon.None)
-            => Task.FromResult(ChooseResult);
+        {
+            ChooseCalls.Add((title, message, options));
+            return Task.FromResult(ChooseResult);
+        }
 
         public Task ShowMessageAsync(string title, string message) => Task.CompletedTask;
 
