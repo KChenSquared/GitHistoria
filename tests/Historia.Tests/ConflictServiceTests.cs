@@ -343,22 +343,9 @@ public class ConflictServiceTests
         using var repoDir = TestRepositoryBuilder.Create();
         repoDir.WriteFile("init.txt", "init\n").Stage().Commit("init");
 
-        // Write a file directly into stage 2 (ours) using update-index --index-info
-        var hash = repoDir.Git("hash-object", "-w", "--stdin"); // empty or write
-        var blobSha = repoDir.Git("hash-object", "-w", "init.txt").Trim();
-        repoDir.FastImport($"commit refs/heads/main\nmark :1\nauthor Test User <test@example.com> 1000 +0000\ncommitter Test User <test@example.com> 1000 +0000\ndata 4\ntest\nM 100644 inline init.txt\ndata 5\ninit\n\n");
-
         // Set up index conflict: AddedByUs (stage 2 present, stage 3 absent)
         repoDir.WriteFile("added.txt", "content\n");
         var sha = repoDir.Git("hash-object", "-w", "added.txt").Trim();
-        repoDir.Git("update-index", "--add", "--cacheinfo", $"100644,{sha},added.txt");
-        // Remove stage 0 and put into stage 2
-        var gitDir = Path.Combine(repoDir.Path, ".git");
-        using (var repo = new Repository(gitDir))
-        {
-            repo.Index.Remove("added.txt");
-            repo.Index.Write();
-        }
         var psi = new ProcessStartInfo("git")
         {
             WorkingDirectory = repoDir.Path,
@@ -372,9 +359,13 @@ public class ConflictServiceTests
         psi.ArgumentList.Add("--index-info");
         using (var p = Process.Start(psi)!)
         {
-            p.StandardInput.WriteLine($"100644 {sha} 2\tadded.txt");
-            p.StandardInput.Close();
+            using (var sw = new StreamWriter(p.StandardInput.BaseStream, new UTF8Encoding(false)))
+            {
+                sw.Write($"100644 {sha} 2\tadded.txt\n");
+            }
+            var err = p.StandardError.ReadToEnd();
             p.WaitForExit();
+            if (p.ExitCode != 0) throw new InvalidOperationException($"update-index failed ({p.ExitCode}): {err}");
         }
 
         await using var ctx = host.Open(repoDir.Path);
