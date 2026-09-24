@@ -49,8 +49,11 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private readonly Button _stageArrow;
     private readonly Button _unstageArrow;
     private readonly Button _discardAllChanges;
-    private readonly Border _conflictStrip = new() { IsVisible = false };
-    private readonly StackPanel _conflictRows = new() { Spacing = 1 };
+    private readonly Dictionary<string, Border> _conflictedRowCache = new(StringComparer.Ordinal);
+
+    internal StackPanel ChangesRowsForTesting => _changesRows;
+    internal TextBlock ChangesHeaderForTesting => _changesHeader;
+    internal IReadOnlyDictionary<string, Border> ConflictedRowCacheForTesting => _conflictedRowCache;
 
     // Checked paths per section, preserved across StatusChanged re-renders where the path still exists.
     private readonly HashSet<string> _checkedChanges = new(StringComparer.Ordinal);
@@ -167,18 +170,8 @@ public sealed class StagingPanelView : UserControl, IDisposable
             BorderThickness = new Thickness(1),
         }.Dyn(Border.BorderBrushProperty, "ColorBorder");
 
-        // ── conflicted strip (only when there are conflicts) ──
-        _conflictStrip.Padding = new Thickness(12, 6);
-        _conflictStrip.BorderThickness = new Thickness(0, 0, 0, 1);
-        _conflictStrip.Dyn(Border.BackgroundProperty, "ColorSurface").Dyn(Border.BorderBrushProperty, "ColorBorder");
-        var conflictInner = new StackPanel { Spacing = 2 };
-        conflictInner.Children.Add(Text("Conflicted — resolve these before committing", "ColorDanger", 12, FontWeight.SemiBold));
-        conflictInner.Children.Add(_conflictRows);
-        _conflictStrip.Child = conflictInner;
-
         // ── layout ──────────────────────────────────────────────────────────────────────────
         // A DockPanel keeps each piece in its own lane so a drag can never push one off-screen:
-        //   • the conflict strip docks to the top,
         //   • the commit-message strip docks to the bottom at its own (capped) content height —
         //     always pinned there, never trading space with the lists,
         //   • the Changes / Staged split fills whatever is left.
@@ -312,15 +305,14 @@ public sealed class StagingPanelView : UserControl, IDisposable
         splitArea.SizeChanged += (_, _) => SectionFrame.ApplySplitHeight(splitArea, changesRow, _ctx.Id);
 
         var root = new DockPanel { LastChildFill = true };
-        DockPanel.SetDock(_conflictStrip, Dock.Top);
         DockPanel.SetDock(messageSection, Dock.Bottom);
-        root.Children.Add(_conflictStrip);
         root.Children.Add(messageSection);
         root.Children.Add(splitArea);
         Content = root;
 
         _status = ctx.State.Status;
         ctx.State.StatusChanged += OnStatusChanged;
+        ctx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
         RenderLists();
     }
 
@@ -373,40 +365,127 @@ public sealed class StagingPanelView : UserControl, IDisposable
         return true;
     }
 
+    private void OnSelectedConflictPathChanged(object? sender, SelectedConflictPathChangedEventArgs e)
+        => Avalonia.Threading.Dispatcher.UIThread.Post(UpdateConflictedRowHighlights);
+
+    private void UpdateConflictedRowHighlights()
+    {
+        var selected = _ctx.State.SelectedConflictPath;
+        foreach (var (path, border) in _conflictedRowCache)
+        {
+            if (selected != null && string.Equals(path, selected, StringComparison.Ordinal))
+            {
+                border.Dyn(Border.BackgroundProperty, "ColorListActive");
+            }
+            else
+            {
+                border.ClearValue(Border.BackgroundProperty);
+                border.Background = Brushes.Transparent;
+            }
+        }
+    }
+
     private void RenderLists()
     {
         var changes = _status.Unstaged.Concat(_status.Untracked).OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
         var staged = _status.Staged.OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
+        var conflicted = _status.Conflicted.OrderBy(f => f.Path, StringComparer.Ordinal).ToList();
 
         // Drop checks for paths that no longer exist in the section.
         _checkedChanges.IntersectWith(changes.Select(f => f.Path));
         _checkedStaged.IntersectWith(staged.Select(f => f.Path));
 
-        _changesHeader.Text = $"Changes ({changes.Count})";
+        _changesHeader.Text = $"Changes ({changes.Count + conflicted.Count})";
         _stagedHeader.Text = $"Staged ({staged.Count})";
 
-        FillRows(_changesRows, changes, _checkedChanges, staged: false, _changesRowCache);
-        FillRows(_stagedRows, staged, _checkedStaged, staged: true, _stagedRowCache);
+        // Conflicted rows cache prune
+        var conflictedPaths = new HashSet<string>(conflicted.Select(f => f.Path), StringComparer.Ordinal);
+        var removedConflicted = _conflictedRowCache.Keys.Where(k => !conflictedPaths.Contains(k)).ToList();
+        foreach (var k in removedConflicted)
+            _conflictedRowCache.Remove(k);
 
-        _conflictStrip.IsVisible = _status.Conflicted.Count > 0;
-        _conflictRows.Children.Clear();
-        foreach (var f in _status.Conflicted)
+        var changesChildren = new List<Control>();
+
+        if (conflicted.Count > 0)
         {
-            var r = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Height = 22 };
-            r.Children.Add(KindLabel(f.Kind));
-            var p = Text(f.Path, "ColorText", 12);
-            p.Margin = new Thickness(8, 0, 0, 0);
-            Grid.SetColumn(p, 1);
-            r.Children.Add(p);
-            _conflictRows.Children.Add(r);
+            var header = Text("Conflicted — resolve these before committing", "ColorDanger", 12, FontWeight.SemiBold);
+            header.Margin = new Thickness(4, 2, 0, 2);
+            changesChildren.Add(header);
+
+            foreach (var f in conflicted)
+            {
+                var file = f;
+                if (!_conflictedRowCache.TryGetValue(file.Path, out var border))
+                {
+                    var r = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Height = 24 };
+                    var kind = KindLabel(FileChangeKind.Conflicted);
+                    Grid.SetColumn(kind, 0);
+                    r.Children.Add(kind);
+
+                    var p = Text(file.Path, "ColorText", 12);
+                    p.Margin = new Thickness(8, 0, 0, 0);
+                    p.VerticalAlignment = VerticalAlignment.Center;
+                    Grid.SetColumn(p, 1);
+                    r.Children.Add(p);
+
+                    border = new Border
+                    {
+                        Child = r,
+                        Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+                        Background = Brushes.Transparent,
+                    };
+
+                    if (!_ctx.IsBare)
+                    {
+                        border.WithRevealMenu(_launcher, () => System.IO.Path.Combine(_ctx.RepositoryPath, file.Path));
+                    }
+
+                    border.PointerPressed += (_, _) =>
+                    {
+                        _ctx.State.SetOpenDiff(null);
+                        _ctx.State.SetSelectedConflictPath(file.Path);
+                    };
+
+                    _conflictedRowCache[file.Path] = border;
+                }
+
+                changesChildren.Add(border);
+            }
         }
+
+        var normalChangeRows = BuildRows(changes, _checkedChanges, staged: false, _changesRowCache);
+        changesChildren.AddRange(normalChangeRows);
+
+        _changesRows.Children.Clear();
+        if (changesChildren.Count == 0)
+        {
+            _changesRows.Children.Add(Text("No changes.", "ColorTextFaint", 12));
+        }
+        else
+        {
+            foreach (var c in changesChildren)
+                _changesRows.Children.Add(c);
+        }
+
+        var stagedChildren = BuildRows(staged, _checkedStaged, staged: true, _stagedRowCache);
+        _stagedRows.Children.Clear();
+        if (stagedChildren.Count == 0)
+        {
+            _stagedRows.Children.Add(Text("Nothing staged.", "ColorTextFaint", 12));
+        }
+        else
+        {
+            foreach (var c in stagedChildren)
+                _stagedRows.Children.Add(c);
+        }
+
+        UpdateConflictedRowHighlights();
 
         _lastRenderedStatus = _status;
         RefreshSelectionState();
     }
 
-    private void FillRows(
-        StackPanel host,
+    private List<Control> BuildRows(
         IReadOnlyList<FileStatusEntry> files,
         HashSet<string> checkedSet,
         bool staged,
@@ -414,10 +493,8 @@ public sealed class StagingPanelView : UserControl, IDisposable
     {
         if (files.Count == 0)
         {
-            host.Children.Clear();
             cache.Clear();
-            host.Children.Add(Text(staged ? "Nothing staged." : "No changes.", "ColorTextFaint", 12));
-            return;
+            return [];
         }
 
         var currentPaths = new HashSet<string>(files.Select(f => f.Path), StringComparer.Ordinal);
@@ -495,9 +572,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             newChildren.Add(b);
         }
 
-        host.Children.Clear();
-        foreach (var c in newChildren)
-            host.Children.Add(c);
+        return newChildren;
     }
 
     private static Control KindLabel(FileChangeKind k)
@@ -794,6 +869,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
     public void Dispose()
     {
         _ctx.State.StatusChanged -= OnStatusChanged;
+        _ctx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
         _commitShortcut?.Dispose();
         var msg = _message.Text ?? "";
         if (msg.Length > 0) DraftByRepo[_ctx.Id] = msg;
