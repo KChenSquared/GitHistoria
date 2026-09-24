@@ -557,4 +557,184 @@ public class ConflictServiceTests
     [Fact]
     public void Tokenize_of_blank_input_yields_no_tokens()
         => Assert.Empty(ConflictService.Tokenize("   "));
+
+    [Fact]
+    public async Task LaunchExternalMergeTool_passes_a_metacharacter_laden_path_as_one_literal_argument()
+    {
+        const string conflictedName = "pwn&calc&file.txt";
+
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.FromTemplate("conflicted-metachar-path-repo", repo =>
+        {
+            repo.WriteFile(conflictedName, "line1\nshared\nline3\n").Stage().Commit("base");
+            repo.Checkout("feature", create: true).WriteFile(conflictedName, "line1\nTHEIRS\nline3\n").Stage().Commit("theirs");
+            repo.Checkout("main").WriteFile(conflictedName, "line1\nOURS\nline3\n").Stage().Commit("ours");
+            try { repo.Git("merge", "feature"); } catch { /* expected to conflict */ }
+        });
+
+        await using var ctx = host.Open(repoDir.Path);
+
+        // A "merge tool" that records the argv it actually received, one line per argument.
+        var script = Path.Combine(Path.GetTempPath(), $"historia-mergetool-test-{Guid.NewGuid():N}.ps1");
+        var marker = Path.Combine(Path.GetTempPath(), $"historia-mergetool-test-{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(script,
+            "param([string]$Merged)\n" +
+            "Set-Content -LiteralPath '" + marker.Replace("'", "''") + "' -Value $Merged -Encoding utf8\n");
+
+        try
+        {
+            await host.Settings.UpdateAsync(s => s with
+            {
+                ExternalMergeTool = $"powershell -NoProfile -ExecutionPolicy Bypass -File \"{script}\" $MERGED",
+            });
+
+            var svc = Make(host);
+            await svc.LaunchExternalMergeToolAsync(ctx, conflictedName);
+
+            Assert.True(File.Exists(marker), "the configured merge tool never ran");
+            var received = (await File.ReadAllTextAsync(marker)).Trim();
+            // The whole "&calc&"-laden path arrived as PowerShell's single -Merged argument
+            // (i.e. it was never split or re-parsed by a shell along the way).
+            Assert.EndsWith(conflictedName, received, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { File.Delete(script); } catch { /* best effort */ }
+            try { File.Delete(marker); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task LaunchExternalMergeToolAsync_runs_the_configured_tool_directly_not_via_a_wrapping_shell()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        await host.Settings.UpdateAsync(s => s with { ExternalMergeTool = "cmd.exe /c copy /Y $LOCAL $MERGED" });
+
+        var ok = await svc.LaunchExternalMergeToolAsync(ctx, "f.txt");
+
+        Assert.True(ok);
+        var merged = await File.ReadAllTextAsync(Path.Combine(repoDir.Path, "f.txt"));
+        Assert.Contains("OURS", merged);
+        Assert.DoesNotContain("<<<<<<<", merged, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Resolve_with_side_sees_index_changed_by_cli_since_last_status()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+        repoDir.WriteFile("init.txt", "init\n").Stage().Commit("init");
+
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        // Pre-query conflicts so the LibGit2 repo inside ctx caches its initial 0-conflict status.
+        var initial = await svc.GetConflictsAsync(ctx);
+        Assert.Empty(initial);
+
+        // Now CLI updates the index directly, introducing a conflict stage without notifying LibGit2.
+        repoDir.WriteFile("added.txt", "content\n");
+        var sha = repoDir.Git("hash-object", "-w", "added.txt").Trim();
+        var psi = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = repoDir.Path,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        psi.ArgumentList.Add("update-index");
+        psi.ArgumentList.Add("--index-info");
+        using (var p = Process.Start(psi)!)
+        {
+            using (var sw = new StreamWriter(p.StandardInput.BaseStream, new UTF8Encoding(false)))
+            {
+                sw.Write($"100644 {sha} 2\tadded.txt\n");
+            }
+            p.WaitForExit();
+            Assert.Equal(0, p.ExitCode);
+        }
+
+        // ResolveWithSideAsync must reload status via RetrieveStatus() rather than reading stale cached conflicts.
+        await svc.ResolveWithSideAsync(ctx, "added.txt", ConflictSide.Theirs);
+
+        Assert.False(File.Exists(Path.Combine(repoDir.Path, "added.txt")));
+        Assert.Empty(await svc.GetConflictsAsync(ctx));
+    }
+
+    private sealed class FailingCheckoutCli(IGitCliService inner) : IGitCliService
+    {
+        public bool IsGitAvailable => inner.IsGitAvailable;
+
+        public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default)
+        {
+            if (request.Arguments.Contains("checkout-index"))
+            {
+                return Task.FromResult(new GitCliResult(
+                    1,
+                    string.Empty,
+                    "fatal: unable to checkout file",
+                    GitErrorKind.Unknown,
+                    TimeSpan.Zero));
+            }
+            return inner.RunAsync(request, ct);
+        }
+
+        public Task<GitCliResult> RunAsync(
+            GitCliRequest request,
+            IProgress<GitProgress>? progress,
+            Action<string>? onStdoutLine,
+            CancellationToken ct = default)
+            => inner.RunAsync(request, progress, onStdoutLine, ct);
+    }
+
+    [Fact]
+    public async Task External_tool_stage_extract_failure_throws_classified_error()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+
+        var realCli = (IGitCliService)host.Provider.GetService(typeof(IGitCliService))!;
+        var failingCli = new FailingCheckoutCli(realCli);
+        var svc = new ConflictService(failingCli, host.Settings);
+
+        await host.Settings.UpdateAsync(s => s with { ExternalMergeTool = "dummy $LOCAL $REMOTE $BASE $MERGED" });
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() => svc.LaunchExternalMergeToolAsync(ctx, "f.txt"));
+        Assert.Equal(GitErrorKind.Unknown, ex.Kind);
+    }
+
+    [Fact]
+    public async Task Oversize_working_copy_hash_matches_file_hash()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+        repoDir.WriteFile("init.txt", "init\n").Stage().Commit("init");
+
+        // Create an oversize file (> 5 MB: 5 * 1024 * 1024 + 1024 bytes)
+        int size = (5 * 1024 * 1024) + 1024;
+        var bytes = new byte[size];
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            bytes[i] = (byte)(i % 251);
+        }
+        string filePath = Path.Combine(repoDir.Path, "large.txt");
+        await File.WriteAllBytesAsync(filePath, bytes);
+
+        var expectedHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "large.txt");
+        Assert.True(copy.ExceedsBudget);
+        Assert.Equal(expectedHash, copy.DiskHash);
+    }
 }
+

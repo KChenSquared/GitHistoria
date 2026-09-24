@@ -37,8 +37,9 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         var info = new FileInfo(full);
         if (info.Length > MaxWorkingCopyBytes)
         {
-            var largeBytes = await File.ReadAllBytesAsync(full, ct).ConfigureAwait(false);
-            var largeHash = Convert.ToHexStringLower(SHA256.HashData(largeBytes));
+            await using var stream = File.OpenRead(full);
+            var hashBytes = await SHA256.HashDataAsync(stream, ct).ConfigureAwait(false);
+            var largeHash = Convert.ToHexStringLower(hashBytes);
             return new ConflictWorkingCopy
             {
                 Path = filePath,
@@ -137,6 +138,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
 
         var (isSubmodule, chosenStageSha, chosenStagePresent) = await context.WithRepositoryAsync(repo =>
         {
+            repo.RetrieveStatus();
             var conflict = repo.Index.Conflicts[filePath]
                 ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"'{filePath}' is not a conflicted path.");
 
@@ -372,6 +374,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             var ext = Path.GetExtension(filePath);
             var (hasStage1, hasStage2, hasStage3) = await context.WithRepositoryAsync(repo =>
             {
+                repo.RetrieveStatus();
                 var conflict = repo.Index.Conflicts[filePath];
                 return (conflict?.Ancestor is not null, conflict?.Ours is not null, conflict?.Theirs is not null);
             }, ct).ConfigureAwait(false);
@@ -450,6 +453,9 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             WorkingDirectory = context.RepositoryPath,
         }, ct).ConfigureAwait(false);
 
+        if (!res.IsSuccess)
+            throw HistoriaGitException.FromCli(res, $"Extract stage {stage} for '{filePath}'");
+
         var extracted = Path.Combine(stagePrefix, filePath);
         if (File.Exists(extracted))
         {
@@ -457,7 +463,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         }
         else
         {
-            await File.WriteAllBytesAsync(targetFile, [], ct).ConfigureAwait(false);
+            throw new HistoriaGitException(GitErrorKind.Unknown, $"Failed to extract stage {stage} for '{filePath}'.");
         }
 
         return targetFile;
@@ -601,6 +607,13 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
     /// <summary>
     /// Splits a user-configured external-tool command line into its executable and argument tokens,
     /// honouring double-quoted segments.
+    /// <para>
+    /// Tokens are passed directly to <see cref="ProcessStartInfo.ArgumentList"/> with
+    /// <see cref="ProcessStartInfo.UseShellExecute"/> set to false, ensuring external tools
+    /// are invoked directly as a child process rather than via a shell. Substituted paths
+    /// ($BASE, $LOCAL, $REMOTE, $MERGED) are controlled by the repository and temporary directory,
+    /// preventing shell-injection vulnerabilities when paths contain spaces or shell metacharacters.
+    /// </para>
     /// </summary>
     internal static List<string> Tokenize(string commandLine)
     {
