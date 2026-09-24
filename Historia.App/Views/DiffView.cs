@@ -8,6 +8,7 @@ public sealed class DiffView : UserControl, IDisposable
 {
     private readonly RepositoryContext _ctx;
     private readonly DiffRequest _request;
+    private readonly ISettingsService? _settings;
     private readonly IServiceProvider? _sp;
     private readonly ContentControl _host = new();
     private readonly IPatchService? _patches;
@@ -25,11 +26,15 @@ public sealed class DiffView : UserControl, IDisposable
 
     public Control? PresenterForTesting => _host.Content as Control;
     public FileDiff? DiffForTesting => _diff;
+    public Button ToggleButtonForTesting => _toggleButton;
+    public void ToggleModeForTesting() => OnToggleMode();
+    internal int LastModelCreationThreadId { get; private set; }
 
     public DiffView(RepositoryContext ctx, DiffRequest request, ISettingsService? settings, IServiceProvider? sp)
     {
         _ctx = ctx;
         _request = request;
+        _settings = settings;
         _sp = sp;
         _sideBySide = settings?.Current.DefaultDiffView == DiffViewMode.SideBySide;
         _wordWrap = settings?.Current.DiffWordWrap ?? false;
@@ -75,7 +80,22 @@ public sealed class DiffView : UserControl, IDisposable
     {
         _sideBySide = !_sideBySide;
         _toggleButton.Content = _sideBySide ? "Unified" : "Side-by-side";
+        var mode = _sideBySide ? DiffViewMode.SideBySide : DiffViewMode.Unified;
+        SaveDiffViewModePreference(mode);
         Rebuild();
+    }
+
+    private async void SaveDiffViewModePreference(DiffViewMode mode)
+    {
+        if (_settings is null) return;
+        try
+        {
+            await _settings.UpdateAsync(s => s with { DefaultDiffView = mode });
+        }
+        catch (Exception ex)
+        {
+            _notifications?.Publish(NotificationSeverity.Warning, "Failed to save diff view preference.", ex.NotificationDetails());
+        }
     }
 
     private void OnPreviousChange()
@@ -131,21 +151,32 @@ public sealed class DiffView : UserControl, IDisposable
 
         try
         {
-            _diff = await _ctx.Gateway.GetFileDiffAsync(_request, _ctx.Lifetime);
+            var diff = await _ctx.Gateway.GetFileDiffAsync(_request, _ctx.Lifetime);
+            if (_disposed) return;
+            _diff = diff;
             cts.Cancel();
-            _model = DiffDisplayModel.Create(_diff);
+            var model = await Task.Run(() =>
+            {
+                LastModelCreationThreadId = Environment.CurrentManagedThreadId;
+                return DiffDisplayModel.Create(diff);
+            });
+            if (_disposed) return;
+            _model = model;
             Rebuild();
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _host.Content = Text($"Could not load diff: {ex.Message}", "ColorDanger", 12);
+            if (!_disposed)
+            {
+                _host.Content = Text($"Could not load diff: {ex.Message}", "ColorDanger", 12);
+            }
         }
     }
 
     public void Rebuild()
     {
-        if (_diff is null)
+        if (_disposed || _diff is null)
         {
             return;
         }
@@ -240,7 +271,7 @@ public sealed class DiffView : UserControl, IDisposable
 
     public async Task ApplyHunkAsync(int hunkIndex)
     {
-        if (_patches is null || _diff is null)
+        if (_patches is null || _diff is null || _disposed)
         {
             return;
         }
@@ -251,12 +282,13 @@ public sealed class DiffView : UserControl, IDisposable
         {
             var selected = new HashSet<DiffLineRef> { new(hunkIndex, 0) };
             var patch = _patches.GeneratePatch(_diff, PatchScope.SingleHunk, selected, reverse: reverse);
-            if (string.IsNullOrEmpty(patch))
+            if (string.IsNullOrEmpty(patch) || _disposed)
             {
                 return;
             }
 
             var check = await _patches.CheckAsync(_ctx, patch, PatchTarget.StagingArea, reverse, _ctx.Lifetime);
+            if (_disposed) return;
             if (!check.CanApply)
             {
                 _notifications?.Publish(NotificationSeverity.Warning,
@@ -265,24 +297,34 @@ public sealed class DiffView : UserControl, IDisposable
             }
 
             await _patches.ApplyPatchAsync(_ctx, patch, PatchTarget.StagingArea, reverse, _ctx.Lifetime);
+            if (_disposed) return;
             await _ctx.State.RefreshStatusAsync(_ctx.Lifetime);
-            _diff = await _ctx.Gateway.GetFileDiffAsync(_request, _ctx.Lifetime);
-            _model = DiffDisplayModel.Create(_diff);
+            if (_disposed) return;
+            var diff = await _ctx.Gateway.GetFileDiffAsync(_request, _ctx.Lifetime);
+            if (_disposed) return;
+            _diff = diff;
+            var model = await Task.Run(() =>
+            {
+                LastModelCreationThreadId = Environment.CurrentManagedThreadId;
+                return DiffDisplayModel.Create(diff);
+            });
+            if (_disposed) return;
+            _model = model;
             Rebuild();
         }
         catch (HistoriaGitException ex)
         {
-            _notifications?.Publish(NotificationSeverity.Warning, ex.Message);
+            if (!_disposed) _notifications?.Publish(NotificationSeverity.Warning, ex.Message);
         }
         catch (Exception ex)
         {
-            _notifications?.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails());
+            if (!_disposed) _notifications?.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails());
         }
     }
 
     public async Task ApplySelectionAsync(IReadOnlyList<DiffLineRef> refs)
     {
-        if (_patches is null || _diff is null)
+        if (_patches is null || _diff is null || _disposed)
         {
             return;
         }
@@ -293,12 +335,13 @@ public sealed class DiffView : UserControl, IDisposable
         {
             var selected = refs.ToHashSet();
             var patch = _patches.GeneratePatch(_diff, PatchScope.SelectedLines, selected, reverse: reverse);
-            if (string.IsNullOrEmpty(patch))
+            if (string.IsNullOrEmpty(patch) || _disposed)
             {
                 return;
             }
 
             var check = await _patches.CheckAsync(_ctx, patch, PatchTarget.StagingArea, reverse, _ctx.Lifetime);
+            if (_disposed) return;
             if (!check.CanApply)
             {
                 _notifications?.Publish(NotificationSeverity.Warning,
@@ -307,18 +350,28 @@ public sealed class DiffView : UserControl, IDisposable
             }
 
             await _patches.ApplyPatchAsync(_ctx, patch, PatchTarget.StagingArea, reverse, _ctx.Lifetime);
+            if (_disposed) return;
             await _ctx.State.RefreshStatusAsync(_ctx.Lifetime);
-            _diff = await _ctx.Gateway.GetFileDiffAsync(_request, _ctx.Lifetime);
-            _model = DiffDisplayModel.Create(_diff);
+            if (_disposed) return;
+            var diff = await _ctx.Gateway.GetFileDiffAsync(_request, _ctx.Lifetime);
+            if (_disposed) return;
+            _diff = diff;
+            var model = await Task.Run(() =>
+            {
+                LastModelCreationThreadId = Environment.CurrentManagedThreadId;
+                return DiffDisplayModel.Create(diff);
+            });
+            if (_disposed) return;
+            _model = model;
             Rebuild();
         }
         catch (HistoriaGitException ex)
         {
-            _notifications?.Publish(NotificationSeverity.Warning, ex.Message);
+            if (!_disposed) _notifications?.Publish(NotificationSeverity.Warning, ex.Message);
         }
         catch (Exception ex)
         {
-            _notifications?.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails());
+            if (!_disposed) _notifications?.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails());
         }
     }
 

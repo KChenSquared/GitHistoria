@@ -54,12 +54,74 @@ public class DiffViewSettingsTests : IDisposable
         var sbsPresenter = await WaitForPresenterAsync(sbsView);
 
         Assert.IsType<SideBySideDiffPresenter>(sbsPresenter);
+        Assert.NotEqual(Environment.CurrentManagedThreadId, sbsView.LastModelCreationThreadId);
+        Assert.True(sbsView.LastModelCreationThreadId > 0);
 
         var unifiedSettings = new LocalFakeSettingsService(new AppSettings { DefaultDiffView = DiffViewMode.Unified });
         var unifiedView = new DiffView(_context, req, unifiedSettings, _sp);
         var unifiedPresenter = await WaitForPresenterAsync(unifiedView);
 
         Assert.IsType<CombinedDiffPresenter>(unifiedPresenter);
+    }
+
+    [AvaloniaFact]
+    public async Task Toggling_mode_persists_it_via_settings()
+    {
+        var settings = new LocalFakeSettingsService(new AppSettings { DefaultDiffView = DiffViewMode.Unified });
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, settings, _sp);
+        var presenter = await WaitForPresenterAsync(view);
+
+        Assert.IsType<CombinedDiffPresenter>(presenter);
+        Assert.Equal(DiffViewMode.Unified, settings.Current.DefaultDiffView);
+
+        // Toggle to SideBySide
+        view.ToggleModeForTesting();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(DiffViewMode.SideBySide, settings.Current.DefaultDiffView);
+        Assert.IsType<SideBySideDiffPresenter>(view.PresenterForTesting);
+
+        // Toggle back to Unified
+        view.ToggleModeForTesting();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(DiffViewMode.Unified, settings.Current.DefaultDiffView);
+        Assert.IsType<CombinedDiffPresenter>(view.PresenterForTesting);
+    }
+
+    [AvaloniaFact]
+    public async Task New_diff_view_opens_in_last_toggled_mode()
+    {
+        var settings = new LocalFakeSettingsService(new AppSettings { DefaultDiffView = DiffViewMode.Unified });
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view1 = new DiffView(_context, req, settings, _sp);
+        await WaitForPresenterAsync(view1);
+
+        // Toggle mode on first view
+        view1.ToggleModeForTesting();
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(DiffViewMode.SideBySide, settings.Current.DefaultDiffView);
+
+        // Second view should open with SideBySide
+        var view2 = new DiffView(_context, req, settings, _sp);
+        var presenter2 = await WaitForPresenterAsync(view2);
+        Assert.IsType<SideBySideDiffPresenter>(presenter2);
+    }
+
+    [AvaloniaFact]
+    public async Task Disposed_view_ignores_late_load_result()
+    {
+        var settings = new LocalFakeSettingsService(new AppSettings { DefaultDiffView = DiffViewMode.Unified });
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, settings, _sp);
+
+        // Dispose immediately before load completes
+        view.Dispose();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(view.PresenterForTesting);
     }
 
     [AvaloniaFact]
@@ -108,9 +170,15 @@ public class DiffViewSettingsTests : IDisposable
 
     private sealed class LocalFakeSettingsService(AppSettings initial) : ISettingsService
     {
-        public AppSettings Current { get; } = initial;
-        public event EventHandler<SettingsChangedEventArgs>? Changed { add { } remove { } }
-        public Task UpdateAsync(Func<AppSettings, AppSettings> mutate, CancellationToken ct = default) => Task.CompletedTask;
+        public AppSettings Current { get; private set; } = initial;
+        public event EventHandler<SettingsChangedEventArgs>? Changed;
+        public Task UpdateAsync(Func<AppSettings, AppSettings> mutate, CancellationToken ct = default)
+        {
+            var old = Current;
+            Current = mutate(Current);
+            Changed?.Invoke(this, new SettingsChangedEventArgs(old, Current));
+            return Task.CompletedTask;
+        }
         public Task FlushAsync(CancellationToken ct = default) => Task.CompletedTask;
     }
 
