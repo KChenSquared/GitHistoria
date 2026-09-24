@@ -93,25 +93,54 @@ public class SyntaxThemeHostTests
     [AvaloniaFact]
     public void Editor_background_and_foreground_remain_palette_bindings_after_attach()
     {
-        var themeService = new StubThemeService();
+        var themeService = new StubThemeService { Effective = EffectiveTheme.Dark };
         using var applier = new AvaloniaThemeApplier(themeService);
         using var host = new SyntaxThemeHost(themeService);
 
         var editor = new CodeEditor();
         var window = new Window { Content = editor };
         window.Show();
+        Dispatcher.UIThread.RunJobs();
         try
         {
             using var sub = host.Attach(editor, "test.cs");
+            Dispatcher.UIThread.RunJobs();
 
-            // The background and foreground bindings remain active on the control
-            Assert.NotNull(editor.Background);
-            Assert.NotNull(editor.Foreground);
+            var darkBg = (ISolidColorBrush)editor.FindResource("ColorBg")!;
+            var darkFg = (ISolidColorBrush)editor.FindResource("ColorText")!;
+
+            Assert.Equal(darkBg.Color, ((ISolidColorBrush)editor.Background!).Color);
+            Assert.Equal(darkFg.Color, ((ISolidColorBrush)editor.Foreground!).Color);
+
+            themeService.ChangeTheme(EffectiveTheme.Light);
+            Dispatcher.UIThread.RunJobs();
+
+            var lightBg = (ISolidColorBrush)editor.FindResource("ColorBg")!;
+            var lightFg = (ISolidColorBrush)editor.FindResource("ColorText")!;
+
+            Assert.Equal(lightBg.Color, ((ISolidColorBrush)editor.Background!).Color);
+            Assert.Equal(lightFg.Color, ((ISolidColorBrush)editor.Foreground!).Color);
         }
         finally
         {
             window.Close();
         }
+    }
+
+    [Fact]
+    public async Task Grammar_cache_is_safe_under_concurrent_lookup()
+    {
+        var wrapper = new SyntaxThemeHost.RegistryOptionsWrapper(ThemeName.DarkPlus);
+        var scopes = new[] { "source.cs", "source.cpp", "text.xml" };
+
+        var tasks = Enumerable.Range(0, 50).Select(i => Task.Run(() =>
+        {
+            var scope = scopes[i % scopes.Length];
+            var grammar = wrapper.GetGrammar(scope);
+            Assert.NotNull(grammar);
+        }));
+
+        await Task.WhenAll(tasks);
     }
 
     [Fact]

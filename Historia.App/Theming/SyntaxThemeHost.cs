@@ -196,8 +196,9 @@ public sealed class SyntaxThemeHost : IDisposable
     internal sealed class RegistryOptionsWrapper(ThemeName defaultTheme) : IRegistryOptions
     {
         private readonly RegistryOptions _backend = new(defaultTheme);
-        private readonly Dictionary<string, IRawGrammar> _rawGrammarCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, IRawGrammar?> _rawGrammarCache = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<ThemeName, IRawTheme> _themeCache = [];
+        private readonly object _cacheLock = new();
 
         public IRawTheme GetTheme(string scopeName) => _backend.GetTheme(scopeName);
         public IRawTheme GetDefaultTheme() => _backend.GetDefaultTheme();
@@ -210,17 +211,17 @@ public sealed class SyntaxThemeHost : IDisposable
                 return null!;
             }
 
-            if (_rawGrammarCache.TryGetValue(scopeName, out var cached))
+            lock (_cacheLock)
             {
-                return cached;
-            }
+                if (_rawGrammarCache.TryGetValue(scopeName, out var cached))
+                {
+                    return cached!;
+                }
 
-            var grammar = _backend.GetGrammar(scopeName);
-            if (grammar is not null)
-            {
+                var grammar = _backend.GetGrammar(scopeName);
                 _rawGrammarCache[scopeName] = grammar;
+                return grammar!;
             }
-            return grammar!;
         }
 
         public string GetScope(string filename) => GetScopeByPath(filename);
@@ -265,14 +266,17 @@ public sealed class SyntaxThemeHost : IDisposable
 
         public IRawTheme LoadTheme(ThemeName name)
         {
-            if (_themeCache.TryGetValue(name, out var cached))
+            lock (_cacheLock)
             {
-                return cached;
-            }
+                if (_themeCache.TryGetValue(name, out var cached))
+                {
+                    return cached;
+                }
 
-            var loaded = _backend.LoadTheme(name);
-            _themeCache[name] = loaded;
-            return loaded;
+                var loaded = _backend.LoadTheme(name);
+                _themeCache[name] = loaded;
+                return loaded;
+            }
         }
     }
 }
