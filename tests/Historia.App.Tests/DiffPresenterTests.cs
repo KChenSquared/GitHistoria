@@ -74,6 +74,46 @@ public class DiffPresenterTests
         };
     }
 
+    private static FileDiff CreateDiffEndingInAddedBlankLine()
+    {
+        var hunk = new DiffHunk
+        {
+            OldStart = 1,
+            OldLineCount = 1,
+            NewStart = 1,
+            NewLineCount = 2,
+            Header = "@@ -1,1 +1,2 @@",
+            Lines =
+            [
+                new DiffLine
+                {
+                    Type = DiffLineType.Context,
+                    Content = "context 1",
+                    OldLineNumber = 1,
+                    NewLineNumber = 1,
+                },
+                new DiffLine
+                {
+                    Type = DiffLineType.Addition,
+                    Content = "",
+                    OldLineNumber = null,
+                    NewLineNumber = 2,
+                },
+            ],
+        };
+
+        return new FileDiff
+        {
+            Path = "blank_end.txt",
+            Kind = DiffKind.Modified,
+            IsBinary = false,
+            IsTruncated = false,
+            Hunks = [hunk],
+            AddedLines = 1,
+            DeletedLines = 0,
+        };
+    }
+
     [AvaloniaFact]
     public void Combined_presenter_document_line_count_equals_model()
     {
@@ -705,5 +745,128 @@ public class DiffPresenterTests
         var leftRefs = sbs.GetSelectedLineRefs();
         Assert.Single(leftRefs);
         Assert.Equal(new DiffLineRef(0, 1), leftRefs[0]);
+    }
+
+    [AvaloniaFact]
+    public void Select_all_over_diff_ending_in_added_blank_line_includes_it()
+    {
+        var diff = CreateDiffEndingInAddedBlankLine();
+        var model = DiffDisplayModel.Create(diff);
+        var presenter = new CombinedDiffPresenter { Model = model };
+
+        presenter.TextArea.Selection = Selection.Create(presenter.TextArea, 0, presenter.Document.TextLength);
+
+        var refs = presenter.GetSelectedLineRefs();
+        Assert.Single(refs);
+        Assert.Equal(new DiffLineRef(0, 1), refs[0]);
+    }
+
+    [AvaloniaFact]
+    public void Selection_from_previous_row_onto_empty_last_row_includes_it()
+    {
+        var diff = CreateDiffEndingInAddedBlankLine();
+        var model = DiffDisplayModel.Create(diff);
+        var presenter = new CombinedDiffPresenter { Model = model };
+
+        var startOffset = presenter.Document.GetOffset(2, 1);
+        var endOffset = presenter.Document.GetOffset(3, 1);
+        presenter.TextArea.Selection = Selection.Create(presenter.TextArea, startOffset, endOffset);
+
+        var refs = presenter.GetSelectedLineRefs();
+        Assert.Single(refs);
+        Assert.Equal(new DiffLineRef(0, 1), refs[0]);
+    }
+
+    [AvaloniaFact]
+    public void Selection_ending_at_column_1_of_non_empty_last_row_still_excludes_it()
+    {
+        var hunk = new DiffHunk
+        {
+            OldStart = 1,
+            OldLineCount = 1,
+            NewStart = 1,
+            NewLineCount = 3,
+            Header = "@@ -1,1 +1,3 @@",
+            Lines =
+            [
+                new DiffLine { Type = DiffLineType.Context, Content = "c1", OldLineNumber = 1, NewLineNumber = 1 },
+                new DiffLine { Type = DiffLineType.Addition, Content = "add1", OldLineNumber = null, NewLineNumber = 2 },
+                new DiffLine { Type = DiffLineType.Addition, Content = "add2", OldLineNumber = null, NewLineNumber = 3 },
+            ],
+        };
+        var diff = new FileDiff
+        {
+            Path = "non_empty_last.txt",
+            Kind = DiffKind.Modified,
+            IsBinary = false,
+            IsTruncated = false,
+            Hunks = [hunk],
+            AddedLines = 2,
+            DeletedLines = 0,
+        };
+        var model = DiffDisplayModel.Create(diff);
+        var presenter = new CombinedDiffPresenter { Model = model };
+
+        var startOffset = presenter.Document.GetOffset(3, 1);
+        var endOffset = presenter.Document.GetOffset(4, 1);
+        presenter.TextArea.Selection = Selection.Create(presenter.TextArea, startOffset, endOffset);
+
+        var refs = presenter.GetSelectedLineRefs();
+        Assert.Single(refs);
+        Assert.Equal(new DiffLineRef(0, 1), refs[0]);
+    }
+
+    [AvaloniaFact]
+    public void Select_all_in_sbs_right_pane_ending_in_blank_line_includes_it()
+    {
+        var diff = CreateDiffEndingInAddedBlankLine();
+        var model = DiffDisplayModel.Create(diff);
+        var sbs = new SideBySideDiffPresenter { Model = model };
+
+        sbs.RightPresenter.TextArea.Selection = Selection.Create(
+            sbs.RightPresenter.TextArea, 0, sbs.RightPresenter.Document.TextLength);
+
+        var refs = sbs.GetSelectedLineRefs();
+        Assert.Single(refs);
+        Assert.Equal(new DiffLineRef(0, 1), refs[0]);
+    }
+
+    [AvaloniaFact]
+    public void Selection_ending_at_column_1_of_empty_middle_row_still_excludes_it()
+    {
+        var hunk = new DiffHunk
+        {
+            OldStart = 1,
+            OldLineCount = 1,
+            NewStart = 1,
+            NewLineCount = 3,
+            Header = "@@ -1,1 +1,3 @@",
+            Lines =
+            [
+                new DiffLine { Type = DiffLineType.Addition, Content = "add1", OldLineNumber = null, NewLineNumber = 1 },
+                new DiffLine { Type = DiffLineType.Addition, Content = "", OldLineNumber = null, NewLineNumber = 2 },
+                new DiffLine { Type = DiffLineType.Addition, Content = "add3", OldLineNumber = null, NewLineNumber = 3 },
+            ],
+        };
+        var diff = new FileDiff
+        {
+            Path = "middle_blank.txt",
+            Kind = DiffKind.Modified,
+            IsBinary = false,
+            IsTruncated = false,
+            Hunks = [hunk],
+            AddedLines = 3,
+            DeletedLines = 0,
+        };
+        var model = DiffDisplayModel.Create(diff);
+        var presenter = new CombinedDiffPresenter { Model = model };
+
+        var startOffset = presenter.Document.GetOffset(2, 1);
+        var endOffset = presenter.Document.GetOffset(3, 1);
+        presenter.TextArea.Selection = Selection.Create(presenter.TextArea, startOffset, endOffset);
+
+        var refs = presenter.GetSelectedLineRefs();
+        Assert.Single(refs);
+        Assert.Equal(new DiffLineRef(0, 0), refs[0]);
     }
 }

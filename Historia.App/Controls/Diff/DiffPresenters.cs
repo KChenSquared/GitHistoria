@@ -340,7 +340,13 @@ public abstract class DiffPresenterBase : CodeEditor
         }
     }
 
-    internal static (int First, int Last) SelectedLineSpan(Selection selection)
+    /// <summary>
+    /// Computes the 1-based [firstLine, lastLine] document line range covered by a selection.
+    /// When a multi-line selection ends at column 1 of a line, that end line is excluded because
+    /// the selection only touches the line break before it. However, if the end line is the
+    /// document's last line and is empty, it is kept because there is no following delimiter to end on.
+    /// </summary>
+    internal static (int First, int Last) SelectedLineSpan(Selection selection, TextDocument document)
     {
         var start = selection.StartPosition;
         var end = selection.EndPosition;
@@ -359,7 +365,8 @@ public abstract class DiffPresenterBase : CodeEditor
             lastCol = start.Column;
         }
 
-        if (selection is SimpleSelection && lastLine > firstLine && lastCol == 1)
+        if (selection is SimpleSelection && lastLine > firstLine && lastCol == 1
+            && !(document != null && lastLine == document.LineCount && document.GetLineByNumber(lastLine).Length == 0))
         {
             lastLine--;
         }
@@ -375,7 +382,7 @@ public abstract class DiffPresenterBase : CodeEditor
             return [];
         }
 
-        var (start, end) = SelectedLineSpan(sel);
+        var (start, end) = SelectedLineSpan(sel, Document);
         return Model.GetSelectedLinesForCombined(start, end);
     }
 
@@ -603,7 +610,7 @@ public sealed class SingleSideDiffPresenter : DiffPresenterBase
             return [];
         }
 
-        var (start, end) = SelectedLineSpan(sel);
+        var (start, end) = SelectedLineSpan(sel, Document);
         return Model.GetSelectedLinesForSideBySide(start, end, oldSide: _isOld);
     }
 
@@ -793,7 +800,7 @@ public sealed class SideBySideDiffPresenter : Control
         var rightSel = _rightPresenter.TextArea.Selection;
         if (!rightSel.IsEmpty)
         {
-            var (start, end) = DiffPresenterBase.SelectedLineSpan(rightSel);
+            var (start, end) = DiffPresenterBase.SelectedLineSpan(rightSel, _rightPresenter.Document);
             return Model.GetSelectedLinesForSideBySide(start, end, oldSide: false);
         }
 
@@ -801,7 +808,7 @@ public sealed class SideBySideDiffPresenter : Control
         var leftSel = _leftPresenter.TextArea.Selection;
         if (!leftSel.IsEmpty)
         {
-            var (start, end) = DiffPresenterBase.SelectedLineSpan(leftSel);
+            var (start, end) = DiffPresenterBase.SelectedLineSpan(leftSel, _leftPresenter.Document);
             return Model.GetSelectedLinesForSideBySide(start, end, oldSide: true);
         }
 
