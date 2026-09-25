@@ -276,10 +276,10 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         toolbar.Children.Add(_damagedMarkersHint);
         toolbar.Children.Add(_saveBtn);
         toolbar.Children.Add(_saveAndResolveBtn);
-        toolbar.Children.Add(TextActionButton("Take ours", () => _ = TakeOursCurrentAsync()));
-        toolbar.Children.Add(TextActionButton("Take theirs", () => _ = TakeTheirsCurrentAsync()));
-        toolbar.Children.Add(TextActionButton("Re-create with base", () => _ = RecreateConflictAsync()));
-        toolbar.Children.Add(TextActionButton("External tool", () => _ = LaunchExternalToolAsync()));
+        toolbar.Children.Add(ActionButton("Take ours", () => _ = TakeOursCurrentAsync()));
+        toolbar.Children.Add(ActionButton("Take theirs", () => _ = TakeTheirsCurrentAsync()));
+        toolbar.Children.Add(ActionButton("Re-create with base", () => _ = RecreateConflictAsync()));
+        toolbar.Children.Add(ActionButton("External tool", () => _ = LaunchExternalToolAsync()));
 
         // Floating region action box
         _floatingRegionBox = new Border
@@ -1175,7 +1175,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
             if (res.StageError != null)
             {
-                _notifications.Publish(NotificationSeverity.Error, $"Stage failed: {res.StageError.Message}");
+                _notifications.Publish(NotificationSeverity.Error, $"Saved {_currentFile.FilePath}, but could not mark it resolved: {res.StageError.Message}", res.StageError.NotificationDetails());
                 return false;
             }
 

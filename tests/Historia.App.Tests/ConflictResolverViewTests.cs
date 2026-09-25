@@ -1388,7 +1388,13 @@ public class ConflictResolverViewTests : IDisposable
     public async Task Busy_disables_action_buttons_and_ignores_reentry()
     {
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
-        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f.txt",
+            Text = TwoConflictText,
+            DiskHash = "hash1",
+            Format = new TextFileFormat(System.Text.Encoding.UTF8, false),
+        };
 
         var view = new ConflictResolverView(_sp, _context);
         await view.LoadAsync();
@@ -1403,6 +1409,8 @@ public class ConflictResolverViewTests : IDisposable
         Assert.True(view.IsBusy);
         Assert.NotEmpty(view.ActionButtonsForTesting);
         Assert.All(view.ActionButtonsForTesting, btn => Assert.False(btn.IsEnabled));
+        Assert.NotEmpty(view.TextActionButtonsForTesting);
+        Assert.All(view.TextActionButtonsForTesting, btn => Assert.False(btn.IsEnabled));
 
         // Re-entry calls should be ignored while busy
         await view.ContinueAsync();
@@ -1412,12 +1420,14 @@ public class ConflictResolverViewTests : IDisposable
         Assert.False(saveResult);
 
         Assert.Equal(1, _conflicts.ContinueCalls);
+        Assert.Empty(_conflicts.SaveResolutionCalls);
 
         tcs.SetResult(true);
         await continueTask;
 
         Assert.False(view.IsBusy);
         Assert.All(view.ActionButtonsForTesting, btn => Assert.True(btn.IsEnabled));
+        Assert.All(view.TextActionButtonsForTesting, btn => Assert.True(btn.IsEnabled));
     }
 
     [AvaloniaFact]
@@ -1631,6 +1641,57 @@ public class ConflictResolverViewTests : IDisposable
     }
 
     [AvaloniaFact]
+    public async Task File_card_keeps_take_recreate_and_external_toolbar_actions_enabled()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "binary.png", Status = ConflictStatus.BothModified, IsBinary = true }];
+        _conflicts.WorkingCopies["binary.png"] = new ConflictWorkingCopy
+        {
+            Path = "binary.png",
+            IsBinary = true,
+            DiskHash = "hash1"
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(view.IsEditableForTesting);
+        Assert.NotEmpty(view.TextActionButtonsForTesting);
+        Assert.All(view.TextActionButtonsForTesting, b => Assert.False(b.IsEnabled));
+
+        var targetLabels = new[] { "Take ours", "Take theirs", "Re-create with base", "External tool" };
+        var toolbarActions = view.ActionButtonsForTesting
+            .Where(b => targetLabels.Contains(b.Content as string))
+            .ToList();
+        Assert.Equal(4, toolbarActions.Count);
+        Assert.All(toolbarActions, b => Assert.True(b.IsEnabled));
+    }
+
+    [AvaloniaFact]
+    public async Task Toolbar_recreate_on_a_card_asks_for_confirmation_and_recreates()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "binary.png", Status = ConflictStatus.BothModified, IsBinary = true }];
+        _conflicts.WorkingCopies["binary.png"] = new ConflictWorkingCopy
+        {
+            Path = "binary.png",
+            IsBinary = true,
+            DiskHash = "hash1"
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        _dialogs.ConfirmDestructiveResult = true;
+        await view.RecreateConflictAsync();
+
+        Assert.Single(_dialogs.ConfirmDestructiveCalls);
+        Assert.Equal("Re-create conflict", _dialogs.ConfirmDestructiveCalls[0].Title);
+        Assert.Single(_conflicts.RecreatedCalls);
+        Assert.Equal("binary.png", _conflicts.RecreatedCalls[0]);
+    }
+
+    [AvaloniaFact]
     public async Task Save_on_file_card_never_calls_SaveResolutionAsync()
     {
         _conflicts.Conflicts = [new ConflictFile { FilePath = "binary.png", Status = ConflictStatus.BothModified, IsBinary = true }];
@@ -1738,6 +1799,40 @@ public class ConflictResolverViewTests : IDisposable
         var notifications = _sp.GetRequiredService<INotificationService>().Current;
         Assert.Contains(notifications, n => n.Severity == NotificationSeverity.Error && n.Message.Contains("git add failed"));
         Assert.Equal("f1.txt", view.CurrentFileForTesting?.FilePath);
+    }
+
+    [AvaloniaFact]
+    public async Task Stage_error_message_says_the_file_was_saved_and_carries_details()
+    {
+        var f1 = new ConflictFile { FilePath = "f1.txt", Status = ConflictStatus.BothModified, IsBinary = false };
+        _conflicts.Conflicts = [f1];
+        _conflicts.WorkingCopies["f1.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f1.txt",
+            Text = TwoConflictText,
+            DiskHash = "hash1",
+            Format = new TextFileFormat(System.Text.Encoding.UTF8, false)
+        };
+        _conflicts.SaveResult = new ResolutionSaveResult
+        {
+            Saved = true,
+            DiskHash = "h2",
+            StageError = new HistoriaGitException(GitErrorKind.Unknown, "git add failed", details: "fatal: lockfile present")
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var saved = await view.SaveCurrentFileAsync(stage: true);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(saved);
+        var notifications = _sp.GetRequiredService<INotificationService>().Current;
+        var errNotification = notifications.FirstOrDefault(n => n.Severity == NotificationSeverity.Error && n.Message.StartsWith("Saved f1.txt, but could not mark it resolved"));
+        Assert.NotNull(errNotification);
+        Assert.False(string.IsNullOrEmpty(errNotification.Details));
+        Assert.Contains("fatal: lockfile present", errNotification.Details);
     }
 
     [AvaloniaFact]
