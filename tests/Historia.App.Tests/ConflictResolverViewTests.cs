@@ -2072,6 +2072,35 @@ public class ConflictResolverViewTests : IDisposable
     }
 
     [AvaloniaFact]
+    public async Task Selection_of_an_unlisted_file_with_a_cancelled_refresh_is_silent()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var notify = _sp.GetRequiredService<INotificationService>();
+        var errorsBefore = notify.Current.Count(n => n.Severity == NotificationSeverity.Error);
+
+        Exception? unhandled = null;
+        void H(object? s, DispatcherUnhandledExceptionEventArgs e) { unhandled = e.Exception; e.Handled = true; }
+        Dispatcher.UIThread.UnhandledException += H;
+        try
+        {
+            _conflicts.OnGetConflictsAsync = () => throw new OperationCanceledException();
+            _context.State.SetSelectedConflictPath("h.txt");
+            await Task.Delay(100);
+            Dispatcher.UIThread.RunJobs();
+        }
+        finally { Dispatcher.UIThread.UnhandledException -= H; }
+
+        Assert.Null(unhandled);
+        Assert.Equal(errorsBefore, notify.Current.Count(n => n.Severity == NotificationSeverity.Error));
+        Assert.Equal("f.txt", view.CurrentFileForTesting?.FilePath);
+    }
+
+    [AvaloniaFact]
     public async Task Take_side_on_a_both_deleted_conflict_says_delete()
     {
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothDeletedRenamed, IsBinary = false }];

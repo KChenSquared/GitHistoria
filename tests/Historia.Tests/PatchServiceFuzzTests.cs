@@ -1,40 +1,136 @@
 namespace Historia.Tests;
 
+/// <summary>
+/// Partial staging and unstaging through the real path (<c>ProjectDiff</c> → <c>GeneratePatch</c> →
+/// <c>git apply</c>) against random files, random line selections and random context sizes. The
+/// expected index content comes from an oracle that reasons over the parsed hunks, never over the
+/// generated patch text. Seeds are fixed; <c>HISTORIA_PATCH_FUZZ_CASES</c> raises the case count
+/// for a local soak.
+/// </summary>
 [Trait("tier", "git")]
 public class PatchServiceFuzzTests
 {
+    private const int StageSeed = 101;
+    private const int UnstageSeed = 202;
+    private const int EofSeed = 303;
+    private const int DefaultEofCases = 10;
+
     private static readonly string[] Alpha = ["a", "b", "c", "", "}", "x = 1;", "x = 2;"];
     private static readonly int[] ContextCycle = [0, 0, 1, 3];
 
-    private static int GetCaseBudget()
+    private sealed record FuzzCase(List<string> OldLines, List<string> NewLines, string Eol);
+
+    private sealed record FuzzSelection(PatchScope Scope, HashSet<DiffLineRef> Selected, HashSet<DiffLineRef> Oracle);
+
+    private static int? CaseBudgetOverride()
     {
         var env = Environment.GetEnvironmentVariable("HISTORIA_PATCH_FUZZ_CASES");
-        return int.TryParse(env, out var n) && n > 0 ? n : 40;
+        return int.TryParse(env, out var n) && n > 0 ? n : null;
     }
+
+    private static int CaseBudget(int fallback) => CaseBudgetOverride() ?? fallback;
 
     private static PatchService Make(MiniHost host)
         => new((IGitCliService)host.Provider.GetService(typeof(IGitCliService))!);
 
+    private static FuzzCase NextCase(Random rnd)
+    {
+        var n = rnd.Next(10, 60);
+        var oldLines = Enumerable.Range(0, n).Select(_ => Alpha[rnd.Next(Alpha.Length)]).ToList();
+        var newLines = new List<string>(oldLines);
+        var edits = rnd.Next(1, 8);
+        for (var k = 0; k < edits; k++)
+        {
+            var pos = rnd.Next(0, newLines.Count + 1);
+            switch (rnd.Next(3))
+            {
+                case 0: if (pos < newLines.Count) newLines.RemoveAt(pos); break;
+                case 1: newLines.Insert(pos, Alpha[rnd.Next(Alpha.Length)]); break;
+                default: if (pos < newLines.Count) newLines[pos] = Alpha[rnd.Next(Alpha.Length)] + "!"; break;
+            }
+        }
+
+        return new FuzzCase(oldLines, newLines, rnd.Next(4) == 0 ? "\r\n" : "\n");
+    }
+
+    private static FileDiff ProjectDiff(string repoPath, DiffSource source, int contextLines)
+    {
+        using var repo = new Repository(repoPath);
+        return new LibGit2Service().ProjectDiff(repo, new DiffRequest
+        {
+            Source = source,
+            Path = "f.txt",
+            ContextLines = contextLines,
+        });
+    }
+
+    private static FuzzSelection PickSelection(Random rnd, IReadOnlyList<DiffHunk> hunks)
+    {
+        var selected = new HashSet<DiffLineRef>();
+        var oracle = new HashSet<DiffLineRef>();
+
+        if (rnd.Next(2) == 0)
+        {
+            var hunkIndex = rnd.Next(hunks.Count);
+            selected.Add(new DiffLineRef(hunkIndex, 0));
+            for (var li = 0; li < hunks[hunkIndex].Lines.Count; li++)
+            {
+                if (hunks[hunkIndex].Lines[li].Type != DiffLineType.Context)
+                    oracle.Add(new DiffLineRef(hunkIndex, li));
+            }
+
+            return new FuzzSelection(PatchScope.SingleHunk, selected, oracle);
+        }
+
+        for (var h = 0; h < hunks.Count; h++)
+        {
+            for (var li = 0; li < hunks[h].Lines.Count; li++)
+            {
+                if (hunks[h].Lines[li].Type != DiffLineType.Context && rnd.Next(2) == 0)
+                {
+                    selected.Add(new DiffLineRef(h, li));
+                    oracle.Add(new DiffLineRef(h, li));
+                }
+            }
+        }
+
+        if (selected.Count == 0)
+        {
+            for (var h = 0; h < hunks.Count && selected.Count == 0; h++)
+            {
+                for (var li = 0; li < hunks[h].Lines.Count; li++)
+                {
+                    if (hunks[h].Lines[li].Type != DiffLineType.Context)
+                    {
+                        selected.Add(new DiffLineRef(h, li));
+                        oracle.Add(new DiffLineRef(h, li));
+                        break;
+                    }
+                }
+            }
+        }
+
+        return new FuzzSelection(PatchScope.SelectedLines, selected, oracle);
+    }
+
     private static List<string> ComputeOracle(List<string> baseLines, IReadOnlyList<DiffHunk> hunks, IReadOnlySet<DiffLineRef> selected, bool reverse)
     {
         var exp = new List<string>();
-        int ptr = 0;
-        for (int h = 0; h < hunks.Count; h++)
+        var ptr = 0;
+        for (var h = 0; h < hunks.Count; h++)
         {
             var hk = hunks[h];
-            int start = reverse
+            var start = reverse
                 ? (hk.NewLineCount == 0 ? hk.NewStart : hk.NewStart - 1)
                 : (hk.OldLineCount == 0 ? hk.OldStart : hk.OldStart - 1);
 
             while (ptr < start && ptr < baseLines.Count)
-            {
                 exp.Add(baseLines[ptr++]);
-            }
 
-            for (int li = 0; li < hk.Lines.Count; li++)
+            for (var li = 0; li < hk.Lines.Count; li++)
             {
                 var l = hk.Lines[li];
-                bool s = selected.Contains(new DiffLineRef(h, li));
+                var s = selected.Contains(new DiffLineRef(h, li));
                 if (l.Type == DiffLineType.Context)
                 {
                     if (ptr < baseLines.Count)
@@ -48,14 +144,14 @@ public class PatchServiceFuzzTests
                         {
                             if (ptr < baseLines.Count) ptr++;
                         }
-                        else
+                        else if (ptr < baseLines.Count)
                         {
-                            if (ptr < baseLines.Count) exp.Add(baseLines[ptr++]);
+                            exp.Add(baseLines[ptr++]);
                         }
                     }
-                    else
+                    else if (s)
                     {
-                        if (s) exp.Add(l.Content);
+                        exp.Add(l.Content);
                     }
                 }
                 else
@@ -66,311 +162,131 @@ public class PatchServiceFuzzTests
                         {
                             if (ptr < baseLines.Count) ptr++;
                         }
-                        else
+                        else if (ptr < baseLines.Count)
                         {
-                            if (ptr < baseLines.Count) exp.Add(baseLines[ptr++]);
+                            exp.Add(baseLines[ptr++]);
                         }
                     }
-                    else
+                    else if (s)
                     {
-                        if (s) exp.Add(l.Content);
+                        exp.Add(l.Content);
                     }
                 }
             }
         }
 
         while (ptr < baseLines.Count)
-        {
             exp.Add(baseLines[ptr++]);
-        }
 
         return exp;
     }
 
-    [Fact]
-    public async Task Random_line_selections_stage_the_intended_lines()
-    {
-        await using var host = new MiniHost();
-        using var b = TestRepositoryBuilder.Create();
-        b.Git("config", "core.autocrlf", "false");
-        await using var ctx = host.Open(b.Path);
-        var svc = Make(host);
+    private static string Describe(int seed, int caseIdx, string direction, int ctxLines, PatchScope scope, string patch, IEnumerable<string> baseLines, string expected, string actual)
+        => $"Seed: {seed}, Case: {caseIdx}, Dir: {direction}, Ctx: {ctxLines}, Scope: {scope}\nPatch:\n{patch}\nBase:\n{string.Join("|", baseLines)}\nExpected:\n{expected}\nActual:\n{actual}";
 
-        File.WriteAllText(Path.Combine(b.Path, "f.txt"), "init\n");
+    private static void PrepareStage(TestRepositoryBuilder b, FuzzCase c)
+    {
+        File.WriteAllText(Path.Combine(b.Path, "f.txt"), string.Join(c.Eol, c.OldLines) + c.Eol);
         b.Git("add", "f.txt");
-        b.Git("commit", "-m", "init", "--no-gpg-sign");
-
-        var rnd = new Random(101);
-        int totalCases = GetCaseBudget();
-        int tested = 0;
-
-        for (int caseIdx = 0; tested < totalCases; caseIdx++)
-        {
-            int n = rnd.Next(10, 60);
-            var oldL = Enumerable.Range(0, n).Select(_ => Alpha[rnd.Next(Alpha.Length)]).ToList();
-            var newL = new List<string>(oldL);
-            int edits = rnd.Next(1, 8);
-            for (int k = 0; k < edits; k++)
-            {
-                int pos = rnd.Next(0, newL.Count + 1);
-                switch (rnd.Next(3))
-                {
-                    case 0: if (pos < newL.Count) newL.RemoveAt(pos); break;
-                    case 1: newL.Insert(pos, Alpha[rnd.Next(Alpha.Length)]); break;
-                    default: if (pos < newL.Count) newL[pos] = Alpha[rnd.Next(Alpha.Length)] + "!"; break;
-                }
-            }
-
-            bool crlf = rnd.Next(4) == 0;
-            string eol = crlf ? "\r\n" : "\n";
-            string Join(List<string> l) => string.Join(eol, l) + eol;
-
-            var oldText = Join(oldL);
-            var newText = Join(newL);
-
-            File.WriteAllText(Path.Combine(b.Path, "f.txt"), oldText);
-            b.Git("add", "f.txt");
-            File.WriteAllText(Path.Combine(b.Path, "f.txt"), newText);
-
-            int ctxLines = ContextCycle[tested % ContextCycle.Length];
-            FileDiff diff;
-            using (var repo = new Repository(b.Path))
-            {
-                diff = new LibGit2Service().ProjectDiff(repo, new DiffRequest
-                {
-                    Source = DiffSource.UnstagedChanges,
-                    Path = "f.txt",
-                    ContextLines = ctxLines,
-                });
-            }
-
-            if (diff.Hunks.Count == 0)
-                continue;
-
-            tested++;
-
-            var hunks = diff.Hunks;
-            var sel = new HashSet<DiffLineRef>();
-            var oracleSel = new HashSet<DiffLineRef>();
-            PatchScope scope;
-
-            if (rnd.Next(2) == 0)
-            {
-                scope = PatchScope.SingleHunk;
-                int hIdx = rnd.Next(hunks.Count);
-                sel.Add(new DiffLineRef(hIdx, 0));
-                for (int li = 0; li < hunks[hIdx].Lines.Count; li++)
-                {
-                    if (hunks[hIdx].Lines[li].Type != DiffLineType.Context)
-                        oracleSel.Add(new DiffLineRef(hIdx, li));
-                }
-            }
-            else
-            {
-                scope = PatchScope.SelectedLines;
-                for (int h = 0; h < hunks.Count; h++)
-                {
-                    for (int li = 0; li < hunks[h].Lines.Count; li++)
-                    {
-                        if (hunks[h].Lines[li].Type != DiffLineType.Context && rnd.Next(2) == 0)
-                        {
-                            sel.Add(new DiffLineRef(h, li));
-                            oracleSel.Add(new DiffLineRef(h, li));
-                        }
-                    }
-                }
-                if (sel.Count == 0)
-                {
-                    for (int h = 0; h < hunks.Count && sel.Count == 0; h++)
-                    {
-                        for (int li = 0; li < hunks[h].Lines.Count; li++)
-                        {
-                            if (hunks[h].Lines[li].Type != DiffLineType.Context)
-                            {
-                                sel.Add(new DiffLineRef(h, li));
-                                oracleSel.Add(new DiffLineRef(h, li));
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (sel.Count == 0)
-                continue;
-
-            var exp = ComputeOracle(oldL, hunks, oracleSel, reverse: false);
-            string expected = string.Join(eol, exp) + eol;
-
-            string patch;
-            try
-            {
-                patch = svc.GeneratePatch(diff, scope, sel, reverse: false);
-            }
-            catch (HistoriaGitException)
-            {
-                continue;
-            }
-
-            if (string.IsNullOrEmpty(patch))
-                continue;
-
-            await svc.ApplyPatchAsync(ctx, patch, PatchTarget.StagingArea, reverse: false);
-
-            var actual = b.Git("cat-file", "-p", ":f.txt");
-            if (actual != expected)
-            {
-                Assert.Fail($"Seed: 101, Case: {caseIdx}, Dir: forward, Ctx: {ctxLines}, Scope: {scope}\nPatch:\n{patch}\nOld:\n{string.Join("|", oldL)}\nExpected:\n{string.Join("|", exp)}\nActual:\n{string.Join("|", actual.Split('\n'))}");
-            }
-        }
+        File.WriteAllText(Path.Combine(b.Path, "f.txt"), string.Join(c.Eol, c.NewLines) + c.Eol);
     }
 
-    [Fact]
-    public async Task Random_line_selections_unstage_the_intended_lines()
+    private static void PrepareUnstage(TestRepositoryBuilder b, FuzzCase c, int caseIdx)
+    {
+        using (var repo = new Repository(b.Path))
+        {
+            using var ms = new MemoryStream(Encoding.UTF8.GetBytes(string.Join(c.Eol, c.OldLines) + c.Eol));
+            var blob = repo.ObjectDatabase.CreateBlob(ms);
+            var treeDef = new TreeDefinition();
+            treeDef.Add("f.txt", blob, Mode.NonExecutableFile);
+            var tree = repo.ObjectDatabase.CreateTree(treeDef);
+            var sig = new Signature("Test", "test@example.com", DateTimeOffset.UnixEpoch);
+            var parent = repo.Head.Tip;
+            var commit = repo.ObjectDatabase.CreateCommit(sig, sig, $"base-{caseIdx}", tree, parent != null ? [parent] : [], false);
+            repo.Refs.UpdateTarget(repo.Refs.Head, commit.Id);
+        }
+
+        File.WriteAllText(Path.Combine(b.Path, "f.txt"), string.Join(c.Eol, c.NewLines) + c.Eol);
+        b.Git("add", "f.txt");
+    }
+
+    private static async Task RunAsync(int seed, bool reverse)
     {
         await using var host = new MiniHost();
         using var b = TestRepositoryBuilder.Create();
         b.Git("config", "core.autocrlf", "false");
         await using var ctx = host.Open(b.Path);
         var svc = Make(host);
+        var direction = reverse ? "reverse" : "forward";
 
-        var rnd = new Random(202);
-        int totalCases = GetCaseBudget();
-        int tested = 0;
-
-        for (int caseIdx = 0; tested < totalCases; caseIdx++)
+        if (!reverse)
         {
-            int n = rnd.Next(10, 60);
-            var oldL = Enumerable.Range(0, n).Select(_ => Alpha[rnd.Next(Alpha.Length)]).ToList();
-            var newL = new List<string>(oldL);
-            int edits = rnd.Next(1, 8);
-            for (int k = 0; k < edits; k++)
-            {
-                int pos = rnd.Next(0, newL.Count + 1);
-                switch (rnd.Next(3))
-                {
-                    case 0: if (pos < newL.Count) newL.RemoveAt(pos); break;
-                    case 1: newL.Insert(pos, Alpha[rnd.Next(Alpha.Length)]); break;
-                    default: if (pos < newL.Count) newL[pos] = Alpha[rnd.Next(Alpha.Length)] + "!"; break;
-                }
-            }
-
-            bool crlf = rnd.Next(4) == 0;
-            string eol = crlf ? "\r\n" : "\n";
-            string Join(List<string> l) => string.Join(eol, l) + eol;
-
-            var oldText = Join(oldL);
-            var newText = Join(newL);
-
-            using (var repo = new Repository(b.Path))
-            {
-                using var ms = new MemoryStream(Encoding.UTF8.GetBytes(oldText));
-                var blob = repo.ObjectDatabase.CreateBlob(ms);
-                var treeDef = new TreeDefinition();
-                treeDef.Add("f.txt", blob, Mode.NonExecutableFile);
-                var tree = repo.ObjectDatabase.CreateTree(treeDef);
-                var sig = new Signature("Test", "test@example.com", DateTimeOffset.UnixEpoch);
-                var parent = repo.Head.Tip;
-                var commit = repo.ObjectDatabase.CreateCommit(sig, sig, $"base-{caseIdx}", tree, parent != null ? [parent] : [], false);
-                repo.Refs.UpdateTarget(repo.Refs.Head, commit.Id);
-            }
-
-            // Stage new content
-            File.WriteAllText(Path.Combine(b.Path, "f.txt"), newText);
+            File.WriteAllText(Path.Combine(b.Path, "f.txt"), "init\n");
             b.Git("add", "f.txt");
+            b.Git("commit", "-m", "init", "--no-gpg-sign");
+        }
 
-            int ctxLines = ContextCycle[tested % ContextCycle.Length];
-            FileDiff diff;
-            using (var repo = new Repository(b.Path))
-            {
-                diff = new LibGit2Service().ProjectDiff(repo, new DiffRequest
-                {
-                    Source = DiffSource.StagedChanges,
-                    Path = "f.txt",
-                    ContextLines = ctxLines,
-                });
-            }
+        var rnd = new Random(seed);
+        var totalCases = CaseBudget(40);
+        var tested = 0;
 
+        for (var caseIdx = 0; tested < totalCases; caseIdx++)
+        {
+            var c = NextCase(rnd);
+            if (reverse)
+                PrepareUnstage(b, c, caseIdx);
+            else
+                PrepareStage(b, c);
+
+            var ctxLines = ContextCycle[tested % ContextCycle.Length];
+            var diff = ProjectDiff(b.Path, reverse ? DiffSource.StagedChanges : DiffSource.UnstagedChanges, ctxLines);
             if (diff.Hunks.Count == 0)
                 continue;
 
             tested++;
 
-            var hunks = diff.Hunks;
-            var sel = new HashSet<DiffLineRef>();
-            var oracleSel = new HashSet<DiffLineRef>();
-            PatchScope scope;
+            var pick = PickSelection(rnd, diff.Hunks);
+            if (pick.Selected.Count == 0)
+                Assert.Fail($"Seed: {seed}, Case: {caseIdx}: a non-empty diff produced no selectable line.");
 
-            if (rnd.Next(2) == 0)
-            {
-                scope = PatchScope.SingleHunk;
-                int hIdx = rnd.Next(hunks.Count);
-                sel.Add(new DiffLineRef(hIdx, 0));
-                for (int li = 0; li < hunks[hIdx].Lines.Count; li++)
-                {
-                    if (hunks[hIdx].Lines[li].Type != DiffLineType.Context)
-                        oracleSel.Add(new DiffLineRef(hIdx, li));
-                }
-            }
-            else
-            {
-                scope = PatchScope.SelectedLines;
-                for (int h = 0; h < hunks.Count; h++)
-                {
-                    for (int li = 0; li < hunks[h].Lines.Count; li++)
-                    {
-                        if (hunks[h].Lines[li].Type != DiffLineType.Context && rnd.Next(2) == 0)
-                        {
-                            sel.Add(new DiffLineRef(h, li));
-                            oracleSel.Add(new DiffLineRef(h, li));
-                        }
-                    }
-                }
-                if (sel.Count == 0)
-                {
-                    for (int h = 0; h < hunks.Count && sel.Count == 0; h++)
-                    {
-                        for (int li = 0; li < hunks[h].Lines.Count; li++)
-                        {
-                            if (hunks[h].Lines[li].Type != DiffLineType.Context)
-                            {
-                                sel.Add(new DiffLineRef(h, li));
-                                oracleSel.Add(new DiffLineRef(h, li));
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (sel.Count == 0)
-                continue;
-
-            var exp = ComputeOracle(newL, hunks, oracleSel, reverse: true);
-            string expected = string.Join(eol, exp) + eol;
+            var baseLines = reverse ? c.NewLines : c.OldLines;
+            var expectedLines = ComputeOracle(baseLines, diff.Hunks, pick.Oracle, reverse);
+            var expected = string.Join(c.Eol, expectedLines) + c.Eol;
 
             string patch;
             try
             {
-                patch = svc.GeneratePatch(diff, scope, sel, reverse: true);
+                patch = svc.GeneratePatch(diff, pick.Scope, pick.Selected, reverse);
             }
-            catch (HistoriaGitException)
+            catch (HistoriaGitException ex)
             {
-                continue;
+                patch = string.Empty;
+                Assert.Fail($"Seed: {seed}, Case: {caseIdx}, Dir: {direction}, Ctx: {ctxLines}, Scope: {pick.Scope}: GeneratePatch refused a file that ends in a newline: {ex.Message}");
             }
 
             if (string.IsNullOrEmpty(patch))
-                continue;
+                Assert.Fail($"Seed: {seed}, Case: {caseIdx}, Dir: {direction}, Ctx: {ctxLines}, Scope: {pick.Scope}: GeneratePatch returned an empty patch for a non-empty selection.");
 
-            await svc.ApplyPatchAsync(ctx, patch, PatchTarget.StagingArea, reverse: true);
+            try
+            {
+                await svc.ApplyPatchAsync(ctx, patch, PatchTarget.StagingArea, reverse);
+            }
+            catch (HistoriaGitException ex)
+            {
+                Assert.Fail(Describe(seed, caseIdx, direction, ctxLines, pick.Scope, patch, baseLines, expected, $"apply failed: {ex.Message}"));
+            }
 
             var actual = b.Git("cat-file", "-p", ":f.txt");
             if (actual != expected)
-            {
-                Assert.Fail($"Seed: 202, Case: {caseIdx}, Dir: reverse, Ctx: {ctxLines}, Scope: {scope}\nPatch:\n{patch}\nOld:\n{string.Join("|", newL)}\nExpected:\n{string.Join("|", exp)}\nActual:\n{string.Join("|", actual.Split('\n'))}");
-            }
+                Assert.Fail(Describe(seed, caseIdx, direction, ctxLines, pick.Scope, patch, baseLines, string.Join("|", expectedLines), string.Join("|", actual.Split('\n'))));
         }
     }
+
+    [Fact]
+    public Task Random_line_selections_stage_the_intended_lines() => RunAsync(StageSeed, reverse: false);
+
+    [Fact]
+    public Task Random_line_selections_unstage_the_intended_lines() => RunAsync(UnstageSeed, reverse: true);
 
     [Fact]
     public async Task Random_selections_without_a_final_newline_stay_correct_or_are_refused()
@@ -385,115 +301,39 @@ public class PatchServiceFuzzTests
         b.Git("add", "f.txt");
         b.Git("commit", "-m", "init", "--no-gpg-sign");
 
-        var rnd = new Random(303);
-        int totalCases = Environment.GetEnvironmentVariable("HISTORIA_PATCH_FUZZ_CASES") != null ? GetCaseBudget() : 10;
-        int tested = 0;
+        var rnd = new Random(EofSeed);
+        var totalCases = CaseBudget(DefaultEofCases);
+        var tested = 0;
 
-        for (int caseIdx = 0; tested < totalCases; caseIdx++)
+        for (var caseIdx = 0; tested < totalCases; caseIdx++)
         {
-            int n = rnd.Next(10, 60);
-            var oldL = Enumerable.Range(0, n).Select(_ => Alpha[rnd.Next(Alpha.Length)]).ToList();
-            var newL = new List<string>(oldL);
-            int edits = rnd.Next(1, 8);
-            for (int k = 0; k < edits; k++)
-            {
-                int pos = rnd.Next(0, newL.Count + 1);
-                switch (rnd.Next(3))
-                {
-                    case 0: if (pos < newL.Count) newL.RemoveAt(pos); break;
-                    case 1: newL.Insert(pos, Alpha[rnd.Next(Alpha.Length)]); break;
-                    default: if (pos < newL.Count) newL[pos] = Alpha[rnd.Next(Alpha.Length)] + "!"; break;
-                }
-            }
+            var c = NextCase(rnd);
+            var noOldNl = rnd.Next(2) == 0;
+            var noNewNl = rnd.Next(2) == 0;
+            if (!noOldNl && !noNewNl)
+                noOldNl = true;
 
-            bool crlf = rnd.Next(4) == 0;
-            string eol = crlf ? "\r\n" : "\n";
-            bool noOldNl = rnd.Next(2) == 0;
-            bool noNewNl = rnd.Next(2) == 0;
-            if (!noOldNl && !noNewNl) noOldNl = true;
-
-            string oldText = string.Join(eol, oldL) + (noOldNl ? "" : eol);
-            string newText = string.Join(eol, newL) + (noNewNl ? "" : eol);
-
-            File.WriteAllText(Path.Combine(b.Path, "f.txt"), oldText);
+            File.WriteAllText(Path.Combine(b.Path, "f.txt"), string.Join(c.Eol, c.OldLines) + (noOldNl ? "" : c.Eol));
             b.Git("add", "f.txt");
-            File.WriteAllText(Path.Combine(b.Path, "f.txt"), newText);
+            File.WriteAllText(Path.Combine(b.Path, "f.txt"), string.Join(c.Eol, c.NewLines) + (noNewNl ? "" : c.Eol));
 
-            int ctxLines = ContextCycle[tested % ContextCycle.Length];
-            FileDiff diff;
-            using (var repo = new Repository(b.Path))
-            {
-                diff = new LibGit2Service().ProjectDiff(repo, new DiffRequest
-                {
-                    Source = DiffSource.UnstagedChanges,
-                    Path = "f.txt",
-                    ContextLines = ctxLines,
-                });
-            }
-
+            var ctxLines = ContextCycle[tested % ContextCycle.Length];
+            var diff = ProjectDiff(b.Path, DiffSource.UnstagedChanges, ctxLines);
             if (diff.Hunks.Count == 0)
                 continue;
 
             tested++;
 
-            var hunks = diff.Hunks;
-            var sel = new HashSet<DiffLineRef>();
-            var oracleSel = new HashSet<DiffLineRef>();
-            PatchScope scope;
-
-            if (rnd.Next(2) == 0)
-            {
-                scope = PatchScope.SingleHunk;
-                int hIdx = rnd.Next(hunks.Count);
-                sel.Add(new DiffLineRef(hIdx, 0));
-                for (int li = 0; li < hunks[hIdx].Lines.Count; li++)
-                {
-                    if (hunks[hIdx].Lines[li].Type != DiffLineType.Context)
-                        oracleSel.Add(new DiffLineRef(hIdx, li));
-                }
-            }
-            else
-            {
-                scope = PatchScope.SelectedLines;
-                for (int h = 0; h < hunks.Count; h++)
-                {
-                    for (int li = 0; li < hunks[h].Lines.Count; li++)
-                    {
-                        if (hunks[h].Lines[li].Type != DiffLineType.Context && rnd.Next(2) == 0)
-                        {
-                            sel.Add(new DiffLineRef(h, li));
-                            oracleSel.Add(new DiffLineRef(h, li));
-                        }
-                    }
-                }
-                if (sel.Count == 0)
-                {
-                    for (int h = 0; h < hunks.Count && sel.Count == 0; h++)
-                    {
-                        for (int li = 0; li < hunks[h].Lines.Count; li++)
-                        {
-                            if (hunks[h].Lines[li].Type != DiffLineType.Context)
-                            {
-                                sel.Add(new DiffLineRef(h, li));
-                                oracleSel.Add(new DiffLineRef(h, li));
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (sel.Count == 0)
-                continue;
+            var pick = PickSelection(rnd, diff.Hunks);
 
             string patch;
             try
             {
-                patch = svc.GeneratePatch(diff, scope, sel, reverse: false);
+                patch = svc.GeneratePatch(diff, pick.Scope, pick.Selected, reverse: false);
             }
             catch (HistoriaGitException)
             {
-                // B16 refusal is a valid pass
+                // The end-of-file newline refusal is a valid outcome for this variant.
                 continue;
             }
 
@@ -507,13 +347,10 @@ public class PatchServiceFuzzTests
             await svc.ApplyPatchAsync(ctx, patch, PatchTarget.StagingArea, reverse: false);
 
             var actual = b.Git("cat-file", "-p", ":f.txt");
-            var exp = ComputeOracle(oldL, hunks, oracleSel, reverse: false);
-            var expectedTrimmed = string.Join(eol, exp).TrimEnd('\r', '\n');
+            var expectedTrimmed = string.Join(c.Eol, ComputeOracle(c.OldLines, diff.Hunks, pick.Oracle, reverse: false)).TrimEnd('\r', '\n');
             var actualTrimmed = actual.TrimEnd('\r', '\n');
             if (actualTrimmed != expectedTrimmed)
-            {
-                Assert.Fail($"Seed: 303, Case: {caseIdx}, EOF variant\nPatch:\n{patch}\nOld:\n{string.Join("|", oldL)}\nExpected:\n{expectedTrimmed}\nActual:\n{actualTrimmed}");
-            }
+                Assert.Fail($"Seed: {EofSeed}, Case: {caseIdx}, EOF variant, Ctx: {ctxLines}, Scope: {pick.Scope}\nPatch:\n{patch}\nBase:\n{string.Join("|", c.OldLines)}\nExpected:\n{expectedTrimmed}\nActual:\n{actualTrimmed}");
         }
     }
 }
