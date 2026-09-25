@@ -24,7 +24,7 @@ public class GraphDecorationMergeTests : IAsyncDisposable
     private async Task<GraphDecoration[]> DecorationsForTipAsync()
     {
         await using var ctx = _host.Open(_repo.Path);
-        var svc = new GraphLayoutService();
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         var layout = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
         return layout.Layout.Decorations.Where(d => d.RowIndex == 0).ToArray();
     }
@@ -108,7 +108,7 @@ public class GraphDecorationMergeTests : IAsyncDisposable
         _repo.Git("tag", "v1", "HEAD~1"); // tag the branch-less c1
 
         await using var ctx = _host.Open(_repo.Path);
-        var svc = new GraphLayoutService();
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         var layout = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
         var decos = layout.Layout.Decorations.ToArray();
 
@@ -123,7 +123,7 @@ public class GraphDecorationMergeTests : IAsyncDisposable
         _repo.Git("tag", "-a", "v-annotated", "-m", "release note", "HEAD~1");
 
         await using var ctx = _host.Open(_repo.Path);
-        var svc = new GraphLayoutService();
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         var layout = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
         var decos = layout.Layout.Decorations.ToArray();
 
@@ -216,7 +216,7 @@ public class GraphDecorationMergeTests : IAsyncDisposable
         _repo.Commit("c2");
 
         await using var ctx = _host.Open(_repo.Path);
-        var svc = new GraphLayoutService();
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         var initial = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
 
         // Tip initially has local main only (origin/main is at row 1)
@@ -241,7 +241,7 @@ public class GraphDecorationMergeTests : IAsyncDisposable
     public async Task Recompute_with_unchanged_refs_returns_previous_layout()
     {
         await using var ctx = _host.Open(_repo.Path);
-        var svc = new GraphLayoutService();
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         var initial = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
 
         Assert.NotEqual(0, initial.Fingerprint);

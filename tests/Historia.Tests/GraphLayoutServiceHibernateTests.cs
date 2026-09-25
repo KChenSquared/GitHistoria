@@ -36,7 +36,7 @@ public sealed class GraphLayoutServiceHibernateTests : IAsyncDisposable
     public async Task Hibernate_drops_the_repo_cache_entry()
     {
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
-        var svc = new GraphLayoutService(_host.Settings);
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         await using var ctx = _host.Open(_repo.Path);
         ctx.MarkFirstGraphPaintDone();
         ctx.MarkFirstFullLoadDone();
@@ -52,7 +52,7 @@ public sealed class GraphLayoutServiceHibernateTests : IAsyncDisposable
     [Fact]
     public async Task Hibernate_on_a_context_with_no_cache_is_a_no_op()
     {
-        var svc = new GraphLayoutService(_host.Settings);
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         await using var ctx = _host.Open(_repo.Path);
 
         await svc.Hibernate(ctx); // must not throw
@@ -63,7 +63,7 @@ public sealed class GraphLayoutServiceHibernateTests : IAsyncDisposable
     public async Task Refocus_after_hibernate_produces_the_same_layout()
     {
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
-        var svc = new GraphLayoutService(_host.Settings);
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         await using var ctx = _host.Open(_repo.Path);
         ctx.MarkFirstGraphPaintDone();
         ctx.MarkFirstFullLoadDone();

@@ -38,7 +38,7 @@ public sealed class GraphSpillExhaustionTests : IAsyncDisposable
         GraphLayoutService.TestSpillBatchRowsOverride = 7;
         try
         {
-            var svc = new GraphLayoutService(_host.Settings);
+            var svc = new GraphLayoutService(_host.Settings, _host.Locator);
             await using var ctx = _host.Open(repo.Path);
             ctx.MarkFirstGraphPaintDone();
             ctx.MarkFirstFullLoadDone();
@@ -51,7 +51,7 @@ public sealed class GraphSpillExhaustionTests : IAsyncDisposable
             Assert.NotNull(spillTask);
             await spillTask.WaitAsync(TimeSpan.FromSeconds(15));
 
-            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
             Assert.True(probe.Ok, "meta store header should exist");
             Assert.True(probe.Exhausted, "background spill should have walked the whole history to exhaustion");
             Assert.Equal(commitCount, probe.RowCount);
@@ -71,7 +71,7 @@ public sealed class GraphSpillExhaustionTests : IAsyncDisposable
 
         // Expected ground truth from memory walk
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
-        var memSvc = new GraphLayoutService(_host.Settings);
+        var memSvc = new GraphLayoutService(_host.Settings, _host.Locator);
         await using var memCtx = _host.Open(repo.Path);
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
         var expected = await memSvc.ComputeLayoutAsync(memCtx, query, maxRows: commitCount);
@@ -82,7 +82,7 @@ public sealed class GraphSpillExhaustionTests : IAsyncDisposable
         GraphLayoutService.TestSpillBatchRowsOverride = 7;
         try
         {
-            var svc = new GraphLayoutService(_host.Settings);
+            var svc = new GraphLayoutService(_host.Settings, _host.Locator);
             await using var ctx = _host.Open(repo.Path);
             ctx.MarkFirstGraphPaintDone();
             ctx.MarkFirstFullLoadDone();
@@ -94,7 +94,7 @@ public sealed class GraphSpillExhaustionTests : IAsyncDisposable
             Assert.NotNull(spillTask);
             await spillTask.WaitAsync(TimeSpan.FromSeconds(15));
 
-            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
             Assert.True(probe.Ok);
             Assert.True(probe.Exhausted);
             Assert.Equal(commitCount, probe.RowCount);

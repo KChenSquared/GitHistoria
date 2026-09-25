@@ -16,7 +16,7 @@ public sealed class GraphReadWindowTests : IDisposable
     private readonly StateDir _state = new();
     private const long WalkKey = 0x1122_3344_5566_7788;
     private const string Repo = @"C:\repos\readwindow-demo";
-    private const WalkEngine Engine = WalkEngine.LibGit2;
+    private const WalkEngine Engine = WalkEngine.Cli;
 
     public void Dispose() => _state.Dispose();
 
@@ -171,7 +171,7 @@ public sealed class GraphReadWindowTests : IDisposable
         var cache = NewCache(spilledRows: 20, resident: [], store);
         CacheType.GetProperty("Exhausted")!.SetValue(cache, true);
 
-        var svc = new GraphLayoutService();
+        var svc = new GraphLayoutService(host.Settings, host.Locator);
         var cachesField = typeof(GraphLayoutService).GetField(
             "_caches", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
         var caches = cachesField.GetValue(svc)!;

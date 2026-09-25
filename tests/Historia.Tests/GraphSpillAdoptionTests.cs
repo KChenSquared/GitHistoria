@@ -72,7 +72,7 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
         const long walkKey = 0x1234_5678_9ABC_DEF0;
 
         // Writer B pre-populates the on-disk store with 25 rows (not exhausted)
-        var writerB = new GraphMetaWriter(repo.Path, walkKey, includeRemoteBranches: true, WalkEngine.LibGit2);
+        var writerB = new GraphMetaWriter(repo.Path, walkKey, includeRemoteBranches: true, WalkEngine.Cli);
         var (outcomeB, countB) = writerB.AppendSpillBatch(rawCommits.Take(25).ToList(), 0, 25, exhausted: false);
         Assert.Equal(SpillOutcome.Appended, outcomeB);
         Assert.Equal(25, countB);
@@ -81,7 +81,7 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
         var repoCacheType = typeof(GraphLayoutService).GetNestedType("RepoCache", System.Reflection.BindingFlags.NonPublic)!;
         var cache = Activator.CreateInstance(repoCacheType)!;
         repoCacheType.GetProperty("WalkKey")!.SetValue(cache, walkKey);
-        repoCacheType.GetProperty("Engine")!.SetValue(cache, WalkEngine.LibGit2);
+        repoCacheType.GetProperty("Engine")!.SetValue(cache, WalkEngine.Cli);
         using var dummyWalk = rawCommits.GetEnumerator();
         repoCacheType.GetProperty("LiveWalk")!.SetValue(cache, dummyWalk);
         var commitsList = (List<RawCommit>)repoCacheType.GetProperty("Commits")!.GetValue(cache)!;
@@ -116,7 +116,7 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
         const long walkKey = 0x2468_1357_9BDF_ECA0;
 
         // Writer B pre-populates the on-disk store with all 30 rows (exhausted)
-        var writerB = new GraphMetaWriter(repo.Path, walkKey, includeRemoteBranches: true, WalkEngine.LibGit2);
+        var writerB = new GraphMetaWriter(repo.Path, walkKey, includeRemoteBranches: true, WalkEngine.Cli);
         var (outcomeB, countB) = writerB.AppendSpillBatch(rawCommits, 0, commitCount, exhausted: true);
         Assert.Equal(SpillOutcome.Appended, outcomeB);
         Assert.Equal(commitCount, countB);
@@ -125,7 +125,7 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
         var repoCacheType = typeof(GraphLayoutService).GetNestedType("RepoCache", System.Reflection.BindingFlags.NonPublic)!;
         var cache = Activator.CreateInstance(repoCacheType)!;
         repoCacheType.GetProperty("WalkKey")!.SetValue(cache, walkKey);
-        repoCacheType.GetProperty("Engine")!.SetValue(cache, WalkEngine.LibGit2);
+        repoCacheType.GetProperty("Engine")!.SetValue(cache, WalkEngine.Cli);
         using var dummyWalk = rawCommits.GetEnumerator();
         repoCacheType.GetProperty("LiveWalk")!.SetValue(cache, dummyWalk);
         var commitsList = (List<RawCommit>)repoCacheType.GetProperty("Commits")!.GetValue(cache)!;
@@ -160,7 +160,7 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
 
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
 
-        var svc = new GraphLayoutService(_host.Settings);
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         await using var ctx = _host.Open(repo.Path);
         ctx.MarkFirstGraphPaintDone();
         ctx.MarkFirstFullLoadDone();

@@ -1,10 +1,11 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// The CLI streaming walk (<see cref="GitLogStream"/>, via <see cref="GraphLayoutService"/>'s 2-arg DI ctor)
-/// and the libgit2 fallback walk (the 1-arg ctor) agree on the reachable commit set and on row order
-/// (in commit-date order) for the same ref set when timestamps are distinct. Skipped when git.exe
-/// isn't discoverable by <see cref="IGitExecutableLocator"/> (the CLI engine never engages).
+/// The graph walk (<see cref="GitLogStream"/>, via <see cref="GraphLayoutService"/>) yields exactly
+/// the commits reachable from every ref — checked against an independent LibGit2Sharp revwalk
+/// computed inside the test — resumes across extends without gaps or dupes, and emits rows in
+/// strictly descending commit-date order when timestamps are distinct. Skipped when git.exe isn't
+/// discoverable by <see cref="IGitExecutableLocator"/>.
 /// </summary>
 [Trait("tier", "git")]
 public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
@@ -48,9 +49,9 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
     private static List<ObjectId> RowIds(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
-    /// <summary>Ground-truth check independent of either engine: for every row, every real
-    /// libgit2 parent of that row's commit (when also present in the walked window) must sort at
-    /// a LATER row — children-before-parents, regardless of which engine produced the order.</summary>
+    /// <summary>Ground-truth check independent of the walk: for every row, every real parent of
+    /// that row's commit (when also present in the walked window) must sort at a LATER row —
+    /// children-before-parents.</summary>
     private static async Task AssertChildrenBeforeParents(RepositoryContext ctx, GraphLayoutResult result)
     {
         var rowOf = new Dictionary<ObjectId, int>();
@@ -75,33 +76,38 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
         });
     }
 
+    /// <summary>Test oracle: every commit reachable from HEAD and every ref, by LibGit2Sharp's
+    /// own revwalk (which peels annotated tags itself). Independent of the graph service's tip
+    /// resolution.</summary>
+    private static Task<HashSet<ObjectId>> ReachableFromAllRefs(RepositoryContext ctx) =>
+        ctx.WithRepositoryAsync(repo =>
+        {
+            var tips = new List<object> { repo.Head };
+            tips.AddRange(repo.Refs);
+            return repo.Commits.QueryBy(new CommitFilter { IncludeReachableFrom = tips })
+                .Select(c => c.Id)
+                .ToHashSet();
+        });
+
     [Fact]
-    public async Task Cli_and_libgit2_walks_agree_on_the_reachable_commit_set()
+    public async Task Walk_yields_exactly_the_commits_reachable_from_every_ref()
     {
         var locator = _host.Provider.GetRequiredService<IGitExecutableLocator>();
         if (!locator.Current.Found)
-            return; // git.exe not discoverable — nothing to compare (see class doc)
+            return; // git.exe not discoverable (see class doc)
 
-        await using var ctxCli = _host.Open(_repo.Path);
-        ctxCli.MarkFirstGraphPaintDone(); ctxCli.MarkFirstFullLoadDone();
-        var cliSvc = new GraphLayoutService(_host.Settings, locator);
-        var cliResult = await cliSvc.ComputeLayoutAsync(ctxCli, Q, maxRows: 1000);
+        await using var ctx = _host.Open(_repo.Path);
+        ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone();
+        var result = await new GraphLayoutService(_host.Settings, locator).ComputeLayoutAsync(ctx, Q, maxRows: 1000);
 
-        await using var ctxLibgit2 = _host.Open(_repo.Path);
-        ctxLibgit2.MarkFirstGraphPaintDone(); ctxLibgit2.MarkFirstFullLoadDone();
-        var libgit2Svc = new GraphLayoutService(_host.Settings);
-        var libgit2Result = await libgit2Svc.ComputeLayoutAsync(ctxLibgit2, Q, maxRows: 1000);
+        var ids = new HashSet<ObjectId>(RowIds(result));
 
-        var cliIds = new HashSet<ObjectId>(RowIds(cliResult));
-        var libIds = new HashSet<ObjectId>(RowIds(libgit2Result));
-
-        Assert.NotEmpty(cliIds);
-        Assert.Equal(libIds, cliIds);
+        Assert.NotEmpty(ids);
+        Assert.Equal(await ReachableFromAllRefs(ctx), ids);
         // Sanity: both roots and the merge are actually in the walked set.
-        Assert.Equal(10, cliIds.Count);
+        Assert.Equal(10, ids.Count);
 
-        await AssertChildrenBeforeParents(ctxCli, cliResult);
-        await AssertChildrenBeforeParents(ctxLibgit2, libgit2Result);
+        await AssertChildrenBeforeParents(ctx, result);
     }
 
     [Fact]
@@ -133,21 +139,17 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
         Assert.Equal(fullIds, new HashSet<ObjectId>(seen)); // same set as one big walk
     }
 
-    /// <summary>An annotated tag's ref target is the TAG OBJECT, not the
-    /// commit it points at. Before the fix, <c>GraphLayoutService.ResolveTipShas</c> called
-    /// <c>repo.Lookup&lt;Commit&gt;(target)</c> straight on that target and silently dropped the
-    /// tip when it returned null — exactly this fixture's shape (a release tagged on a branch that
-    /// is then deleted, so the annotated tag is the ONLY remaining path to that history).
-    /// libgit2's own <see cref="StartWalk"/> fallback never had this gap: it feeds
-    /// <see cref="Reference"/> objects straight to <c>CommitFilter.IncludeReachableFrom</c>, which
-    /// peels annotated tags internally — so before the fix the two engines walked different
-    /// histories for this repo.</summary>
+    /// <summary>An annotated tag's ref target is the TAG OBJECT, not the commit it points at, so
+    /// <c>GraphLayoutService.ResolveTipShas</c> must peel it — a plain
+    /// <c>repo.Lookup&lt;Commit&gt;(target)</c> returns null and would silently drop the tip. This
+    /// fixture is a release tagged on a branch that is then deleted, so the annotated tag is the
+    /// ONLY remaining path to that history.</summary>
     [Fact]
-    public async Task Cli_and_libgit2_walks_agree_when_a_commit_is_reachable_only_via_an_annotated_tag_on_a_deleted_branch()
+    public async Task Walk_includes_a_commit_reachable_only_via_an_annotated_tag_on_a_deleted_branch()
     {
         var locator = _host.Provider.GetRequiredService<IGitExecutableLocator>();
         if (!locator.Current.Found)
-            return; // git.exe not discoverable — nothing to compare (see class doc)
+            return; // git.exe not discoverable (see class doc)
 
         _repo.Git("checkout", "-b", "doomed");
         var doomedSha = _repo.WriteFile("doomed.txt", "x\n").Stage().Commit("doomed work");
@@ -155,25 +157,20 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
         _repo.Git("checkout", "main");
         _repo.Git("branch", "-D", "doomed");
 
-        await using var ctxCli = _host.Open(_repo.Path);
-        ctxCli.MarkFirstGraphPaintDone(); ctxCli.MarkFirstFullLoadDone();
-        var cliResult = await new GraphLayoutService(_host.Settings, locator).ComputeLayoutAsync(ctxCli, Q, maxRows: 1000);
+        await using var ctx = _host.Open(_repo.Path);
+        ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone();
+        var result = await new GraphLayoutService(_host.Settings, locator).ComputeLayoutAsync(ctx, Q, maxRows: 1000);
 
-        await using var ctxLibgit2 = _host.Open(_repo.Path);
-        ctxLibgit2.MarkFirstGraphPaintDone(); ctxLibgit2.MarkFirstFullLoadDone();
-        var libgit2Result = await new GraphLayoutService(_host.Settings).ComputeLayoutAsync(ctxLibgit2, Q, maxRows: 1000);
+        var ids = new HashSet<ObjectId>(RowIds(result));
 
-        var cliIds = new HashSet<ObjectId>(RowIds(cliResult));
-        var libIds = new HashSet<ObjectId>(RowIds(libgit2Result));
-
-        Assert.Equal(libIds, cliIds);
+        Assert.Equal(await ReachableFromAllRefs(ctx), ids);
         // The doomed-branch commit must actually be present — the annotated tag is its only
         // remaining path now that the branch itself is deleted.
-        Assert.Contains(new ObjectId(doomedSha), cliIds);
+        Assert.Contains(new ObjectId(doomedSha), ids);
     }
 
     [Fact]
-    public async Task Cli_and_libgit2_walks_agree_on_row_order_when_timestamps_are_distinct()
+    public async Task Walk_rows_descend_by_commit_date_when_timestamps_are_distinct()
     {
         var locator = _host.Provider.GetRequiredService<IGitExecutableLocator>();
         if (!locator.Current.Found)
@@ -194,17 +191,16 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
             b.WriteFile("m3.txt", "m3").Stage().CommitAt("M3", t0.AddMinutes(6));
         });
 
-        await using var ctxCli = _host.Open(repo.Path);
-        ctxCli.MarkFirstGraphPaintDone(); ctxCli.MarkFirstFullLoadDone();
-        var cliResult = await new GraphLayoutService(_host.Settings, locator).ComputeLayoutAsync(ctxCli, Q, maxRows: 1000);
+        await using var ctx = _host.Open(repo.Path);
+        ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone();
+        var result = await new GraphLayoutService(_host.Settings, locator).ComputeLayoutAsync(ctx, Q, maxRows: 1000);
 
-        await using var ctxLibgit2 = _host.Open(repo.Path);
-        ctxLibgit2.MarkFirstGraphPaintDone(); ctxLibgit2.MarkFirstFullLoadDone();
-        var libgit2Result = await new GraphLayoutService(_host.Settings).ComputeLayoutAsync(ctxLibgit2, Q, maxRows: 1000);
-
-        var cliRows = RowIds(cliResult);
-        var libgit2Rows = RowIds(libgit2Result);
-
-        Assert.Equal(libgit2Rows, cliRows);
+        // --date-order with distinct timestamps and no clock skew: strictly newest-first.
+        var dates = Enumerable.Range(0, result.Layout.RowCount)
+            .Select(i => result.Layout.Commits[i].CommitWhen)
+            .ToList();
+        Assert.Equal(6, dates.Count);
+        for (var i = 1; i < dates.Count; i++)
+            Assert.True(dates[i - 1] > dates[i], $"row {i - 1} ({dates[i - 1]:O}) must be newer than row {i} ({dates[i]:O})");
     }
 }

@@ -29,7 +29,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
     private async Task<GraphLayoutService> DiskBackedServiceAsync()
     {
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
-        return new GraphLayoutService(_host.Settings);
+        return new GraphLayoutService(_host.Settings, _host.Locator);
     }
 
     private static GraphQuery Q => new() { RefScope = GraphRefScope.AllRefs };
@@ -200,7 +200,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
         // walk key is untouched, so from RunHeadlessCacheAsync's point of view this looks exactly
         // like a real repo whose store has drifted this way over time.
         var hdrPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.HdrExt);
-        var probeBefore = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+        var probeBefore = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
         Assert.True(probeBefore.Ok);
         var hdrJson = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(File.ReadAllBytes(hdrPath))!;
         var inflated = new
@@ -223,7 +223,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
         await using var ctx2 = _host.Open(_repo.Path);
         await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None);
 
-        var probeAfter = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+        var probeAfter = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
         Assert.True(probeAfter.Ok);
         Assert.Equal(CommitCount + 1, probeAfter.RowCount);
         Assert.Equal(probeAfter.RowCount, probeAfter.RecordCount); // compacted: identity order, no dead records
@@ -246,14 +246,14 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
 
         // Ground truth: a plain in-memory compute of the SAME (now-checked-out) history.
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
-        var memSvc = new GraphLayoutService(_host.Settings);
+        var memSvc = new GraphLayoutService(_host.Settings, _host.Locator);
         await using var memCtx = _host.Open(_repo.Path);
         var expected = await memSvc.ComputeLayoutAsync(memCtx, Q);
         Assert.Equal(CommitCount + 1, expected.Layout.RowCount);
 
         // The headlessly-reordered disk store: ProbeExisting (not ProbeAny/Probe) so this reads
         // through the actual OrderVersion/RecordCount the reorder wrote, not the identity order.
-        var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+        var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
         Assert.True(probe.Ok);
         Assert.True(probe.OrderVersion > 0, "expected the reorder's order file to be in effect");
         using var store = DiskCommitStore.Open(_repo.Path, probe.RowCount, probe.RecordCount, probe.OrderVersion);
@@ -266,7 +266,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
     public async Task Headless_cache_does_nothing_when_disk_backed_metadata_is_off()
     {
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
-        var svc = new GraphLayoutService(_host.Settings);
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         await using var ctx = _host.Open(_repo.Path);
 
         await svc.RunHeadlessCacheAsync(ctx, Q, CancellationToken.None);
@@ -337,7 +337,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
                 await svc.RunHeadlessCacheAsync(ctx2, Q, CancellationToken.None);
 
             Assert.Equal(0, spliceCalls);
-            var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+            var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
             Assert.True(probe.OrderVersion > 0, "expected the ordinary reorder to have run");
         }
         finally
@@ -520,7 +520,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
         var prefix = GraphMetaStore.ProbeDeadPrefix(_repo.Path);
         Assert.Equal(0, prefix.DeadBytes);
 
-        var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+        var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
         Assert.True(probe.Ok);
         Assert.True(probe.Exhausted);
         Assert.Equal(CommitCount + 1, probe.RowCount);

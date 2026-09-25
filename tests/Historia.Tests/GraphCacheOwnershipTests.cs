@@ -24,7 +24,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     private const long WalkKeyA = 0x1111_2222_3333_4444;
     private const long WalkKeyB = 0x5555_6666_7777_8888;
     private const string Repo = @"C:\repos\cache-ownership-demo";
-    private const WalkEngine Engine = WalkEngine.LibGit2;
+    private const WalkEngine Engine = WalkEngine.Cli;
 
     public async ValueTask DisposeAsync()
     {
@@ -310,8 +310,8 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
         GraphLayoutService.TestSpillBatchRowsOverride = 7; // force many batch boundaries over 60 commits
         try
         {
-            var headlessSvc = new GraphLayoutService(_host.Settings);
-            var foregroundSvc = new GraphLayoutService(_host.Settings);
+            var headlessSvc = new GraphLayoutService(_host.Settings, _host.Locator);
+            var foregroundSvc = new GraphLayoutService(_host.Settings, _host.Locator);
             var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
 
             await using var headlessCtx = _host.Open(repo.Path);
@@ -336,12 +336,12 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
 
             // Ground truth, unrelated to either writer above.
             await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
-            var memSvc = new GraphLayoutService(_host.Settings);
+            var memSvc = new GraphLayoutService(_host.Settings, _host.Locator);
             await using var memCtx = _host.Open(repo.Path);
             var expected = await memSvc.ComputeLayoutAsync(memCtx, query, maxRows: commitCount);
             Assert.Equal(commitCount, expected.Layout.RowCount);
 
-            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true, WalkEngine.LibGit2);
+            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
             Assert.True(probe.Ok);
             using var store = DiskCommitStore.Open(repo.Path, probe.RowCount, probe.RecordCount, probe.OrderVersion);
 
