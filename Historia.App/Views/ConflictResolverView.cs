@@ -55,6 +55,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private readonly INotificationService _notifications;
     private readonly IUnsavedWorkRegistry? _unsavedRegistry;
 
+    // Cancelled in Dispose to signal in-flight work, but not disposed so in-flight tasks
+    // observing its token do not throw ObjectDisposedException. A plain CTS with no timer
+    // or wait handle holds no unmanaged resources.
     private readonly CancellationTokenSource _viewCts = new();
     private CancellationTokenSource? _debounceCts;
     private CancellationTokenSource? _switchCts;
@@ -106,12 +109,22 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private readonly List<Button> _actionButtons = [];
     private readonly List<Button> _dynamicActionButtons = [];
+    private readonly List<Button> _textActionButtons = [];
+    private bool _isEditable;
 
     private Button ActionButton(string text, Action onClick, bool primary = false)
     {
         var btn = TextButton(text, onClick, primary: primary);
         btn.IsEnabled = !_isBusy;
         _actionButtons.Add(btn);
+        return btn;
+    }
+
+    private Button TextActionButton(string text, Action onClick, bool primary = false)
+    {
+        var btn = TextButton(text, onClick, primary: primary);
+        btn.IsEnabled = !_isBusy && _isEditable;
+        _textActionButtons.Add(btn);
         return btn;
     }
 
@@ -133,6 +146,11 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         foreach (var b in _dynamicActionButtons)
         {
             b.IsEnabled = enabled;
+        }
+        bool textEnabled = !_isBusy && _isEditable;
+        foreach (var b in _textActionButtons)
+        {
+            b.IsEnabled = textEnabled;
         }
     }
 
@@ -166,12 +184,15 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     internal Button SaveButtonForTesting => _saveBtn;
     internal Button SaveAndResolveButtonForTesting => _saveAndResolveBtn;
     internal IReadOnlyList<Button> ActionButtonsForTesting => _actionButtons;
+    internal IReadOnlyList<Button> TextActionButtonsForTesting => _textActionButtons;
     internal TextBlock ConflictsCountTextForTesting => _conflictsCountText;
     internal TextBlock DamagedMarkersHintForTesting => _damagedMarkersHint;
     internal Border ExternalEndedBannerForTesting => _externalEndedBanner;
     internal Border ChangedOnDiskBannerForTesting => _changedOnDiskBanner;
     internal ConflictParse? CurrentParseForTesting => _parse;
     internal ConflictParseSnapshot? SnapshotForTesting => _snapshot;
+    internal bool IsEditableForTesting => _isEditable;
+    internal string? DiskHashForTesting => _diskHash;
     internal ConflictFile? CurrentFileForTesting => _currentFile;
     internal IReadOnlyList<ConflictFile> ConflictedFilesForTesting => _conflictedFiles;
     internal ContentControl EditorAreaForTesting => _editorArea;
@@ -245,20 +266,20 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _changedOnDiskBanner.Child = diskMsgPanel;
 
         // Toolbar
-        _saveBtn = ActionButton("Save", () => _ = SaveCurrentFileAsync(stage: false));
-        _saveAndResolveBtn = ActionButton("Save & mark resolved", () => _ = SaveAndMarkResolvedAsync(), primary: true);
+        _saveBtn = TextActionButton("Save", () => _ = SaveCurrentFileAsync(stage: false));
+        _saveAndResolveBtn = TextActionButton("Save & mark resolved", () => _ = SaveAndMarkResolvedAsync(), primary: true);
 
         var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(8, 4) };
-        toolbar.Children.Add(ActionButton("Prev conflict", () => GoToPreviousConflict()));
-        toolbar.Children.Add(ActionButton("Next conflict", () => GoToNextConflict()));
+        toolbar.Children.Add(TextActionButton("Prev conflict", () => GoToPreviousConflict()));
+        toolbar.Children.Add(TextActionButton("Next conflict", () => GoToNextConflict()));
         toolbar.Children.Add(_conflictsCountText);
         toolbar.Children.Add(_damagedMarkersHint);
         toolbar.Children.Add(_saveBtn);
         toolbar.Children.Add(_saveAndResolveBtn);
-        toolbar.Children.Add(ActionButton("Take ours", () => _ = TakeOursCurrentAsync()));
-        toolbar.Children.Add(ActionButton("Take theirs", () => _ = TakeTheirsCurrentAsync()));
-        toolbar.Children.Add(ActionButton("Re-create with base", () => _ = RecreateConflictAsync()));
-        toolbar.Children.Add(ActionButton("External tool", () => _ = LaunchExternalToolAsync()));
+        toolbar.Children.Add(TextActionButton("Take ours", () => _ = TakeOursCurrentAsync()));
+        toolbar.Children.Add(TextActionButton("Take theirs", () => _ = TakeTheirsCurrentAsync()));
+        toolbar.Children.Add(TextActionButton("Re-create with base", () => _ = RecreateConflictAsync()));
+        toolbar.Children.Add(TextActionButton("External tool", () => _ = LaunchExternalToolAsync()));
 
         // Floating region action box
         _floatingRegionBox = new Border
@@ -390,6 +411,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         try
         {
             var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
+            if (_disposed) return;
             bool stopChanged = _stopId != null && labels.StopId != _stopId;
             _stopId = labels.StopId;
             _headerOurs.Text = $"Ours: {labels.OursTitle}";
@@ -411,7 +433,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             }
 
             await RefreshConflictsAsync();
+            if (_disposed) return;
             await CheckExternalDiskChangeAsync();
+            if (_disposed) return;
 
             bool currentStillConflicted = _currentFile != null &&
                 _conflictedFiles.Any(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
@@ -461,7 +485,10 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, ex.Message);
+            if (!_disposed)
+            {
+                _notifications.Publish(NotificationSeverity.Error, ex.Message);
+            }
         }
     }
 
@@ -568,7 +595,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private async Task RefreshConflictsAsync()
     {
+        if (_disposed) return;
         var files = await _conflicts.GetConflictsAsync(_ctx, _viewCts.Token);
+        if (_disposed) return;
         _conflictedFiles.Clear();
         _conflictedFiles.AddRange(files);
 
@@ -579,11 +608,21 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private void ShowAllConflictsResolvedCard()
     {
+        _isEditable = false;
+        UpdateActionButtonsEnabled();
+        _debounceCts?.Cancel();
+        _parse = null;
+        _parseVersion = null;
+        _snapshot = null;
+        _minimap.Parse = null;
+        _floatingRegionBox.IsVisible = false;
+        _conflictsCountText.IsVisible = false;
+        _damagedMarkersHint.IsVisible = false;
+
         _dynamicActionButtons.Clear();
         _currentFile = null;
         _workingCopy = null;
         _diskHash = null;
-        _snapshot = null;
         _suppressTextChanged = true;
         try
         {
@@ -661,6 +700,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
         else
         {
+            _isEditable = true;
+            UpdateActionButtonsEnabled();
+
             if (!ReferenceEquals(_editorArea.Content, _editorOverlay))
             {
                 _editorArea.Content = _editorOverlay;
@@ -676,6 +718,17 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private void ShowFileLevelCard(ConflictFile file, ConflictWorkingCopy copy)
     {
+        _isEditable = false;
+        UpdateActionButtonsEnabled();
+        _debounceCts?.Cancel();
+        _parse = null;
+        _parseVersion = null;
+        _snapshot = null;
+        _minimap.Parse = null;
+        _floatingRegionBox.IsVisible = false;
+        _conflictsCountText.IsVisible = false;
+        _damagedMarkersHint.IsVisible = false;
+
         _dynamicActionButtons.Clear();
         var card = new StackPanel { Spacing = 10, Margin = new Thickness(24) };
         card.Children.Add(Text(file.FilePath, "ColorText", 14, FontWeight.Bold));
@@ -898,6 +951,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private void UpdateConflictsCount()
     {
+        _conflictsCountText.IsVisible = true;
         int remaining = _parse?.Regions.Count ?? 0;
         int malformed = _parse?.MalformedAt.Count ?? 0;
         int total = remaining + malformed;
@@ -1089,10 +1143,13 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     public async Task<bool> SaveCurrentFileAsync(bool stage)
     {
-        if (_isBusy || _currentFile == null || _workingCopy == null)
+        if (_isBusy || !_isEditable || _currentFile == null || _workingCopy == null || _workingCopy.Format is null)
         {
             return false;
         }
+
+        var savedVersion = _resultEditor.Document.Version;
+        var textToSave = _resultEditor.Text;
 
         _saving = true;
         IsBusy = true;
@@ -1101,8 +1158,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             var res = await _conflicts.SaveResolutionAsync(
                 _ctx,
                 _currentFile.FilePath,
-                _resultEditor.Text,
-                _workingCopy.Format ?? default,
+                textToSave,
+                _workingCopy.Format.Value,
                 _diskHash ?? string.Empty,
                 stage,
                 _viewCts.Token);
@@ -1115,10 +1172,21 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
             _diskHash = res.DiskHash;
             _changedOnDiskBanner.IsVisible = false;
-            _resultEditor.Document.UndoStack.MarkAsOriginalFile();
-            UnregisterUnsavedWork();
 
-            if (stage)
+            if (res.StageError != null)
+            {
+                _notifications.Publish(NotificationSeverity.Error, $"Stage failed: {res.StageError.Message}");
+                return false;
+            }
+
+            bool versionUnchanged = _resultEditor.Document.Version.CompareAge(savedVersion) == 0;
+            if (versionUnchanged)
+            {
+                _resultEditor.Document.UndoStack.MarkAsOriginalFile();
+                UnregisterUnsavedWork();
+            }
+
+            if (stage && versionUnchanged)
             {
                 await RefreshConflictsAsync();
                 if (_conflictedFiles.Count > 0)
@@ -1170,7 +1238,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         await SaveCurrentFileAsync(stage: true);
     }
 
-    public async Task TakeOursCurrentAsync()
+    private async Task TakeSideAsync(ConflictSide side)
     {
         if (_isBusy || _currentFile == null)
         {
@@ -1181,12 +1249,15 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         try
         {
             var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
-            bool isAbsent = _currentFile.Status is ConflictStatus.DeletedByUs or ConflictStatus.AddedByThem;
-            string title = isAbsent ? $"Delete {path}" : "Take ours";
+            bool isAbsent = side == ConflictSide.Ours
+                ? (_currentFile.Status is ConflictStatus.DeletedByUs or ConflictStatus.AddedByThem)
+                : (_currentFile.Status is ConflictStatus.DeletedByThem or ConflictStatus.AddedByUs);
+            var sideTitle = side == ConflictSide.Ours ? labels.OursTitle : labels.TheirsTitle;
+            string title = isAbsent ? $"Delete {path}" : (side == ConflictSide.Ours ? "Take ours" : "Take theirs");
             string message = isAbsent
-                ? $"Delete {path} — {labels.OursTitle} deleted it. Any edits to this file will be lost."
-                : $"Replace {path} with {labels.OursTitle}'s version? Any edits to this file will be lost.";
-            string verb = isAbsent ? "Delete" : "Take ours";
+                ? $"Delete {path} — {sideTitle} deleted it. Any edits to this file will be lost."
+                : $"Replace {path} with {sideTitle}'s version? Any edits to this file will be lost.";
+            string verb = isAbsent ? "Delete" : (side == ConflictSide.Ours ? "Take ours" : "Take theirs");
 
             if (!await _dialogs.ConfirmDestructiveAsync(title, message, verb))
             {
@@ -1196,7 +1267,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             IsBusy = true;
             try
             {
-                await _conflicts.ResolveWithSideAsync(_ctx, path, ConflictSide.Ours, _viewCts.Token);
+                await _conflicts.ResolveWithSideAsync(_ctx, path, side, _viewCts.Token);
                 UnregisterUnsavedWork();
                 await RefreshConflictsAsync();
                 if (_conflictedFiles.Count > 0)
@@ -1215,62 +1286,16 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 IsBusy = false;
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Take ours failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, $"Take {(side == ConflictSide.Ours ? "ours" : "theirs")} failed: {ex.Message}", ex.NotificationDetails());
         }
     }
 
-    public async Task TakeTheirsCurrentAsync()
-    {
-        if (_isBusy || _currentFile == null)
-        {
-            return;
-        }
+    public Task TakeOursCurrentAsync() => TakeSideAsync(ConflictSide.Ours);
 
-        var path = _currentFile.FilePath;
-        try
-        {
-            var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
-            bool isAbsent = _currentFile.Status is ConflictStatus.DeletedByThem or ConflictStatus.AddedByUs;
-            string title = isAbsent ? $"Delete {path}" : "Take theirs";
-            string message = isAbsent
-                ? $"Delete {path} — {labels.TheirsTitle} deleted it. Any edits to this file will be lost."
-                : $"Replace {path} with {labels.TheirsTitle}'s version? Any edits to this file will be lost.";
-            string verb = isAbsent ? "Delete" : "Take theirs";
-
-            if (!await _dialogs.ConfirmDestructiveAsync(title, message, verb))
-            {
-                return;
-            }
-
-            IsBusy = true;
-            try
-            {
-                await _conflicts.ResolveWithSideAsync(_ctx, path, ConflictSide.Theirs, _viewCts.Token);
-                UnregisterUnsavedWork();
-                await RefreshConflictsAsync();
-                if (_conflictedFiles.Count > 0)
-                {
-                    var next = _conflictedFiles.FirstOrDefault(f => !string.Equals(f.FilePath, path, StringComparison.Ordinal))
-                               ?? _conflictedFiles[0];
-                    await SwitchToFileAsync(next);
-                }
-                else
-                {
-                    ShowAllConflictsResolvedCard();
-                }
-            }
-            finally
-            {
-                IsBusy = false;
-            }
-        }
-        catch (Exception ex)
-        {
-            _notifications.Publish(NotificationSeverity.Error, $"Take theirs failed: {ex.Message}", ex.NotificationDetails());
-        }
-    }
+    public Task TakeTheirsCurrentAsync() => TakeSideAsync(ConflictSide.Theirs);
 
     public async Task RecreateConflictAsync()
     {
@@ -1280,41 +1305,45 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
 
         var path = _currentFile.FilePath;
-        if (!await _dialogs.ConfirmDestructiveAsync(
-                "Re-create conflict",
-                $"Re-create conflict markers for {path} with base section? Any edits to this file will be lost.",
-                "Re-create"))
-        {
-            return;
-        }
-
-        IsBusy = true;
         try
         {
-            await _conflicts.RecreateConflictAsync(_ctx, path, _viewCts.Token);
-            UnregisterUnsavedWork();
-            await RefreshConflictsAsync();
-            var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
-            if (target != null)
+            if (!await _dialogs.ConfirmDestructiveAsync(
+                    "Re-create conflict",
+                    $"Re-create conflict markers for {path} with base section? Any edits to this file will be lost.",
+                    "Re-create"))
             {
-                await SwitchToFileAsync(target);
+                return;
             }
-            else if (_conflictedFiles.Count > 0)
+
+            IsBusy = true;
+            try
             {
-                await SwitchToFileAsync(_conflictedFiles[0]);
+                await _conflicts.RecreateConflictAsync(_ctx, path, _viewCts.Token);
+                UnregisterUnsavedWork();
+                await RefreshConflictsAsync();
+                var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
+                if (target != null)
+                {
+                    await SwitchToFileAsync(target);
+                }
+                else if (_conflictedFiles.Count > 0)
+                {
+                    await SwitchToFileAsync(_conflictedFiles[0]);
+                }
+                else
+                {
+                    ShowAllConflictsResolvedCard();
+                }
             }
-            else
+            finally
             {
-                ShowAllConflictsResolvedCard();
+                IsBusy = false;
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Re-create conflict failed: {ex.Message}", ex.NotificationDetails());
-        }
-        finally
-        {
-            IsBusy = false;
         }
     }
 
@@ -1325,58 +1354,62 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
-        if (HasUnsavedWork)
-        {
-            var work = _unsavedRegistry?.For(_ctx) ?? [new ConflictUnsavedWork(this, _ctx, _currentFile.FilePath)];
-            var proceed = await UnsavedWorkPrompt.ResolveAsync(work, _dialogs);
-            if (!proceed)
-            {
-                return;
-            }
-        }
-
-        IsBusy = true;
         try
         {
-            var launched = await _conflicts.LaunchExternalMergeToolAsync(_ctx, _currentFile.FilePath, _viewCts.Token);
-            if (!launched)
+            if (HasUnsavedWork)
             {
-                var settings = _sp.GetService(typeof(ISettingsService)) as ISettingsService;
-                var tool = settings?.Current.ExternalMergeTool;
-                if (!string.IsNullOrWhiteSpace(tool))
+                var work = _unsavedRegistry?.For(_ctx) ?? [new ConflictUnsavedWork(this, _ctx, _currentFile.FilePath)];
+                var proceed = await UnsavedWorkPrompt.ResolveAsync(work, _dialogs);
+                if (!proceed)
                 {
-                    _notifications.Publish(NotificationSeverity.Warning, $"The merge tool exited with conflict markers still in {_currentFile.FilePath}.");
+                    return;
+                }
+            }
+
+            IsBusy = true;
+            try
+            {
+                var launched = await _conflicts.LaunchExternalMergeToolAsync(_ctx, _currentFile.FilePath, _viewCts.Token);
+                if (!launched)
+                {
+                    var settings = _sp.GetService(typeof(ISettingsService)) as ISettingsService;
+                    var tool = settings?.Current.ExternalMergeTool;
+                    if (!string.IsNullOrWhiteSpace(tool))
+                    {
+                        _notifications.Publish(NotificationSeverity.Warning, $"The merge tool exited with conflict markers still in {_currentFile.FilePath}.");
+                    }
+                    else
+                    {
+                        _notifications.Publish(NotificationSeverity.Warning, "No external merge tool is configured (git config merge.tool).");
+                    }
+                    return;
+                }
+
+                UnregisterUnsavedWork();
+                await RefreshConflictsAsync();
+                var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
+                if (target != null)
+                {
+                    await SwitchToFileAsync(target);
+                }
+                else if (_conflictedFiles.Count > 0)
+                {
+                    await SwitchToFileAsync(_conflictedFiles[0]);
                 }
                 else
                 {
-                    _notifications.Publish(NotificationSeverity.Warning, "No external merge tool is configured (git config merge.tool).");
+                    ShowAllConflictsResolvedCard();
                 }
-                return;
             }
-
-            UnregisterUnsavedWork();
-            await RefreshConflictsAsync();
-            var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, _currentFile.FilePath, StringComparison.Ordinal));
-            if (target != null)
+            finally
             {
-                await SwitchToFileAsync(target);
-            }
-            else if (_conflictedFiles.Count > 0)
-            {
-                await SwitchToFileAsync(_conflictedFiles[0]);
-            }
-            else
-            {
-                ShowAllConflictsResolvedCard();
+                IsBusy = false;
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"External tool failed: {ex.Message}", ex.NotificationDetails());
-        }
-        finally
-        {
-            IsBusy = false;
         }
     }
 
@@ -1387,56 +1420,66 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
-        if (HasUnsavedWork && _currentFile != null)
-        {
-            var choice = await _dialogs.ChooseAsync(
-                "Unsaved changes",
-                $"{_currentFile.FilePath} has unsaved edits. Save and mark it resolved before continuing?",
-                ["Save & mark resolved", "Discard changes"],
-                defaultIndex: 0,
-                destructiveIndex: 1);
-
-            if (choice == 0)
-            {
-                int remaining = (_parse?.Regions.Count ?? 0) + (_parse?.MalformedAt.Count ?? 0);
-                if (remaining > 0)
-                {
-                    var ok = await _dialogs.ConfirmAsync(
-                        "Unresolved conflicts",
-                        $"{remaining} conflict block(s) remain — mark resolved anyway?",
-                        confirmLabel: "Mark resolved");
-                    if (!ok)
-                    {
-                        return;
-                    }
-                }
-
-                var saved = await SaveCurrentFileAsync(stage: true);
-                if (!saved)
-                {
-                    return;
-                }
-            }
-            else if (choice == 1)
-            {
-                DiscardUnsavedState();
-                await SwitchToFileAsync(_currentFile);
-            }
-            else
-            {
-                return;
-            }
-        }
-
-        IsBusy = true;
         try
         {
-            await _conflicts.ContinueOperationAsync(_ctx, _ctx.Lifetime);
-            if (_ctx.State.PendingOperation == OperationState.None)
+            if (HasUnsavedWork && _currentFile != null)
             {
-                _ctx.State.SetKeepConflictResolverOpen(false);
+                var choice = await UnsavedWorkPrompt.ResolveAsync(
+                    _dialogs,
+                    "Unsaved changes",
+                    $"{_currentFile.FilePath} has unsaved edits. Save and mark it resolved before continuing?",
+                    "Save & mark resolved",
+                    "Discard changes");
+
+                switch (choice)
+                {
+                    case UnsavedWorkChoice.Save:
+                        int remaining = (_parse?.Regions.Count ?? 0) + (_parse?.MalformedAt.Count ?? 0);
+                        if (remaining > 0)
+                        {
+                            var ok = await _dialogs.ConfirmAsync(
+                                "Unresolved conflicts",
+                                $"{remaining} conflict block(s) remain — mark resolved anyway?",
+                                confirmLabel: "Mark resolved");
+                            if (!ok)
+                            {
+                                return;
+                            }
+                        }
+
+                        var saved = await SaveCurrentFileAsync(stage: true);
+                        if (!saved)
+                        {
+                            return;
+                        }
+                        break;
+
+                    case UnsavedWorkChoice.Discard:
+                        DiscardUnsavedState();
+                        await SwitchToFileAsync(_currentFile);
+                        break;
+
+                    case UnsavedWorkChoice.Cancel:
+                    default:
+                        return;
+                }
+            }
+
+            IsBusy = true;
+            try
+            {
+                await _conflicts.ContinueOperationAsync(_ctx, _ctx.Lifetime);
+                if (_ctx.State.PendingOperation == OperationState.None)
+                {
+                    _ctx.State.SetKeepConflictResolverOpen(false);
+                }
+            }
+            finally
+            {
+                IsBusy = false;
             }
         }
+        catch (OperationCanceledException) { }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.MergeConflict)
         {
             _notifications.Publish(NotificationSeverity.Warning, ex.Message);
@@ -1444,10 +1487,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Continue failed: {ex.Message}", ex.NotificationDetails());
-        }
-        finally
-        {
-            IsBusy = false;
         }
     }
 
@@ -1458,34 +1497,38 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
-        var labels = await _conflicts.GetSideLabelsAsync(_ctx, _ctx.Lifetime);
-        var commitInfo = string.IsNullOrWhiteSpace(labels.TheirsDetail) ? "the current commit" : labels.TheirsDetail;
-        if (!await _dialogs.ConfirmDestructiveAsync(
-                "Skip commit",
-                $"Skip {commitInfo}? Resolutions and unsaved edits in this stop will be discarded.",
-                "Skip"))
-        {
-            return;
-        }
-
-        IsBusy = true;
         try
         {
-            await _conflicts.SkipCurrentAsync(_ctx, _ctx.Lifetime);
-            DiscardUnsavedState();
-            _changedOnDiskBanner.IsVisible = false;
-            if (_ctx.State.PendingOperation == OperationState.None)
+            var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
+            var commitInfo = string.IsNullOrWhiteSpace(labels.TheirsDetail) ? "the current commit" : labels.TheirsDetail;
+            if (!await _dialogs.ConfirmDestructiveAsync(
+                    "Skip commit",
+                    $"Skip {commitInfo}? Resolutions and unsaved edits in this stop will be discarded.",
+                    "Skip"))
             {
-                _ctx.State.SetKeepConflictResolverOpen(false);
+                return;
+            }
+
+            IsBusy = true;
+            try
+            {
+                await _conflicts.SkipCurrentAsync(_ctx, _ctx.Lifetime);
+                DiscardUnsavedState();
+                _changedOnDiskBanner.IsVisible = false;
+                if (_ctx.State.PendingOperation == OperationState.None)
+                {
+                    _ctx.State.SetKeepConflictResolverOpen(false);
+                }
+            }
+            finally
+            {
+                IsBusy = false;
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Skip failed: {ex.Message}", ex.NotificationDetails());
-        }
-        finally
-        {
-            IsBusy = false;
         }
     }
 
@@ -1496,43 +1539,48 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
-        if (!await _dialogs.ConfirmDestructiveAsync(
-                "Abort operation",
-                "Abort the in-progress merge / rebase / cherry-pick? Conflict resolutions and unsaved edits made so far will be discarded.",
-                "Abort"))
-        {
-            return;
-        }
-
-        IsBusy = true;
         try
         {
-            await _conflicts.AbortOperationAsync(_ctx, _ctx.Lifetime);
-            DiscardUnsavedState();
-            _changedOnDiskBanner.IsVisible = false;
-            if (_ctx.State.PendingOperation == OperationState.None)
+            if (!await _dialogs.ConfirmDestructiveAsync(
+                    "Abort operation",
+                    "Abort the in-progress merge / rebase / cherry-pick? Conflict resolutions and unsaved edits made so far will be discarded.",
+                    "Abort"))
             {
-                _ctx.State.SetKeepConflictResolverOpen(false);
+                return;
+            }
+
+            IsBusy = true;
+            try
+            {
+                await _conflicts.AbortOperationAsync(_ctx, _ctx.Lifetime);
+                DiscardUnsavedState();
+                _changedOnDiskBanner.IsVisible = false;
+                if (_ctx.State.PendingOperation == OperationState.None)
+                {
+                    _ctx.State.SetKeepConflictResolverOpen(false);
+                }
+            }
+            finally
+            {
+                IsBusy = false;
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Abort failed: {ex.Message}", ex.NotificationDetails());
-        }
-        finally
-        {
-            IsBusy = false;
         }
     }
 
     private async Task CheckExternalDiskChangeAsync()
     {
-        if (_saving || _currentFile == null || _diskHash == null)
+        if (_disposed || _saving || _currentFile == null || _diskHash == null)
         {
             return;
         }
 
         var currentHash = await _conflicts.GetDiskHashAsync(_ctx, _currentFile.FilePath, _viewCts.Token);
+        if (_disposed) return;
         if (currentHash != _diskHash)
         {
             if (!HasUnsavedWork)
@@ -1553,17 +1601,25 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
-        if (!await _dialogs.ConfirmDestructiveAsync(
-                "Reload from disk",
-                $"Reload {_currentFile.FilePath} from disk? Your unsaved edits will be discarded.",
-                "Reload"))
+        try
         {
-            return;
-        }
+            if (!await _dialogs.ConfirmDestructiveAsync(
+                    "Reload from disk",
+                    $"Reload {_currentFile.FilePath} from disk? Your unsaved edits will be discarded.",
+                    "Reload"))
+            {
+                return;
+            }
 
-        _changedOnDiskBanner.IsVisible = false;
-        UnregisterUnsavedWork();
-        await SwitchToFileAsync(_currentFile);
+            _changedOnDiskBanner.IsVisible = false;
+            UnregisterUnsavedWork();
+            await SwitchToFileAsync(_currentFile);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, $"Reload failed: {ex.Message}", ex.NotificationDetails());
+        }
     }
 
     internal async Task KeepMineAsync()
@@ -1574,28 +1630,32 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
 
         var path = _currentFile.FilePath;
-        if (!await _dialogs.ConfirmDestructiveAsync(
-                "Keep my version",
-                $"Your next save will overwrite {path} on disk, which changed outside Historia.",
-                "Keep mine"))
-        {
-            return;
-        }
-
-        _changedOnDiskBanner.IsVisible = false;
-        IsBusy = true;
         try
         {
-            var copy = await _conflicts.LoadWorkingCopyAsync(_ctx, path, _ctx.Lifetime);
-            _diskHash = copy.DiskHash;
+            if (!await _dialogs.ConfirmDestructiveAsync(
+                    "Keep my version",
+                    $"Your next save will overwrite {path} on disk, which changed outside Historia.",
+                    "Keep mine"))
+            {
+                return;
+            }
+
+            _changedOnDiskBanner.IsVisible = false;
+            IsBusy = true;
+            try
+            {
+                var copy = await _conflicts.LoadWorkingCopyAsync(_ctx, path, _ctx.Lifetime);
+                _diskHash = copy.DiskHash;
+            }
+            finally
+            {
+                IsBusy = false;
+            }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Keep mine failed: {ex.Message}", ex.NotificationDetails());
-        }
-        finally
-        {
-            IsBusy = false;
         }
     }
 
@@ -1632,7 +1692,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _ctx.State.StatusChanged -= OnStatusChanged;
         _ctx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
         _viewCts.Cancel();
-        _viewCts.Dispose();
         _switchCts?.Cancel();
         _switchCts?.Dispose();
         _debounceCts?.Cancel();

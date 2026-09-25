@@ -1610,6 +1610,259 @@ public class ConflictResolverViewTests : IDisposable
         Assert.NotEmpty(snapshot.Analyses[0].OursHighlights);
     }
 
+    [AvaloniaFact]
+    public async Task File_card_disables_text_actions()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "binary.png", Status = ConflictStatus.BothModified, IsBinary = true }];
+        _conflicts.WorkingCopies["binary.png"] = new ConflictWorkingCopy
+        {
+            Path = "binary.png",
+            IsBinary = true,
+            DiskHash = "hash1"
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(view.IsEditableForTesting);
+        Assert.NotEmpty(view.TextActionButtonsForTesting);
+        Assert.All(view.TextActionButtonsForTesting, b => Assert.False(b.IsEnabled));
+    }
+
+    [AvaloniaFact]
+    public async Task Save_on_file_card_never_calls_SaveResolutionAsync()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "binary.png", Status = ConflictStatus.BothModified, IsBinary = true }];
+        _conflicts.WorkingCopies["binary.png"] = new ConflictWorkingCopy
+        {
+            Path = "binary.png",
+            IsBinary = true,
+            DiskHash = "hash1"
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var saved = await view.SaveCurrentFileAsync(stage: false);
+        Assert.False(saved);
+        Assert.Empty(_conflicts.SaveResolutionCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task All_resolved_card_disables_text_actions()
+    {
+        _conflicts.Conflicts = [];
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(view.IsEditableForTesting);
+        Assert.NotEmpty(view.TextActionButtonsForTesting);
+        Assert.All(view.TextActionButtonsForTesting, b => Assert.False(b.IsEnabled));
+    }
+
+    [AvaloniaFact]
+    public async Task Switching_to_file_card_clears_parse_and_count()
+    {
+        var textFile = new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false };
+        var binFile = new ConflictFile { FilePath = "bin.png", Status = ConflictStatus.BothModified, IsBinary = true };
+        _conflicts.Conflicts = [textFile, binFile];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f.txt",
+            Text = TwoConflictText,
+            DiskHash = "hash1"
+        };
+        _conflicts.WorkingCopies["bin.png"] = new ConflictWorkingCopy
+        {
+            Path = "bin.png",
+            IsBinary = true,
+            DiskHash = "hash2"
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(view.IsEditableForTesting);
+        Assert.NotNull(view.CurrentParseForTesting);
+        Assert.True(view.ConflictsCountTextForTesting.IsVisible);
+
+        _context.State.SetSelectedConflictPath("bin.png");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(view.IsEditableForTesting);
+        Assert.Null(view.CurrentParseForTesting);
+        Assert.False(view.ConflictsCountTextForTesting.IsVisible);
+    }
+
+    [AvaloniaFact]
+    public async Task Stage_error_adopts_new_hash_notifies_and_stays_on_file()
+    {
+        var f1 = new ConflictFile { FilePath = "f1.txt", Status = ConflictStatus.BothModified, IsBinary = false };
+        var f2 = new ConflictFile { FilePath = "f2.txt", Status = ConflictStatus.BothModified, IsBinary = false };
+        _conflicts.Conflicts = [f1, f2];
+        _conflicts.WorkingCopies["f1.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f1.txt",
+            Text = TwoConflictText,
+            DiskHash = "hash1",
+            Format = new TextFileFormat(System.Text.Encoding.UTF8, false)
+        };
+        _conflicts.WorkingCopies["f2.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f2.txt",
+            Text = TwoConflictText,
+            DiskHash = "hash2",
+            Format = new TextFileFormat(System.Text.Encoding.UTF8, false)
+        };
+        _conflicts.SaveResult = new ResolutionSaveResult
+        {
+            Saved = true,
+            DiskHash = "h2",
+            StageError = new HistoriaGitException(GitErrorKind.Unknown, "git add failed")
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var saved = await view.SaveCurrentFileAsync(stage: true);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(saved);
+        Assert.Equal("h2", view.DiskHashForTesting);
+        var notifications = _sp.GetRequiredService<INotificationService>().Current;
+        Assert.Contains(notifications, n => n.Severity == NotificationSeverity.Error && n.Message.Contains("git add failed"));
+        Assert.Equal("f1.txt", view.CurrentFileForTesting?.FilePath);
+    }
+
+    [AvaloniaFact]
+    public async Task Edits_during_save_stay_unsaved()
+    {
+        var f1 = new ConflictFile { FilePath = "f1.txt", Status = ConflictStatus.BothModified, IsBinary = false };
+        var f2 = new ConflictFile { FilePath = "f2.txt", Status = ConflictStatus.BothModified, IsBinary = false };
+        _conflicts.Conflicts = [f1, f2];
+        _conflicts.WorkingCopies["f1.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f1.txt",
+            Text = TwoConflictText,
+            DiskHash = "hash1",
+            Format = new TextFileFormat(System.Text.Encoding.UTF8, false)
+        };
+        _conflicts.WorkingCopies["f2.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f2.txt",
+            Text = TwoConflictText,
+            DiskHash = "hash2",
+            Format = new TextFileFormat(System.Text.Encoding.UTF8, false)
+        };
+        _conflicts.SaveResult = new ResolutionSaveResult { Saved = true, DiskHash = "hash1-saved" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var gate = new TaskCompletionSource<bool>();
+        _conflicts.SaveGate = gate;
+
+        var saveTask = view.SaveCurrentFileAsync(stage: true);
+
+        // While save is in flight, mutate document text
+        view.ResultEditorForTesting.Document.Insert(0, "// extra edit\n");
+        Dispatcher.UIThread.RunJobs();
+
+        // Release save gate
+        gate.SetResult(true);
+        var saved = await saveTask;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(saved);
+        Assert.True(view.HasUnsavedWork);
+        Assert.Equal("f1.txt", view.CurrentFileForTesting?.FilePath);
+    }
+
+    [AvaloniaFact]
+    public async Task Dispose_during_status_refresh_publishes_no_error()
+    {
+        var f1 = new ConflictFile { FilePath = "f1.txt", Status = ConflictStatus.BothModified, IsBinary = false };
+        _conflicts.Conflicts = [f1];
+        _conflicts.WorkingCopies["f1.txt"] = new ConflictWorkingCopy { Path = "f1.txt", Text = TwoConflictText, DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var gate = new TaskCompletionSource<ConflictSideLabels>();
+        _conflicts.OnGetSideLabelsAsync = () => gate.Task;
+
+        _ = _context.State.RefreshStatusAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        view.Dispose();
+        gate.SetResult(_conflicts.SideLabels);
+        Dispatcher.UIThread.RunJobs();
+
+        var notifications = _sp.GetRequiredService<INotificationService>().Current;
+        Assert.DoesNotContain(notifications, n => n.Severity == NotificationSeverity.Error);
+    }
+
+    [AvaloniaFact]
+    public async Task Skip_label_failure_publishes_error_and_does_not_skip()
+    {
+        var f1 = new ConflictFile { FilePath = "f1.txt", Status = ConflictStatus.BothModified, IsBinary = false };
+        _conflicts.Conflicts = [f1];
+        _conflicts.WorkingCopies["f1.txt"] = new ConflictWorkingCopy { Path = "f1.txt", Text = TwoConflictText, DiskHash = "hash1" };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        _conflicts.OnGetSideLabelsAsync = () => throw new InvalidOperationException("Failed to read commit labels");
+
+        await view.SkipAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, _conflicts.SkipCalls);
+        var notifications = _sp.GetRequiredService<INotificationService>().Current;
+        Assert.Contains(notifications, n => n.Severity == NotificationSeverity.Error && n.Message.Contains("Failed to read commit labels"));
+    }
+
+    [AvaloniaFact]
+    public async Task Continue_unsaved_prompt_uses_warning_chooser()
+    {
+        var f1 = new ConflictFile { FilePath = "f1.txt", Status = ConflictStatus.BothModified, IsBinary = false };
+        _conflicts.Conflicts = [f1];
+        _conflicts.WorkingCopies["f1.txt"] = new ConflictWorkingCopy
+        {
+            Path = "f1.txt",
+            Text = TwoConflictText,
+            DiskHash = "hash1",
+            Format = new TextFileFormat(System.Text.Encoding.UTF8, false)
+        };
+
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        // Mutate document to create unsaved work
+        view.ResultEditorForTesting.Document.Insert(0, "unsaved change\n");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(view.HasUnsavedWork);
+
+        _dialogs.ChooseResult = 2; // Cancel
+
+        await view.ContinueAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(_dialogs.ChooseCalls);
+        Assert.Equal(DialogIcon.Warning, _dialogs.LastChooseIcon);
+        Assert.Equal(1, _dialogs.LastChooseDestructiveIndex);
+    }
+
     #region Fakes
 
     internal sealed class FakeConflictService : IConflictService
@@ -1626,6 +1879,8 @@ public class ConflictResolverViewTests : IDisposable
             StopId = "stop-init"
         };
         public ResolutionSaveResult SaveResult { get; set; } = new() { Saved = true, DiskHash = "saved-hash" };
+        public TaskCompletionSource<bool>? SaveGate { get; set; }
+        public Func<Task<ConflictSideLabels>>? OnGetSideLabelsAsync { get; set; }
         public Func<Task>? OnBeforeSaveAsync { get; set; }
         public Func<Task>? OnContinueAsync { get; set; }
         public Func<string, CancellationToken, Task>? OnLoadWorkingCopyAsync { get; set; }
@@ -1668,19 +1923,28 @@ public class ConflictResolverViewTests : IDisposable
                 await OnLoadWorkingCopyAsync(filePath, ct);
 
             if (WorkingCopies.TryGetValue(filePath, out var copy))
+            {
+                if (copy.Format == null && !copy.IsBinary && !copy.UnsupportedEncoding)
+                {
+                    return copy with { Format = new TextFileFormat(System.Text.Encoding.UTF8, false) };
+                }
                 return copy;
+            }
 
             return new ConflictWorkingCopy
             {
                 Path = filePath,
                 Text = "",
-                DiskHash = "default-hash"
+                DiskHash = "default-hash",
+                Format = new TextFileFormat(System.Text.Encoding.UTF8, false)
             };
         }
 
         public async Task<ResolutionSaveResult> SaveResolutionAsync(RepositoryContext context, string filePath, string text, TextFileFormat format, string expectedDiskHash, bool stage, CancellationToken ct = default)
         {
             SaveResolutionCalls.Add((filePath, text, stage));
+            if (SaveGate != null)
+                await SaveGate.Task;
             if (OnBeforeSaveAsync != null)
                 await OnBeforeSaveAsync();
 
@@ -1714,8 +1978,12 @@ public class ConflictResolverViewTests : IDisposable
             return Task.CompletedTask;
         }
 
-        public Task<ConflictSideLabels> GetSideLabelsAsync(RepositoryContext context, CancellationToken ct = default)
-            => Task.FromResult(SideLabels);
+        public async Task<ConflictSideLabels> GetSideLabelsAsync(RepositoryContext context, CancellationToken ct = default)
+        {
+            if (OnGetSideLabelsAsync != null)
+                return await OnGetSideLabelsAsync();
+            return SideLabels;
+        }
 
         public Task<bool> LaunchExternalMergeToolAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
         {
@@ -1753,6 +2021,8 @@ public class ConflictResolverViewTests : IDisposable
         public bool ConfirmResult { get; set; } = true;
         public bool ConfirmDestructiveResult { get; set; } = true;
         public int ChooseResult { get; set; } = 0;
+        public DialogIcon LastChooseIcon { get; set; } = DialogIcon.None;
+        public int LastChooseDestructiveIndex { get; set; } = -1;
         public List<(string Title, string Effect, string ConfirmLabel)> ConfirmDestructiveCalls { get; } = [];
         public List<(string Title, string Message, IReadOnlyList<string> Options)> ChooseCalls { get; } = [];
 
@@ -1770,6 +2040,8 @@ public class ConflictResolverViewTests : IDisposable
 
         public Task<int> ChooseAsync(string title, string message, IReadOnlyList<string> options, int defaultIndex = 0, int destructiveIndex = -1, DialogIcon icon = DialogIcon.None)
         {
+            LastChooseIcon = icon;
+            LastChooseDestructiveIndex = destructiveIndex;
             ChooseCalls.Add((title, message, options));
             return Task.FromResult(ChooseResult);
         }
