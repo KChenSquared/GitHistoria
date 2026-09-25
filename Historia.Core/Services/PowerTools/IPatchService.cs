@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <summary>
 /// Builds and applies partial-staging patches (§8.2.5). Patches are generated from the diff
@@ -11,8 +11,10 @@ public interface IPatchService
     /// Builds a unified-diff patch containing only the requested hunks, or only the requested
     /// lines within them. The caller supplies the <see cref="FileDiff"/> for the correct diff
     /// direction (index↔worktree to stage, HEAD↔index to unstage) — §8.2.3 requirement 1.
+    /// <paramref name="reverse"/> must match the reverse flag passed to <see cref="CheckAsync"/>
+    /// and <see cref="ApplyPatchAsync"/>.
     /// </summary>
-    string GeneratePatch(FileDiff source, PatchScope scope, IReadOnlySet<DiffLineRef>? selectedLines = null);
+    string GeneratePatch(FileDiff source, PatchScope scope, IReadOnlySet<DiffLineRef>? selectedLines = null, bool reverse = false);
 
     /// <summary>Runs <c>git apply --check</c> with the same flags the real apply will use.</summary>
     Task<PatchCheckResult> CheckAsync(RepositoryContext context, string patch, PatchTarget target, bool reverse, CancellationToken ct = default);

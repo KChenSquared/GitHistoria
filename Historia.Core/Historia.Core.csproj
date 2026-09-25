@@ -15,6 +15,7 @@
   <ItemGroup>
     <!-- Pinned, no floating wildcard (constitution rule 0.7). -->
     <PackageReference Include="LibGit2Sharp" Version="0.31.0" />
+    <PackageReference Include="DiffPlex" Version="1.9.0" />
     <!-- RepositoryContext resolves per-repo collaborators from the app's IServiceProvider. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
     <!-- V5 §5: headless VT/ANSI emulator + pseudoterminal. Both are framework-free process /

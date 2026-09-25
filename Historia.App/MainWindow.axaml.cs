@@ -17,9 +17,9 @@ public partial class MainWindow : Window
     private readonly ShortcutsBarControl? _rightShortcuts;
     private readonly CommitGraphControl? _graph;
     private readonly TerminalDockControl? _terminalDock;
+    private readonly CenterPaneController? _centerPaneController;
     private IRepoNetworkActionRunner? _networkRunner;
     private IWorkspaceService? _workspace;
-    private IRepositoryStateService? _boundState;
 
     // Parameterless ctor for the XAML previewer only.
     public MainWindow() : this(null!) { }
@@ -59,8 +59,8 @@ public partial class MainWindow : Window
             _networkRunner = services.GetRequiredService<IRepoNetworkActionRunner>();
 
             _graph = new CommitGraphControl();
-            CenterHost.Content = _graph;
             _graph.Initialize(services);
+            _centerPaneController = new CenterPaneController(CenterHost, _graph, services);
 
             SidebarHost.Content = new RefNavigatorView(services);
             DetailHost.Content = new DetailRouter(services);
@@ -70,15 +70,6 @@ public partial class MainWindow : Window
             _terminalDock.Initialize(services);
 
             _workspace = services.GetService<IWorkspaceService>();
-            if (_workspace is not null)
-            {
-                // The terminal dock follows repo focus on its own (TerminalDockControl
-                // subscribes to FocusedRepositoryChanged): active tab tracks the repo, and the
-                // dock auto-hides for a repo with no terminal.
-                _workspace.FocusedRepositoryChanged += (_, e) =>
-                    Dispatcher.UIThread.Post(() => BindCenterDiff(e.New?.State));
-                BindCenterDiff(_workspace.Focused?.State);
-            }
         }
 
         RestorePlacement();
@@ -97,6 +88,8 @@ public partial class MainWindow : Window
         ApplyBodyLayout();
     }
 
+    private readonly UnsavedWorkCloseGate _closeGate = new();
+
     protected override void OnClosed(EventArgs e)
     {
         if (_theme is not null)
@@ -105,36 +98,13 @@ public partial class MainWindow : Window
         _leftShortcuts?.Dispose();
         _rightShortcuts?.Dispose();
         _terminalDock?.Dispose();
+        _centerPaneController?.Dispose();
         _ = _placementWriter?.DisposeAsync();
         base.OnClosed(e);
     }
 
     private void OnThemeChanged(object? sender, ThemeChangedEventArgs e)
         => Dispatcher.UIThread.Post(() => WindowChromeFor(e.NewTheme));
-
-    // ── Centre panel: graph ↔ diff overlay (§V2-8.1) ──
-    private void BindCenterDiff(IRepositoryStateService? state)
-    {
-        if (ReferenceEquals(state, _boundState))
-            return;
-        if (_boundState is not null)
-            _boundState.OpenDiffChanged -= OnOpenDiffChanged;
-        _boundState = state;
-        if (_boundState is not null)
-            _boundState.OpenDiffChanged += OnOpenDiffChanged;
-        ApplyCenter(state?.OpenDiff);
-    }
-
-    private void OnOpenDiffChanged(object? sender, OpenDiffChangedEventArgs e)
-        => Dispatcher.UIThread.Post(() => ApplyCenter(e.Request));
-
-    private void ApplyCenter(DiffRequest? request)
-    {
-        if (request is not null && _workspace?.Focused is { } ctx)
-            CenterHost.Content = new DiffView(ctx, request, _services?.GetService<ISettingsService>(), _services);
-        else
-            CenterHost.Content = _graph;
-    }
 
     private void WindowChromeFor(EffectiveTheme theme)
         => Historia.Platform.WindowChrome.Apply(TryGetPlatformHandle()?.Handle ?? IntPtr.Zero, theme);
@@ -401,10 +371,45 @@ public partial class MainWindow : Window
         };
     }
 
-    protected override void OnClosing(WindowClosingEventArgs e)
+    protected override async void OnClosing(WindowClosingEventArgs e)
     {
         Historia.Diagnostics.PerfLog.Mark("MainWindow.OnClosing start");
         base.OnClosing(e);
+
+        var registry = _services?.GetService<IUnsavedWorkRegistry>();
+        var dialogs = _services?.GetService<IDialogService>();
+        var work = registry?.For(null) ?? [];
+
+        var decision = _closeGate.Evaluate(dialogs is not null ? work.Count : 0);
+        switch (decision)
+        {
+            case CloseDecision.CancelOnly:
+                e.Cancel = true;
+                return;
+
+            case CloseDecision.CancelAndPrompt:
+                e.Cancel = true;
+                var proceed = false;
+                try
+                {
+                    proceed = await UnsavedWorkPrompt.ResolveAsync(work, dialogs!).ConfigureAwait(true);
+                }
+                finally
+                {
+                    _closeGate.Complete(proceed);
+                }
+
+                if (proceed)
+                {
+                    Close();
+                }
+                return;
+
+            case CloseDecision.Allow:
+            default:
+                break;
+        }
+
         using (Historia.Diagnostics.PerfLog.Scope("MainWindow.OnClosing terminalDock.Dispose"))
             _terminalDock?.Dispose();
     }

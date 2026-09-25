@@ -1,3 +1,5 @@
+global using DiffPlex;
+global using DiffPlex.Model;
 global using Historia.Diagnostics;
 global using Historia.Models;
 global using Historia.Primitives;

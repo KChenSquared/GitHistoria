@@ -1,4 +1,4 @@
-﻿namespace Historia.Theming;
+namespace Historia.Theming;
 
 /// <summary>
 /// V4 §split: the App-side half of theming. <see cref="ThemeService"/> (in Core) decides the
@@ -36,6 +36,7 @@ public sealed class AvaloniaThemeApplier : IDisposable
         _applied = dict;
 
         app.RequestedThemeVariant = theme == EffectiveTheme.Light ? ThemeVariant.Light : ThemeVariant.Dark;
+        PaletteBrushes.Invalidate();
     }
 
     /// <summary>§V6-G9: build from the theme service's <em>resolved</em> palette (built-in or the

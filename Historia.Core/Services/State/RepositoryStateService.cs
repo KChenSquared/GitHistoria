@@ -21,6 +21,8 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     private GitProfile? _activeProfile;
     private OperationState _pendingOperation;
     private DiffRequest? _openDiff;
+    private bool _keepConflictResolverOpen;
+    private string? _selectedConflictPath;
 
     public event EventHandler<StatusChangedEventArgs>? StatusChanged;
     public event EventHandler<SelectionChangedEventArgs>? SelectedCommitChanged;
@@ -29,6 +31,8 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public event EventHandler<ProfileChangedEventArgs>? ActiveProfileChanged;
     public event EventHandler<OperationStateChangedEventArgs>? OperationStateChanged;
     public event EventHandler<OpenDiffChangedEventArgs>? OpenDiffChanged;
+    public event EventHandler? ConflictSessionChanged;
+    public event EventHandler<SelectedConflictPathChangedEventArgs>? SelectedConflictPathChanged;
 
     private readonly IGitGateway _gateway;
     private readonly SingleFlightCoalescer _refsCoalescer;
@@ -71,6 +75,66 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public DiffRequest? OpenDiff { get { lock (_sync) return _openDiff; } }
     public GitProfile? ActiveProfile { get { lock (_sync) return _activeProfile; } }
     public OperationState PendingOperation { get { lock (_sync) return _pendingOperation; } }
+    public bool KeepConflictResolverOpen { get { lock (_sync) return _keepConflictResolverOpen; } }
+    public bool IsConflictSessionActive { get { lock (_sync) return ComputeIsConflictSessionActive(_status, _pendingOperation, _keepConflictResolverOpen); } }
+    public string? SelectedConflictPath { get { lock (_sync) return _selectedConflictPath; } }
+
+    private static bool ComputeIsConflictSessionActive(RepositoryStatus status, OperationState operation, bool keepOpen)
+    {
+        return status.Conflicted.Count > 0 ||
+            (keepOpen && operation is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting);
+    }
+
+    public void SetKeepConflictResolverOpen(bool keep)
+    {
+        bool flipped;
+        bool nowActive;
+        lock (_sync)
+        {
+            if (_keepConflictResolverOpen == keep)
+                return;
+            bool wasActive = ComputeIsConflictSessionActive(_status, _pendingOperation, _keepConflictResolverOpen);
+            _keepConflictResolverOpen = keep;
+            nowActive = ComputeIsConflictSessionActive(_status, _pendingOperation, _keepConflictResolverOpen);
+            flipped = wasActive != nowActive;
+            if (flipped && !nowActive)
+            {
+                _selectedConflictPath = null;
+            }
+        }
+
+        if (flipped)
+            HandleConflictSessionFlipped(nowActive);
+    }
+
+    public void SetSelectedConflictPath(string? path)
+    {
+        bool changed;
+        lock (_sync)
+        {
+            if (string.Equals(_selectedConflictPath, path, StringComparison.Ordinal))
+                return;
+            _selectedConflictPath = path;
+            changed = true;
+        }
+
+        if (changed)
+            Raise(() => SelectedConflictPathChanged?.Invoke(this, new SelectedConflictPathChangedEventArgs(path)));
+    }
+
+    private void HandleConflictSessionFlipped(bool nowActive)
+    {
+        Raise(() => ConflictSessionChanged?.Invoke(this, EventArgs.Empty));
+
+        if (nowActive)
+        {
+            SetSelectedCommit(null);
+        }
+        else
+        {
+            Raise(() => SelectedConflictPathChanged?.Invoke(this, new SelectedConflictPathChangedEventArgs(null)));
+        }
+    }
 
     public BranchInfo? CurrentBranch
     {
@@ -143,12 +207,33 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
 
         bool operationChanged;
         bool openDiffCleared;
+        bool conflictSessionFlipped;
+        bool nowActive;
         lock (_sync)
         {
+            bool wasActive = ComputeIsConflictSessionActive(_status, _pendingOperation, _keepConflictResolverOpen);
+
+            bool isOperationInProgress = operation is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
+            if (status.Conflicted.Count > 0 && isOperationInProgress)
+            {
+                _keepConflictResolverOpen = true;
+            }
+            else if (!isOperationInProgress)
+            {
+                _keepConflictResolverOpen = false;
+            }
+
             _status = status;
             _repository = info;
             operationChanged = _pendingOperation != operation;
             _pendingOperation = operation;
+
+            nowActive = ComputeIsConflictSessionActive(_status, _pendingOperation, _keepConflictResolverOpen);
+            conflictSessionFlipped = wasActive != nowActive;
+            if (conflictSessionFlipped && !nowActive)
+            {
+                _selectedConflictPath = null;
+            }
 
             // §V2-8.1: the centre panel shows the open file diff in place of the commit graph.
             // A commit, an amend, a stage/unstage, or an external edit can drop the file a
@@ -162,6 +247,9 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         }
 
         QueueStatusRaise(status);
+
+        if (conflictSessionFlipped)
+            HandleConflictSessionFlipped(nowActive);
 
         if (openDiffCleared)
             Raise(() => OpenDiffChanged?.Invoke(this, new OpenDiffChangedEventArgs(null)));

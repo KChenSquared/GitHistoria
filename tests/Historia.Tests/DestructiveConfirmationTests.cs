@@ -18,6 +18,7 @@ public class DestructiveConfirmationTests
     {
         "Historia.Core/Services/UI/IDialogService.cs",
         "Historia.App/Platform/AvaloniaDialogService.cs",
+        "Historia.App/Services/UnsavedWorkPrompt.cs", // the multi-remedy form IDialogService.ChooseAsync documents; this file is its one caller
     };
 
     private static readonly (Regex pattern, string what)[] Forbidden =
@@ -80,6 +81,10 @@ public class DestructiveConfirmationTests
         (new(@"_stashes\.DropAsync\s*\(", RegexOptions.Compiled), "stash DropAsync"),
         (new(@"_stashes\.ClearAsync\s*\(", RegexOptions.Compiled), "stash ClearAsync"),
         (new(@"\.ResetAsync\s*\(", RegexOptions.Compiled), "ResetAsync"),
+        (new(@"\.ResolveWithSideAsync\s*\(", RegexOptions.Compiled), "ResolveWithSideAsync"),
+        (new(@"\.RecreateConflictAsync\s*\(", RegexOptions.Compiled), "RecreateConflictAsync"),
+        (new(@"\.AbortOperationAsync\s*\(", RegexOptions.Compiled), "AbortOperationAsync"),
+        (new(@"\.SkipCurrentAsync\s*\(", RegexOptions.Compiled), "SkipCurrentAsync"),
         // Bounded lookahead (not a full parse) for the Force flag on the same statement, so a
         // plain push (no Force argument at all) never has to sit behind a confirm.
         (new(@"PushAsync\s*\([^;]{0,400}?Force", RegexOptions.Compiled | RegexOptions.Singleline), "force PushAsync"),

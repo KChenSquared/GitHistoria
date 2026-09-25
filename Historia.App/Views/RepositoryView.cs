@@ -31,19 +31,25 @@ public sealed class RepositoryView : UserControl, IDisposable
     private readonly ContentControl _bannerHost = new();
     private readonly TextBlock _opBanner = Text("", "ColorText", 12);
     private readonly Border _opBox;
+    private readonly Button _opContinueBtn;
+    private readonly Button _opAbortBtn;
+    private readonly StackPanel _opActions;
     private readonly TextBlock _netProgress = Text("", "ColorTextMuted", 12);
     private readonly Border _netProgressBox = new();
     private readonly Historia.Services.UI.IRepoNetworkActionRunner _networkRunner;
     private RepositoryContext? _repo;
     private StagingPanelView? _stagingPanel;
     private CommitDetailPanelView? _detailPanel;
-    private ConflictResolverView? _conflictPanel;
+    private bool _opBusy;
 
     internal Panel TopBarForTesting => _topBar;
     internal Grid BranchBarForTesting => _branchBar;
     internal Button WorkingCopyButtonForTesting => _workingCopy;
     internal TextBlock BranchTextBlockForTesting => _branch;
     internal TextBlock WorkingCopyTextBlockForTesting => _workingCopyText;
+    internal Border OpBoxForTesting => _opBox;
+    internal Button OpContinueButtonForTesting => _opContinueBtn;
+    internal Button OpAbortButtonForTesting => _opAbortBtn;
 
     public RepositoryView(IServiceProvider sp)
     {
@@ -95,7 +101,22 @@ public sealed class RepositoryView : UserControl, IDisposable
         _networkRunner.ProgressChanged += OnNetworkProgressChanged;
 
         _opBanner.TextWrapping = TextWrapping.Wrap;
-        _opBox = new Border { Child = _opBanner, IsVisible = false, Padding = new Thickness(12, 6), BorderThickness = new Thickness(0, 0, 0, 1) }
+        _opContinueBtn = TextButton("Continue", () => _ = OnOpBannerContinueAsync(), primary: true);
+        _opAbortBtn = TextButton("Abort", () => _ = OnOpBannerAbortAsync());
+        _opActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        _opActions.Children.Add(_opContinueBtn);
+        _opActions.Children.Add(_opAbortBtn);
+
+        var opGrid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        opGrid.Children.Add(_opBanner);
+        Grid.SetColumn(_opActions, 1);
+        opGrid.Children.Add(_opActions);
+
+        _opBox = new Border { Child = opGrid, IsVisible = false, Padding = new Thickness(12, 6), BorderThickness = new Thickness(0, 0, 0, 1) }
             .Dyn(Border.BackgroundProperty, "ColorSurface2").Dyn(Border.BorderBrushProperty, "ColorBorder");
 
         _netProgressBox.IsVisible = false;
@@ -138,8 +159,6 @@ public sealed class RepositoryView : UserControl, IDisposable
             _stagingPanel = null;
             _detailPanel?.Dispose();
             _detailPanel = null;
-            _conflictPanel?.Dispose();
-            _conflictPanel = null;
         }
         _repo = ctx;
         if (_repo is not null)
@@ -175,6 +194,7 @@ public sealed class RepositoryView : UserControl, IDisposable
             _body.Content = null;
             _branchBar.IsVisible = true;
             _workingCopy.IsVisible = false;
+            _opBox.IsVisible = false;
             return;
         }
 
@@ -185,11 +205,12 @@ public sealed class RepositoryView : UserControl, IDisposable
         var st = _repo.State.Status;
         _ab.Text = (st.AheadBy > 0 ? $"↑{st.AheadBy} " : "") + (st.BehindBy > 0 ? $"↓{st.BehindBy}" : "");
 
-        // Operation-state banner (mid rebase/cherry-pick/merge with no conflicts).
         var op = _repo.State.PendingOperation;
-        if (op != OperationState.None && st.Conflicted.Count == 0)
+        if (op != OperationState.None && !_repo.State.IsConflictSessionActive)
         {
-            _opBanner.Text = $"Repository is in {op} state with no conflicts — continue it from a terminal, or it may have completed.";
+            _opBanner.Text = $"Repository is in {op} state with no conflicts.";
+            bool canContinue = op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
+            _opActions.IsVisible = canContinue;
             _opBox.IsVisible = true;
         }
         else
@@ -197,60 +218,97 @@ public sealed class RepositoryView : UserControl, IDisposable
             _opBox.IsVisible = false;
         }
 
-        if (op != OperationState.None && st.Conflicted.Count > 0)
+        if (_repo.State.SelectedCommitId is { } id)
         {
-            _conflictPanel ??= new ConflictResolverView(_sp, _repo);
-            if (!ReferenceEquals(_body.Content, _conflictPanel))
-                _body.Content = _conflictPanel;
+            if (_detailPanel is null)
+                _detailPanel = new CommitDetailPanelView(_sp, _repo, id);
+            else
+                _detailPanel.SetCommit(id);
+
+            if (!ReferenceEquals(_body.Content, _detailPanel))
+                _body.Content = _detailPanel;
+
+            var n = TrackedChangeCount(st);
+            _workingCopyText.Text = $"← Working Copy (Changes: {n})";
+            if (n > 0)
+            {
+                _workingCopy.Classes.Remove("flat");
+                _workingCopy.Classes.Add("primary");
+                _workingCopy.ClearValue(Button.ForegroundProperty);
+            }
+            else
+            {
+                _workingCopy.Classes.Remove("primary");
+                _workingCopy.Classes.Add("flat");
+                _workingCopy.Dyn(Button.ForegroundProperty, "ColorText");
+            }
+
+            _workingCopy.IsVisible = true;
+            _branchBar.IsVisible = false;
+        }
+        else
+        {
+            _stagingPanel ??= new StagingPanelView(_sp, _repo);
+            if (!ReferenceEquals(_body.Content, _stagingPanel))
+                _body.Content = _stagingPanel;
 
             _workingCopy.IsVisible = false;
             _branchBar.IsVisible = true;
         }
-        else
+    }
+
+    private async Task OnOpBannerContinueAsync()
+    {
+        if (_repo == null || _opBusy) return;
+        _opBusy = true;
+        _opContinueBtn.IsEnabled = _opAbortBtn.IsEnabled = false;
+        try
         {
-            if (_conflictPanel is not null)
-            {
-                _conflictPanel.Dispose();
-                _conflictPanel = null;
-            }
+            var conflicts = _sp.GetRequiredService<IConflictService>();
+            await conflicts.ContinueOperationAsync(_repo);
+        }
+        catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.MergeConflict)
+        {
+            _notifications.Publish(NotificationSeverity.Warning, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, $"Continue failed: {ex.Message}", ex.NotificationDetails());
+        }
+        finally
+        {
+            _opBusy = false;
+            _opContinueBtn.IsEnabled = _opAbortBtn.IsEnabled = true;
+        }
+    }
 
-            if (_repo.State.SelectedCommitId is { } id)
-            {
-                if (_detailPanel is null)
-                    _detailPanel = new CommitDetailPanelView(_sp, _repo, id);
-                else
-                    _detailPanel.SetCommit(id);
+    private async Task OnOpBannerAbortAsync()
+    {
+        if (_repo == null || _opBusy) return;
+        if (!await _dialogs.ConfirmDestructiveAsync(
+                "Abort operation",
+                "Abort the in-progress merge / rebase / cherry-pick? Conflict resolutions made so far will be discarded.",
+                "Abort"))
+        {
+            return;
+        }
 
-                if (!ReferenceEquals(_body.Content, _detailPanel))
-                    _body.Content = _detailPanel;
-
-                var n = TrackedChangeCount(st);
-                _workingCopyText.Text = $"← Working Copy (Changes: {n})";
-                if (n > 0)
-                {
-                    _workingCopy.Classes.Remove("flat");
-                    _workingCopy.Classes.Add("primary");
-                    _workingCopy.ClearValue(Button.ForegroundProperty);
-                }
-                else
-                {
-                    _workingCopy.Classes.Remove("primary");
-                    _workingCopy.Classes.Add("flat");
-                    _workingCopy.Dyn(Button.ForegroundProperty, "ColorText");
-                }
-
-                _workingCopy.IsVisible = true;
-                _branchBar.IsVisible = false;
-            }
-            else
-            {
-                _stagingPanel ??= new StagingPanelView(_sp, _repo);
-                if (!ReferenceEquals(_body.Content, _stagingPanel))
-                    _body.Content = _stagingPanel;
-
-                _workingCopy.IsVisible = false;
-                _branchBar.IsVisible = true;
-            }
+        if (_opBusy) return;
+        _opBusy = true;
+        _opContinueBtn.IsEnabled = _opAbortBtn.IsEnabled = false;
+        try
+        {
+            var conflicts = _sp.GetRequiredService<IConflictService>();
+            await conflicts.AbortOperationAsync(_repo);
+        }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, $"Abort failed: {ex.Message}", ex.NotificationDetails());
+        }
+        finally
+        {
+            _opBusy = false;
+            _opContinueBtn.IsEnabled = _opAbortBtn.IsEnabled = true;
         }
     }
 

@@ -15,6 +15,8 @@ public class OfflineAssetTests
     {
         "http://schemas.microsoft.com/",
         "http://www.w3.org/",
+        "https://github.com/avaloniaui",
+        "http://schemas.openxmlformats.org/",
     };
 
     /// <summary>Consented URLs (§V3-18.2 Q8) — a real allowlist, not a blind spot.</summary>
@@ -65,34 +67,67 @@ public class OfflineAssetTests
 
     private static IEnumerable<string> ScannedFiles(string root)
     {
-        var wwwroot = Path.Combine(root, "wwwroot");
+        var psi = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        psi.ArgumentList.Add("ls-files");
+        psi.ArgumentList.Add("--cached");
+        psi.ArgumentList.Add("--others");
+        psi.ArgumentList.Add("--exclude-standard");
+
+        using var p = Process.Start(psi)!;
+        var stdout = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        if (p.ExitCode != 0)
+            throw new InvalidOperationException($"git ls-files failed: {p.ExitCode}");
+
+        var candidateExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ".razor", ".css", ".cs", ".axaml"
+        };
+
+        var lines = stdout.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        if (Directory.Exists(wwwroot))
+        foreach (var rel in lines)
         {
-            foreach (var f in Directory.EnumerateFiles(wwwroot, "*", SearchOption.AllDirectories))
-                if (!BinaryExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) && seen.Add(f))
-                    yield return f;
-        }
+            var normalizedRel = rel.Replace('\\', '/');
+            if (IsUnderBuildDir(root, normalizedRel))
+                continue;
+            if (normalizedRel.Contains("/tests/") || normalizedRel.StartsWith("tests/", StringComparison.Ordinal))
+                continue; // the test tree names URLs on purpose
 
-        foreach (var pattern in new[] { "*.razor", "*.css", "*.cs" })
-        {
-            foreach (var f in Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories))
+            var ext = Path.GetExtension(normalizedRel).ToLowerInvariant();
+            var isWwwroot = normalizedRel.StartsWith("wwwroot/", StringComparison.OrdinalIgnoreCase);
+
+            if (isWwwroot)
             {
-                if (IsUnderBuildDir(root, f))
-                    continue;
-                var rel = Path.GetRelativePath(root, f).Replace('\\', '/');
-                if (rel.Contains("/tests/") || rel.StartsWith("tests/", StringComparison.Ordinal))
-                    continue; // the test tree names URLs on purpose
-                if (seen.Add(f))
-                    yield return f;
+                if (!BinaryExtensions.Contains(ext) && seen.Add(normalizedRel))
+                {
+                    var full = Path.Combine(root, normalizedRel);
+                    if (File.Exists(full))
+                        yield return full;
+                }
+            }
+            else if (candidateExtensions.Contains(ext) && seen.Add(normalizedRel))
+            {
+                var full = Path.Combine(root, normalizedRel);
+                if (File.Exists(full))
+                    yield return full;
             }
         }
     }
 
     private static bool IsUnderBuildDir(string root, string file)
     {
-        var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
+        var rel = file.Contains('/') || file.Contains('\\') && !Path.IsPathRooted(file)
+            ? file.Replace('\\', '/')
+            : Path.GetRelativePath(root, file).Replace('\\', '/');
         return rel.Contains("/bin/") || rel.Contains("/obj/") ||
                rel.StartsWith("bin/") || rel.StartsWith("obj/");
     }

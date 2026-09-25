@@ -363,7 +363,6 @@ public sealed class LibGit2Service
             Hunks = hunks,
             AddedLines = entry.LinesAdded,
             DeletedLines = entry.LinesDeleted,
-            LanguageId = LanguageMap.FromPath(path),
             RawPatch = patchText,
         };
     }

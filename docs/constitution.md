@@ -68,7 +68,8 @@ site hand-rolls the destructive treatment on the plain `ConfirmAsync` overload (
 true`, `defaultToCancel:`, `DialogIcon.Warning` outside the one entry point's own
 implementation), and a call-site guard scanning every listed destructive service call (submodule
 `RemoveAsync`, rebase `StartAsync`, `DiscardAsync`, `DeleteBranchAsync`, `DeleteTagAsync`, stash
-`DropAsync`/`ClearAsync`, worktree `RemoveAsync`, hard `ResetAsync`, force `PushAsync`) so it must
+`DropAsync`/`ClearAsync`, worktree `RemoveAsync`, hard `ResetAsync`, `ResolveWithSideAsync`,
+`RecreateConflictAsync`, `AbortOperationAsync`, `SkipCurrentAsync`, force `PushAsync`) so it must
 sit in a method that also calls `ConfirmDestructiveAsync`, or be on an explicit, commented
 allowlist. `HistoriaApp.Tests.DestructiveConfirmDialogTests` guards the dialog builder itself —
 that Cancel gets the primary class while staying rightmost. A destructive call site with no
@@ -213,6 +214,18 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     `AvaloniaThemeApplier` generates the resource dictionary from it, and `PaletteParityTests`
     checks that every theme defines exactly the declared token set. **No colour literal
     anywhere else.** *(§V2-3)*
+
+    **Exception — syntax token colours.** The diff viewer and conflict resolver take code-token
+    foregrounds (and a rule's bold / italic / underline, never a token background) from TextMateSharp's
+    bundled Dark+ / Light+ / High Contrast Dark themes, chosen by `EffectiveTheme` and switched live
+    (Rule 28). Everything else in those editors (editor background, foreground text, selection, line
+    numbers, diff and conflict washes) continues to come strictly from `HistoriaPalette`. Custom
+    themes do not recolour syntax tokens — they inherit the syntax theme of their underlying base
+    theme (`Dark`, `Light`, or `HighContrast`), which means a custom theme whose `bg` contradicts its
+    base theme (e.g., a light `bg` authored on a Dark base) will produce poorly readable syntax tokens.
+    This exception was adopted by user decision (2026-09-23) to provide VS Code-grade syntax grammars
+    and high-fidelity token highlighting across 100+ programming languages without requiring the manual
+    definition and maintenance of thousands of language-specific token rules in `HistoriaPalette`.
 27. *(Removed.)*
 28. **Theme changes are live.** No restart, no control rebuild, no flash —
     `AvaloniaThemeApplier` swaps the merged resource dictionary in place. *(§I-11.3)*

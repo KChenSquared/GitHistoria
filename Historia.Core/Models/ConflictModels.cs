@@ -1,23 +1,48 @@
 namespace Historia.Models;
 
 /// <summary>
-/// A single unmerged path (§8.4.2). The three versions come from index stages 1/2/3 — never
-/// from parsing conflict markers (see §8.4.2 sourcing note). A null <c>*Content</c> for a
-/// stage is meaningful: it is what distinguishes <see cref="ConflictStatus.BothAdded"/>
-/// (no base), <see cref="ConflictStatus.DeletedByUs"/> (no ours), and
-/// <see cref="ConflictStatus.DeletedByThem"/> (no theirs).
+/// A single unmerged path. Index stages give conflict status and file-level actions;
+/// the working file's markers give conflict regions for resolution.
 /// </summary>
 public sealed record ConflictFile
 {
     public required string FilePath { get; init; }
     public required ConflictStatus Status { get; init; }
     public required bool IsBinary { get; init; }
+    public bool IsSubmodule { get; init; }
+}
 
-    public required string? BaseContent { get; init; }    // Stage 1
-    public required string? OursContent { get; init; }     // Stage 2
-    public required string? TheirsContent { get; init; }   // Stage 3
+public sealed record ConflictWorkingCopy
+{
+    public required string Path { get; init; }
+    public string? Text { get; init; }
+    public TextFileFormat? Format { get; init; }
+    public bool IsBinary { get; init; }
+    public bool ExceedsBudget { get; init; }
+    public bool UnsupportedEncoding { get; init; }
+    public int MarkerSize { get; init; } = 7;
+    public required string DiskHash { get; init; }
+}
 
-    public string MergedContent { get; set; } = "";        // Editable result
+public sealed record ResolutionSaveResult
+{
+    public required bool Saved { get; init; }
+    public required string DiskHash { get; init; }
+    /// <summary>
+    /// Set when the bytes were written but <c>git add</c> failed; <see cref="DiskHash"/> then
+    /// describes the written bytes and the path is still unmerged.
+    /// </summary>
+    public HistoriaGitException? StageError { get; init; }
+}
+
+public sealed record ConflictSideLabels
+{
+    public required string OursTitle { get; init; }
+    public required string OursDetail { get; init; }
+    public required string TheirsTitle { get; init; }
+    public required string TheirsDetail { get; init; }
+    public required OperationState Operation { get; init; }
+    public required string StopId { get; init; }
 }
 
 public enum ConflictStatus
@@ -32,3 +57,4 @@ public enum ConflictStatus
 }
 
 public enum ConflictSide { Ours, Theirs }
+

@@ -18,9 +18,6 @@ public sealed record FileDiff
     public required int AddedLines { get; init; }
     public required int DeletedLines { get; init; }
 
-    /// <summary>For syntax highlighting.</summary>
-    public string? LanguageId { get; init; }
-
     /// <summary>
     /// The raw unified-diff text Git produced for this file (§8.2.5). Patches for partial
     /// staging are generated from this — never by re-reading and re-splitting the file, which

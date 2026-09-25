@@ -1,4 +1,17 @@
 global using Avalonia;
+global using Avalonia.Markup.Xaml.Styling;
+global using AvaloniaEdit;
+global using AvaloniaEdit.Document;
+global using AvaloniaEdit.Editing;
+global using AvaloniaEdit.Rendering;
+global using AvaloniaEdit.TextMate;
+global using TextMateSharp.Grammars;
+global using TextMateSharp.Internal.Types;
+global using TextMateSharp.Registry;
+global using TextMateSharp.Themes;
+global using Historia.Services.Diff;
+
+global using FontStyle = Avalonia.Media.FontStyle;
 global using Avalonia.Controls;
 global using Avalonia.Controls.Primitives;
 global using Avalonia.Headless.XUnit;
@@ -25,6 +38,7 @@ global using Historia.Services.Text;
 global using Historia.Services.Theming;
 global using Historia.Services.UI;
 global using Historia.Services.Workspace;
+global using Historia.Theming;
 global using Historia.Views;
 global using Microsoft.Extensions.DependencyInjection;
 global using System.Runtime.CompilerServices;

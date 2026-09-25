@@ -18,6 +18,14 @@ public class SettingsServiceTests : IDisposable
         Assert.True(svc.Current.GraphMetadataFromDisk); // default on
         Assert.True(svc.Current.AutoFetchEnabled); // §12.1 default on
         Assert.False(svc.Current.EnableGraphSplice); // Default off
+        Assert.Equal(DiffViewMode.Unified, svc.Current.DefaultDiffView);
+    }
+
+    [Fact]
+    public void Default_diff_view_is_unified_for_a_fresh_install()
+    {
+        var svc = SettingsService.Load();
+        Assert.Equal(DiffViewMode.Unified, svc.Current.DefaultDiffView);
     }
 
     [Fact]

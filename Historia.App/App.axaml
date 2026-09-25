@@ -7,6 +7,7 @@
          the one source of truth stays HistoriaPalette.cs (parity with the old WPF dictionary). -->
     <Application.Styles>
         <FluentTheme />
+        <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
 
         <!-- V9: a classless Button never shows Fluent's grey fill. It reads like the Clone
              dialog's buttons — transparent ground, 1 px outline, plain text — and only paints a

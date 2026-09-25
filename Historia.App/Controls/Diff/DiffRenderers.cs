@@ -1,0 +1,433 @@
+namespace Historia.Controls;
+
+/// <summary>
+/// Vertical separator margin between diff editor margins.
+/// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
+/// </summary>
+public sealed class DiffVerticalSeparatorMargin : AbstractMargin
+{
+    public DiffVerticalSeparatorMargin()
+    {
+        ClipToBounds = true;
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        var pen = PaletteBrushes.Pen("ColorBorder", 1);
+        context.DrawLine(pen, new Point(0.5, 0), new Point(0.5, Bounds.Height));
+    }
+
+    protected override Size MeasureOverride(Size availableSize) => new(1, 0);
+}
+
+/// <summary>
+/// Line number margin displaying old or new line numbers for diff rows.
+/// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
+/// </summary>
+public sealed class DiffLineNumberMargin : AbstractMargin
+{
+    private readonly bool _isOld;
+    private readonly DiffPresenterBase _presenter;
+    private readonly Dictionary<string, FormattedText> _textCache = new(StringComparer.Ordinal);
+    private Typeface _typeface;
+    private double _lastFontSize;
+
+    public DiffLineNumberMargin(DiffPresenterBase presenter, bool isOld)
+    {
+        _presenter = presenter;
+        _isOld = isOld;
+        _typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
+        _lastFontSize = _presenter.FontSize;
+        Margin = new Thickness(8, 0);
+        ClipToBounds = true;
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        PaletteBrushes.Changed += OnPaletteChanged;
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        PaletteBrushes.Changed -= OnPaletteChanged;
+        _textCache.Clear();
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnPaletteChanged(object? sender, EventArgs e)
+    {
+        _textCache.Clear();
+        InvalidateVisual();
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        var view = TextView;
+        if (view is not { VisualLinesValid: true })
+        {
+            return;
+        }
+
+        var rows = _presenter.Rows;
+        var foregroundBrush = PaletteBrushes.Get("ColorTextFaint");
+
+        if (_presenter.FontSize != _lastFontSize)
+        {
+            _lastFontSize = _presenter.FontSize;
+            _typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
+            _textCache.Clear();
+        }
+
+        foreach (var line in view.VisualLines)
+        {
+            if (line.IsDisposed || line.FirstDocumentLine == null || line.FirstDocumentLine.IsDeleted)
+            {
+                continue;
+            }
+
+            var index = line.FirstDocumentLine.LineNumber;
+            if (index > rows.Count)
+            {
+                break;
+            }
+
+            var row = rows[index - 1];
+            var lineNumber = _isOld ? row.OldLineText : row.NewLineText;
+            if (string.IsNullOrEmpty(lineNumber))
+            {
+                continue;
+            }
+
+            var y = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineMiddle) - view.VerticalOffset;
+
+            if (!_textCache.TryGetValue(lineNumber, out var txt))
+            {
+                txt = new FormattedText(
+                    lineNumber,
+                    CultureInfo.InvariantCulture,
+                    FlowDirection.LeftToRight,
+                    _typeface,
+                    _presenter.FontSize,
+                    foregroundBrush);
+                if (_textCache.Count < 5000)
+                {
+                    _textCache[lineNumber] = txt;
+                }
+            }
+
+            context.DrawText(txt, new Point(Bounds.Width - txt.Width, y - (txt.Height * 0.5)));
+        }
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        var maxLine = _presenter.Model?.MaxLineNumber ?? 0;
+        if (maxLine <= 0)
+        {
+            return new Size(24, 0);
+        }
+
+        var typeface = new Typeface(_presenter.FontFamily);
+        var test = new FormattedText(
+            maxLine.ToString(CultureInfo.InvariantCulture),
+            CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            typeface,
+            _presenter.FontSize,
+            Brushes.White);
+
+        return new Size(test.Width, 0);
+    }
+}
+
+/// <summary>
+/// Gutter margin showing '+' and '-' modification indicators.
+/// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
+/// </summary>
+public sealed class DiffLineModifyTypeMargin : AbstractMargin
+{
+    private readonly DiffPresenterBase _presenter;
+    private Typeface _typeface;
+    private double _lastFontSize;
+    private FormattedText? _addText;
+    private FormattedText? _delText;
+
+    public DiffLineModifyTypeMargin(DiffPresenterBase presenter)
+    {
+        _presenter = presenter;
+        _typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
+        _lastFontSize = _presenter.FontSize;
+        Margin = new Thickness(4, 0);
+        ClipToBounds = true;
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        PaletteBrushes.Changed += OnPaletteChanged;
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        PaletteBrushes.Changed -= OnPaletteChanged;
+        ClearCache();
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnPaletteChanged(object? sender, EventArgs e)
+    {
+        ClearCache();
+        InvalidateVisual();
+    }
+
+    private void ClearCache()
+    {
+        _addText = null;
+        _delText = null;
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        var view = TextView;
+        if (view is not { VisualLinesValid: true })
+        {
+            return;
+        }
+
+        var rows = _presenter.Rows;
+
+        if (_presenter.FontSize != _lastFontSize)
+        {
+            _lastFontSize = _presenter.FontSize;
+            _typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
+            ClearCache();
+        }
+
+        foreach (var line in view.VisualLines)
+        {
+            if (line.IsDisposed || line.FirstDocumentLine == null || line.FirstDocumentLine.IsDeleted)
+            {
+                continue;
+            }
+
+            var index = line.FirstDocumentLine.LineNumber;
+            if (index > rows.Count)
+            {
+                break;
+            }
+
+            var row = rows[index - 1];
+            FormattedText? indicator = null;
+            var y = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineMiddle) - view.VerticalOffset;
+
+            if (row.Type == DiffDisplayLineType.Addition)
+            {
+                _addText ??= new FormattedText(
+                    "+",
+                    CultureInfo.InvariantCulture,
+                    FlowDirection.LeftToRight,
+                    _typeface,
+                    _presenter.FontSize,
+                    PaletteBrushes.Get("ColorGitAdded"));
+                indicator = _addText;
+            }
+            else if (row.Type == DiffDisplayLineType.Deletion)
+            {
+                _delText ??= new FormattedText(
+                    "-",
+                    CultureInfo.InvariantCulture,
+                    FlowDirection.LeftToRight,
+                    _typeface,
+                    _presenter.FontSize,
+                    PaletteBrushes.Get("ColorGitDeleted"));
+                indicator = _delText;
+            }
+
+            if (indicator != null)
+            {
+                context.DrawText(indicator, new Point(0, y - (indicator.Height * 0.5)));
+            }
+        }
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        var typeface = new Typeface(_presenter.FontFamily);
+        var test = new FormattedText(
+            "-",
+            CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            typeface,
+            _presenter.FontSize,
+            Brushes.White);
+        return new Size(test.Width, 0);
+    }
+}
+
+/// <summary>
+/// Safe background renderer for diff line washes, intra-line spans, and block borders.
+/// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
+/// </summary>
+public sealed class DiffLineBackgroundRenderer : SafeBackgroundRenderer
+{
+    private readonly DiffPresenterBase _presenter;
+
+    public override KnownLayer Layer => KnownLayer.Background;
+
+    public DiffLineBackgroundRenderer(DiffPresenterBase presenter)
+    {
+        _presenter = presenter;
+    }
+
+    protected override void DrawCore(TextView textView, DrawingContext drawingContext)
+    {
+        var rows = _presenter.Rows;
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        var width = textView.Bounds.Width;
+        var changeBlock = _presenter.CurrentBlock;
+
+        var addBg = PaletteBrushes.Get("ColorDiffAddBg");
+        var delBg = PaletteBrushes.Get("ColorDiffDelBg");
+        var emptyBg = PaletteBrushes.Get("ColorDiffEmptyBg");
+        var addHl = PaletteBrushes.Get("ColorDiffAddHl");
+        var delHl = PaletteBrushes.Get("ColorDiffDelHl");
+        var blockBorderPen = PaletteBrushes.Pen("ColorAccent", 1);
+
+        foreach (var line in textView.VisualLines)
+        {
+            if (line.IsDisposed || line.FirstDocumentLine == null || line.FirstDocumentLine.IsDeleted)
+            {
+                continue;
+            }
+
+            var index = line.FirstDocumentLine.LineNumber;
+            if (index > rows.Count)
+            {
+                break;
+            }
+
+            var row = rows[index - 1];
+            var lastTextLine = line.TextLines[^1];
+            var startY = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineTop) - textView.VerticalOffset;
+            var endY = line.GetTextLineVisualYPosition(lastTextLine, VisualYPosition.LineBottom) - textView.VerticalOffset;
+
+            IBrush? bg = row.Type switch
+            {
+                DiffDisplayLineType.Addition => addBg,
+                DiffDisplayLineType.Deletion => delBg,
+                DiffDisplayLineType.None => emptyBg,
+                _ => null,
+            };
+
+            if (bg != null)
+            {
+                drawingContext.DrawRectangle(bg, null, new Rect(0, startY, width, endY - startY));
+
+                if (row.Highlights.Count > 0)
+                {
+                    var highlightBg = row.Type == DiffDisplayLineType.Addition ? addHl : delHl;
+                    if (highlightBg != null)
+                    {
+                        int processingIdxStart = 0;
+                        int processingIdxEnd = 0;
+                        int nextHighlight = 0;
+
+                        foreach (var tl in line.TextLines)
+                        {
+                            processingIdxEnd += tl.Length;
+                            var y = line.GetTextLineVisualYPosition(tl, VisualYPosition.LineTop) - textView.VerticalOffset;
+                            var h = line.GetTextLineVisualYPosition(tl, VisualYPosition.LineBottom) - textView.VerticalOffset - y;
+
+                            while (nextHighlight < row.Highlights.Count)
+                            {
+                                var highlight = row.Highlights[nextHighlight];
+                                int hlStart = highlight.Start;
+                                int hlEnd = highlight.Start + highlight.Length - 1;
+
+                                if (hlStart >= processingIdxEnd)
+                                {
+                                    break;
+                                }
+
+                                var startCol = line.GetVisualColumn(hlStart < processingIdxStart ? processingIdxStart : hlStart);
+                                var endCol = line.GetVisualColumn(hlEnd >= processingIdxEnd ? processingIdxEnd : hlEnd + 1);
+
+                                var x = line.GetTextLineVisualXPosition(tl, startCol) - textView.HorizontalOffset;
+                                var w = line.GetTextLineVisualXPosition(tl, endCol) - textView.HorizontalOffset - x;
+
+                                if (w > 0 && h > 0)
+                                {
+                                    drawingContext.DrawRectangle(highlightBg, null, new Rect(x, y, w, h));
+                                }
+
+                                if (hlEnd >= processingIdxEnd)
+                                {
+                                    break;
+                                }
+
+                                nextHighlight++;
+                            }
+
+                            processingIdxStart = processingIdxEnd;
+                        }
+                    }
+                }
+            }
+
+            if (changeBlock != null)
+            {
+                if (index == changeBlock.Value.StartLine)
+                {
+                    drawingContext.DrawLine(blockBorderPen, new Point(0, startY), new Point(width, startY));
+                }
+
+                if (index == changeBlock.Value.EndLine)
+                {
+                    drawingContext.DrawLine(blockBorderPen, new Point(0, endY), new Point(width, endY));
+                }
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Transformer coloring @@ hunk indicator @@ header lines.
+/// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
+/// </summary>
+public sealed class DiffIndicatorTransformer : DocumentColorizingTransformer
+{
+    private readonly DiffPresenterBase _presenter;
+    private readonly Typeface _indicatorTypeface;
+
+    public DiffIndicatorTransformer(DiffPresenterBase presenter)
+    {
+        _presenter = presenter;
+        _indicatorTypeface = new Typeface(_presenter.FontFamily, FontStyle.Italic);
+    }
+
+    protected override void ColorizeLine(DocumentLine line)
+    {
+        var rows = _presenter.Rows;
+        var idx = line.LineNumber;
+        if (idx > rows.Count)
+        {
+            return;
+        }
+
+        var row = rows[idx - 1];
+        if (row.Type == DiffDisplayLineType.Indicator)
+        {
+            var indicatorBrush = PaletteBrushes.Get("ColorAccent");
+            ChangeLinePart(line.Offset, line.EndOffset, v =>
+            {
+                v.TextRunProperties.SetForegroundBrush(indicatorBrush);
+                v.TextRunProperties.SetTypeface(_indicatorTypeface);
+            });
+        }
+    }
+}

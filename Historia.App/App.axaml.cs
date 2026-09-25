@@ -209,6 +209,7 @@ public sealed class App : Application
         services.AddSingleton<INotificationService, NotificationService>();
         services.AddSingleton<ICustomThemeService, CustomThemeService>();
         services.AddSingleton<IThemeService, ThemeService>();
+        services.AddSingleton<SyntaxThemeHost>();
         services.AddSingleton<IGitExecutableLocator, GitExecutableLocator>();
         services.AddSingleton<IGitCliService, GitCliService>();
         services.AddSingleton<LibGit2Service>();
@@ -231,6 +232,8 @@ public sealed class App : Application
         services.AddSingleton<ICloneService, CloneService>();
         services.AddSingleton<IKeyboardCommandRouter, KeyboardCommandRouter>();
         services.AddSingleton<INavigationBus, NavigationBus>();
+        services.AddSingleton<IUnsavedWorkRegistry, UnsavedWorkRegistry>();
+        services.AddSingleton<ConflictResolverHost>();
 
         // ── Terminal (V5 §3.3). Singletons — never AddScoped (rule 20). ──
         services.AddSingleton<Historia.Services.Terminal.ITerminalBackend, Historia.Services.Terminal.PortaPtyBackend>();

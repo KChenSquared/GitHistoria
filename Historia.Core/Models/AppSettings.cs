@@ -45,7 +45,7 @@ public sealed record AppSettings
     /// <see cref="ThemeMode.Custom"/>; null otherwise.</summary>
     public string? CustomThemeId { get; init; }
 
-    public DiffViewMode DefaultDiffView { get; init; } = DiffViewMode.SideBySide;
+    public DiffViewMode DefaultDiffView { get; init; } = DiffViewMode.Unified;
 
     /// <summary>
     /// Off (default): every displayed commit date is the commit (committer) date — the date the
