@@ -40,12 +40,15 @@ public class DiffViewStagingTests : IDisposable
         public IReadOnlySet<DiffLineRef>? LastSelectedLines { get; set; }
         public bool LastReverse { get; set; }
         public int GeneratePatchCount { get; set; }
+        public int CheckAsyncCount { get; set; }
         public int ApplyPatchCount { get; set; }
         public string? LastAppliedPatch { get; set; }
         public PatchTarget LastAppliedTarget { get; set; }
         public bool LastAppliedReverse { get; set; }
         public Exception? ThrowOnGenerate { get; set; }
+        public Exception? ThrowOnApply { get; set; }
         public PatchCheckResult CheckResult { get; set; } = new(true, null);
+        public TaskCompletionSource<bool>? CheckGate { get; set; }
 
         public string GeneratePatch(FileDiff source, PatchScope scope, IReadOnlySet<DiffLineRef>? selectedLines = null, bool reverse = false)
         {
@@ -62,13 +65,22 @@ public class DiffViewStagingTests : IDisposable
             return "diff --git a/test.txt b/test.txt\n--- a/test.txt\n+++ b/test.txt\n";
         }
 
-        public Task<PatchCheckResult> CheckAsync(RepositoryContext context, string patch, PatchTarget target, bool reverse, CancellationToken ct = default)
+        public async Task<PatchCheckResult> CheckAsync(RepositoryContext context, string patch, PatchTarget target, bool reverse, CancellationToken ct = default)
         {
-            return Task.FromResult(CheckResult);
+            CheckAsyncCount++;
+            if (CheckGate is not null)
+            {
+                await CheckGate.Task;
+            }
+            return CheckResult;
         }
 
         public Task ApplyPatchAsync(RepositoryContext context, string patch, PatchTarget target, bool reverse, CancellationToken ct = default)
         {
+            if (ThrowOnApply is not null)
+            {
+                throw ThrowOnApply;
+            }
             LastAppliedPatch = patch;
             LastAppliedTarget = target;
             LastAppliedReverse = reverse;
@@ -477,6 +489,106 @@ public class DiffViewStagingTests : IDisposable
             window.Close();
             Dispatcher.UIThread.RunJobs();
         }
+    }
+
+    [AvaloniaFact]
+    public async Task Second_hunk_request_while_first_in_flight_is_ignored()
+    {
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
+        await WaitForPresenterAsync(view);
+
+        var gate = new TaskCompletionSource<bool>();
+        _patchService.CheckGate = gate;
+
+        var task1 = view.ApplyHunkAsync(0);
+        var task2 = view.ApplyHunkAsync(1);
+
+        await task2;
+
+        Assert.Equal(1, _patchService.GeneratePatchCount);
+        Assert.Equal(1, _patchService.CheckAsyncCount);
+        Assert.Equal(0, _patchService.ApplyPatchCount);
+
+        _patchService.CheckGate = null;
+        gate.SetResult(true);
+        await task1;
+
+        Assert.Equal(1, _patchService.GeneratePatchCount);
+        Assert.Equal(1, _patchService.CheckAsyncCount);
+        Assert.Equal(1, _patchService.ApplyPatchCount);
+
+        await view.ApplyHunkAsync(0);
+        Assert.Equal(2, _patchService.GeneratePatchCount);
+        Assert.Equal(2, _patchService.CheckAsyncCount);
+        Assert.Equal(2, _patchService.ApplyPatchCount);
+    }
+
+    [AvaloniaFact]
+    public async Task Selection_request_while_hunk_in_flight_is_ignored()
+    {
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
+        await WaitForPresenterAsync(view);
+
+        var gate = new TaskCompletionSource<bool>();
+        _patchService.CheckGate = gate;
+
+        var task1 = view.ApplyHunkAsync(0);
+        var task2 = view.ApplySelectionAsync([new DiffLineRef(0, 1)]);
+
+        await task2;
+
+        Assert.Equal(1, _patchService.GeneratePatchCount);
+        Assert.Equal(PatchScope.SingleHunk, _patchService.LastScope);
+
+        _patchService.CheckGate = null;
+        gate.SetResult(true);
+        await task1;
+
+        Assert.Equal(1, _patchService.ApplyPatchCount);
+        Assert.Equal(PatchScope.SingleHunk, _patchService.LastScope);
+    }
+
+    [AvaloniaFact]
+    public async Task Guard_clears_after_refused_check()
+    {
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
+        await WaitForPresenterAsync(view);
+
+        _patchService.CheckResult = new(false, "conflict");
+        await view.ApplyHunkAsync(0);
+
+        Assert.Equal(1, _patchService.GeneratePatchCount);
+        Assert.Equal(0, _patchService.ApplyPatchCount);
+        Assert.Contains(_notificationService.Notifications, n => n.Severity == NotificationSeverity.Warning && n.Message.Contains("conflict"));
+
+        _patchService.CheckResult = new(true, null);
+        await view.ApplyHunkAsync(0);
+
+        Assert.Equal(2, _patchService.GeneratePatchCount);
+        Assert.Equal(1, _patchService.ApplyPatchCount);
+    }
+
+    [AvaloniaFact]
+    public async Task Guard_clears_after_exception()
+    {
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
+        await WaitForPresenterAsync(view);
+
+        _patchService.ThrowOnApply = new InvalidOperationException("simulated failure");
+        await view.ApplyHunkAsync(0);
+
+        Assert.Equal(1, _patchService.GeneratePatchCount);
+        Assert.Contains(_notificationService.Notifications, n => n.Severity == NotificationSeverity.Error && n.Message.Contains("simulated failure"));
+
+        _patchService.ThrowOnApply = null;
+        await view.ApplyHunkAsync(0);
+
+        Assert.Equal(2, _patchService.GeneratePatchCount);
+        Assert.Equal(1, _patchService.ApplyPatchCount);
     }
 
     private static async Task<Control> WaitForPresenterAsync(DiffView view)

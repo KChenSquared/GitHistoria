@@ -21,6 +21,7 @@ public sealed class DiffView : UserControl, IDisposable
     private readonly bool _wordWrap;
     private CancellationTokenSource? _loadingCts;
     private bool _disposed;
+    private bool _patchInFlight;
 
     private CombinedDiffPresenter? _combinedPresenter;
     private SideBySideDiffPresenter? _sideBySidePresenter;
@@ -318,19 +319,26 @@ public sealed class DiffView : UserControl, IDisposable
         _ = ApplySelectionAsync(refs);
     }
 
-    public async Task ApplyHunkAsync(int hunkIndex)
+    public Task ApplyHunkAsync(int hunkIndex)
+        => ApplyPatchAsync(PatchScope.SingleHunk, new HashSet<DiffLineRef> { new(hunkIndex, 0) }, "this hunk");
+
+    public Task ApplySelectionAsync(IReadOnlyList<DiffLineRef> refs)
+        => ApplyPatchAsync(PatchScope.SelectedLines, refs.ToHashSet(), "selected lines");
+
+    private async Task ApplyPatchAsync(PatchScope scope, IReadOnlySet<DiffLineRef> selected, string what)
     {
-        if (_patches is null || _diff is null || _disposed)
+        if (_patches is null || _diff is null || _disposed || _patchInFlight)
         {
             return;
         }
 
+        _patchInFlight = true;
+        var diffAtEntry = _diff;
         var stage = _request.Source == DiffSource.UnstagedChanges;
         var reverse = !stage;
         try
         {
-            var selected = new HashSet<DiffLineRef> { new(hunkIndex, 0) };
-            var patch = _patches.GeneratePatch(_diff, PatchScope.SingleHunk, selected, reverse: reverse);
+            var patch = _patches.GeneratePatch(diffAtEntry, scope, selected, reverse: reverse);
             if (string.IsNullOrEmpty(patch) || _disposed)
             {
                 return;
@@ -341,7 +349,7 @@ public sealed class DiffView : UserControl, IDisposable
             if (!check.CanApply)
             {
                 _notifications?.Publish(NotificationSeverity.Warning,
-                    $"Cannot {(stage ? "stage" : "unstage")} this hunk: {check.FailureReason}");
+                    $"Cannot {(stage ? "stage" : "unstage")} {what}: {check.FailureReason}");
                 return;
             }
 
@@ -369,58 +377,9 @@ public sealed class DiffView : UserControl, IDisposable
         {
             if (!_disposed) _notifications?.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails());
         }
-    }
-
-    public async Task ApplySelectionAsync(IReadOnlyList<DiffLineRef> refs)
-    {
-        if (_patches is null || _diff is null || _disposed)
+        finally
         {
-            return;
-        }
-
-        var stage = _request.Source == DiffSource.UnstagedChanges;
-        var reverse = !stage;
-        try
-        {
-            var selected = refs.ToHashSet();
-            var patch = _patches.GeneratePatch(_diff, PatchScope.SelectedLines, selected, reverse: reverse);
-            if (string.IsNullOrEmpty(patch) || _disposed)
-            {
-                return;
-            }
-
-            var check = await _patches.CheckAsync(_ctx, patch, PatchTarget.StagingArea, reverse, _ctx.Lifetime);
-            if (_disposed) return;
-            if (!check.CanApply)
-            {
-                _notifications?.Publish(NotificationSeverity.Warning,
-                    $"Cannot {(stage ? "stage" : "unstage")} selected lines: {check.FailureReason}");
-                return;
-            }
-
-            await _patches.ApplyPatchAsync(_ctx, patch, PatchTarget.StagingArea, reverse, _ctx.Lifetime);
-            if (_disposed) return;
-            await _ctx.State.RefreshStatusAsync(_ctx.Lifetime);
-            if (_disposed) return;
-            var diff = await _ctx.Gateway.GetFileDiffAsync(_request, _ctx.Lifetime);
-            if (_disposed) return;
-            _diff = diff;
-            var model = await Task.Run(() =>
-            {
-                LastModelCreationThreadId = Environment.CurrentManagedThreadId;
-                return DiffDisplayModel.Create(diff);
-            });
-            if (_disposed) return;
-            _model = model;
-            Rebuild();
-        }
-        catch (HistoriaGitException ex)
-        {
-            if (!_disposed) _notifications?.Publish(NotificationSeverity.Warning, ex.Message);
-        }
-        catch (Exception ex)
-        {
-            if (!_disposed) _notifications?.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails());
+            _patchInFlight = false;
         }
     }
 
