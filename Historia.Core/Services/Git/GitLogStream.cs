@@ -2,11 +2,10 @@ namespace Historia.Services.Git;
 
 /// <summary>
 /// Pull-based <see cref="IEnumerator{T}"/> over a live <c>git log --date-order</c> process — the
-/// primary graph-walk engine (libgit2's revwalk is the fallback, see
-/// <c>Historia.Services.Graph.GraphLayoutService</c>). Git's own in-degree topological sort
-/// expands lazily by generation number (using a commit-graph file when present) instead of
-/// libgit2's whole-history <c>prepare_walk</c>, so on a huge history the first rows arrive in a
-/// fraction of the time.
+/// commit-graph walk (see <c>Historia.Services.Graph.GraphLayoutService</c>). Git's own in-degree
+/// topological sort expands lazily by generation number (using a commit-graph file when present)
+/// instead of sorting the whole history up front, so on a huge history the first rows arrive in
+/// a fraction of a second.
 /// <para>
 /// Tip SHAs are written to the process's stdin (<c>--stdin</c>) and then closed — a large tag/
 /// branch count can exceed the ~32K Windows command-line limit if passed as arguments. Pipe
@@ -35,8 +34,8 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
     object IEnumerator.Current => Current;
 
     /// <summary>True once the underlying process has failed — exited non-zero, or produced a
-    /// record this parser could not understand. The caller should dispose and fall back to the
-    /// libgit2 walk.</summary>
+    /// record this parser could not understand. The caller should dispose it; the rows already
+    /// yielded stay valid, but the walk cannot continue.</summary>
     public bool Failed { get; private set; }
 
     private GitLogStream(Process process, Task stderrDrain, StringBuilder stderr)
@@ -49,11 +48,21 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
 
     /// <summary>
     /// Starts <c>git log --date-order -z --stdin --format=...</c> over <paramref name="tipShas"/>.
-    /// Returns null (spawning nothing further) when git isn't available or there are no tips —
-    /// the caller falls back to the libgit2 walk in that case.
+    /// Returns null (spawning nothing further) when git isn't available, there are no tips, or
+    /// the process could not be started.
+    /// <para>
+    /// A non-empty <paramref name="pathFilter"/> limits the walk to commits touching that path
+    /// (file or folder), matched literally (<c>GIT_LITERAL_PATHSPECS=1</c>). It adds
+    /// <c>--parents</c>, which turns on parent rewriting so <c>%P</c> names the nearest shown
+    /// ancestors instead of parents that never appear in the output — without it the graph
+    /// would be full of edges to missing rows. Renames are not followed. The pathspec goes on the
+    /// command line after <c>--</c>; <c>--stdin</c> still reads only revisions, since paths are
+    /// taken from stdin only after a <c>--</c> line there.
+    /// </para>
     /// </summary>
     public static GitLogStream? TryStart(
-        IGitExecutableLocator locator, string repositoryPath, IReadOnlyList<string> tipShas, GitProfile? profile = null)
+        IGitExecutableLocator locator, string repositoryPath, IReadOnlyList<string> tipShas, GitProfile? profile = null,
+        string? pathFilter = null)
     {
         var git = locator.Current;
         if (!git.Found || git.Path is null || tipShas.Count == 0)
@@ -78,12 +87,20 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
         psi.ArgumentList.Add("--no-show-signature");
         psi.ArgumentList.Add("--stdin");
         psi.ArgumentList.Add($"--format={Format}");
+        var filtered = !string.IsNullOrEmpty(pathFilter);
+        if (filtered)
+        {
+            psi.ArgumentList.Add("--parents");
+            psi.ArgumentList.Add("--");
+            psi.ArgumentList.Add(pathFilter!);
+        }
 
         GitCliProcessSetup.ComposeEnvironment(psi, profile, extraEnvironment: null);
-        // libgit2 (the fallback engine) ignores replace refs entirely — the CLI walk must expand
-        // the exact same history, or a fallback mid-walk would disagree with what was already
-        // produced.
+        // Graph rows must name the same commit objects the rest of Historia reads through
+        // libgit2 (details, diffs, decorations), and libgit2 ignores replace refs entirely.
         psi.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
+        if (filtered)
+            psi.Environment["GIT_LITERAL_PATHSPECS"] = "1";
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = false };
         try
@@ -146,8 +163,8 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
 
         if (record is null)
         {
-            // EOF on stdout. A clean exit means the walk is exhausted; anything else is a failure
-            // the caller should fall back from.
+            // EOF on stdout. A clean exit means the walk is exhausted; anything else is a
+            // failure.
             try { _process.WaitForExit(5_000); } catch { /* best effort */ }
             var exitCode = SafeExitCode();
             if (exitCode != 0)
