@@ -340,6 +340,33 @@ public abstract class DiffPresenterBase : CodeEditor
         }
     }
 
+    internal static (int First, int Last) SelectedLineSpan(Selection selection)
+    {
+        var start = selection.StartPosition;
+        var end = selection.EndPosition;
+
+        int firstLine, lastLine, lastCol;
+        if (start.Line < end.Line || (start.Line == end.Line && start.Column <= end.Column))
+        {
+            firstLine = start.Line;
+            lastLine = end.Line;
+            lastCol = end.Column;
+        }
+        else
+        {
+            firstLine = end.Line;
+            lastLine = start.Line;
+            lastCol = start.Column;
+        }
+
+        if (selection is SimpleSelection && lastLine > firstLine && lastCol == 1)
+        {
+            lastLine--;
+        }
+
+        return (firstLine, lastLine);
+    }
+
     public virtual IReadOnlyList<DiffLineRef> GetSelectedLineRefs()
     {
         var sel = TextArea.Selection;
@@ -348,8 +375,7 @@ public abstract class DiffPresenterBase : CodeEditor
             return [];
         }
 
-        int start = sel.StartPosition.Line;
-        int end = sel.EndPosition.Line;
+        var (start, end) = SelectedLineSpan(sel);
         return Model.GetSelectedLinesForCombined(start, end);
     }
 
@@ -577,8 +603,7 @@ public sealed class SingleSideDiffPresenter : DiffPresenterBase
             return [];
         }
 
-        int start = sel.StartPosition.Line;
-        int end = sel.EndPosition.Line;
+        var (start, end) = SelectedLineSpan(sel);
         return Model.GetSelectedLinesForSideBySide(start, end, oldSide: _isOld);
     }
 
@@ -768,8 +793,7 @@ public sealed class SideBySideDiffPresenter : Control
         var rightSel = _rightPresenter.TextArea.Selection;
         if (!rightSel.IsEmpty)
         {
-            int start = rightSel.StartPosition.Line;
-            int end = rightSel.EndPosition.Line;
+            var (start, end) = DiffPresenterBase.SelectedLineSpan(rightSel);
             return Model.GetSelectedLinesForSideBySide(start, end, oldSide: false);
         }
 
@@ -777,8 +801,7 @@ public sealed class SideBySideDiffPresenter : Control
         var leftSel = _leftPresenter.TextArea.Selection;
         if (!leftSel.IsEmpty)
         {
-            int start = leftSel.StartPosition.Line;
-            int end = leftSel.EndPosition.Line;
+            var (start, end) = DiffPresenterBase.SelectedLineSpan(leftSel);
             return Model.GetSelectedLinesForSideBySide(start, end, oldSide: true);
         }
 

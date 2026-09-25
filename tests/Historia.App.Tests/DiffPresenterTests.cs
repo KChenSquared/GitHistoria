@@ -611,4 +611,99 @@ public class DiffPresenterTests
         var handler = (System.ComponentModel.CancelEventHandler?)field?.GetValue(menu);
         handler?.Invoke(menu, new System.ComponentModel.CancelEventArgs());
     }
+
+    [AvaloniaFact]
+    public void Selection_ending_at_column_1_of_next_row_excludes_that_row()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+        var presenter = new CombinedDiffPresenter { Model = model };
+
+        // Line 3 is deletion (hunk 0, line 1), Line 4 is addition (hunk 0, line 2)
+        var startOffset = presenter.Document.GetOffset(3, 1);
+        var endOffset = presenter.Document.GetOffset(4, 1);
+        presenter.TextArea.Selection = Selection.Create(presenter.TextArea, startOffset, endOffset);
+
+        var refs = presenter.GetSelectedLineRefs();
+        Assert.Single(refs);
+        Assert.Equal(new DiffLineRef(0, 1), refs[0]);
+    }
+
+    [AvaloniaFact]
+    public void Reverse_drag_ending_at_column_1_excludes_that_row()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+        var presenter = new CombinedDiffPresenter { Model = model };
+
+        // Anchor at line 4 col 1, caret at line 3 col 1
+        var startOffset = presenter.Document.GetOffset(4, 1);
+        var endOffset = presenter.Document.GetOffset(3, 1);
+        presenter.TextArea.Selection = Selection.Create(presenter.TextArea, startOffset, endOffset);
+
+        var refs = presenter.GetSelectedLineRefs();
+        Assert.Single(refs);
+        Assert.Equal(new DiffLineRef(0, 1), refs[0]);
+    }
+
+    [AvaloniaFact]
+    public void Selection_ending_mid_row_includes_that_row()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+        var presenter = new CombinedDiffPresenter { Model = model };
+
+        var startOffset = presenter.Document.GetOffset(3, 1);
+        var endOffset = presenter.Document.GetOffset(4, 2);
+        presenter.TextArea.Selection = Selection.Create(presenter.TextArea, startOffset, endOffset);
+
+        var refs = presenter.GetSelectedLineRefs();
+        Assert.Equal(2, refs.Count);
+        Assert.Equal(new DiffLineRef(0, 1), refs[0]);
+        Assert.Equal(new DiffLineRef(0, 2), refs[1]);
+    }
+
+    [AvaloniaFact]
+    public void Single_row_selection_is_unchanged()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+        var presenter = new CombinedDiffPresenter { Model = model };
+
+        var startOffset = presenter.Document.GetOffset(3, 1);
+        var endOffset = presenter.Document.GetOffset(3, 3);
+        presenter.TextArea.Selection = Selection.Create(presenter.TextArea, startOffset, endOffset);
+
+        var refs = presenter.GetSelectedLineRefs();
+        Assert.Single(refs);
+        Assert.Equal(new DiffLineRef(0, 1), refs[0]);
+    }
+
+    [AvaloniaFact]
+    public void Sbs_left_and_right_selection_apply_the_column_1_rule()
+    {
+        var diff = CreateSampleDiff();
+        var model = DiffDisplayModel.Create(diff);
+        var sbs = new SideBySideDiffPresenter { Model = model };
+
+        // In side-by-side: Line 1 indicator, Line 2 context 1, Line 3 replacement (left=del, right=add), Line 4 context 2
+        // 1. Right presenter: Line 3 is addition (hunk 0, line 2), Line 4 is context
+        var rStart = sbs.RightPresenter.Document.GetOffset(3, 1);
+        var rEnd = sbs.RightPresenter.Document.GetOffset(4, 1);
+        sbs.RightPresenter.TextArea.Selection = Selection.Create(sbs.RightPresenter.TextArea, rStart, rEnd);
+
+        var rightRefs = sbs.GetSelectedLineRefs();
+        Assert.Single(rightRefs);
+        Assert.Equal(new DiffLineRef(0, 2), rightRefs[0]);
+
+        // 2. Left presenter: Line 3 is deletion (hunk 0, line 1), Line 4 is context
+        sbs.RightPresenter.TextArea.ClearSelection();
+        var lStart = sbs.LeftPresenter.Document.GetOffset(3, 1);
+        var lEnd = sbs.LeftPresenter.Document.GetOffset(4, 1);
+        sbs.LeftPresenter.TextArea.Selection = Selection.Create(sbs.LeftPresenter.TextArea, lStart, lEnd);
+
+        var leftRefs = sbs.GetSelectedLineRefs();
+        Assert.Single(leftRefs);
+        Assert.Equal(new DiffLineRef(0, 1), leftRefs[0]);
+    }
 }
