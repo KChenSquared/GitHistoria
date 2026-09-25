@@ -28,6 +28,11 @@ public sealed record ResolutionSaveResult
 {
     public required bool Saved { get; init; }
     public required string DiskHash { get; init; }
+    /// <summary>
+    /// Set when the bytes were written but <c>git add</c> failed; <see cref="DiskHash"/> then
+    /// describes the written bytes and the path is still unmerged.
+    /// </summary>
+    public HistoriaGitException? StageError { get; init; }
 }
 
 public sealed record ConflictSideLabels

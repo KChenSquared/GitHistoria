@@ -891,5 +891,120 @@ public class ConflictServiceTests
             Assert.Empty(ctx.State.Status.Conflicted);
         }
     }
+
+    [Fact]
+    public async Task Abort_failure_with_conflicts_present_throws()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        ctx.MarkFirstGraphPaintDone();
+        ctx.MarkFirstFullLoadDone();
+        await ctx.State.RefreshAllAsync(ctx.Lifetime);
+        var svc = Make(host);
+
+        var lockPath = Path.Combine(ctx.GitDirectory, "index.lock");
+        await File.WriteAllBytesAsync(lockPath, []);
+        try
+        {
+            await Assert.ThrowsAsync<HistoriaGitException>(() => svc.AbortOperationAsync(ctx));
+            Assert.True(File.Exists(Path.Combine(ctx.GitDirectory, "MERGE_HEAD")));
+            var conflicts = await svc.GetConflictsAsync(ctx);
+            Assert.NotEmpty(conflicts);
+        }
+        finally
+        {
+            if (File.Exists(lockPath))
+                File.Delete(lockPath);
+        }
+    }
+
+    [Fact]
+    public async Task Skip_failure_with_conflicts_present_throws()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+        repoDir.WriteFile("f1.txt", "base1\n").Stage().Commit("base");
+        repoDir.Checkout("feature", create: true).WriteFile("f1.txt", "feature1\n").Stage().Commit("c1");
+        repoDir.Checkout("main").WriteFile("f1.txt", "main1\n").Stage().Commit("m1");
+        repoDir.Checkout("feature");
+        try { repoDir.Git("rebase", "main"); } catch { }
+
+        await using var ctx = host.Open(repoDir.Path);
+        ctx.MarkFirstGraphPaintDone();
+        ctx.MarkFirstFullLoadDone();
+        await ctx.State.RefreshAllAsync(ctx.Lifetime);
+        var svc = Make(host);
+
+        Assert.Equal(OperationState.Rebasing, ctx.State.PendingOperation);
+
+        var lockPath = Path.Combine(ctx.GitDirectory, "index.lock");
+        await File.WriteAllBytesAsync(lockPath, []);
+        try
+        {
+            await Assert.ThrowsAsync<HistoriaGitException>(() => svc.SkipCurrentAsync(ctx));
+            Assert.Equal(OperationState.Rebasing, Historia.Services.State.RepositoryStateService.DetectOperationState(ctx.GitDirectory));
+        }
+        finally
+        {
+            if (File.Exists(lockPath))
+                File.Delete(lockPath);
+        }
+    }
+
+    [Fact]
+    public async Task SaveResolution_stage_failure_returns_new_hash_and_stage_error()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        var resolvedText = "line1\nRESOLVED\nline3\n";
+        var lockPath = Path.Combine(ctx.GitDirectory, "index.lock");
+        await File.WriteAllBytesAsync(lockPath, []);
+        try
+        {
+            var res = await svc.SaveResolutionAsync(ctx, "f.txt", resolvedText, copy.Format!.Value, copy.DiskHash, stage: true);
+            Assert.True(res.Saved);
+            Assert.NotNull(res.StageError);
+
+            var expectedHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(copy.Format.Value.Encode(resolvedText)));
+            Assert.Equal(expectedHash, res.DiskHash);
+
+            var diskHash = await svc.GetDiskHashAsync(ctx, "f.txt");
+            Assert.Equal(expectedHash, diskHash);
+
+            var conflicts = await svc.GetConflictsAsync(ctx);
+            Assert.Contains(conflicts, c => c.FilePath == "f.txt");
+        }
+        finally
+        {
+            if (File.Exists(lockPath))
+                File.Delete(lockPath);
+        }
+    }
+
+    [Fact]
+    public async Task SaveResolution_refuses_default_format_without_writing()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var fullPath = Path.Combine(ctx.RepositoryPath, "f.txt");
+        var originalBytes = await File.ReadAllBytesAsync(fullPath);
+        var originalMtime = File.GetLastWriteTimeUtc(fullPath);
+        var diskHash = await svc.GetDiskHashAsync(ctx, "f.txt");
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() =>
+            svc.SaveResolutionAsync(ctx, "f.txt", "new text", default, diskHash, stage: false));
+
+        Assert.Contains("no detected text format", ex.Message);
+        Assert.Equal(originalBytes, await File.ReadAllBytesAsync(fullPath));
+        Assert.Equal(originalMtime, File.GetLastWriteTimeUtc(fullPath));
+    }
 }
 

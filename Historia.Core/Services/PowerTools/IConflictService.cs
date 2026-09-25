@@ -23,6 +23,12 @@ public interface IConflictService
 
     /// <summary>Writes resolved content and optionally stages it, verifying the current on-disk hash
     /// against <paramref name="expectedDiskHash"/> before writing (compare-before-write).
+    /// Outcomes:
+    /// <list type="bullet">
+    /// <item><description>Refused (<see cref="ResolutionSaveResult.Saved"/> is false): current on-disk hash differed from <paramref name="expectedDiskHash"/>.</description></item>
+    /// <item><description>Saved and staged (<see cref="ResolutionSaveResult.Saved"/> is true, <see cref="ResolutionSaveResult.StageError"/> is null): bytes written to disk and staged in index.</description></item>
+    /// <item><description>Saved but not staged (<see cref="ResolutionSaveResult.Saved"/> is true, <see cref="ResolutionSaveResult.StageError"/> is set): bytes written to disk, but staging failed.</description></item>
+    /// </list>
     /// If the file was missing when loaded, <paramref name="expectedDiskHash"/> should be <see cref="string.Empty"/>.</summary>
     Task<ResolutionSaveResult> SaveResolutionAsync(RepositoryContext context, string filePath, string text, TextFileFormat format, string expectedDiskHash, bool stage, CancellationToken ct = default);
 

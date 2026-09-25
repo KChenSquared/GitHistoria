@@ -101,6 +101,11 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         bool stage,
         CancellationToken ct = default)
     {
+        if (format.Encoding is null)
+        {
+            throw new HistoriaGitException(GitErrorKind.Unknown, $"'{filePath}' has no detected text format and cannot be saved as text.");
+        }
+
         using var _ = context.BeginSelfOperation();
         var full = Path.Combine(context.RepositoryPath, filePath);
 
@@ -131,7 +136,14 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
                 WorkingDirectory = context.RepositoryPath,
             }, ct).ConfigureAwait(false);
             if (!add.IsSuccess)
-                throw HistoriaGitException.FromCli(add, "Save resolution (stage)");
+            {
+                return new ResolutionSaveResult
+                {
+                    Saved = true,
+                    DiskHash = newHash,
+                    StageError = HistoriaGitException.FromCli(add, "Save resolution (stage)")
+                };
+            }
         }
 
         return new ResolutionSaveResult { Saved = true, DiskHash = newHash };
@@ -529,9 +541,9 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             ExtraEnvironment = env,
         }, ct).ConfigureAwait(false);
 
-        var isConflict = result.ErrorKind == GitErrorKind.MergeConflict
-            || GitErrorClassifier.Classify(result.ExitCode, $"{result.StandardOutput}\n{result.StandardError}") == GitErrorKind.MergeConflict
-            || await context.WithRepositoryAsync(HasUnmergedPaths, ct).ConfigureAwait(false);
+        var isConflict = (string.Equals(action, "--continue", StringComparison.Ordinal) || string.Equals(action, "--skip", StringComparison.Ordinal))
+            && (result.ErrorKind == GitErrorKind.MergeConflict
+                || GitErrorClassifier.Classify(result.ExitCode, $"{result.StandardOutput}\n{result.StandardError}") == GitErrorKind.MergeConflict);
 
         if (!result.IsSuccess && !isConflict)
             throw HistoriaGitException.FromCli(result, $"{verb} {action}");
