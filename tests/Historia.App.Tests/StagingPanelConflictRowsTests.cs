@@ -136,8 +136,17 @@ public class StagingPanelConflictRowsTests : IDisposable
         stageAllBtn.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
         Dispatcher.UIThread.RunJobs();
 
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            await _context.State.RefreshStatusAsync();
+            Dispatcher.UIThread.RunJobs();
+            if (_context.State.Status.Staged.Any(s => s.Path == "u.txt"))
+            {
+                break;
+            }
+            await Task.Delay(50);
+        }
 
         Assert.Contains(_context.State.Status.Conflicted, c => c.Path == "f.txt");
         Assert.Contains(_context.State.Status.Staged, s => s.Path == "u.txt");
