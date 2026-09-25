@@ -2956,8 +2956,9 @@ public sealed partial class CommitGraphControl : Control
         if (_layout is not { } result)
         {
             // §V10.1.2: nothing painted yet — the optimistic snapshot missed and the real walk
-            // is still priming (on a large, never-before-opened repo that can be tens of
-            // seconds; see GraphLayoutService.StartWalk's tip-priority prime).
+            // is still priming (on a large, never-before-opened repo `git log --date-order` can
+            // take a couple of seconds to yield its first row; see
+            // GraphLayoutService.PrimeCliWalkAsync).
             DrawInitialLoadingPlaceholder(dc, size);
             return;
         }

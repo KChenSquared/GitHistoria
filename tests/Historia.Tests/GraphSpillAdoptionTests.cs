@@ -81,7 +81,6 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
         var repoCacheType = typeof(GraphLayoutService).GetNestedType("RepoCache", System.Reflection.BindingFlags.NonPublic)!;
         var cache = Activator.CreateInstance(repoCacheType)!;
         repoCacheType.GetProperty("WalkKey")!.SetValue(cache, walkKey);
-        repoCacheType.GetProperty("Engine")!.SetValue(cache, WalkEngine.Cli);
         using var dummyWalk = rawCommits.GetEnumerator();
         repoCacheType.GetProperty("LiveWalk")!.SetValue(cache, dummyWalk);
         var commitsList = (List<RawCommit>)repoCacheType.GetProperty("Commits")!.GetValue(cache)!;
@@ -125,7 +124,6 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
         var repoCacheType = typeof(GraphLayoutService).GetNestedType("RepoCache", System.Reflection.BindingFlags.NonPublic)!;
         var cache = Activator.CreateInstance(repoCacheType)!;
         repoCacheType.GetProperty("WalkKey")!.SetValue(cache, walkKey);
-        repoCacheType.GetProperty("Engine")!.SetValue(cache, WalkEngine.Cli);
         using var dummyWalk = rawCommits.GetEnumerator();
         repoCacheType.GetProperty("LiveWalk")!.SetValue(cache, dummyWalk);
         var commitsList = (List<RawCommit>)repoCacheType.GetProperty("Commits")!.GetValue(cache)!;
@@ -148,7 +146,7 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
 
         // SpillRange left the walk untouched; now retire it safely via RetireLiveWalkAsync
         var retireMethod = typeof(GraphLayoutService).GetMethod("RetireLiveWalkAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-        await (Task)retireMethod.Invoke(null, [ctx, cache])!;
+        await (Task)retireMethod.Invoke(null, [cache])!;
         Assert.Null(repoCacheType.GetProperty("LiveWalk")!.GetValue(cache));
     }
 

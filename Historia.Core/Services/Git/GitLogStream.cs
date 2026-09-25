@@ -38,6 +38,10 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
     /// yielded stay valid, but the walk cannot continue.</summary>
     public bool Failed { get; private set; }
 
+    /// <summary>Why the stream <see cref="Failed"/> — the exit code and a tail of git's stderr, or
+    /// the read/parse error. Null while it hasn't failed.</summary>
+    public string? FailureReason { get; private set; }
+
     private GitLogStream(Process process, Task stderrDrain, StringBuilder stderr)
     {
         _process = process;
@@ -187,6 +191,7 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
     private void Fail(string reason)
     {
         Failed = true;
+        FailureReason = reason;
         Diagnostics.PerfLog.Mark($"GitLogStream: {reason}");
     }
 
