@@ -88,7 +88,7 @@ public partial class MainWindow : Window
         ApplyBodyLayout();
     }
 
-    private bool _closeConfirmed;
+    private readonly UnsavedWorkCloseGate _closeGate = new();
 
     protected override void OnClosed(EventArgs e)
     {
@@ -376,25 +376,38 @@ public partial class MainWindow : Window
         Historia.Diagnostics.PerfLog.Mark("MainWindow.OnClosing start");
         base.OnClosing(e);
 
-        if (!_closeConfirmed)
+        var registry = _services?.GetService<IUnsavedWorkRegistry>();
+        var dialogs = _services?.GetService<IDialogService>();
+        var work = registry?.For(null) ?? [];
+
+        var decision = _closeGate.Evaluate(dialogs is not null ? work.Count : 0);
+        switch (decision)
         {
-            var registry = _services?.GetService<IUnsavedWorkRegistry>();
-            var dialogs = _services?.GetService<IDialogService>();
-            if (registry is not null && dialogs is not null)
-            {
-                var work = registry.For(null);
-                if (work.Count > 0)
+            case CloseDecision.CancelOnly:
+                e.Cancel = true;
+                return;
+
+            case CloseDecision.CancelAndPrompt:
+                e.Cancel = true;
+                var proceed = false;
+                try
                 {
-                    e.Cancel = true;
-                    var proceed = await UnsavedWorkPrompt.ResolveAsync(work, dialogs).ConfigureAwait(true);
-                    if (proceed)
-                    {
-                        _closeConfirmed = true;
-                        Close();
-                    }
-                    return;
+                    proceed = await UnsavedWorkPrompt.ResolveAsync(work, dialogs!).ConfigureAwait(true);
                 }
-            }
+                finally
+                {
+                    _closeGate.Complete(proceed);
+                }
+
+                if (proceed)
+                {
+                    Close();
+                }
+                return;
+
+            case CloseDecision.Allow:
+            default:
+                break;
         }
 
         using (Historia.Diagnostics.PerfLog.Scope("MainWindow.OnClosing terminalDock.Dispose"))
