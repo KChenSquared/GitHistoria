@@ -130,4 +130,45 @@ public class UnsavedWorkPromptTests
         Assert.False(work1.DiscardCalled);
         Assert.False(work2.DiscardCalled);
     }
+
+    [Fact]
+    public async Task Chooser_overload_uses_warning_icon_and_destructive_second_option()
+    {
+        var dialogs = new StubDialogService { ChooseReturn = 0 };
+        await UnsavedWorkPrompt.ResolveAsync(dialogs, "Title", "Message", "Save now");
+
+        Assert.Equal(DialogIcon.Warning, dialogs.LastIcon);
+        Assert.Equal(0, dialogs.LastDefaultIndex);
+        Assert.Equal(1, dialogs.LastDestructiveIndex);
+        Assert.NotNull(dialogs.LastOptions);
+        Assert.Equal(2, dialogs.LastOptions.Count);
+        Assert.Equal("Save now", dialogs.LastOptions[0]);
+        Assert.Equal("Discard changes", dialogs.LastOptions[1]);
+    }
+
+    [Theory]
+    [InlineData(0, UnsavedWorkChoice.Save)]
+    [InlineData(1, UnsavedWorkChoice.Discard)]
+    [InlineData(-1, UnsavedWorkChoice.Cancel)]
+    [InlineData(2, UnsavedWorkChoice.Cancel)]
+    public async Task Chooser_overload_maps_choices(int chooseReturn, UnsavedWorkChoice expected)
+    {
+        var dialogs = new StubDialogService { ChooseReturn = chooseReturn };
+        var choice = await UnsavedWorkPrompt.ResolveAsync(dialogs, "Title", "Message", "Save now");
+        Assert.Equal(expected, choice);
+    }
+
+    [Fact]
+    public async Task Chooser_overload_uses_given_title_message_and_labels()
+    {
+        var dialogs = new StubDialogService { ChooseReturn = 0 };
+        await UnsavedWorkPrompt.ResolveAsync(dialogs, "Custom Title", "Custom Message", "Keep", "Drop");
+
+        Assert.Equal("Custom Title", dialogs.LastTitle);
+        Assert.Equal("Custom Message", dialogs.LastMessage);
+        Assert.NotNull(dialogs.LastOptions);
+        Assert.Equal(2, dialogs.LastOptions.Count);
+        Assert.Equal("Keep", dialogs.LastOptions[0]);
+        Assert.Equal("Drop", dialogs.LastOptions[1]);
+    }
 }
