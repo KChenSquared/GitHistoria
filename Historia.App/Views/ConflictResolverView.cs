@@ -39,7 +39,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         {
             _owner = owner;
             Context = ctx;
-            Description = $"Unsaved conflict resolution in {path}";
+            Description = $"the conflict resolution in {path}";
         }
 
         public Task<bool> SaveAsync() => _owner.SaveCurrentFileAsync(stage: false);
@@ -512,29 +512,41 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 return;
             }
 
-            var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
-            if (target == null)
+            try
             {
-                await RefreshConflictsAsync();
-                target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
+                var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
                 if (target == null)
                 {
-                    return;
+                    await RefreshConflictsAsync();
+                    target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
+                    if (target == null)
+                    {
+                        return;
+                    }
                 }
-            }
 
-            if (HasUnsavedWork)
-            {
-                var work = _unsavedRegistry?.For(_ctx) ?? [new ConflictUnsavedWork(this, _ctx, _currentFile?.FilePath ?? "")];
-                var proceed = await UnsavedWorkPrompt.ResolveAsync(work, _dialogs);
-                if (!proceed)
+                if (HasUnsavedWork)
                 {
-                    _ctx.State.SetSelectedConflictPath(_currentFile?.FilePath);
-                    return;
+                    var work = _unsavedRegistry?.For(_ctx) ?? [new ConflictUnsavedWork(this, _ctx, _currentFile?.FilePath ?? "")];
+                    var proceed = await UnsavedWorkPrompt.ResolveAsync(work, _dialogs);
+                    if (!proceed)
+                    {
+                        _ctx.State.SetSelectedConflictPath(_currentFile?.FilePath);
+                        return;
+                    }
                 }
-            }
 
-            await SwitchToFileAsync(target);
+                await SwitchToFileAsync(target);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _notifications.Publish(NotificationSeverity.Error, $"Could not open {path}: {ex.Message}", ex.NotificationDetails());
+                _ctx.State.SetSelectedConflictPath(_currentFile?.FilePath);
+            }
         });
     }
 
@@ -618,6 +630,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _floatingRegionBox.IsVisible = false;
         _conflictsCountText.IsVisible = false;
         _damagedMarkersHint.IsVisible = false;
+        _changedOnDiskBanner.IsVisible = false;
 
         _dynamicActionButtons.Clear();
         _currentFile = null;
@@ -672,6 +685,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _currentFile = file;
         _workingCopy = copy;
         _diskHash = copy.DiskHash;
+        _changedOnDiskBanner.IsVisible = false;
         _snapshot = null;
         _oursEditor.FilePath = file.FilePath;
         _theirsEditor.FilePath = file.FilePath;
@@ -1250,8 +1264,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         {
             var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
             bool isAbsent = side == ConflictSide.Ours
-                ? (_currentFile.Status is ConflictStatus.DeletedByUs or ConflictStatus.AddedByThem)
-                : (_currentFile.Status is ConflictStatus.DeletedByThem or ConflictStatus.AddedByUs);
+                ? (_currentFile.Status is ConflictStatus.DeletedByUs or ConflictStatus.AddedByThem or ConflictStatus.BothDeletedRenamed)
+                : (_currentFile.Status is ConflictStatus.DeletedByThem or ConflictStatus.AddedByUs or ConflictStatus.BothDeletedRenamed);
             var sideTitle = side == ConflictSide.Ours ? labels.OursTitle : labels.TheirsTitle;
             string title = isAbsent ? $"Delete {path}" : (side == ConflictSide.Ours ? "Take ours" : "Take theirs");
             string message = isAbsent

@@ -171,4 +171,21 @@ public class UnsavedWorkPromptTests
         Assert.Equal("Keep", dialogs.LastOptions[0]);
         Assert.Equal("Drop", dialogs.LastOptions[1]);
     }
+
+    [Fact]
+    public async Task Message_text_uses_before_continuing_for_single_and_multiple_items()
+    {
+        var dialogs = new StubDialogService();
+        var work1 = new StubWork("file1.cs");
+        await UnsavedWorkPrompt.ResolveAsync([work1], dialogs);
+        Assert.NotNull(dialogs.LastMessage);
+        Assert.Contains("before continuing", dialogs.LastMessage);
+        Assert.DoesNotContain("closing", dialogs.LastMessage, StringComparison.OrdinalIgnoreCase);
+
+        var work2 = new StubWork("file2.cs");
+        await UnsavedWorkPrompt.ResolveAsync([work1, work2], dialogs);
+        Assert.NotNull(dialogs.LastMessage);
+        Assert.Contains("before continuing", dialogs.LastMessage);
+        Assert.DoesNotContain("closing", dialogs.LastMessage, StringComparison.OrdinalIgnoreCase);
+    }
 }

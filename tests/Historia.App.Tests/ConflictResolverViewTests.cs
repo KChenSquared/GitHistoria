@@ -1974,6 +1974,124 @@ public class ConflictResolverViewTests : IDisposable
         Assert.Equal(1, _dialogs.LastChooseDestructiveIndex);
     }
 
+    [AvaloniaFact]
+    public async Task Changed_on_disk_banner_is_cleared_when_the_file_switches()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }, new ConflictFile { FilePath = "g.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.WorkingCopies["g.txt"] = new ConflictWorkingCopy { Path = "g.txt", Text = "g content", DiskHash = "hash-g" };
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+        view.ResultEditorForTesting.Document.Insert(0, "unsaved edit" + Environment.NewLine);
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash-changed-on-disk" };
+        await _context.State.RefreshStatusAsync();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(view.ChangedOnDiskBannerForTesting.IsVisible, "precondition: banner shown for f.txt");
+        _dialogs.ChooseResult = 1; // Discard
+        _context.State.SetSelectedConflictPath("g.txt");
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("g.txt", view.CurrentFileForTesting?.FilePath);
+        Assert.False(view.ChangedOnDiskBannerForTesting.IsVisible, "banner should not carry over to g.txt");
+    }
+
+    [AvaloniaFact]
+    public async Task Selection_switch_load_failure_publishes_an_error_and_keeps_the_current_file()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }, new ConflictFile { FilePath = "g.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.WorkingCopies["g.txt"] = new ConflictWorkingCopy { Path = "g.txt", Text = "g content", DiskHash = "hash-g" };
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var notify = _sp.GetRequiredService<INotificationService>();
+        Notification? lastError = null;
+        notify.Changed += (_, e) =>
+        {
+            var err = e.Current.LastOrDefault(n => n.Severity == NotificationSeverity.Error);
+            if (err != null) lastError = err;
+        };
+
+        Exception? unhandled = null;
+        void H(object? s, DispatcherUnhandledExceptionEventArgs e) { unhandled = e.Exception; e.Handled = true; }
+        Dispatcher.UIThread.UnhandledException += H;
+        try
+        {
+            _conflicts.OnLoadWorkingCopyAsync = (path, ct) => path == "g.txt" ? throw new IOException("locked") : Task.CompletedTask;
+            _context.State.SetSelectedConflictPath("g.txt");
+            await Task.Delay(100);
+            Dispatcher.UIThread.RunJobs();
+        }
+        finally { Dispatcher.UIThread.UnhandledException -= H; }
+
+        Assert.Null(unhandled);
+        Assert.NotNull(lastError);
+        Assert.Contains("Could not open g.txt", lastError.Message);
+        Assert.False(string.IsNullOrWhiteSpace(lastError.Details));
+        Assert.Equal("f.txt", _context.State.SelectedConflictPath);
+    }
+
+    [AvaloniaFact]
+    public async Task Selection_switch_cancelled_by_dispose_is_silent()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }, new ConflictFile { FilePath = "g.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        _conflicts.WorkingCopies["g.txt"] = new ConflictWorkingCopy { Path = "g.txt", Text = "g content", DiskHash = "hash-g" };
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var notify = _sp.GetRequiredService<INotificationService>();
+        Notification? lastError = null;
+        notify.Changed += (_, e) =>
+        {
+            var err = e.Current.LastOrDefault(n => n.Severity == NotificationSeverity.Error);
+            if (err != null) lastError = err;
+        };
+
+        var tcs = new TaskCompletionSource();
+        _conflicts.OnLoadWorkingCopyAsync = async (path, ct) =>
+        {
+            if (path == "g.txt")
+            {
+                tcs.SetResult();
+                await Task.Delay(5000, ct);
+            }
+        };
+
+        _context.State.SetSelectedConflictPath("g.txt");
+        await tcs.Task;
+        view.Dispose();
+        await Task.Delay(50);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(lastError);
+    }
+
+    [AvaloniaFact]
+    public async Task Take_side_on_a_both_deleted_conflict_says_delete()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothDeletedRenamed, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "", DiskHash = "hash1" };
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        _dialogs.ConfirmDestructiveResult = true;
+        await view.TakeOursCurrentAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var call = Assert.Single(_dialogs.ConfirmDestructiveCalls);
+        Assert.StartsWith("Delete", call.Title);
+        Assert.Equal("Delete", call.ConfirmLabel);
+        var resolved = Assert.Single(_conflicts.ResolvedWithSideCalls);
+        Assert.Equal("f.txt", resolved.Path);
+        Assert.Equal(ConflictSide.Ours, resolved.Side);
+    }
+
     #region Fakes
 
     internal sealed class FakeConflictService : IConflictService

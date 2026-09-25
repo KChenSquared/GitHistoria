@@ -37,8 +37,8 @@ public static class UnsavedWorkPrompt
             return true;
 
         var message = work.Count == 1
-            ? $"Save changes to {work[0].Description} before closing?"
-            : $"The following items have unsaved changes:\n\n• {string.Join("\n• ", work.Select(w => w.Description))}\n\nDo you want to save changes before closing?";
+            ? $"Save changes to {work[0].Description} before continuing?"
+            : $"The following items have unsaved changes:\n\n• {string.Join("\n• ", work.Select(w => w.Description))}\n\nDo you want to save changes before continuing?";
 
         var choice = await ResolveAsync(dialogs, "Unsaved changes", message, "Save", "Discard changes").ConfigureAwait(true);
 
