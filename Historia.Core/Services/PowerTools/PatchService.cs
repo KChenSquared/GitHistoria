@@ -21,23 +21,34 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
             ? (selectedLines ?? new HashSet<DiffLineRef>()).Select(r => r.HunkIndex).ToHashSet()
             : Enumerable.Range(0, chunks.Count).ToHashSet();
 
-        // Always synthesise a clean file header from the FileDiff — LibGit2Sharp's per-file
-        // patch text does not reliably include the `diff --git` / `---` / `+++` lines that
-        // `git apply` needs.
+        // Synthesise a clean file header from the FileDiff to keep index and mode lines
+        // out of a patch whose partial content no longer matches them.
         var sb = new StringBuilder(BuildHeader(source));
         var emitted = 0;
+        var runningDelta = 0;
+
         for (var h = 0; h < chunks.Count; h++)
         {
             if (!wanted.Contains(h))
                 continue;
 
-            var chunkText = scope == PatchScope.SelectedLines
+            var hunk = scope == PatchScope.SelectedLines
                 ? RebuildChunk(chunks[h], h, selectedLines ?? new HashSet<DiffLineRef>(), reverse)
-                : chunks[h];
+                : ParseSingleHunk(chunks[h]);
 
-            if (chunkText is null)
+            if (hunk is null)
                 continue;
-            sb.Append(chunkText);
+
+            if (hunk.RawFallback is not null)
+            {
+                sb.Append(hunk.RawFallback);
+                emitted++;
+                continue;
+            }
+
+            sb.Append(FormatHeader(hunk, reverse, runningDelta));
+            sb.Append(hunk.Body);
+            runningDelta += hunk.NewCount - hunk.OldCount;
             emitted++;
         }
 
@@ -141,21 +152,83 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
 
     private readonly record struct KeptLine(string Content, LineSide Side, bool HasNoNewline, string? MarkerText);
 
+    private sealed record RebuiltHunk(int OldStart, int NewStart, int OldCount, int NewCount, string Tail, string Body, string? RawFallback = null);
+
+    private static (int OldCount, int NewCount) RecountBody(string body)
+    {
+        var oldCount = 0;
+        var newCount = 0;
+        var lines = body.Split('\n');
+        foreach (var l in lines)
+        {
+            if (l.Length == 0 || l[0] == '\\')
+                continue;
+
+            if (l[0] == ' ')
+            {
+                oldCount++;
+                newCount++;
+            }
+            else if (l[0] == '-')
+            {
+                oldCount++;
+            }
+            else if (l[0] == '+')
+            {
+                newCount++;
+            }
+        }
+        return (oldCount, newCount);
+    }
+
+    private static RebuiltHunk ParseSingleHunk(string chunk)
+    {
+        var firstNewline = chunk.IndexOf('\n');
+        var header = firstNewline >= 0 ? chunk[..firstNewline] : chunk;
+        var m = HunkHeader().Match(header);
+        if (!m.Success)
+            return new RebuiltHunk(0, 0, 0, 0, string.Empty, string.Empty, RawFallback: chunk);
+
+        var oldStart = int.Parse(m.Groups["os"].Value, CultureInfo.InvariantCulture);
+        var newStart = int.Parse(m.Groups["ns"].Value, CultureInfo.InvariantCulture);
+        var tail = m.Groups["tail"].Value;
+        var body = firstNewline >= 0 ? chunk[(firstNewline + 1)..] : string.Empty;
+        var (oldCount, newCount) = RecountBody(body);
+        return new RebuiltHunk(oldStart, newStart, oldCount, newCount, tail, body);
+    }
+
+    private static string FormatHeader(RebuiltHunk hunk, bool reverse, int runningDelta)
+    {
+        var os = hunk.OldStart;
+        var ns = hunk.NewStart;
+        var oc = hunk.OldCount;
+        var nc = hunk.NewCount;
+
+        var t = !reverse
+            ? (oc > 0 ? os : os + 1) + runningDelta
+            : (nc > 0 ? ns : ns + 1) - runningDelta;
+
+        var newOs = oc > 0 ? t : t - 1;
+        var newNs = nc > 0 ? t : t - 1;
+
+        return $"@@ -{newOs},{oc} +{newNs},{nc} @@{hunk.Tail}\n";
+    }
+
     /// <summary>Rebuilds one hunk chunk keeping only the selected +/- lines (§8.2.3, requirement 4).</summary>
-    private static string? RebuildChunk(string chunk, int hunkIndex, IReadOnlySet<DiffLineRef> selected, bool reverse)
+    private static RebuiltHunk? RebuildChunk(string chunk, int hunkIndex, IReadOnlySet<DiffLineRef> selected, bool reverse)
     {
         var lines = chunk.Split('\n');
         var header = lines[0];
         var m = HunkHeader().Match(header);
         if (!m.Success)
-            return chunk;
+            return new RebuiltHunk(0, 0, 0, 0, string.Empty, string.Empty, RawFallback: chunk);
 
         var oldStart = int.Parse(m.Groups["os"].Value, CultureInfo.InvariantCulture);
         var newStart = int.Parse(m.Groups["ns"].Value, CultureInfo.InvariantCulture);
         var tail = m.Groups["tail"].Value;
 
         var keptLines = new List<KeptLine>();
-        int oldCount = 0, newCount = 0, added = 0, removed = 0, bodyIndex = 0;
+        int added = 0, removed = 0, bodyIndex = 0;
         bool lastLineWasKept = false;
 
         for (var i = 1; i < lines.Length; i++)
@@ -186,7 +259,6 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
                     if (isSel)
                     {
                         keptLines.Add(new KeptLine(l, LineSide.New, false, null));
-                        newCount++;
                         added++;
                         lastLineWasKept = true;
                     }
@@ -194,8 +266,6 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
                     {
                         // In reverse, an unselected addition is part of the current index state (context).
                         keptLines.Add(new KeptLine(" " + l[1..], LineSide.Both, false, null));
-                        oldCount++;
-                        newCount++;
                         lastLineWasKept = true;
                     }
                     else
@@ -209,7 +279,6 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
                     if (isSel)
                     {
                         keptLines.Add(new KeptLine(l, LineSide.Old, false, null));
-                        oldCount++;
                         removed++;
                         lastLineWasKept = true;
                     }
@@ -217,8 +286,6 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
                     {
                         // In forward, an unselected deletion is kept as context.
                         keptLines.Add(new KeptLine(" " + l[1..], LineSide.Both, false, null));
-                        oldCount++;
-                        newCount++;
                         lastLineWasKept = true;
                     }
                     else
@@ -230,8 +297,6 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
 
                 default:
                     keptLines.Add(new KeptLine(l, LineSide.Both, false, null));
-                    oldCount++;
-                    newCount++;
                     lastLineWasKept = true;
                     break;
             }
@@ -272,8 +337,9 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
             }
         }
 
-        var newHeader = $"@@ -{oldStart},{oldCount} +{newStart},{newCount} @@{tail}";
-        return newHeader + "\n" + body;
+        var bodyText = body.ToString();
+        var (oldCount, newCount) = RecountBody(bodyText);
+        return new RebuiltHunk(oldStart, newStart, oldCount, newCount, tail, bodyText);
     }
 
     [GeneratedRegex(@"^@@ -(?<os>\d+)(?:,\d+)? \+(?<ns>\d+)(?:,\d+)? @@(?<tail>.*)$", RegexOptions.CultureInvariant)]
