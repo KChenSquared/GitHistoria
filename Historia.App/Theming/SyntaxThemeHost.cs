@@ -61,26 +61,36 @@ public sealed class SyntaxThemeHost : IDisposable
             _liveInstallations.Add(installation);
         }
 
-        var currentTheme = MapTheme(_themeService.Effective);
-        installation.SetTheme(_wrapper!.LoadTheme(currentTheme));
-
-        if (!string.IsNullOrEmpty(filePath))
-        {
-            var scope = _wrapper.GetScopeByPath(filePath);
-            if (!string.IsNullOrEmpty(scope))
-            {
-                installation.SetGrammar(scope);
-            }
-        }
-
-        return new AttachSubscription(() =>
+        void Release()
         {
             lock (_lock)
             {
                 _liveInstallations.Remove(installation);
             }
             installation.Dispose();
-        });
+        }
+
+        try
+        {
+            var currentTheme = MapTheme(_themeService.Effective);
+            installation.SetTheme(_wrapper!.LoadTheme(currentTheme));
+
+            if (!string.IsNullOrEmpty(filePath))
+            {
+                var scope = _wrapper.GetScopeByPath(filePath);
+                if (!string.IsNullOrEmpty(scope))
+                {
+                    installation.SetGrammar(scope);
+                }
+            }
+        }
+        catch
+        {
+            Release();
+            throw;
+        }
+
+        return new AttachSubscription(Release);
     }
 
     public static ThemeName MapTheme(EffectiveTheme theme) => theme switch

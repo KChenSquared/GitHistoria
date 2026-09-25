@@ -182,6 +182,37 @@ public class ConflictServiceTests
     }
 
     [Fact]
+    public async Task Save_resolution_leaves_no_temp_file_behind()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        var res = await svc.SaveResolutionAsync(ctx, "f.txt", "resolved\n", copy.Format ?? default, copy.DiskHash, stage: false);
+
+        Assert.True(res.Saved);
+        Assert.Equal("resolved\n", await File.ReadAllTextAsync(Path.Combine(repoDir.Path, "f.txt")));
+        Assert.Empty(Directory.GetFiles(repoDir.Path, ".historia-save-*"));
+    }
+
+    [Fact]
+    public async Task Disk_hash_is_readable_while_another_process_holds_the_file_open()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+
+        var full = Path.Combine(repoDir.Path, "f.txt");
+        var expected = await svc.GetDiskHashAsync(ctx, "f.txt");
+        await using var holder = new FileStream(full, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+
+        Assert.Equal(expected, await svc.GetDiskHashAsync(ctx, "f.txt"));
+    }
+
+    [Fact]
     public async Task Recreate_conflict_writes_zdiff3_base_section()
     {
         await using var host = new MiniHost();

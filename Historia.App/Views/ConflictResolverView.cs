@@ -1260,6 +1260,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
 
         var path = _currentFile.FilePath;
+        IsBusy = true;
         try
         {
             var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
@@ -1278,32 +1279,28 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 return;
             }
 
-            IsBusy = true;
-            try
+            await _conflicts.ResolveWithSideAsync(_ctx, path, side, _viewCts.Token);
+            UnregisterUnsavedWork();
+            await RefreshConflictsAsync();
+            if (_conflictedFiles.Count > 0)
             {
-                await _conflicts.ResolveWithSideAsync(_ctx, path, side, _viewCts.Token);
-                UnregisterUnsavedWork();
-                await RefreshConflictsAsync();
-                if (_conflictedFiles.Count > 0)
-                {
-                    var next = _conflictedFiles.FirstOrDefault(f => !string.Equals(f.FilePath, path, StringComparison.Ordinal))
-                               ?? _conflictedFiles[0];
-                    await SwitchToFileAsync(next);
-                }
-                else
-                {
-                    ShowAllConflictsResolvedCard();
-                }
+                var next = _conflictedFiles.FirstOrDefault(f => !string.Equals(f.FilePath, path, StringComparison.Ordinal))
+                           ?? _conflictedFiles[0];
+                await SwitchToFileAsync(next);
             }
-            finally
+            else
             {
-                IsBusy = false;
+                ShowAllConflictsResolvedCard();
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Take {(side == ConflictSide.Ours ? "ours" : "theirs")} failed: {ex.Message}", ex.NotificationDetails());
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
@@ -1319,6 +1316,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
 
         var path = _currentFile.FilePath;
+        IsBusy = true;
         try
         {
             if (!await _dialogs.ConfirmDestructiveAsync(
@@ -1329,35 +1327,31 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 return;
             }
 
-            IsBusy = true;
-            try
+            await _conflicts.RecreateConflictAsync(_ctx, path, _viewCts.Token);
+            UnregisterUnsavedWork();
+            await RefreshConflictsAsync();
+            var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
+            if (target != null)
             {
-                await _conflicts.RecreateConflictAsync(_ctx, path, _viewCts.Token);
-                UnregisterUnsavedWork();
-                await RefreshConflictsAsync();
-                var target = _conflictedFiles.FirstOrDefault(f => string.Equals(f.FilePath, path, StringComparison.Ordinal));
-                if (target != null)
-                {
-                    await SwitchToFileAsync(target);
-                }
-                else if (_conflictedFiles.Count > 0)
-                {
-                    await SwitchToFileAsync(_conflictedFiles[0]);
-                }
-                else
-                {
-                    ShowAllConflictsResolvedCard();
-                }
+                await SwitchToFileAsync(target);
             }
-            finally
+            else if (_conflictedFiles.Count > 0)
             {
-                IsBusy = false;
+                await SwitchToFileAsync(_conflictedFiles[0]);
+            }
+            else
+            {
+                ShowAllConflictsResolvedCard();
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, $"Re-create conflict failed: {ex.Message}", ex.NotificationDetails());
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
@@ -1593,7 +1587,17 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
-        var currentHash = await _conflicts.GetDiskHashAsync(_ctx, _currentFile.FilePath, _viewCts.Token);
+        string currentHash;
+        try
+        {
+            currentHash = await _conflicts.GetDiskHashAsync(_ctx, _currentFile.FilePath, _viewCts.Token);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable right now (locked mid-save, scanned): the next status change checks again.
+            return;
+        }
+
         if (_disposed) return;
         if (currentHash != _diskHash)
         {
