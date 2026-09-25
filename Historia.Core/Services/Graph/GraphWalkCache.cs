@@ -1,16 +1,5 @@
 namespace Historia.Services.Graph;
 
-/// <summary>Which engine produced a persisted walk / metadata store: the CLI streaming
-/// <c>git log --date-order</c> walk (primary, v10.1.3+) or the libgit2 revwalk (fallback). Both
-/// engines now produce date order and can differ only on equal-timestamp ties, so a cache written
-/// by one must never be resumed (<c>skip: have</c>) by the other — see <see cref="GraphWalkCache"/>
-/// and <see cref="GraphMetaStore"/>.</summary>
-internal enum WalkEngine
-{
-    LibGit2 = 0,
-    Cli = 1,
-}
-
 /// <summary>
 /// On-disk persistence of the raw graph walk (commits + decorations) keyed by a fingerprint of
 /// the repo's refs. A hit skips the whole revwalk on the next launch — only
@@ -19,9 +8,16 @@ internal enum WalkEngine
 /// </summary>
 internal sealed class GraphWalkCache
 {
-    // A file written by one walk engine must never be treated as resumable by the other,
-    // since their row orders can differ for the same ref set. The CLI prime's resume skip
-    // and the canonical (sorted) tip order both define the cache format compatibility.
+    /// <summary>The value both persisted formats (this <c>.json.gz</c> and the
+    /// <see cref="GraphMetaStore"/> header) store in their <c>WalkEngine</c> field, recording
+    /// which walk produced the rows. Only the <c>git log --date-order</c> walk writes them. A
+    /// file carrying any other value came from a walk engine that no longer exists and whose row
+    /// order can differ on equal-timestamp ties, so it is never resumed (<c>skip: have</c>); an
+    /// exhausted one is still a complete, valid history.</summary>
+    internal const int CliWalkMarker = 1;
+
+    // The prime's resume skip and the canonical (sorted) tip order both define the cache format
+    // compatibility.
     // v5: rows in commit-date order; v4 files were --topo-order and must never be shown or resumed.
     private const int Version = 5;
     private const int MaxFiles = 40;
@@ -66,10 +62,7 @@ internal sealed class GraphWalkCache
     /// <param name="metadataOnDisk">§7.6: when true the per-commit strings are served from the
     /// paged <c>DiskCommitStore</c>, so a warm load only needs id + parent count here — skip
     /// materialising the message/author/email text for a whole huge history.</param>
-    /// <param name="engine">The walk engine that WOULD run a fresh prime right now. A saved file
-    /// from the other engine is rejected outright when it is not exhausted — resuming it with
-    /// <c>skip: have</c> would assume a row order only the file's own engine actually produced.</param>
-    public Loaded? TryLoad(string repoPath, GraphQuery query, int wantCount, long fingerprint, WalkEngine engine, bool metadataOnDisk = false)
+    public Loaded? TryLoad(string repoPath, GraphQuery query, int wantCount, long fingerprint, bool metadataOnDisk = false)
     {
         if (!Supports(query))
             return null;
@@ -93,10 +86,10 @@ internal sealed class GraphWalkCache
             Historia.Diagnostics.PerfLog.Mark("walk cache MISS: IncludeRemoteBranches mismatch");
             return null;
         }
-        if (!dto.Exhausted && (WalkEngine)dto.WalkEngine != engine)
+        if (!dto.Exhausted && dto.WalkEngine != CliWalkMarker)
         {
             Historia.Diagnostics.PerfLog.Mark(
-                $"walk cache MISS: engine mismatch (file={(WalkEngine)dto.WalkEngine}, current={engine}) on a non-exhausted save");
+                $"walk cache MISS: non-exhausted save written by a retired walk engine (marker {dto.WalkEngine})");
             return null;
         }
 
@@ -288,8 +281,7 @@ internal sealed class GraphWalkCache
     public void Save(
         string repoPath, GraphQuery query, long fingerprint, bool exhausted,
         IReadOnlyList<RawCommit> commits,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations,
-        WalkEngine engine)
+        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations)
     {
         if (!Supports(query))
             return;
@@ -304,7 +296,7 @@ internal sealed class GraphWalkCache
                 Fingerprint = fingerprint,
                 IncludeRemoteBranches = query.IncludeRemoteBranches,
                 Exhausted = exhausted,
-                WalkEngine = (int)engine,
+                WalkEngine = CliWalkMarker,
                 Commits = commits.Select(c => new CommitDto
                 {
                     Id = c.Id.Sha,

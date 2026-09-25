@@ -147,7 +147,7 @@ public sealed class GraphDateOrderTests : IAsyncDisposable
 
         // Direct TryLoad with v5 code must reject the v4 file as a miss
         var cache = new GraphWalkCache();
-        var directHit = cache.TryLoad(repo.Path, Q, wantCount: 2, fingerprint: res1.Fingerprint, WalkEngine.Cli);
+        var directHit = cache.TryLoad(repo.Path, Q, wantCount: 2, fingerprint: res1.Fingerprint);
         Assert.Null(directHit);
 
         // Compute again through a fresh service instance: must encounter a cache miss, re-walk, and return date-ordered rows

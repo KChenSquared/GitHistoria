@@ -13,7 +13,6 @@ public sealed class GraphStoreLiveReaderTests : IDisposable
     private const long KeyA = 0x1111_2222_3333_4444;
     private const long KeyB = 0x5555_6666_7777_8888;
     private const string Repo = @"C:\repos\live-reader-demo";
-    private const WalkEngine Engine = WalkEngine.LibGit2;
 
     public void Dispose() => _state.Dispose();
 
@@ -37,18 +36,18 @@ public sealed class GraphStoreLiveReaderTests : IDisposable
     public void A_leased_store_keeps_reading_its_rows_after_a_from_row_0_respill()
     {
         var rowsA = Enumerable.Range(0, 10).Select(i => Commit(i, i == 0 ? [] : [i - 1])).ToList();
-        var writerA = new GraphMetaWriter(Repo, KeyA, true, Engine);
+        var writerA = new GraphMetaWriter(Repo, KeyA, true);
         var outcomeA = writerA.AppendSpillBatch(rowsA, 0, 10, exhausted: true);
         Assert.Equal(SpillOutcome.Appended, outcomeA.Outcome);
 
-        var storeA = GraphMetaStore.TryOpen(Repo, KeyA, true, 10, Engine)!;
+        var storeA = GraphMetaStore.TryOpen(Repo, KeyA, true, 10)!;
         Assert.NotNull(storeA);
         var paintedLease = storeA.AddRef()!;
         storeA.Dispose(); // opener drops its lease; paintedLease keeps store open
 
         // Spill 10 DIFFERENT rows under walk key B from row 0 (which calls Reset())
         var rowsB = Enumerable.Range(100, 10).Select(i => Commit(i, i == 100 ? [] : [i - 1])).ToList();
-        var writerB = new GraphMetaWriter(Repo, KeyB, true, Engine);
+        var writerB = new GraphMetaWriter(Repo, KeyB, true);
         var outcomeB = writerB.AppendSpillBatch(rowsB, 0, 10, exhausted: true);
         Assert.Equal(SpillOutcome.Appended, outcomeB.Outcome);
 
@@ -62,7 +61,7 @@ public sealed class GraphStoreLiveReaderTests : IDisposable
         }
 
         // Store freshly opened at key B reads the new rows
-        using (var storeB = GraphMetaStore.TryOpen(Repo, KeyB, true, 10, Engine)!)
+        using (var storeB = GraphMetaStore.TryOpen(Repo, KeyB, true, 10)!)
         {
             Assert.NotNull(storeB);
             Assert.Equal(10, storeB.Count);
@@ -78,7 +77,7 @@ public sealed class GraphStoreLiveReaderTests : IDisposable
         paintedLease.Dispose();
 
         // Re-check the new store opened at key B
-        using (var storeB2 = GraphMetaStore.TryOpen(Repo, KeyB, true, 10, Engine)!)
+        using (var storeB2 = GraphMetaStore.TryOpen(Repo, KeyB, true, 10)!)
         {
             Assert.NotNull(storeB2);
             Assert.Equal(10, storeB2.Count);
@@ -90,11 +89,11 @@ public sealed class GraphStoreLiveReaderTests : IDisposable
     public void A_leased_store_keeps_reading_its_rows_after_a_reorder_commits()
     {
         var rows = Enumerable.Range(0, 5).Select(i => Commit(i, i == 0 ? [] : [i - 1])).ToList();
-        var writerA = new GraphMetaWriter(Repo, KeyA, true, Engine);
+        var writerA = new GraphMetaWriter(Repo, KeyA, true);
         var outcomeA = writerA.AppendSpillBatch(rows, 0, 5, exhausted: true);
         Assert.Equal(SpillOutcome.Appended, outcomeA.Outcome);
 
-        var storeA = GraphMetaStore.TryOpen(Repo, KeyA, true, 5, Engine)!;
+        var storeA = GraphMetaStore.TryOpen(Repo, KeyA, true, 5)!;
         Assert.NotNull(storeA);
         var paintedLease = storeA.AddRef()!;
         storeA.Dispose();
@@ -106,7 +105,7 @@ public sealed class GraphStoreLiveReaderTests : IDisposable
         var existing = storeA.BuildShaIndex();
         var plan = GraphMetaReorder.Build(existing, storeA.RecordCount, newWalk);
 
-        var writerB = new GraphMetaWriter(Repo, KeyB, true, Engine);
+        var writerB = new GraphMetaWriter(Repo, KeyB, true);
         writerB.Append(plan.NewRecords, 0, plan.NewRecords.Count);
         Assert.True(writerB.WriteOrder(1, plan.Order));
         writerB.WriteTips([Oid(5)]);
@@ -121,7 +120,7 @@ public sealed class GraphStoreLiveReaderTests : IDisposable
         }
 
         // Store opened at KeyB reads the new reordered rows
-        using (var storeB = GraphMetaStore.TryOpen(Repo, KeyB, true, 6, Engine)!)
+        using (var storeB = GraphMetaStore.TryOpen(Repo, KeyB, true, 6)!)
         {
             Assert.NotNull(storeB);
             Assert.Equal(6, storeB.Count);

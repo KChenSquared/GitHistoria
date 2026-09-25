@@ -51,7 +51,7 @@ public sealed class GraphSpillExhaustionTests : IAsyncDisposable
             Assert.NotNull(spillTask);
             await spillTask.WaitAsync(TimeSpan.FromSeconds(15));
 
-            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
+            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true);
             Assert.True(probe.Ok, "meta store header should exist");
             Assert.True(probe.Exhausted, "background spill should have walked the whole history to exhaustion");
             Assert.Equal(commitCount, probe.RowCount);
@@ -94,7 +94,7 @@ public sealed class GraphSpillExhaustionTests : IAsyncDisposable
             Assert.NotNull(spillTask);
             await spillTask.WaitAsync(TimeSpan.FromSeconds(15));
 
-            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
+            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true);
             Assert.True(probe.Ok);
             Assert.True(probe.Exhausted);
             Assert.Equal(commitCount, probe.RowCount);

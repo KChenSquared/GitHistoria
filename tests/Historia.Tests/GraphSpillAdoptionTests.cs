@@ -72,7 +72,7 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
         const long walkKey = 0x1234_5678_9ABC_DEF0;
 
         // Writer B pre-populates the on-disk store with 25 rows (not exhausted)
-        var writerB = new GraphMetaWriter(repo.Path, walkKey, includeRemoteBranches: true, WalkEngine.Cli);
+        var writerB = new GraphMetaWriter(repo.Path, walkKey, includeRemoteBranches: true);
         var (outcomeB, countB) = writerB.AppendSpillBatch(rawCommits.Take(25).ToList(), 0, 25, exhausted: false);
         Assert.Equal(SpillOutcome.Appended, outcomeB);
         Assert.Equal(25, countB);
@@ -115,7 +115,7 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
         const long walkKey = 0x2468_1357_9BDF_ECA0;
 
         // Writer B pre-populates the on-disk store with all 30 rows (exhausted)
-        var writerB = new GraphMetaWriter(repo.Path, walkKey, includeRemoteBranches: true, WalkEngine.Cli);
+        var writerB = new GraphMetaWriter(repo.Path, walkKey, includeRemoteBranches: true);
         var (outcomeB, countB) = writerB.AppendSpillBatch(rawCommits, 0, commitCount, exhausted: true);
         Assert.Equal(SpillOutcome.Appended, outcomeB);
         Assert.Equal(commitCount, countB);

@@ -309,7 +309,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // frame paints commits/lanes with no decorations for that one moment.
         if (GraphWalkCache.Supports(query))
         {
-            var probe = GraphMetaStore.ProbeAny(context.RepositoryPath, query.IncludeRemoteBranches, WalkEngine.Cli);
+            var probe = GraphMetaStore.ProbeAny(context.RepositoryPath, query.IncludeRemoteBranches);
             if (probe.Ok)
             {
                 DiskCommitStore? store = null;
@@ -433,7 +433,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // (Usually already handled by PrepareWalk's own warm-store hit, so
                 // this is a defensive fallback for the paths that don't go through it.)
                 if (cache is { SpilledRows: 0, MetaStore: null } && cache.WalkKey != 0
-                    && GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount, WalkEngine.Cli) is { } warm
+                    && GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount) is { } warm
                     && warm.Count >= rowCount)
                 {
                     cache.MetaStore = warm;
@@ -451,7 +451,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     cache.MetaStore?.SetCount(Math.Max(cache.MetaStore.Count, rowCount));
 
                 if (cache.MetaStore is null && cache.WalkKey != 0)
-                    cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount, WalkEngine.Cli);
+                    cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount);
 
                 if (cache.MetaStore is not null && cache.MetaStore.Count >= rowCount)
                 {
@@ -513,7 +513,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 return SpillOutcome.Appended;
             snap = cache.Commits.GetRange(0, to - from);
         }
-        cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, includeRemotes, WalkEngine.Cli);
+        cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, includeRemotes);
 
         var (outcome, rowCount) = cache.MetaWriter.AppendSpillBatch(snap, from, to, exhausted, fullWalkElapsed, sortedTips);
         switch (outcome)
@@ -528,9 +528,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
             case SpillOutcome.Adopted:
                 cache.MetaStore?.Dispose();
-                cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount, WalkEngine.Cli);
+                cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount);
                 AdoptDurableStore(cache, rowCount);
-                var probe = GraphMetaStore.Probe(repoPath, cache.WalkKey, includeRemotes, WalkEngine.Cli);
+                var probe = GraphMetaStore.Probe(repoPath, cache.WalkKey, includeRemotes);
                 if (probe is { Ok: true, Exhausted: true })
                 {
                     cache.MetaComplete = true;
@@ -542,7 +542,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 cache.MetaComplete = exhausted;
                 Diagnostics.PerfLog.Mark($"graph cache write: spill {snap.Count} rows ({repoPath})");
 
-                cache.MetaStore ??= GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, to, WalkEngine.Cli);
+                cache.MetaStore ??= GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, to);
                 cache.MetaStore?.SetCount(to);
                 if (cache.MetaStore is { } store && store.Count >= to)
                     TrimConfirmedSpilled(cache, to);
@@ -862,8 +862,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
             return (
                 WalkKey: walkKey,
                 Tips: tips,
-                Current: GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches, WalkEngine.Cli),
-                Existing: GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches, WalkEngine.Cli));
+                Current: GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches),
+                Existing: GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches));
         }, ct);
     }
 
@@ -1053,7 +1053,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
             var plan = GraphMetaSplice.Build(oldStore.ToOrderArray(), removedRecords, addedCommits, oldProbe.RecordCount);
 
-            var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches, WalkEngine.Cli);
+            var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches);
             if (plan.NewRecords.Count > 0 && !writer.AppendReorderBatch(plan.NewRecords, oldProbe.WalkKey))
                 return -1;
 
@@ -1195,7 +1195,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // Open the old store and build its SHA index up front — everything the walk
         // below needs to map each batch as it streams in, rather than only after the whole new
         // history has been walked and copied resident.
-        var oldProbe = GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches, WalkEngine.Cli);
+        var oldProbe = GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches);
         if (!oldProbe.Ok || !oldProbe.Exhausted || oldProbe.WalkKey == newWalkKey)
             return; // stale, gone, or someone else already brought it up to date
 
@@ -1205,7 +1205,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         using (var oldStore = DiskCommitStore.Open(repoPath, oldProbe.RowCount, oldProbe.RecordCount, oldProbe.OrderVersion))
             builder = new GraphMetaReorderBuilder(oldStore.BuildShaIndex(), oldStore.RecordCount);
 
-        var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches, WalkEngine.Cli);
+        var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches);
         var cache = new RepoCache { Query = query };
         try
         {
@@ -1465,7 +1465,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // the store's row count can exceed anything this cache has walked so far.
                 AdoptDurableStore(cache, walked.MetaStore.Count);
                 cache.MetaComplete = walked.MetaExhausted;
-                cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, cache.IncludeRemotes, WalkEngine.Cli);
+                cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, cache.IncludeRemotes);
             }
         }
 
@@ -1517,7 +1517,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 _ = Task.Run(async () =>
                 {
                     await WaitForGateAsync(CancellationToken.None).ConfigureAwait(false);
-                    _walkCache.Save(repoPath, query, walkKeyToSave, exhausted, commits, decos, WalkEngine.Cli);
+                    _walkCache.Save(repoPath, query, walkKeyToSave, exhausted, commits, decos);
                 });
         }
     }
@@ -1588,10 +1588,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // instead of reloading any of its rows into memory.
             if (metaFromDisk)
             {
-                var probe = GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches, WalkEngine.Cli);
+                var probe = GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches);
                 if (probe.Ok && probe.RowCount > 0
                     && GraphMetaStore.TryOpen(repoPath, walkKey, query.IncludeRemoteBranches,
-                        probe.Exhausted ? probe.RowCount : 0, WalkEngine.Cli) is { } store)
+                        probe.Exhausted ? probe.RowCount : 0) is { } store)
                 {
                     if (probe.Exhausted)
                     {
@@ -1605,7 +1605,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     }
 
                     cache.MetaStore = store;
-                    cache.MetaWriter ??= new GraphMetaWriter(repoPath, walkKey, query.IncludeRemoteBranches, WalkEngine.Cli);
+                    cache.MetaWriter ??= new GraphMetaWriter(repoPath, walkKey, query.IncludeRemoteBranches);
                     AdoptDurableStore(cache, store.Count);
                     have = store.Count;
                     Diagnostics.PerfLog.Mark($"meta store HIT (partial): resuming walk after {store.Count} durable rows");
@@ -1617,7 +1617,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     // fall through below to prime/continue a walk with skip = have
                 }
             }
-            else if (walkCache.TryLoad(repoPath, query, wantCount, walkKey, WalkEngine.Cli, metadataOnDisk: false) is { } hit)
+            else if (walkCache.TryLoad(repoPath, query, wantCount, walkKey, metadataOnDisk: false) is { } hit)
             {
                 Diagnostics.PerfLog.Mark($"walk cache HIT: {hit.Commits.Count} commits, exhausted={hit.Exhausted}");
                 return GatePrep.Done(new WalkResult(hit.Commits, hit.Decorations, hit.Exhausted, fp, DecosFresh: true, FromDisk: true, WalkKey: walkKey));

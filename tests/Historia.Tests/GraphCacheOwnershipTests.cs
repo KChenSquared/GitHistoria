@@ -24,7 +24,6 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     private const long WalkKeyA = 0x1111_2222_3333_4444;
     private const long WalkKeyB = 0x5555_6666_7777_8888;
     private const string Repo = @"C:\repos\cache-ownership-demo";
-    private const WalkEngine Engine = WalkEngine.Cli;
 
     public async ValueTask DisposeAsync()
     {
@@ -61,7 +60,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public void A_fresh_writer_at_row_zero_with_no_existing_header_appends_and_resets()
     {
-        var writer = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var writer = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
 
         var (outcome, rowCount) = writer.AppendSpillBatch(RawRange(0, 10), from: 0, to: 10, exhausted: false);
 
@@ -73,7 +72,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public void A_batch_that_continues_a_matching_header_appends_normally()
     {
-        var writer = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var writer = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
         writer.AppendSpillBatch(RawRange(0, 10), from: 0, to: 10, exhausted: false);
 
         var (outcome, rowCount) = writer.AppendSpillBatch(RawRange(10, 10), from: 10, to: 20, exhausted: false);
@@ -86,12 +85,12 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public void A_batch_whose_range_another_writer_already_durably_wrote_is_adopted_not_reappended()
     {
-        var firstWriter = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var firstWriter = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
         firstWriter.AppendSpillBatch(RawRange(0, 20), from: 0, to: 20, exhausted: false); // "another writer"
         var datLengthAfterFirst = new FileInfo(GraphCachePaths.File(Repo, GraphMetaStore.DatExt)).Length;
 
         // This writer thinks it's continuing from row 10 — stale, since row 20 is already durable.
-        var staleWriter = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var staleWriter = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
         var (outcome, rowCount) = staleWriter.AppendSpillBatch(RawRange(10, 10), from: 10, to: 20, exhausted: false);
 
         Assert.Equal(SpillOutcome.Adopted, outcome);
@@ -103,7 +102,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public void A_batch_with_a_gap_before_the_headers_row_count_conflicts()
     {
-        var writer = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var writer = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
         writer.AppendSpillBatch(RawRange(0, 15), from: 0, to: 15, exhausted: false); // header RowCount now 15
 
         // A batch expecting to continue from row 10 — but the header is already past that, and
@@ -117,12 +116,12 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public void A_batch_at_a_different_walk_key_than_the_header_conflicts_when_not_starting_from_zero()
     {
-        var writerA = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var writerA = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
         writerA.AppendSpillBatch(RawRange(0, 10), from: 0, to: 10, exhausted: false);
 
         // A different walk key trying to continue from row 10 (as if it thought it owned this
         // store) — the on-disk header belongs to a different walk entirely.
-        var writerB = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true, Engine);
+        var writerB = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true);
         var (outcome, rowCount) = writerB.AppendSpillBatch(RawRange(10, 10), from: 10, to: 20, exhausted: false);
 
         Assert.Equal(SpillOutcome.Conflict, outcome);
@@ -132,12 +131,12 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public void A_batch_at_a_different_walk_key_starting_from_zero_resets_and_appends()
     {
-        var writerA = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var writerA = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
         writerA.AppendSpillBatch(RawRange(0, 10), from: 0, to: 10, exhausted: false);
 
         // A fresh walk under a new key, legitimately starting over from row 0 (e.g. a from-scratch
         // recompute) — this IS the reset case, not a conflict.
-        var writerB = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true, Engine);
+        var writerB = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true);
         var (outcome, rowCount) = writerB.AppendSpillBatch(RawRange(0, 5), from: 0, to: 5, exhausted: false);
 
         Assert.Equal(SpillOutcome.Appended, outcome);
@@ -152,11 +151,11 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public void TryCommitReorder_succeeds_when_the_header_still_matches_what_the_reorder_started_from()
     {
-        var original = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var original = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
         original.AppendSpillBatch(RawRange(0, 5), from: 0, to: 5, exhausted: true);
         var before = ReadHeader();
 
-        var reorderWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true, Engine);
+        var reorderWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true);
         var order = new[] { 0, 1, 2, 3, 4, 5 }; // rows 0..4 reuse old records, row 5 is new
         var newRecords = RawRange(5, 1);
         // The new record is appended (streaming) BEFORE the commit, exactly as
@@ -180,11 +179,11 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public void TryCommitReorder_abandons_when_the_header_moved_under_it()
     {
-        var original = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var original = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
         original.AppendSpillBatch(RawRange(0, 5), from: 0, to: 5, exhausted: true);
         var before = ReadHeader(); // what the reorder "saw" when it started
 
-        var reorderWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true, Engine);
+        var reorderWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true);
         var newRecords = RawRange(5, 1);
         Assert.True(reorderWriter.AppendReorderBatch(newRecords, expectedWalkKey: before.Fingerprint));
 
@@ -212,17 +211,17 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     [Fact]
     public void AppendReorderBatch_refuses_to_write_once_the_walk_key_has_moved()
     {
-        var original = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var original = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
         original.AppendSpillBatch(RawRange(0, 5), from: 0, to: 5, exhausted: true);
         var before = ReadHeader();
 
         // A different writer resets the store to a brand-new key entirely before this reorder's
         // batch gets a chance to append.
-        var otherWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true, Engine);
+        var otherWriter = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true);
         otherWriter.AppendSpillBatch(RawRange(0, 3), from: 0, to: 3, exhausted: false);
         var datLengthAfterOtherWrite = new FileInfo(GraphCachePaths.File(Repo, GraphMetaStore.DatExt)).Length;
 
-        var reorderWriter = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true, Engine);
+        var reorderWriter = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
         var ok = reorderWriter.AppendReorderBatch(RawRange(5, 1), expectedWalkKey: before.Fingerprint);
 
         Assert.False(ok);
@@ -341,7 +340,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
             var expected = await memSvc.ComputeLayoutAsync(memCtx, query, maxRows: commitCount);
             Assert.Equal(commitCount, expected.Layout.RowCount);
 
-            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true, WalkEngine.Cli);
+            var probe = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true);
             Assert.True(probe.Ok);
             using var store = DiskCommitStore.Open(repo.Path, probe.RowCount, probe.RecordCount, probe.OrderVersion);
 

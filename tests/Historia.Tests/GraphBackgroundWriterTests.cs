@@ -336,7 +336,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
             RowCount = GraphBackgroundWriter.MinCommitsToWrite,
             RecordCount = GraphBackgroundWriter.MinCommitsToWrite,
             Exhausted = true,
-            WalkEngine = (int)WalkEngine.LibGit2,
+            WalkEngine = GraphWalkCache.CliWalkMarker,
         };
         var hdrPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.HdrExt);
         Directory.CreateDirectory(Path.GetDirectoryName(hdrPath)!);
