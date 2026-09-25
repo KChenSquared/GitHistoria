@@ -1562,21 +1562,28 @@ public class ConflictResolverViewTests : IDisposable
         Assert.Equal(2, view.SnapshotForTesting!.Analyses.Count);
 
         // Part 2: Switch to g.txt and immediately change document so version moves
+        // The switch runs as a dispatcher job and starts region analysis on the thread pool, whose
+        // result is posted back to the same queue. Queue the edit right behind the switch so it is
+        // always ahead of that post, instead of racing the analysis after RunJobs returns.
+        var versionBeforeSwitch = view.ResultEditorForTesting.Document.Version;
+        int analysesAtSwitch = -1;
         _context.State.SetSelectedConflictPath("g.txt");
+        Dispatcher.UIThread.Post(() =>
+        {
+            // Right after the switch the snapshot carries no analyses
+            analysesAtSwitch = view.SnapshotForTesting!.Analyses.Count;
+
+            // Move document version before background analysis posts back
+            view.ResultEditorForTesting.Document.Insert(0, "immediate change\n");
+        });
         Dispatcher.UIThread.RunJobs();
-
-        var versionAtSwitch = view.ResultEditorForTesting.Document.Version;
-        // Right after switch, snapshot version is versionAtSwitch with 0 analyses
-        Assert.Empty(view.SnapshotForTesting!.Analyses);
-
-        // Move document version before background analysis posts back
-        view.ResultEditorForTesting.Document.Insert(0, "immediate change\n");
+        Assert.Equal(0, analysesAtSwitch);
 
         // Wait a short time for the switch background task to finish and post to dispatcher
         await Task.Delay(30);
         Dispatcher.UIThread.RunJobs();
 
-        // The background analysis that targeted versionAtSwitch was dropped (version moved),
+        // The background analysis that targeted the pre-edit version was dropped (version moved),
         // and debounce (150ms) hasn't fired yet, so snapshot analyses is still empty!
         Assert.Empty(view.SnapshotForTesting!.Analyses);
 
@@ -1584,7 +1591,7 @@ public class ConflictResolverViewTests : IDisposable
         await Task.Delay(200);
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(2, view.SnapshotForTesting!.Analyses.Count);
-        Assert.True(view.ResultEditorForTesting.Document.Version.CompareAge(versionAtSwitch) > 0);
+        Assert.True(view.ResultEditorForTesting.Document.Version.CompareAge(versionBeforeSwitch) > 0);
     }
 
     [AvaloniaFact]
@@ -1683,7 +1690,16 @@ public class ConflictResolverViewTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         _dialogs.ConfirmDestructiveResult = true;
-        await view.RecreateConflictAsync();
+        var recreateButton = view.ActionButtonsForTesting.Single(b => b.Content as string == "Re-create with base");
+        Assert.True(recreateButton.IsEnabled);
+        recreateButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (_conflicts.RecreatedCalls.Count == 0 && DateTime.UtcNow < deadline)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(20);
+        }
 
         Assert.Single(_dialogs.ConfirmDestructiveCalls);
         Assert.Equal("Re-create conflict", _dialogs.ConfirmDestructiveCalls[0].Title);

@@ -366,7 +366,7 @@ public abstract class DiffPresenterBase : CodeEditor
         }
 
         if (selection is SimpleSelection && lastLine > firstLine && lastCol == 1
-            && !(document != null && lastLine == document.LineCount && document.GetLineByNumber(lastLine).Length == 0))
+            && !(lastLine == document.LineCount && document.GetLineByNumber(lastLine).Length == 0))
         {
             lastLine--;
         }
