@@ -66,6 +66,12 @@ public sealed partial class CommitGraphControl : Control
     private int _crawlTarget;
     private int _crawlRunning;
 
+    // A crawl step that adds no rows waits before asking again, doubling from the first value to
+    // the cap; any growth or a new layout resets it. The loop never exits on "no rows": most
+    // causes clear up by themselves, and the loop is what a recompute's new layout is picked up by.
+    private const int CrawlIdleBackoffFirstMs = 40;
+    private const int CrawlIdleBackoffMaxMs = 500;
+
     private IReadOnlyList<GraphColumn> _columns = GraphColumnDefaults.All;
     private bool _graphWidthPinned;
 
@@ -1365,6 +1371,7 @@ public sealed partial class CommitGraphControl : Control
             if (ct.IsCancellationRequested || !ReferenceEquals(context, _context))
                 return;
 
+            var idleDelayMs = 0;
             while (!ct.IsCancellationRequested && ReferenceEquals(context, _context))
             {
                 var cap = Volatile.Read(ref _crawlTarget);
@@ -1382,6 +1389,21 @@ public sealed partial class CommitGraphControl : Control
                     break;
 
                 await tcs.Task.WaitAsync(ct).ConfigureAwait(false);
+
+                // The pump applies an extension before completing the request, so an unchanged
+                // layout here means the step added nothing: a walk that failed or was superseded
+                // (until a recompute replaces the layout), a layout its walk no longer owns, or a
+                // transient miss such as a short disk read. Back off rather than ask every 20 ms.
+                if (_layout is { } after && ReferenceEquals(after.State, current.State)
+                    && after.Layout.RowCount <= current.Layout.RowCount)
+                {
+                    idleDelayMs = idleDelayMs == 0
+                        ? CrawlIdleBackoffFirstMs
+                        : Math.Min(idleDelayMs * 2, CrawlIdleBackoffMaxMs);
+                    await Task.Delay(idleDelayMs, ct).ConfigureAwait(false);
+                }
+                else
+                    idleDelayMs = 0;
             }
         }
         catch (OperationCanceledException) { }
