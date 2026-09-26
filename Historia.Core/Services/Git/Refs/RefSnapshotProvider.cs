@@ -12,9 +12,10 @@ namespace Historia.Services.Git;
 /// the repository's lifetime token, not a caller's, and each caller waits with its own token — one
 /// caller giving up never cancels the scan the others are waiting on.</para>
 /// <para>A ref that points at a missing object (a half-deleted branch, a corrupt
-/// <c>packed-refs</c>) is left out, as LibGit2Sharp-based reads always did — the full format
-/// makes git stop at the first one, so the scan then reads refs without their objects and asks
-/// <c>cat-file</c> about each object instead. Any other failure is a
+/// <c>packed-refs</c>), or an annotated tag whose tagged object is missing, is left out, as the
+/// LibGit2Sharp-based graph walk always dropped it — the full format makes git stop at the first
+/// one, so the scan then reads refs without their objects and asks <c>cat-file</c> about each
+/// object and each tag's peel instead. Any other failure is a
 /// <see cref="HistoriaGitException"/> (Rule 11).</para>
 /// </summary>
 public sealed class RefSnapshotProvider
@@ -159,10 +160,11 @@ public sealed class RefSnapshotProvider
 
     /// <summary>
     /// The full scan failed. If that is because refs point at missing objects — git stops at the
-    /// first one (<c>fatal: missing object … for refs/…</c>) — rebuild the same entries without
-    /// them: list refs without reading objects, type every object with one
-    /// <c>cat-file --batch-check</c>, and read tag data with one <c>cat-file --batch</c>. When no
-    /// object is missing, the original failure is unexplained and is thrown as is (Rule 11).
+    /// first one (<c>fatal: missing object … for refs/…</c>), whether the ref's own object or the
+    /// object an annotated tag peels to — rebuild the same entries without them: list refs
+    /// without reading objects, type every object and peel every tag with
+    /// <c>cat-file --batch-check</c>, and read tag data with one <c>cat-file --batch</c>. When
+    /// nothing is missing, the original failure is unexplained and is thrown as is (Rule 11).
     /// </summary>
     private async Task<List<RefEntry>> ScanPastMissingObjectsAsync(GitCliResult failed)
     {
@@ -180,21 +182,31 @@ public sealed class RefSnapshotProvider
         for (var i = 0; i < objects.Count; i++)
             typeOf[objects[i]] = types[i];
 
-        var dropped = list.Where(r => typeOf[r.ObjectName].Type is null).Select(r => r.Name).ToList();
-        if (dropped.Count == 0)
-            throw Failure(failed, "Reading refs");
-
-        // Annotated tags: peel all the way (as %(*objectname) does) and read tagger + message.
+        // Annotated tags: peel all the way (as %(*objectname) does). A tag whose peel is missing —
+        // the tag object is there, the object it tags (or an inner tag) is not — stops the full
+        // scan just as a missing ref target does, so it counts as broken too.
         var tagObjects = objects.Where(o => typeOf[o].Type == "tag").ToList();
         var peeled = await BatchCheckAsync([.. tagObjects.Select(o => o + "^{}")]).ConfigureAwait(false);
         var peelOf = new Dictionary<string, (ObjectId? Id, string? Type)>(StringComparer.Ordinal);
         for (var i = 0; i < tagObjects.Count; i++)
             peelOf[tagObjects[i]] = peeled[i];
-        var tagData = await ReadTagObjectsAsync(tagObjects).ConfigureAwait(false);
+
+        bool Broken(string objectName) =>
+            typeOf[objectName].Type is not { } type
+            || (type == "tag" && peelOf[objectName].Type is null);
+
+        var dropped = list.Where(r => Broken(r.ObjectName)).Select(r => r.Name).ToList();
+        if (dropped.Count == 0)
+            throw Failure(failed, "Reading refs");
+
+        // Tagger + message for the tags that stay.
+        var tagData = await ReadTagObjectsAsync([.. tagObjects.Where(o => !Broken(o))]).ConfigureAwait(false);
 
         var refs = new List<RefEntry>(list.Count - dropped.Count);
         foreach (var (name, objectName, symref) in list)
         {
+            if (Broken(objectName))
+                continue;
             var (id, type) = typeOf[objectName];
             if (id is null || type is null)
                 continue;

@@ -43,6 +43,76 @@ public sealed class RefSnapshotBrokenRefTests : IAsyncDisposable
 
     private static readonly string[] BrokenNames = ["refs/heads/broken", "refs/tags/broken-tag"];
 
+    /// <summary>Annotated tags whose tag objects exist but whose tagged commit doesn't: a commit
+    /// no branch reaches, tagged (and that tag tagged again), then its loose object deleted. git
+    /// stops the full scan on these too (<c>fatal: missing object &lt;commit&gt; for
+    /// refs/tags/…</c>, verified on git 2.51) although every ref's own object is present.</summary>
+    private void AddTagsWithLostTarget()
+    {
+        var orphan = _repo.Git("commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "orphan").Trim();
+        _repo.Git("tag", "-a", "lost-target", orphan, "-m", "tags a commit that goes missing");
+        _repo.Git("tag", "-a", "lost-inner", "lost-target", "-m", "tags the tag");
+        var loose = Path.Combine(_repo.Path, ".git", "objects", orphan[..2], orphan[2..]);
+        Assert.True(File.Exists(loose), "commit-tree writes a loose object");
+        File.SetAttributes(loose, FileAttributes.Normal); // git writes objects read-only
+        File.Delete(loose);
+    }
+
+    private static readonly string[] LostTargetNames = ["refs/tags/lost-target", "refs/tags/lost-inner"];
+
+    [Fact]
+    public async Task Tag_with_a_missing_target_is_dropped_from_the_snapshot()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var normal = await ctx.RefSnapshots.GetAsync();
+
+        AddTagsWithLostTarget();
+        var degraded = await ctx.RefSnapshots.GetAsync();
+
+        Assert.NotSame(normal, degraded);
+        Assert.DoesNotContain(degraded.Refs, r => LostTargetNames.Contains(r.CanonicalName));
+        Assert.Equal(normal.Refs, degraded.Refs);
+    }
+
+    [Fact]
+    public async Task Tags_list_without_the_tag_whose_target_is_missing()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var healthy = await ctx.Gateway.GetTagsAsync();
+
+        AddTagsWithLostTarget();
+        var actual = await ctx.Gateway.GetTagsAsync();
+
+        Assert.DoesNotContain(actual, t => t.Name is "lost-target" or "lost-inner");
+        Assert.Equal(healthy, actual);
+    }
+
+    [Fact]
+    public async Task Graph_walks_with_a_tag_whose_target_is_missing()
+    {
+        if (!_host.Locator.Current.Found)
+            return;
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
+
+        List<ObjectId> before;
+        long keyBefore;
+        await using (var ctx = _host.Open(_repo.Path))
+        {
+            ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone();
+            before = Ids(await new GraphLayoutService(_host.Settings, _host.Locator).ComputeLayoutAsync(ctx, query));
+            keyBefore = await WalkKeyAsync(ctx, query);
+        }
+
+        AddTagsWithLostTarget();
+        await using var broken = _host.Open(_repo.Path);
+        broken.MarkFirstGraphPaintDone(); broken.MarkFirstFullLoadDone();
+        var after = await new GraphLayoutService(_host.Settings, _host.Locator).ComputeLayoutAsync(broken, query);
+
+        Assert.NotEmpty(before);
+        Assert.Equal(before, Ids(after));
+        Assert.Equal(keyBefore, await WalkKeyAsync(broken, query));
+    }
+
     [Fact]
     public async Task Degraded_scan_matches_the_normal_scan_minus_the_broken_refs()
     {
