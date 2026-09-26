@@ -15,12 +15,22 @@ namespace Historia.Services.Git;
 /// <c>packed-refs</c>), or an annotated tag whose tagged object is missing, is left out, as the
 /// LibGit2Sharp-based graph walk always dropped it — the full format makes git stop at the first
 /// one, so the scan then reads refs without their objects and asks <c>cat-file</c> about each
-/// object and each tag's peel instead. Any other failure is a
+/// object and each tag's peel instead. In a partial clone, an object git would otherwise fetch
+/// from the promisor remote counts as missing: the scan never goes to the network. Any other
+/// failure is a
 /// <see cref="HistoriaGitException"/> (Rule 11).</para>
 /// </summary>
 public sealed class RefSnapshotProvider
 {
     private static readonly TimeSpan ScanTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>In a partial clone git would fetch a ref's missing object from the promisor
+    /// remote on demand (Rule 0: reading refs never touches the network). With lazy fetching off,
+    /// such a ref fails the scan like any other missing object and is left out. Only these
+    /// reads set it — every object a clone or fetch hands a ref is local, so the normal scan's
+    /// output is the same either way. git before 2.45 ignores the variable.</summary>
+    private static readonly IReadOnlyDictionary<string, string> NoLazyFetch =
+        new Dictionary<string, string> { ["GIT_NO_LAZY_FETCH"] = "1" };
 
     private readonly IGitCliService _cli;
     private readonly string _gitDir;
@@ -137,6 +147,7 @@ public sealed class RefSnapshotProvider
             StandardInput = stdin,
             Timeout = ScanTimeout,
             RawStandardOutput = true,
+            ExtraEnvironment = NoLazyFetch,
         }, _lifetime);
 
     /// <summary>A failed read of refs: cancelled when the repo is closing, otherwise the
@@ -306,11 +317,13 @@ public sealed class RefSnapshotProvider
         {
             Arguments = ["symbolic-ref", "-q", "HEAD"],
             WorkingDirectory = _workingDirectory,
+            ExtraEnvironment = NoLazyFetch,
         }, _lifetime).ConfigureAwait(false);
         var target = await _cli.RunAsync(new GitCliRequest
         {
             Arguments = ["rev-parse", "-q", "--verify", "HEAD"],
             WorkingDirectory = _workingDirectory,
+            ExtraEnvironment = NoLazyFetch,
         }, _lifetime).ConfigureAwait(false);
 
         var symref = symbolic.ExitCode == 0 ? NullIfEmpty(symbolic.StandardOutput.Trim()) : null;

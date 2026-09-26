@@ -195,4 +195,49 @@ public sealed class RefSnapshotBrokenRefTests : IAsyncDisposable
         var ex = await Assert.ThrowsAsync<HistoriaGitException>(() => ctx.RefSnapshots.GetAsync());
         Assert.Contains("unexpected line", ex.Details);
     }
+
+    /// <summary>In a blobless clone, a ref naming a blob only the promisor remote has would make
+    /// every <c>for-each-ref</c> fetch it over the network. The scan runs with lazy fetching off,
+    /// so the ref counts as broken and is dropped, and the object stays missing locally
+    /// (verified on git 2.51; <c>GIT_NO_LAZY_FETCH</c> is git 2.45+).</summary>
+    [Fact]
+    public async Task A_ref_to_an_object_only_the_promisor_remote_has_is_dropped_without_fetching()
+    {
+        using var source = TestRepositoryBuilder.Create();
+        source.WriteFile("gone.txt", "only in history\n").Stage().Commit("add");
+        var blob = source.Git("rev-parse", "HEAD:gone.txt").Trim();
+        source.Git("rm", "-q", "gone.txt");
+        source.Commit("remove");
+        source.Git("config", "uploadpack.allowFilter", "true");
+
+        var clone = TestScratch.NewDirectory();
+        try
+        {
+            source.Git("clone", "-q", "--no-checkout", "--filter=blob:none", "--no-local",
+                new Uri(source.Path).AbsoluteUri, clone);
+            var noLazyFetch = new Dictionary<string, string> { ["GIT_NO_LAZY_FETCH"] = "1" };
+            bool LocallyPresent()
+            {
+                try { source.Git(noLazyFetch, "-C", clone, "cat-file", "-e", blob); return true; }
+                catch (InvalidOperationException) { return false; }
+            }
+            Assert.False(LocallyPresent(), "a blobless clone leaves history-only blobs on the remote");
+            // Written as a file: update-ref would fetch the object itself to check it exists.
+            File.WriteAllText(Path.Combine(clone, ".git", "refs", "tags", "promised"), blob + "\n");
+
+            await using (var ctx = _host.Open(clone))
+            {
+                var snapshot = await ctx.RefSnapshots.GetAsync();
+                Assert.DoesNotContain(snapshot.Refs, r => r.CanonicalName == "refs/tags/promised");
+                Assert.Contains(snapshot.Refs, r => r.CanonicalName == "refs/heads/main");
+            }
+            Assert.False(LocallyPresent(), "the ref scan must not fetch from the promisor remote");
+        }
+        finally
+        {
+            foreach (var f in new DirectoryInfo(clone).EnumerateFiles("*", SearchOption.AllDirectories))
+                f.Attributes &= ~FileAttributes.ReadOnly;
+            try { Directory.Delete(clone, recursive: true); } catch (IOException) { }
+        }
+    }
 }
