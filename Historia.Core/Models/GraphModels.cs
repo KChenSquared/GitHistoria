@@ -272,8 +272,19 @@ public sealed class GraphLayout : IDisposable
     internal GraphEdge[] OffWindowEdges { get; init; } = [];
 
     /// <summary>Rows pulled either side of a requested row into one cached derivation, so
-    /// scrolling a screenful at a time rarely re-derives (§Phase 2).</summary>
+    /// scrolling a screenful at a time rarely re-derives (§Phase 2). Only scrolling past the
+    /// window's edge gets this overscan. A jump (scrollbar drag, search, reveal) derives just the
+    /// requested rows ± <see cref="JumpOverscan"/>, because a drag leaves the window on every
+    /// frame and a derivation costs window rows × every lane, on screen or not (§7.6).</summary>
     private const int WindowOverscan = 1_000;
+
+    /// <summary>Rows either side of the requested range in the tight window a jump derives.</summary>
+    private const int JumpOverscan = 128;
+
+    /// <summary>A request more than this many rows beyond the current window is a jump; within
+    /// it, a scroll. A slow drag of a few hundred rows per frame still counts as a scroll and gets
+    /// a full window that lasts several frames.</summary>
+    private const int JumpDistance = 256;
 
     private (int A, int B, RowLaneSegment[] Segs, int[] SegStart, int[] SegCount,
         RowElbow[] Elbs, int[] ElbStart, int[] ElbCount)? _window;
@@ -437,22 +448,68 @@ public sealed class GraphLayout : IDisposable
         return w.ElbCount[i] > 0 ? w.Elbs.AsSpan(w.ElbStart[i], w.ElbCount[i]) : [];
     }
 
-    private void EnsureWindow(int row)
-    {
-        if (_window is { } cur && row >= cur.A && row <= cur.B) return;
+    private void EnsureWindow(int row) => EnsureRows(row, row);
 
-        if (SourceState is null || RowCount == 0)
+    /// <summary>
+    /// Makes sure rows <paramref name="first"/>..<paramref name="last"/> are inside the cached
+    /// derivation window. A renderer calls this once per frame for the rows it will draw, so the
+    /// whole block is derived up front instead of from whichever row is read first (§7.6).
+    /// Scrolling just past the window's edge (within <see cref="JumpDistance"/> rows), or a
+    /// layout with no window yet, derives the full ± <see cref="WindowOverscan"/>. A jump further
+    /// than that derives only the range ± <see cref="JumpOverscan"/>, so a scrollbar drag that
+    /// leaves the window every frame stays cheap however many lanes the history has. Allocates
+    /// nothing when the range is already covered.
+    /// </summary>
+    public void EnsureRows(int first, int last)
+    {
+        if (RowCount == 0) return;
+        first = Math.Max(0, first);
+        last = Math.Min(RowCount - 1, last);
+        if (last < first) return;
+
+        var cur = _window;
+        if (cur is { } covered && first >= covered.A && last <= covered.B) return;
+
+        if (SourceState is null)
         {
-            _window = (row, row, [], [0], [0], [], [0], [0]);
+            var len = last - first + 1;
+            _window = (first, last, [], new int[len], new int[len], [], new int[len], new int[len]);
             return;
         }
 
-        var a = Math.Max(0, row - WindowOverscan);
-        var b = Math.Min(RowCount - 1, row + WindowOverscan);
+        int a, b;
+        var jump = false;
+        if (cur is { } w)
+        {
+            var gap = first > w.B ? first - w.B : w.A - last;
+            jump = gap > JumpDistance;
+        }
+
+        if (jump)
+        {
+            a = first - JumpOverscan;
+            b = last + JumpOverscan;
+        }
+        else
+        {
+            a = first - WindowOverscan;
+            b = last + WindowOverscan;
+        }
+        a = Math.Max(0, a);
+        b = Math.Min(RowCount - 1, b);
+
         var (segs, segStart, segCount, elbs, elbStart, elbCount) =
             DagLayoutEngine.DeriveWindow(SourceState, RealEdgeCap, OffWindowEdges, RowCount, a, b);
         _window = (a, b, segs, segStart, segCount, elbs, elbStart, elbCount);
+        WindowDerivations++;
     }
+
+    /// <summary>How many times this snapshot has derived a window. Tests only.</summary>
+    internal int WindowDerivations { get; private set; }
+
+    /// <summary>The cached window's row range, or null before first use or after <see
+    /// cref="Dispose"/>. Tests only.</summary>
+    internal (int A, int B)? WindowRange => _window is { } w ? (w.A, w.B) : null;
 
     public static GraphLayout Empty { get; } = new()
     {
