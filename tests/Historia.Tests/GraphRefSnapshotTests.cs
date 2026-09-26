@@ -95,7 +95,7 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
         await using var ctx = _host.Open(repo.Path);
         var query = QueryFor(queryName);
 
-        var getRefState = typeof(GraphLayoutService).GetMethod("GetRefStateAsync", PrivateStatic)!;
+        var getRefState = typeof(GraphLayoutService).GetMethod("TryGetRefStateAsync", PrivateStatic)!;
         var task = (Task)getRefState.Invoke(null, [ctx, query, false, CancellationToken.None])!;
         await task;
         var state = (System.Runtime.CompilerServices.ITuple)task.GetType().GetProperty("Result")!.GetValue(task)!;

@@ -76,17 +76,15 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// <summary>Test seam: how many full ref scans (fingerprint + tip resolution) have run per
     /// repository path. A scan costs seconds on a repo with tens of thousands of refs, so tests
     /// assert on the delta across a call to prove a satisfied or resumed walk step skipped it.
-    /// Keyed by path so parallel test classes on other fixtures never disturb the count.</summary>
+    /// Keyed by <see cref="RepositoryContext.RepositoryPath"/> so parallel test classes on other
+    /// fixtures never disturb the count.</summary>
     private static readonly ConcurrentDictionary<string, int> _refScanCounts = new(StringComparer.OrdinalIgnoreCase);
 
     internal static int RefScanCountForTesting(string repositoryPath) =>
-        _refScanCounts.TryGetValue(NormalizeScanKey(repositoryPath), out var n) ? n : 0;
+        _refScanCounts.TryGetValue(repositoryPath, out var n) ? n : 0;
 
     private static void CountRefScan(string repositoryPath) =>
-        _refScanCounts.AddOrUpdate(NormalizeScanKey(repositoryPath), 1, (_, n) => n + 1);
-
-    private static string NormalizeScanKey(string path) =>
-        Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        _refScanCounts.AddOrUpdate(repositoryPath, 1, (_, n) => n + 1);
 
     /// <summary>Minimum row-count growth between debounced <see cref="GraphWalkCache.Save"/>
     /// calls for the same cache (see <see cref="RepoCache.WalkCacheSavedRows"/>).</summary>
@@ -264,12 +262,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     {
         Diagnostics.PerfLog.Mark($"ComputeLayout enter (maxRows={maxRows})");
         var cache = GetOrResetCache(context, query, force: false);
-        if (TotalWalked(cache) > 0 && cache.Fingerprint != 0)
-        {
-            var (_, currentFp, _, _) = await GetRefStateAsync(context, query, background: false, ct).ConfigureAwait(false);
-            if (currentFp != cache.Fingerprint)
-                cache = GetOrResetCache(context, query, force: true);
-        }
+        // Refs that can't be read right now are no evidence the painted rows are stale — keep the
+        // cache; EnsureWalkedAsync records the failure if it needs refs to go further.
+        if (TotalWalked(cache) > 0 && cache.Fingerprint != 0
+            && await TryGetRefStateAsync(context, query, background: false, ct).ConfigureAwait(false) is { } state
+            && state.Fingerprint != cache.Fingerprint)
+            cache = GetOrResetCache(context, query, force: true);
         await EnsureWalkedAsync(context, query, cache, maxRows + WalkOverscan, ct).ConfigureAwait(false);
         Diagnostics.PerfLog.Mark($"ComputeLayout walked ({TotalWalked(cache)} commits cached)");
 
@@ -849,7 +847,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         var spoolTask = Task.Run(async () =>
         {
-            var probe = await ProbeStoreAsync(context, query, ct).ConfigureAwait(false);
+            if (await ProbeStoreAsync(context, query, ct).ConfigureAwait(false) is not { } probe)
+                return 0; // refs unreadable — nothing to walk
 
             var rowsProgress = progress is null
                 ? null
@@ -866,17 +865,21 @@ public sealed class GraphLayoutService : IGraphLayoutService
         _backgroundWriter?.RecordWrite(context.GitDirectory, rows);
     }
 
+    /// <summary>Null when the repo's refs can't be read — there is nothing to walk or key a store
+    /// on.</summary>
     private static async Task<(
         long WalkKey,
         string[] Tips,
         (bool Ok, int RowCount, bool Exhausted) Current,
-        (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) Existing)> ProbeStoreAsync(
+        (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) Existing)?> ProbeStoreAsync(
         RepositoryContext context, GraphQuery query, CancellationToken ct)
     {
         // Off the repo gate: the tips come from the ref snapshot, and the probes are header reads
         // of Historia's own files.
         var repoPath = context.RepositoryPath;
-        var (_, _, tips, walkKey) = await GetRefStateAsync(context, query, background: true, ct).ConfigureAwait(false);
+        if (await TryGetRefStateAsync(context, query, background: true, ct).ConfigureAwait(false) is not { } state)
+            return null;
+        var (_, _, tips, walkKey) = state;
         return (
             WalkKey: walkKey,
             Tips: tips,
@@ -897,7 +900,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // Step 1 — off the repo gate: tip resolution + walk key from the ref snapshot, and a
         // header-only probe both at the current key and at whatever key the store was last
         // written under, regardless of match.
-        var probe = await ProbeStoreAsync(context, query, ct).ConfigureAwait(false);
+        if (await ProbeStoreAsync(context, query, ct).ConfigureAwait(false) is not { } probe)
+            return; // refs unreadable — nothing to walk, nothing written
 
         if (probe.Current is { Ok: true, Exhausted: true })
         {
@@ -1296,8 +1300,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
     {
         if (reason == InvalidationReason.RefsChanged && previous.Fingerprint != 0)
         {
-            var (_, currentFp, _, _) = await GetRefStateAsync(context, query, background: false, ct).ConfigureAwait(false);
-            if (currentFp == previous.Fingerprint)
+            // Unreadable refs: keep what is painted; the next RefsChanged tries again.
+            if (await TryGetRefStateAsync(context, query, background: false, ct).ConfigureAwait(false) is not { } state
+                || state.Fingerprint == previous.Fingerprint)
                 return previous;
         }
 
@@ -1449,38 +1454,42 @@ public sealed class GraphLayoutService : IGraphLayoutService
             _ => context.WithRepositoryAsync(work, ct),
         };
 
-        // Step 0 — off the gate: the repo's refs. A file-state check (ms) unless a ref moved since
-        // the last read, in which case one `git for-each-ref` — never a LibGit2Sharp enumeration,
-        // which costs seconds at tens of thousands of refs.
-        RefSnapshot? snapshot = null;
-        string failure = "git.exe was not found";
-        if (_locator.Current.Found)
+        GatePrep prep = default;
+        for (var pass = 0; pass < 2; pass++)
         {
-            try { snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false); }
-            catch (HistoriaGitException ex) { failure = ex.Message; }
-        }
-        if (snapshot is null)
-        {
-            // Nothing can walk without the refs — the same outcome as `git log` failing to start
-            // (Rule 11: no fallback): the graph keeps what it has and this cache stops trying.
-            await cache.WalkLock.WaitAsync(ct).ConfigureAwait(false);
-            try { MarkWalkFailed(context, cache, $"reading refs failed: {failure}"); }
-            finally { cache.WalkLock.Release(); }
-            return;
-        }
+            // Step 0 — off the gate: the repo's refs. A file-state check (ms) unless a ref moved
+            // since the last read, in which case one `git for-each-ref` — never a LibGit2Sharp
+            // enumeration, which costs seconds at tens of thousands of refs.
+            RefSnapshot? snapshot = null;
+            string failure = "git.exe was not found";
+            if (_locator.Current.Found)
+            {
+                try { snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false); }
+                catch (HistoriaGitException ex) { failure = ex.Message; }
+            }
+            if (snapshot is null)
+            {
+                // Nothing can walk without the refs — the same outcome as `git log` failing to
+                // start (Rule 11: no fallback): the graph keeps what it has and this cache stops
+                // trying.
+                await cache.WalkLock.WaitAsync(ct).ConfigureAwait(false);
+                try { MarkWalkFailed(context, cache, $"reading refs failed: {failure}"); }
+                finally { cache.WalkLock.Release(); }
+                return;
+            }
 
-        GatePrep prep;
-        long liveToken = cache.LiveWalkSnapshotToken;
-        if (cache.LiveWalk is not null && liveToken != 0 && liveToken == snapshot.Token)
-        {
-            // No ref file changed since this walk's tip set was confirmed: the tips, fingerprint
-            // and decorations are exactly the cache's — resume without touching the repo gate.
-            // (The token covers HEAD and the stash reflog too, so this holds with stashes on.)
-            prep = GatePrep.ForResumeCli(cache.Fingerprint, cache.LiveWalkFingerprint, TotalWalked(cache),
-                wantCount, cache.Decorations, snapshot.Token);
-        }
-        else
-        {
+            long liveToken = cache.LiveWalkSnapshotToken;
+            if (cache.LiveWalk is not null && liveToken != 0 && liveToken == snapshot.Token)
+            {
+                // No ref file changed since this walk's tip set was confirmed: the tips,
+                // fingerprint and decorations are exactly the cache's — resume without touching
+                // the repo gate. (The token covers HEAD and the stash reflog too, so this holds
+                // with stashes on.)
+                prep = GatePrep.ForResumeCli(cache.Fingerprint, cache.LiveWalkFingerprint, TotalWalked(cache),
+                    wantCount, cache.Decorations, snapshot.Token);
+                break;
+            }
+
             // Step 1 — on the repo gate: what still needs LibGit2Sharp (stash list, remote names
             // for decorations, the on-disk cache probe), plus the fingerprint and tip set derived
             // from the snapshot. It deliberately stops short of spawning or pulling `git log` —
@@ -1488,6 +1497,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
             prep = await WithRepo(repo =>
                 PrepareWalk(repo, repoPath, query, wantCount, deco, cache, snapshot, _metaFromDisk, _walkCache))
                 .ConfigureAwait(false);
+
+            // The snapshot was read before the gate wait, which for the spill can be long. A prime
+            // from tips that have since moved would only be replaced by another prime on the next
+            // step, so when a ref file changed meanwhile, prepare once more from fresh refs.
+            if (pass > 0 || prep.Kind != GatePrepKind.PrimeCli
+                || RefStateToken.Compute(context.GitDirectory).Token == prep.SnapshotToken)
+                break;
+            Diagnostics.PerfLog.Mark("refs moved during the gate wait — re-preparing");
         }
 
         // Step 2 — off the gate: prime or resume the walk.
@@ -1502,7 +1519,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
         {
             cache.Commits.AddRange(walked.Commits);
             cache.Decorations = walked.Decorations;
-            cache.Exhausted = walked.Exhausted;
+            // Never back to false: a concurrent step that exhausted the walk may merge before one
+            // that saw the walk already gone and reported the flag it read before that merge.
+            cache.Exhausted |= walked.Exhausted;
             if (walked.Fingerprint != 0)
                 cache.Fingerprint = walked.Fingerprint; // ref-based: RecomputeAsync's short-circuit + badges
             if (walked.WalkKey != 0)
@@ -1989,11 +2008,19 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
     /// <summary>The current ref state for <paramref name="query"/>, read off the repo gate (the
     /// snapshot is a token check or one separate process); only a query that includes stashes
-    /// takes one short gate turn, for the stash list.</summary>
-    private static async Task<(RefSnapshot Snapshot, long Fingerprint, string[] Tips, long WalkKey)> GetRefStateAsync(
+    /// takes one short gate turn, for the stash list. Null when the refs can't be read — the
+    /// <see cref="HistoriaGitException"/> has already logged why, and each caller decides what an
+    /// unknown ref state means for it; none lets the failure escape the service.</summary>
+    private static async Task<(RefSnapshot Snapshot, long Fingerprint, string[] Tips, long WalkKey)?> TryGetRefStateAsync(
         RepositoryContext context, GraphQuery query, bool background, CancellationToken ct)
     {
-        var snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false);
+        RefSnapshot snapshot;
+        try { snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false); }
+        catch (HistoriaGitException ex)
+        {
+            Diagnostics.PerfLog.Mark($"ref state unreadable: {ex.Message}");
+            return null;
+        }
         IReadOnlyList<string?> stashShas = [];
         if (query.IncludeStashes)
             stashShas = background
