@@ -73,6 +73,21 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// outside tests.</summary>
     internal static Action<int, int>? TestSpliceCommitted;
 
+    /// <summary>Test seam: how many full ref scans (fingerprint + tip resolution) have run per
+    /// repository path. A scan costs seconds on a repo with tens of thousands of refs, so tests
+    /// assert on the delta across a call to prove a satisfied or resumed walk step skipped it.
+    /// Keyed by path so parallel test classes on other fixtures never disturb the count.</summary>
+    private static readonly ConcurrentDictionary<string, int> _refScanCounts = new(StringComparer.OrdinalIgnoreCase);
+
+    internal static int RefScanCountForTesting(string repositoryPath) =>
+        _refScanCounts.TryGetValue(NormalizeScanKey(repositoryPath), out var n) ? n : 0;
+
+    private static void CountRefScan(string repositoryPath) =>
+        _refScanCounts.AddOrUpdate(NormalizeScanKey(repositoryPath), 1, (_, n) => n + 1);
+
+    private static string NormalizeScanKey(string path) =>
+        Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
     /// <summary>Minimum row-count growth between debounced <see cref="GraphWalkCache.Save"/>
     /// calls for the same cache (see <see cref="RepoCache.WalkCacheSavedRows"/>).</summary>
     private const int WalkCacheSaveStride = 5_000;
@@ -1559,6 +1574,19 @@ public sealed class GraphLayoutService : IGraphLayoutService
         Repository repo, string repoPath, GraphQuery query, int wantCount, DecoCache? decoCache,
         RepoCache cache, bool metaFromDisk, GraphWalkCache walkCache)
     {
+        // Read fresh on the gate — a concurrent EnsureWalkedAsync (the silent crawler vs the
+        // background spill) serialises here and has usually already walked what this caller
+        // wanted. Checked before any ref work: on a repo with tens of thousands of refs that work
+        // costs seconds, and a satisfied caller needs none of it. "Have" is TOTAL rows walked
+        // (spilled + resident pending), not cache.Commits.Count alone — confirmed-spilled rows no
+        // longer stay resident. The zero fingerprint / walk key leave the cache's own untouched.
+        var have = cache.SpilledRows + cache.Commits.Count;
+        if (have >= wantCount || cache.Exhausted)
+        {
+            Diagnostics.PerfLog.Mark($"EnsureWalked satisfied on gate (have {have} >= want {wantCount})");
+            return GatePrep.Done(new WalkResult([], cache.Decorations, cache.Exhausted, Fingerprint: 0, DecosFresh: false, WalkKey: 0));
+        }
+
         var fp = ComputeFingerprint(repo, query, out var allRefs);
         // §Phase 3 (3b): resolved once, always — cheap (milliseconds even at linux's 948 refs) —
         // so the disk cache, live-walk resume, and .gz identity can all key
@@ -1568,14 +1596,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // but leaves `walkKey` — and so the on-disk cache — untouched.
         var tips = ResolveTipShas(repo, query, allRefs);
         var walkKey = ComputeWalkKey(tips, query);
-
-        // Read fresh on the gate — a concurrent EnsureWalkedAsync (foreground extend vs the
-        // background spill) serialises here and may have appended since the outer check.
-        // "Have" is TOTAL rows walked (spilled + resident pending), not
-        // cache.Commits.Count alone — confirmed-spilled rows no longer stay resident.
-        var have = cache.SpilledRows + cache.Commits.Count;
-        if (have >= wantCount || cache.Exhausted)
-            return GatePrep.Done(new WalkResult([], cache.Decorations, cache.Exhausted, fp, DecosFresh: false, WalkKey: walkKey));
 
         // Fresh cache, nothing primed: try the on-disk walk before spawning anything. Only the
         // plain all-refs shape is ever cached on disk.
@@ -1703,8 +1723,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
             else if (exhausted)
                 cache.DisposeLiveWalk();
 
+            AppendWalked(cache, delta);
             Diagnostics.PerfLog.Mark($"Walk loop (cli) read {delta.Count} commits (pos {cache.LiveWalkPos}, exhausted={exhausted})");
-            return new WalkResult(delta, prep.Decorations, exhausted, prep.Fingerprint, prep.DecosFresh, WalkKey: prep.WalkKey);
+            return new WalkResult([], prep.Decorations, exhausted, prep.Fingerprint, prep.DecosFresh, WalkKey: prep.WalkKey);
         }
         finally
         {
@@ -1737,7 +1758,15 @@ public sealed class GraphLayoutService : IGraphLayoutService
             if (cache.LiveWalk is not { } live || cache.LiveWalkFingerprint != prep.WalkKey)
                 return new WalkResult([], prep.Decorations, cache.Exhausted, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey);
 
-            var need = prep.WantCount - prep.Have;
+            // Sized from the rows walked now, not prep.Have: a concurrent resume may have pulled a
+            // whole chunk while this one waited on WalkLock, after PrepareWalk read it. Exact
+            // here because every pull appends its rows before releasing WalkLock (AppendWalked).
+            // Not LiveWalkPos: the reorder pass clears cache.Commits after every batch and asks
+            // for batchRows each time, i.e. relative to what the cache holds, not to the stream.
+            var need = prep.WantCount - TotalWalked(cache);
+            if (need <= 0)
+                return new WalkResult([], cache.Decorations, Exhausted: false, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey);
+
             var delta = new List<RawCommit>(Math.Min(need, 8192));
             var exhausted = PumpCommits(live, delta, skip: 0, want: need, cache, ct);
             if (live is GitLogStream { Failed: true } failed)
@@ -1747,13 +1776,25 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
             else if (exhausted)
                 cache.DisposeLiveWalk();
+            AppendWalked(cache, delta);
             Diagnostics.PerfLog.Mark($"walk resumed (cli) +{delta.Count} (pos {cache.LiveWalkPos}, exhausted={exhausted})");
-            return new WalkResult(delta, cache.Decorations, exhausted, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey);
+            return new WalkResult([], cache.Decorations, exhausted, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey);
         }
         finally
         {
             cache.WalkLock.Release();
         }
+    }
+
+    /// <summary>Appends a pull's rows to the pending buffer while the caller still holds
+    /// <see cref="RepoCache.WalkLock"/>, so two pulls in a row can never land in the buffer in the
+    /// opposite order to the one they were read from the stream in.</summary>
+    private static void AppendWalked(RepoCache cache, List<RawCommit> delta)
+    {
+        if (delta.Count == 0)
+            return;
+        lock (cache)
+            cache.Commits.AddRange(delta);
     }
 
     private const int RetireWalkLockTimeoutMs = 5_000;
@@ -1916,6 +1957,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// </summary>
     private static long ComputeFingerprint(Repository repo, GraphQuery query, out List<Reference> allRefs)
     {
+        CountRefScan(repo.Info.WorkingDirectory ?? repo.Info.Path);
         allRefs = repo.Refs.ToList();
 
         var h = StableHash.Fnv64OffsetBasis;
