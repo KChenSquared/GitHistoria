@@ -69,11 +69,12 @@ public sealed class GraphEarlyExitTests : IAsyncDisposable
         var walkCache = typeof(GraphLayoutService).GetField("_walkCache", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(svc);
         var prepareWalk = typeof(GraphLayoutService).GetMethod("PrepareWalk", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
         var fingerprintBefore = Get<long>(cache, "Fingerprint");
+        var snapshot = await ctx.RefSnapshots.GetAsync();
         var scansBefore = GraphLayoutService.RefScanCountForTesting(ctx.RepositoryPath);
 
         // Exactly what the crawler's step sees once the spill's pull landed: want <= have.
         var prep = await ctx.WithRepositoryAsync(repo => prepareWalk.Invoke(null,
-            [repo, ctx.RepositoryPath, new GraphQuery { RefScope = GraphRefScope.AllRefs }, 1_500, null, cache, false, walkCache])!);
+            [repo, ctx.RepositoryPath, new GraphQuery { RefScope = GraphRefScope.AllRefs }, 1_500, null, cache, snapshot, false, walkCache])!);
 
         Assert.Equal("Done", Get<object>(prep, "Kind").ToString());
         Assert.Equal(0L, Get<long>(prep, "Fingerprint"));
@@ -87,17 +88,26 @@ public sealed class GraphEarlyExitTests : IAsyncDisposable
         if (!_host.Locator.Current.Found)
             return;
 
-        var (svc, ctx, initial) = await OpenWalkedAsync();
+        var (svc, ctx, _) = await OpenWalkedAsync();
         await using var _ctx = ctx;
-
-        // Wants 100 + 300 + 2,000 = 2,400 and 100 + 500 + 2,000 = 2,600, both past the 2,100
-        // walked. Whichever pulls second must size its pull from the stream's live position, so
-        // the stream ends at 2,600 — not 2,900 (both sized from the 2,100 they read up front).
-        await Task.WhenAll(
-            svc.ExtendLayoutAsync(ctx, initial, additionalRows: 300),
-            svc.ExtendLayoutAsync(ctx, initial, additionalRows: 500));
-
         var cache = GetCache(svc, ctx);
+
+        // Two walk steps that both read "have 2,100" before either pulls: hold the walk lock so
+        // each gets as far as waiting on it, then let them go. Whichever pulls second must size
+        // its pull from what the first already walked, so the stream ends at 2,600 — not 2,900
+        // (both sized from the 2,100 they read up front).
+        var walkLock = (SemaphoreSlim)cache.GetType().GetField("WalkLock")!.GetValue(cache)!;
+        var ensureWalked = typeof(GraphLayoutService).GetMethod("EnsureWalkedAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
+        Task Step(int want) => (Task)ensureWalked.Invoke(svc, [ctx, query, cache, want, CancellationToken.None, true, false])!;
+
+        await walkLock.WaitAsync();
+        var first = Task.Run(() => Step(2_400));
+        var second = Task.Run(() => Step(2_600));
+        await WaitUntilAsync(() => walkLock.CurrentCount == 0 && Waiters(walkLock) >= 2);
+        walkLock.Release();
+        await Task.WhenAll(first, second);
+
         Assert.Equal(2_600, Get<int>(cache, "LiveWalkPos"));
 
         var walked = Get<System.Collections.IList>(cache, "Commits").Cast<RawCommit>().Select(c => c.Id.Sha).ToList();
@@ -106,5 +116,26 @@ public sealed class GraphEarlyExitTests : IAsyncDisposable
             .Take(2_600)
             .ToList();
         Assert.Equal(expected, walked);
+    }
+
+    /// <summary>How many callers are queued on <paramref name="sem"/> — SemaphoreSlim keeps its
+    /// async waiters in a private linked list; counted by walking it.</summary>
+    private static int Waiters(SemaphoreSlim sem)
+    {
+        var head = typeof(SemaphoreSlim).GetField("m_asyncHead", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(sem);
+        var n = 0;
+        for (var node = head; node is not null; node = node.GetType().GetField("Next", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)!.GetValue(node))
+            n++;
+        return n;
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+        while (!condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "timed out waiting for both walk steps to queue on the walk lock");
+            await Task.Delay(10);
+        }
     }
 }

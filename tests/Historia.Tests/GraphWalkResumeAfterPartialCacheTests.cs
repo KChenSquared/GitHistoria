@@ -120,11 +120,8 @@ public sealed class GraphWalkResumeAfterPartialCacheTests : IAsyncDisposable
         var method = typeof(GraphLayoutService).GetMethod("ResolveTipShas", BindingFlags.NonPublic | BindingFlags.Static)!;
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
 
-        var tips = await ctx.WithRepositoryAsync(repo =>
-        {
-            var allRefs = repo.Refs.ToList();
-            return (string[])method.Invoke(null, [repo, query, allRefs])!;
-        });
+        var snapshot = await ctx.RefSnapshots.GetAsync();
+        var tips = (string[])method.Invoke(null, [snapshot, query, Array.Empty<string?>()])!;
 
         Assert.NotEmpty(tips);
         var sorted = tips.OrderBy(s => s, StringComparer.Ordinal).ToArray();

@@ -16,7 +16,7 @@ public interface IGraphLayoutService
 
     /// <summary>
     /// An optimistic first paint from the last on-disk walk cache for this repo, skipping
-    /// the ref-fingerprint check (and its full <c>repo.Refs.ToList()</c> enumeration) that
+    /// the ref-fingerprint check (and the <c>for-each-ref</c> scan it may need) that
     /// <see cref="ComputeLayoutAsync"/> must otherwise pay before returning anything — a plain
     /// file read + JSON deserialize instead. The result may be momentarily stale (a branch
     /// moved, a new commit landed, or history was rewritten since the file was written); the

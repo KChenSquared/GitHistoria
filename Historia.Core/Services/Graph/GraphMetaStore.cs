@@ -181,7 +181,7 @@ internal sealed class GraphMetaStore
     /// <summary>
     /// Like <see cref="Probe"/> but WITHOUT a fingerprint check — for
     /// <c>TryOptimisticSnapshot</c>'s stale-tolerant first paint, which runs before the fresh
-    /// ref-fingerprint check (a full <c>repo.Refs.ToList()</c>) even starts. The caller must
+    /// ref-fingerprint check (a ref snapshot read, possibly a <c>for-each-ref</c>) even starts. The caller must
     /// treat the result as provisional, exactly like <see cref="GraphWalkCache.TryLoadStale"/>.
     /// Still requires <see cref="GraphWalkCache.CliWalkMarker"/>, so an optimistic frame is never
     /// seeded from a store a retired walk engine wrote.

@@ -107,7 +107,7 @@ internal sealed class GraphWalkCache
     /// <summary>
     /// Loads the cached walk WITHOUT checking it still matches the repo's current refs —
     /// for an optimistic first paint the caller shows immediately, before the fresh ref-
-    /// fingerprint check (which needs a full <c>repo.Refs.ToList()</c> enumeration) even
+    /// fingerprint check (which needs a ref snapshot, possibly a <c>for-each-ref</c> scan) even
     /// completes. The result may be momentarily stale: a branch moved, a new commit landed, or
     /// history was rewritten since the file was written. The caller is responsible for treating
     /// this as provisional and replacing it with the real, fingerprint-verified layout once that
