@@ -144,10 +144,11 @@ public sealed class GraphRefFailureTests : IAsyncDisposable
         await using var ctx = Open(repo);
         var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
-        var initial = await svc.ComputeLayoutAsync(ctx, query, maxRows: 100); // 2,100 walked, live
+        await svc.ComputeLayoutAsync(ctx, query, maxRows: 100); // warms the ref snapshot
 
-        // A new tip: the next step must re-prime. Read the snapshot now so the extend below finds
-        // it cached and goes straight to waiting on the gate.
+        // A fresh cache (a live one would supersede, not re-prime) and a new tip. Read the
+        // snapshot now so the compute below finds it cached and goes straight to the gate.
+        svc.Forget(ctx);
         repo.Git("update-ref", "refs/heads/a", "HEAD~10");
         await ctx.RefSnapshots.GetAsync();
 
@@ -161,18 +162,18 @@ public sealed class GraphRefFailureTests : IAsyncDisposable
         });
         await entered.Task;
 
-        Task<GraphLayoutResult> extend;
+        Task<GraphLayoutResult> compute;
         try
         {
-            extend = svc.ExtendLayoutAsync(ctx, initial, additionalRows: 400);
-            await Task.Delay(500); // the extend reads its (now cached) snapshot and queues on the gate
+            compute = svc.ComputeLayoutAsync(ctx, query, maxRows: 100);
+            await Task.Delay(500); // the compute reads its (now cached) snapshot and queues on the gate
             repo.Git("update-ref", "refs/heads/b", "HEAD~20");
         }
         finally
         {
             release.SetResult();
         }
-        await extend;
+        await compute;
 
         var cache = GetCache(svc, ctx);
         var liveKey = (long)cache.GetType().GetProperty("LiveWalkFingerprint")!.GetValue(cache)!;

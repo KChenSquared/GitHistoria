@@ -176,8 +176,11 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
         Assert.Equal(2_500, Get<int>(GetCache(svc, ctx), "LiveWalkPos"));
     }
 
+    private static List<ObjectId> Ids(GraphLayoutResult r) =>
+        Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
+
     [Fact]
-    public async Task Ref_change_mid_crawl_reprimes_with_the_new_tip_set()
+    public async Task Ref_change_mid_crawl_supersedes_the_walk()
     {
         if (!_host.Locator.Current.Found)
             return;
@@ -187,13 +190,72 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
         var cache = GetCache(svc, ctx);
         var keyBefore = Get<long>(cache, "WalkKey");
 
-        repo.Git("update-ref", "refs/heads/added-mid-crawl", "HEAD~2800");
+        // A commit the old walk never saw, on a new tip: a walk over the new tips would place it
+        // among its first rows.
+        var side = repo.Git("commit-tree", "HEAD~5^{tree}", "-p", "HEAD~5", "-m", "side").Trim();
+        repo.Git("update-ref", "refs/heads/side", side);
         var extended = await svc.ExtendLayoutAsync(ctx, initial, additionalRows: 400);
 
-        Assert.NotEqual(keyBefore, Get<long>(cache, "WalkKey"));
-        Assert.Equal(Get<long>(cache, "WalkKey"), Get<long>(cache, "LiveWalkFingerprint"));
-        var ids = Enumerable.Range(0, extended.Layout.RowCount).Select(i => extended.Layout.Commits[i].Id).ToList();
+        Assert.True(Get<bool>(cache, "WalkSuperseded"));
+        Assert.Equal(keyBefore, Get<long>(cache, "WalkKey"));
+        Assert.Null(cache.GetType().GetProperty("LiveWalk")!.GetValue(cache));
+        // The rows the old walk already produced still extend the old layout, and nothing else.
+        var ids = Ids(extended);
         Assert.Equal(ids.Count, ids.Distinct().Count());
+        Assert.DoesNotContain(new ObjectId(side), ids);
+        Assert.Equal(Ids(initial), ids.Take(initial.Layout.RowCount));
+    }
+
+    [Fact]
+    public async Task A_resume_never_rewrites_the_ref_state()
+    {
+        if (!_host.Locator.Current.Found)
+            return;
+
+        var (svc, ctx, initial, repo) = await OpenLiveWalkAsync();
+        await using var _ctx = ctx;
+        var cache = GetCache(svc, ctx);
+        var fingerprint = Get<long>(cache, "Fingerprint");
+        var decorations = cache.GetType().GetProperty("Decorations")!.GetValue(cache);
+
+        // Fast resume: no ref file changed.
+        var extended = await svc.ExtendLayoutAsync(ctx, initial, additionalRows: 400);
+        Assert.Equal(500, extended.Layout.RowCount);
+        Assert.Equal(fingerprint, Get<long>(cache, "Fingerprint"));
+        Assert.Same(decorations, cache.GetType().GetProperty("Decorations")!.GetValue(cache));
+
+        // Slow resume: HEAD moved to a new branch on the same commit — the fingerprint changes,
+        // the tip set doesn't, so the walk resumes through the gate.
+        repo.Git("checkout", "-q", "-b", "other");
+        var scansBefore = GraphLayoutService.RefScanCountForTesting(ctx.RepositoryPath);
+        var again = await svc.ExtendLayoutAsync(ctx, extended, additionalRows: 400);
+
+        Assert.Equal(900, again.Layout.RowCount);
+        Assert.True(GraphLayoutService.RefScanCountForTesting(ctx.RepositoryPath) > scansBefore);
+        Assert.False(Get<bool>(cache, "WalkSuperseded"));
+        Assert.Equal(fingerprint, Get<long>(cache, "Fingerprint"));
+        Assert.Same(decorations, cache.GetType().GetProperty("Decorations")!.GetValue(cache));
+    }
+
+    [Fact]
+    public async Task Checkout_mid_crawl_repaints_badges_on_next_compute()
+    {
+        if (!_host.Locator.Current.Found)
+            return;
+
+        var (svc, ctx, initial, repo) = await OpenLiveWalkAsync();
+        await using var _ctx = ctx;
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
+
+        repo.Git("checkout", "-q", "-b", "other");
+        await svc.ExtendLayoutAsync(ctx, initial, additionalRows: 400);
+
+        // The resume left the old fingerprint with the old badges, so the compute sees the refs
+        // moved and rebuilds them — also when the rebuilt walk comes from the .gz walk cache,
+        // whose key (the tip set) the checkout didn't change.
+        var fresh = await svc.ComputeLayoutAsync(ctx, query, maxRows: 100);
+        var head = Assert.Single(fresh.Layout.Decorations, d => d.RowIndex == 0 && d.IsHead);
+        Assert.Equal("other", head.Label);
     }
 
     [Fact]
