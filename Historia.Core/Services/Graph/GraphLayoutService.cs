@@ -184,7 +184,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         /// cref="Fingerprint"/>, which still covers every ref + HEAD and stays the key
         /// <c>RecomputeAsync</c> and the ref-badge cache use. A checkout, a stash, a branch
         /// rename, or a ref outside the walk's scope changes <see cref="Fingerprint"/> (so badges
-        /// refresh) but leaves <see cref="WalkKey"/> — and so the disk cache — unchanged.</summary>
+        /// refresh) but leaves <see cref="WalkKey"/> — and so the disk cache — unchanged.
+        /// <para>Once non-zero it names the one walk this cache is committed to; a step that
+        /// derives another key supersedes the walk (<see cref="WalkSuperseded"/>). Normally a
+        /// prime or a <c>Done</c> sets it with <see cref="Fingerprint"/> and the decorations. It is
+        /// set ahead of them — before any row is pulled — in two cases: when the cache adopts a
+        /// partial on-disk store (whose rows are that key's), and when a headless job starts
+        /// (keyed on the tips it probed, which its writes use).</para></summary>
         public long WalkKey { get; set; }
         public int SpilledRows { get; set; }
         public bool MetaComplete { get; set; }   // the whole history is on disk
@@ -882,7 +888,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 : new SynchronousProgress<int>(rows =>
                     progress.Report(new GitProgress { Phase = CloneStatus.CachingPhase, ObjectsDone = rows }));
 
-            return await RunHeadlessSpoolAsync(context, query, probe.Tips, ct, ignoreGate: true, rowsSpilled: rowsProgress)
+            return await RunHeadlessSpoolAsync(context, query, probe.Tips, probe.WalkKey, ct, ignoreGate: true, rowsSpilled: rowsProgress)
                 .ConfigureAwait(false);
         }, ct);
 
@@ -982,7 +988,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             await RunHeadlessReorderAsync(context, query, repoPath, probe.Tips, probe.WalkKey, ct).ConfigureAwait(false);
         }
         else
-            await RunHeadlessSpoolAsync(context, query, probe.Tips, ct).ConfigureAwait(false);
+            await RunHeadlessSpoolAsync(context, query, probe.Tips, probe.WalkKey, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -1135,14 +1141,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// Cancelling <paramref name="ct"/> stops at the next batch boundary; whatever was already
     /// spilled stays on disk.</summary>
     private async Task<int> RunHeadlessSpoolAsync(
-        RepositoryContext context, GraphQuery query, string[] sortedTips, CancellationToken ct,
+        RepositoryContext context, GraphQuery query, string[] sortedTips, long walkKey, CancellationToken ct,
         bool ignoreGate = false, IProgress<int>? rowsSpilled = null)
     {
         if (!_locator.Current.Found)
             return 0; // no git.exe — nothing can walk; the startup notice already says so
 
         var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
-        var cache = new RepoCache { Query = query };
+        // Committed to the probed walk from the start: the store's key and the tips recorded with
+        // it are the probe's, so tips that moved before the first step supersede this spool
+        // instead of walking other rows under them.
+        var cache = new RepoCache { Query = query, WalkKey = walkKey };
         // Times this spool from the moment it starts pulling rows so a walk that
         // reaches exhaustion having started at row 0 (a genuine full walk, not a resumed partial
         // one — the ONLY case that stamp is meaningful for) can record GraphMetaSplice's guard-4
@@ -1254,7 +1263,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
             builder = new GraphMetaReorderBuilder(oldStore.BuildShaIndex(), oldStore.RecordCount);
 
         var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches);
-        var cache = new RepoCache { Query = query };
+        // Committed to the probed walk: the order is written under newWalkKey with sortedTips, so
+        // tips that moved before the first step supersede this reorder rather than feed it
+        // another walk's rows.
+        var cache = new RepoCache { Query = query, WalkKey = newWalkKey };
         try
         {
             var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
@@ -1748,6 +1760,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     cache.MetaStore = store;
                     cache.MetaWriter ??= new GraphMetaWriter(repoPath, walkKey, query.IncludeRemoteBranches);
                     AdoptDurableStore(cache, store.Count);
+                    // The adopted rows commit this cache to the store's walk now, not at the
+                    // prime: a step that prepares before that prime and sees other tips must
+                    // supersede, not prime its own walk over these rows.
+                    lock (cache)
+                        cache.WalkKey = walkKey;
                     have = store.Count;
                     Diagnostics.PerfLog.Mark($"meta store HIT (partial): resuming walk after {store.Count} durable rows");
                     if (have >= wantCount)
@@ -1824,9 +1841,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         await cache.WalkLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            // Another step primed while this one waited for the lock — its walk stands; the next
-            // step resumes it (or supersedes it, when the tips differ).
-            if (cache.LiveWalk is not null || (cache.WalkKey != 0 && cache.WalkKey != prep.WalkKey))
+            // Another step primed (or superseded the walk) while this one waited for the lock — its
+            // outcome stands; the next step resumes it, or supersedes it when the tips differ. A
+            // walk that already ran to the end leaves no LiveWalk behind, so the row count tells
+            // too: priming now would skip only the rows this step saw and pull the rest again.
+            if (cache.WalkHalted || cache.LiveWalk is not null
+                || (cache.WalkKey != 0 && cache.WalkKey != prep.WalkKey)
+                || TotalWalked(cache) != prep.Have)
                 return new WalkResult([], prep.Decorations, Exhausted: false, prep.Fingerprint, DecosFresh: false,
                     WalkKey: prep.WalkKey, CarriesRefState: false);
 

@@ -233,6 +233,188 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
         Assert.Equal(100, after.RowCount);
     }
 
+    private static SemaphoreSlim WalkLock(object cache) =>
+        (SemaphoreSlim)cache.GetType().GetField("WalkLock")!.GetValue(cache)!;
+
+    /// <summary>Holds the repo gate until <see cref="IAsyncDisposable.DisposeAsync"/>.</summary>
+    private static async Task<IAsyncDisposable> HoldGateAsync(RepositoryContext ctx)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = ctx.WithRepositoryAsync(_ =>
+        {
+            entered.SetResult();
+            release.Task.Wait();
+            return 0;
+        });
+        await entered.Task;
+        return new GateHold(release, held);
+    }
+
+    private sealed class GateHold(TaskCompletionSource release, Task held) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            release.TrySetResult();
+            await held;
+        }
+    }
+
+    private static async Task<(string[] Tips, long WalkKey)> CurrentTipsAsync(RepositoryContext ctx, GraphQuery query)
+    {
+        var method = typeof(GraphLayoutService).GetMethod("TryGetRefStateAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var task = (Task)method.Invoke(null, [ctx, query, false, CancellationToken.None])!;
+        await task;
+        var state = (System.Runtime.CompilerServices.ITuple)task.GetType().GetProperty("Result")!.GetValue(task)!;
+        return ((string[])state[2]!, (long)state[3]!);
+    }
+
+    [Fact]
+    public async Task A_prime_queued_behind_a_walk_that_ran_out_pulls_nothing_again()
+    {
+        if (GitMissing)
+            return;
+        var repo = TestRepositoryBuilder.FromTemplate("linear-60", b => b.LinearHistory(60));
+        _repos.Add(repo);
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
+        await using var ctx = Open(repo);
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
+
+        // Two computes on one fresh cache both prepare a prime (nothing walked yet), then queue on
+        // WalkLock. The first reads all 60 commits and closes its walk; the second must not start
+        // another one that pulls them again.
+        Task<GraphLayoutResult> a, b;
+        SemaphoreSlim walkLock;
+        await using (await HoldGateAsync(ctx))
+        {
+            a = svc.ComputeLayoutAsync(ctx, AllRefs, maxRows: 100);
+            b = svc.ComputeLayoutAsync(ctx, AllRefs, maxRows: 100);
+            walkLock = WalkLock(GetCache(svc, ctx));
+            await walkLock.WaitAsync();
+        }
+        try { await Task.Delay(1_000); } // both prepare on the gate, then wait on WalkLock
+        finally { walkLock.Release(); }
+        var results = await Task.WhenAll(a, b);
+
+        Assert.Equal(60, TotalWalked(GetCache(svc, ctx)));
+        foreach (var r in results)
+        {
+            var ids = Ids(r);
+            Assert.Equal(60, ids.Count);
+            Assert.Equal(ids.Count, ids.Distinct().Count());
+        }
+    }
+
+    [Fact]
+    public async Task A_step_prepared_after_a_store_adoption_supersedes_on_new_tips()
+    {
+        if (GitMissing)
+            return;
+        var repo = Linear3000();
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
+        await using var ctx = Open(repo);
+        var svc = DiskService();
+
+        // A partial store (the painted 100 rows) for the current tips.
+        await svc.ComputeLayoutAsync(ctx, AllRefs, maxRows: 100);
+        var store = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true);
+        Assert.True(store is { Ok: true, Exhausted: false, RowCount: 100 });
+        svc.Forget(ctx);
+
+        // Compute A adopts the store on the gate and queues its prime on WalkLock.
+        Task<GraphLayoutResult> a;
+        object cache;
+        SemaphoreSlim walkLock;
+        await using (await HoldGateAsync(ctx))
+        {
+            a = svc.ComputeLayoutAsync(ctx, AllRefs, maxRows: 100);
+            cache = GetCache(svc, ctx);
+            walkLock = WalkLock(cache);
+            await walkLock.WaitAsync();
+        }
+        Task<GraphLayoutResult> b;
+        try
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(30);
+            while (TotalWalked(cache) < 100 && DateTime.UtcNow < deadline)
+                await Task.Delay(20);
+            Assert.Equal(100, TotalWalked(cache));
+
+            // Compute B on the same cache sees new tips before A's prime ran.
+            AddSideTip(repo, "side");
+            var (_, newKey) = await CurrentTipsAsync(ctx, AllRefs);
+            b = svc.ComputeLayoutAsync(ctx, AllRefs, maxRows: 100);
+            await Task.Delay(1_000); // B prepares on the gate, then waits on WalkLock
+        }
+        finally { walkLock.Release(); }
+        await Task.WhenAll(a, b);
+
+        // B superseded the walk instead of priming the new tips over the adopted rows.
+        Assert.True(Get<bool>(cache, "WalkSuperseded"));
+        Assert.Equal(store.WalkKey, Get<long>(cache, "WalkKey"));
+        Assert.NotEqual(await CurrentWalkKeyAsync(ctx, AllRefs), Get<long>(cache, "LiveWalkFingerprint"));
+        var after = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true);
+        Assert.Equal(store.WalkKey, after.WalkKey);
+        Assert.Equal(100, after.RowCount);
+    }
+
+    /// <summary>An exhausted store for the fixture's original tips, written by a full spill.</summary>
+    private async Task WriteExhaustedStoreAsync(TestRepositoryBuilder repo)
+    {
+        await using var ctx0 = Open(repo);
+        var svc0 = new GraphLayoutService(_host.Settings, _host.Locator);
+        await svc0.ComputeLayoutAsync(ctx0, AllRefs, maxRows: 100);
+        var spill = (Task?)GetCache(svc0, ctx0).GetType().GetProperty("BackgroundSpillTask")!.GetValue(GetCache(svc0, ctx0));
+        Assert.NotNull(spill);
+        await spill.WaitAsync(TimeSpan.FromSeconds(60));
+    }
+
+    [Fact]
+    public async Task Headless_reorder_keyed_on_tips_that_moved_before_it_started_writes_nothing()
+    {
+        if (GitMissing)
+            return;
+        var repo = Linear3000();
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true, EnableGraphSplice = false });
+        await WriteExhaustedStoreAsync(repo);
+        var old = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true);
+        Assert.True(old is { Ok: true, Exhausted: true });
+
+        // The probe saw one tip change; a second lands before the reorder's first step.
+        await using var ctx = Open(repo);
+        AddSideTip(repo, "side");
+        var (probedTips, probedKey) = await CurrentTipsAsync(ctx, AllRefs);
+        AddSideTip(repo, "second");
+
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
+        var reorder = typeof(GraphLayoutService).GetMethod("RunHeadlessReorderAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        await (Task)reorder.Invoke(svc, [ctx, AllRefs, ctx.RepositoryPath, probedTips, probedKey, CancellationToken.None])!;
+
+        var after = GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true);
+        Assert.Equal(old.WalkKey, after.WalkKey);
+        Assert.Equal(old.OrderVersion, after.OrderVersion);
+        Assert.Equal(old.RowCount, after.RowCount);
+    }
+
+    [Fact]
+    public async Task Headless_spool_keyed_on_tips_that_moved_before_it_started_writes_nothing()
+    {
+        if (GitMissing)
+            return;
+        var repo = Linear3000();
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
+        await using var ctx = Open(repo);
+        var (probedTips, probedKey) = await CurrentTipsAsync(ctx, AllRefs);
+        AddSideTip(repo, "side");
+
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
+        var spool = typeof(GraphLayoutService).GetMethod("RunHeadlessSpoolAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var task = (Task<int>)spool.Invoke(svc, [ctx, AllRefs, probedTips, probedKey, CancellationToken.None, true, null])!;
+
+        Assert.Equal(0, await task);
+        Assert.False(GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true).Ok);
+    }
+
     [Fact]
     public async Task Headless_reorder_abandons_when_the_tips_move_mid_reorder()
     {
