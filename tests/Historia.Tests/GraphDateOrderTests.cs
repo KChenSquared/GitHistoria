@@ -78,33 +78,6 @@ public sealed class GraphDateOrderTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Libgit2_fallback_walk_produces_the_same_rows()
-    {
-        using var repo = TestRepositoryBuilder.FromTemplate("graph-interleaved-branches", b =>
-        {
-            var t0 = DateTimeOffset.Parse("2026-09-15T12:00:00Z");
-            b.WriteFile("a.txt", "a").Stage().CommitAt("A", t0.AddMinutes(1));
-            b.WriteFile("m1.txt", "m1").Stage().CommitAt("M1", t0.AddMinutes(2));
-
-            b.Checkout("feature", create: true);
-            b.WriteFile("f1.txt", "f1").Stage().CommitAt("F1", t0.AddMinutes(3));
-            b.WriteFile("f2.txt", "f2").Stage().CommitAt("F2", t0.AddMinutes(5));
-
-            b.Checkout("main");
-            b.WriteFile("m2.txt", "m2").Stage().CommitAt("M2", t0.AddMinutes(4));
-            b.WriteFile("m3.txt", "m3").Stage().CommitAt("M3", t0.AddMinutes(6));
-        });
-
-        await using var ctx = _host.Open(repo.Path);
-        ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone();
-        var svc = new GraphLayoutService(_host.Settings); // 1-arg libgit2 constructor
-        var result = await svc.ComputeLayoutAsync(ctx, Q);
-
-        var messages = Messages(result);
-        Assert.Equal(["M3", "F2", "M2", "F1", "M1", "A"], messages);
-    }
-
-    [Fact]
     public async Task Rows_follow_the_commit_date_not_the_author_date()
     {
         var locator = _host.Provider.GetRequiredService<IGitExecutableLocator>();
@@ -174,7 +147,7 @@ public sealed class GraphDateOrderTests : IAsyncDisposable
 
         // Direct TryLoad with v5 code must reject the v4 file as a miss
         var cache = new GraphWalkCache();
-        var directHit = cache.TryLoad(repo.Path, Q, wantCount: 2, fingerprint: res1.Fingerprint, WalkEngine.Cli);
+        var directHit = cache.TryLoad(repo.Path, Q, wantCount: 2, fingerprint: res1.Fingerprint);
         Assert.Null(directHit);
 
         // Compute again through a fresh service instance: must encounter a cache miss, re-walk, and return date-ordered rows

@@ -52,7 +52,7 @@ public sealed class GraphSpillTrunkStabilityTests : IAsyncDisposable
     public async Task Trunk_lane_survives_the_metadata_spill()
     {
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
-        var svc = new GraphLayoutService(_host.Settings);
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         await using var ctx = _host.Open(_repo.Path);
         ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone(); // no graph control / workspace here — stand in for the load signals
 
@@ -84,7 +84,7 @@ public sealed class GraphSpillTrunkStabilityTests : IAsyncDisposable
         ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone(); // no graph control / workspace here — stand in for the load signals
 
         // Session 1 walks, lays out, and persists the walk + spilled metadata to disk.
-        var s1 = new GraphLayoutService(_host.Settings);
+        var s1 = new GraphLayoutService(_host.Settings, _host.Locator);
         var warmUp = await s1.ComputeLayoutAsync(ctx, Q);
         var expected = Lanes(warmUp, 40);
         Assert.Equal(0, warmUp.Layout.Rows[0].LaneIndex);
@@ -92,7 +92,7 @@ public sealed class GraphSpillTrunkStabilityTests : IAsyncDisposable
         await Task.Delay(1500);
 
         // Session 2 (fresh service = cold launch): loads id/parents-only from the walk cache.
-        var s2 = new GraphLayoutService(_host.Settings);
+        var s2 = new GraphLayoutService(_host.Settings, _host.Locator);
         var reopened = await s2.ComputeLayoutAsync(ctx, Q);
 
         Assert.Equal(0, reopened.Layout.Rows[0].LaneIndex);

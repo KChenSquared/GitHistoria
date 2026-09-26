@@ -421,18 +421,17 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
 
     /// <summary>Cheap, header-only check: does the on-disk graph-cache header for
     /// <paramref name="repoPath"/> (there is only ever one physical <c>.meta.hdr</c> per repo,
-    /// whichever walk engine / remote-branch flag last wrote it) know it already has at least
-    /// <see cref="MinCommitsToWrite"/> commits? Tries every engine/remote-branch combination since
-    /// none is known up front here — at most one can ever match the single on-disk header.</summary>
+    /// whichever remote-branch flag last wrote it) know it already has at least
+    /// <see cref="MinCommitsToWrite"/> commits? Tries both remote-branch flags since neither is
+    /// known up front here — at most one can ever match the single on-disk header.</summary>
     private static bool RepoKnownLarge(string repoPath)
     {
-        foreach (var engine in new[] { WalkEngine.Cli, WalkEngine.LibGit2 })
-            foreach (var includeRemoteBranches in new[] { true, false })
-            {
-                var probe = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches, engine);
-                if (probe.Ok)
-                    return probe.RowCount >= MinCommitsToWrite;
-            }
+        foreach (var includeRemoteBranches in new[] { true, false })
+        {
+            var probe = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches);
+            if (probe.Ok)
+                return probe.RowCount >= MinCommitsToWrite;
+        }
         return false;
     }
 

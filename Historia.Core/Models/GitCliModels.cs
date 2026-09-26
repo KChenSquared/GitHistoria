@@ -12,6 +12,10 @@ public sealed record GitCliResult(
     TimeSpan Duration)
 {
     public bool IsSuccess => ExitCode == 0 && ErrorKind == GitErrorKind.None;
+
+    /// <summary>Stdout exactly as git wrote it — set only for a
+    /// <see cref="GitCliRequest.RawStandardOutput"/> request, null otherwise.</summary>
+    public byte[]? StandardOutputBytes { get; init; }
 }
 
 /// <summary>
@@ -37,6 +41,13 @@ public sealed record GitCliRequest
 
     /// <summary>When true, stdout/stderr line callbacks fire as output streams in (§6.5.1).</summary>
     public bool StreamOutput { get; init; }
+
+    /// <summary>Capture stdout as bytes, with no line splitting — for machine-parsed output whose
+    /// line breaks, lone CRs or NULs must survive exactly (<see cref="GitCliResult.StandardOutputBytes"/>;
+    /// <see cref="GitCliResult.StandardOutput"/> is those bytes decoded as UTF-8). Line mode
+    /// splits on CR as well as LF and rejoins lines with CRLF. Can't be combined with
+    /// <see cref="StreamOutput"/> or a stdout line callback.</summary>
+    public bool RawStandardOutput { get; init; }
 
     /// <summary>When set, written to the process's stdin and then closed (e.g. a patch for <c>git apply -</c>).</summary>
     public string? StandardInput { get; init; }

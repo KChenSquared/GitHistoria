@@ -32,7 +32,7 @@ public class GraphQueryTests : IAsyncDisposable
     public async Task CurrentBranchScopeExcludesOtherBranchCommits()
     {
         await using var ctx = _host.Open(_repo.Path);
-        var svc = new GraphLayoutService();
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
 
         var all = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
         svc.Forget(ctx);
@@ -46,7 +46,7 @@ public class GraphQueryTests : IAsyncDisposable
     public async Task PathFilterRestrictsTheWalkAndKeepsACoherentTopology()
     {
         await using var ctx = _host.Open(_repo.Path);
-        var svc = new GraphLayoutService();
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
 
         var filtered = await svc.ComputeLayoutAsync(ctx, new GraphQuery
         {
@@ -77,10 +77,13 @@ public class GraphQueryTests : IAsyncDisposable
         // configured "Initial rows loaded" (§7.3). The result must equal one full layout.
         using var repo = RepoTemplates.Linear(30);
         await using var ctx = _host.Open(repo.Path);
-        var svc = new GraphLayoutService();
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
 
         var full = await svc.ComputeLayoutAsync(ctx, query, maxRows: 20);
+        // Forget disposes a disk-backed commit store, so read the ids while it is still open. A
+        // disk-backed store can hold more rows than the layout has laid out; compare only those.
+        var fullIds = full.Layout.Commits.Take(full.Layout.RowCount).Select(c => c.Id).ToList();
         svc.Forget(ctx);
 
         var fast = await svc.ComputeLayoutAsync(ctx, query, maxRows: 5);
@@ -90,9 +93,7 @@ public class GraphQueryTests : IAsyncDisposable
         Assert.Equal(full.Layout.RowCount, extended.Layout.RowCount);
         Assert.Equal(full.Layout.Rows, extended.Layout.Rows);
         Assert.Equal(full.Layout.Edges, extended.Layout.Edges);
-        Assert.Equal(
-            full.Layout.Commits.Select(c => c.Id),
-            extended.Layout.Commits.Select(c => c.Id));
+        Assert.Equal(fullIds, extended.Layout.Commits.Take(extended.Layout.RowCount).Select(c => c.Id));
     }
 
     public async ValueTask DisposeAsync()

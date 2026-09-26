@@ -70,6 +70,11 @@ public sealed class RepositoryContext : IAsyncDisposable
     public CancellationToken Lifetime { get; }
 
     public IGitGateway Gateway { get; }
+
+    /// <summary>This repo's refs, read with one <c>git for-each-ref</c> and cached until a ref
+    /// file changes — the commit graph and the tag list read refs here, off the repo gate.</summary>
+    public RefSnapshotProvider RefSnapshots { get; }
+
     public IRepositoryStateService State { get; }
     internal FileWatcherService Watcher { get; }
     internal IWorkspaceService? Workspace { get; set; }
@@ -98,6 +103,9 @@ public sealed class RepositoryContext : IAsyncDisposable
         GitDirectory = repository.Info.Path;
         RepositoryPath = repository.Info.WorkingDirectory ?? repository.Info.Path;
         DisplayName = DeriveDisplayName(RepositoryPath, GitDirectory);
+
+        RefSnapshots = new RefSnapshotProvider(
+            services.GetRequiredService<IGitCliService>(), GitDirectory, RepositoryPath, Lifetime);
 
         Gateway = new LoggingGitGateway(
             new GitGateway(

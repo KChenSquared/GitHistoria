@@ -13,6 +13,7 @@ public sealed class MiniHost : IAsyncDisposable
     private readonly StateDir _state = new();
     public ServiceProvider Provider { get; }
     public SettingsService Settings { get; }
+    public IGitExecutableLocator Locator => SharedLocator.Value;
 
     public MiniHost()
     {

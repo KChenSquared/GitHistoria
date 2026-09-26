@@ -122,13 +122,14 @@ internal sealed class GraphMetaStore
     }
 
     /// <summary>
-    /// Opens the on-disk store for <paramref name="repoPath"/> if it is present, matches
-    /// <paramref name="fingerprint"/> / <paramref name="includeRemoteBranches"/> / <paramref
-    /// name="engine"/>, and already holds at least <paramref name="wantCount"/> rows (or is
-    /// exhausted). Returns null on any miss — a fresh walk then re-spills.
+    /// Opens the on-disk store for <paramref name="repoPath"/> if it is present, was written by
+    /// the current walk (<see cref="GraphWalkCache.CliWalkMarker"/>), matches <paramref
+    /// name="fingerprint"/> / <paramref name="includeRemoteBranches"/>, and already holds at least
+    /// <paramref name="wantCount"/> rows (or is exhausted). Returns null on any miss — a fresh
+    /// walk then re-spills.
     /// </summary>
     public static DiskCommitStore? TryOpen(
-        string repoPath, long fingerprint, bool includeRemoteBranches, int wantCount, WalkEngine engine)
+        string repoPath, long fingerprint, bool includeRemoteBranches, int wantCount)
     {
         try
         {
@@ -141,7 +142,7 @@ internal sealed class GraphMetaStore
                 || hdr.Version != Version
                 || hdr.Fingerprint != fingerprint
                 || hdr.IncludeRemoteBranches != includeRemoteBranches
-                || (WalkEngine)hdr.WalkEngine != engine)
+                || hdr.WalkEngine != GraphWalkCache.CliWalkMarker)
                 return null;
             if (!hdr.Exhausted && hdr.RowCount < wantCount)
                 return null;
@@ -155,10 +156,10 @@ internal sealed class GraphMetaStore
     }
 
     /// <summary>Cheap header-only probe: does a store for <paramref name="repoPath"/> exist and
-    /// match this fingerprint / remote-branch flag / engine? Returns its row count and exhausted
-    /// flag. No file handle is opened (unlike <see cref="TryOpen"/>).</summary>
+    /// match this fingerprint / remote-branch flag, written by the current walk? Returns its row
+    /// count and exhausted flag. No file handle is opened (unlike <see cref="TryOpen"/>).</summary>
     public static (bool Ok, int RowCount, bool Exhausted) Probe(
-        string repoPath, long fingerprint, bool includeRemoteBranches, WalkEngine engine)
+        string repoPath, long fingerprint, bool includeRemoteBranches)
     {
         try
         {
@@ -167,7 +168,7 @@ internal sealed class GraphMetaStore
                 return (false, 0, false);
             var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.Fingerprint != fingerprint
-                || hdr.IncludeRemoteBranches != includeRemoteBranches || (WalkEngine)hdr.WalkEngine != engine)
+                || hdr.IncludeRemoteBranches != includeRemoteBranches || hdr.WalkEngine != GraphWalkCache.CliWalkMarker)
                 return (false, 0, false);
             return (true, hdr.RowCount, hdr.Exhausted);
         }
@@ -180,13 +181,12 @@ internal sealed class GraphMetaStore
     /// <summary>
     /// Like <see cref="Probe"/> but WITHOUT a fingerprint check — for
     /// <c>TryOptimisticSnapshot</c>'s stale-tolerant first paint, which runs before the fresh
-    /// ref-fingerprint check (a full <c>repo.Refs.ToList()</c>) even starts. The caller must
+    /// ref-fingerprint check (a ref snapshot read, possibly a <c>for-each-ref</c>) even starts. The caller must
     /// treat the result as provisional, exactly like <see cref="GraphWalkCache.TryLoadStale"/>.
-    /// Still gated on <paramref name="engine"/> — the engine that WOULD run right now is
-    /// known cheaply (locator + query, no repo access), so an optimistic frame is never seeded
-    /// from a store the other engine wrote.
+    /// Still requires <see cref="GraphWalkCache.CliWalkMarker"/>, so an optimistic frame is never
+    /// seeded from a store a retired walk engine wrote.
     /// </summary>
-    public static (bool Ok, int RowCount) ProbeAny(string repoPath, bool includeRemoteBranches, WalkEngine engine)
+    public static (bool Ok, int RowCount) ProbeAny(string repoPath, bool includeRemoteBranches)
     {
         try
         {
@@ -195,7 +195,7 @@ internal sealed class GraphMetaStore
                 return (false, 0);
             var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
-                || (WalkEngine)hdr.WalkEngine != engine || hdr.RowCount <= 0)
+                || hdr.WalkEngine != GraphWalkCache.CliWalkMarker || hdr.RowCount <= 0)
                 return (false, 0);
             return (true, hdr.RowCount);
         }
@@ -212,7 +212,7 @@ internal sealed class GraphMetaStore
     /// without needing to know the current walk key up front.
     /// </summary>
     public static (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) ProbeExisting(
-        string repoPath, bool includeRemoteBranches, WalkEngine engine)
+        string repoPath, bool includeRemoteBranches)
     {
         try
         {
@@ -221,7 +221,7 @@ internal sealed class GraphMetaStore
                 return (false, 0, 0, 0, 0, false, 0);
             var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
-                || (WalkEngine)hdr.WalkEngine != engine)
+                || hdr.WalkEngine != GraphWalkCache.CliWalkMarker)
                 return (false, 0, 0, 0, 0, false, 0);
             return (true, hdr.Fingerprint, hdr.RowCount, hdr.RecordCount, hdr.OrderVersion, hdr.Exhausted, hdr.LastFullWalkMs);
         }
@@ -373,7 +373,7 @@ internal sealed class GraphMetaStore
 /// file must share <see cref="FileShare.Delete"/>, or <see cref="Reset"/> cannot retire it.
 /// All operations swallow IO errors — the cache is an optimisation, never a correctness dependency.
 /// </summary>
-internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool includeRemoteBranches, WalkEngine engine)
+internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool includeRemoteBranches)
 {
     private readonly string _hdr = GraphCachePaths.File(repoPath, GraphMetaStore.HdrExt);
     private readonly string _dat = GraphCachePaths.File(repoPath, GraphMetaStore.DatExt);
@@ -623,7 +623,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 RecordCount = recordCount,
                 OrderVersion = orderVersion,
                 Exhausted = exhausted,
-                WalkEngine = (int)engine,
+                WalkEngine = GraphWalkCache.CliWalkMarker,
                 LastFullWalkMs = lastFullWalkMs,
             };
             var tmp = $"{_hdr}.{Guid.NewGuid():N}.tmp";
@@ -731,7 +731,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     {
         lock (GraphCacheLocks.For(repoPath))
         {
-            var existing = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches, engine);
+            var existing = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches);
             var matchesKey = existing.Ok && existing.WalkKey == fingerprint;
 
             if (!matchesKey)
@@ -780,7 +780,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             return true;
         lock (GraphCacheLocks.For(repoPath))
         {
-            var existing = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches, engine);
+            var existing = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches);
             if (!existing.Ok || existing.WalkKey != expectedWalkKey)
                 return false;
             Append(newRecords, 0, newRecords.Count);
@@ -805,7 +805,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     {
         lock (GraphCacheLocks.For(repoPath))
         {
-            var probe = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches, engine);
+            var probe = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches);
             if (!probe.Ok || probe.WalkKey != expectedOldWalkKey || probe.Exhausted != expectedOldExhausted
                 || probe.OrderVersion != expectedOldOrderVersion || probe.RecordCount != expectedOldRecordCount)
                 return false;

@@ -125,8 +125,11 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
 
         var encoded = format.Encode(text);
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        await File.WriteAllBytesAsync(full, encoded, ct).ConfigureAwait(false);
         var newHash = Convert.ToHexStringLower(SHA256.HashData(encoded));
+
+        var replaced = await WriteReplacingAsync(full, encoded, expectedDiskHash, ct).ConfigureAwait(false);
+        if (replaced is not null)
+            return new ResolutionSaveResult { Saved = false, DiskHash = replaced };
 
         if (stage)
         {
@@ -149,14 +152,62 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         return new ResolutionSaveResult { Saved = true, DiskHash = newHash };
     }
 
+    /// <summary>
+    /// Writes <paramref name="bytes"/> through a sibling temp file that then replaces the target, so a
+    /// crash or a full disk never leaves a truncated working file, and the target keeps its
+    /// attributes and ACLs. Re-checks the on-disk hash just before the replace
+    /// and returns the differing hash (nothing written) when the file changed meanwhile; null on success.
+    /// A symlinked path is written in place so the link survives.
+    /// </summary>
+    private static async Task<string?> WriteReplacingAsync(string full, byte[] bytes, string expectedDiskHash, CancellationToken ct)
+    {
+        var existing = new FileInfo(full);
+        if (existing.LinkTarget is not null)
+        {
+            await File.WriteAllBytesAsync(full, bytes, ct).ConfigureAwait(false);
+            return null;
+        }
+
+        var temp = Path.Combine(Path.GetDirectoryName(full)!, $".historia-save-{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await File.WriteAllBytesAsync(temp, bytes, ct).ConfigureAwait(false);
+            if (!OperatingSystem.IsWindows() && existing.Exists)
+                File.SetUnixFileMode(temp, File.GetUnixFileMode(full));
+
+            var currentHash = await HashFileAsync(full, ct).ConfigureAwait(false);
+            if (!string.Equals(currentHash, expectedDiskHash, StringComparison.OrdinalIgnoreCase))
+                return currentHash;
+
+            // Replace, not rename-over: ReplaceFile keeps the destination's attributes and ACLs.
+            if (File.Exists(full))
+                File.Replace(temp, full, destinationBackupFileName: null);
+            else
+                File.Move(temp, full);
+            return null;
+        }
+        finally
+        {
+            try { File.Delete(temp); } catch { /* best effort */ }
+        }
+    }
+
     private static async Task<string> HashFileAsync(string fullPath, CancellationToken ct)
     {
-        if (!File.Exists(fullPath) || Directory.Exists(fullPath))
+        if (Directory.Exists(fullPath))
             return string.Empty;
 
-        await using var stream = File.OpenRead(fullPath);
-        var hashBytes = await SHA256.HashDataAsync(stream, ct).ConfigureAwait(false);
-        return Convert.ToHexStringLower(hashBytes);
+        try
+        {
+            await using var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 4096, useAsync: true);
+            var hashBytes = await SHA256.HashDataAsync(stream, ct).ConfigureAwait(false);
+            return Convert.ToHexStringLower(hashBytes);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return string.Empty;
+        }
     }
 
     public async Task ResolveWithSideAsync(RepositoryContext context, string filePath, ConflictSide side, CancellationToken ct = default)

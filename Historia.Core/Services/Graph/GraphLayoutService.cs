@@ -12,10 +12,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// them — deliberately long so a slow-but-progressing large repo is never cut short.</summary>
     private static readonly TimeSpan SpillStartGrace = TimeSpan.FromSeconds(180);
 
-    /// <summary>Rows per chunk of the background full-history walk (§7.6). Each chunk is a
-    /// separate low-priority repo-gate acquisition that *resumes* the primed revwalk (cheap —
-    /// no tip reseed), so this bounds how long a foreground caller that has already started
-    /// waiting can be stuck behind the spill to roughly one chunk's pull.</summary>
+    /// <summary>Rows per chunk of the background full-history walk (§7.6). Each chunk *resumes*
+    /// the primed <c>git log</c> walk (cheap — no respawn), off the repo gate while no ref file
+    /// has changed and otherwise after one low-priority gate turn, so this bounds how long a
+    /// foreground extend can wait behind the spill to roughly one chunk's pull.</summary>
     private const int SpillWalkChunkRows = 25_000;
 
     /// <summary>Rows per batch of the disk-spill write, both for the active tab's background
@@ -73,43 +73,50 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// outside tests.</summary>
     internal static Action<int, int>? TestSpliceCommitted;
 
+    /// <summary>Test seam: how many full ref scans (fingerprint + tip resolution) have run per
+    /// repository path. A scan costs seconds on a repo with tens of thousands of refs, so tests
+    /// assert on the delta across a call to prove a satisfied or resumed walk step skipped it.
+    /// Keyed by <see cref="RepositoryContext.RepositoryPath"/> so parallel test classes on other
+    /// fixtures never disturb the count.</summary>
+    private static readonly ConcurrentDictionary<string, int> _refScanCounts = new(StringComparer.OrdinalIgnoreCase);
+
+    internal static int RefScanCountForTesting(string repositoryPath) =>
+        _refScanCounts.TryGetValue(repositoryPath, out var n) ? n : 0;
+
+    private static void CountRefScan(string repositoryPath) =>
+        _refScanCounts.AddOrUpdate(repositoryPath, 1, (_, n) => n + 1);
+
     /// <summary>Minimum row-count growth between debounced <see cref="GraphWalkCache.Save"/>
     /// calls for the same cache (see <see cref="RepoCache.WalkCacheSavedRows"/>).</summary>
     private const int WalkCacheSaveStride = 5_000;
 
-    private readonly ISettingsService? _settings;
-    private readonly IGitExecutableLocator? _locator;
+    private readonly ISettingsService _settings;
+    private readonly IGitExecutableLocator _locator;
     private readonly GraphBackgroundWriter? _backgroundWriter;
 
     /// <summary>Stored (not just forwarded to <see cref="GraphBackgroundWriter"/>)
     /// so <see cref="TryHeadlessSpliceAsync"/> can run its own <c>git rev-list --stdin</c> delta
-    /// query directly. Null in every ctor except the two DI ones that receive one.</summary>
+    /// query directly. Null in the 2-arg ctor.</summary>
     private readonly IGitCliService? _cli;
 
-    /// <summary>Null in every ctor except the 4-arg DI
-    /// one below — tests that don't pass a gate keep today's un-gated behaviour (an "always open"
-    /// gate), matching the plan's own recommendation for test constructors.</summary>
+    /// <summary>Null in every ctor except the 4-arg DI one below — callers that don't pass a gate
+    /// (tests) run un-gated, as if the gate were always open.</summary>
     private readonly IBackgroundWorkGate? _gate;
 
     /// <summary>§7.6: page per-commit metadata from a random-access file instead of keeping
     /// it resident. Read once — the setting takes effect on the next launch.</summary>
     private readonly bool _metaFromDisk;
 
-    public GraphLayoutService() { }
-    public GraphLayoutService(ISettingsService settings)
+    /// <summary>Every graph query is walked by <c>git log</c> (<see cref="GitLogStream"/>) through
+    /// <paramref name="locator"/>. With git.exe missing the graph is empty rather than walked
+    /// some other way (see <see cref="PrimeCliWalkAsync"/>); the startup notice tells the user
+    /// why.</summary>
+    public GraphLayoutService(ISettingsService settings, IGitExecutableLocator locator)
     {
         _settings = settings;
+        _locator = locator;
         // Disk-backed metadata pages from the graph cache folder.
         _metaFromDisk = settings.Current.GraphMetadataFromDisk;
-    }
-
-    /// <summary>DI ctor (§3 linux cold-prime plan): with a working <see cref="IGitExecutableLocator"/>
-    /// the CLI streaming walk (<see cref="GitLogStream"/>) becomes the primary engine for the
-    /// plain all-refs query; the parameterless / single-arg test ctors above always keep the
-    /// libgit2 path, since <see cref="_locator"/> stays null.</summary>
-    public GraphLayoutService(ISettingsService settings, IGitExecutableLocator locator) : this(settings)
-    {
-        _locator = locator;
     }
 
     /// <summary>DI ctor (§4 linux cold-prime plan): additionally wires up
@@ -134,24 +141,40 @@ public sealed class GraphLayoutService : IGraphLayoutService
         _backgroundWriter = new GraphBackgroundWriter(cli, settings, gate);
     }
 
-    /// <summary>Awaits the gate if one was supplied; a no-op ("always open") for the test ctors
-    /// above that never received one.</summary>
+    /// <summary>Awaits the gate if one was supplied; a no-op ("always open") for the ctors above
+    /// that never received one.</summary>
     private Task WaitForGateAsync(CancellationToken ct) =>
         _gate?.WaitUntilOpenAsync(ct) ?? Task.CompletedTask;
 
-    /// <summary>The engine a FRESH prime would use right now — decidable with no repo access
-    /// (locator + query only), so it can gate a disk-cache probe before the repo gate is even
-    /// taken, and gate the optimistic (pre-fingerprint) snapshot path too.</summary>
-    private WalkEngine ExpectedEngine(GraphQuery query) =>
-        _locator is { Current.Found: true } && GraphWalkCache.Supports(query) ? WalkEngine.Cli : WalkEngine.LibGit2;
-
     private sealed class RepoCache
     {
-        public required GraphRefScope Scope { get; set; }
-        public required bool IncludeRemotes { get; set; }
+        /// <summary>The whole query this cache walks — scope, remotes, stashes, path filter and
+        /// selected refs — so an extend continues exactly this walk. <see cref="GetOrResetCache"/>
+        /// reuses the cache only for a query of the same shape (<see cref="SameWalkShape"/>).</summary>
+        public required GraphQuery Query { get; init; }
+        public bool IncludeRemotes => Query.IncludeRemoteBranches;
         public List<RawCommit> Commits { get; } = [];
         public Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Decorations { get; set; } = [];
         public bool Exhausted { get; set; }
+
+        /// <summary>The walk could not run or continue — git.exe missing, the process failed to
+        /// start, or it failed before exhausting (Rule 11: no fallback). The graph keeps whatever
+        /// rows were already walked (none, for a failure before the first row) and nothing more
+        /// is attempted for this cache: no respawn from the crawler or the spill, no disk write.
+        /// <see cref="Forget"/> or a forced reset drops the cache, so a ref change or a reopen
+        /// tries again.</summary>
+        public bool WalkFailed { get; set; }
+
+        /// <summary>The tip set moved after this cache committed to a walk (<see cref="WalkKey"/>
+        /// set): its rows still picture the old refs correctly, but a walk over the new tips
+        /// doesn't line up with them row for row, so nothing more is walked or written for this
+        /// cache — no resume, no re-prime, no spill, no disk save. The next
+        /// <see cref="ComputeLayoutAsync"/> (or the RefsChanged recompute's <see cref="Forget"/>)
+        /// replaces it with a fresh walk from row 0. Normal, not a failure.</summary>
+        public bool WalkSuperseded { get; set; }
+
+        /// <summary>Nothing more is walked or written for this cache.</summary>
+        public bool WalkHalted => WalkFailed || WalkSuperseded;
 
         // ── §7.6 disk-backed metadata ──
         public long Fingerprint { get; set; }
@@ -161,7 +184,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         /// cref="Fingerprint"/>, which still covers every ref + HEAD and stays the key
         /// <c>RecomputeAsync</c> and the ref-badge cache use. A checkout, a stash, a branch
         /// rename, or a ref outside the walk's scope changes <see cref="Fingerprint"/> (so badges
-        /// refresh) but leaves <see cref="WalkKey"/> — and so the disk cache — unchanged.</summary>
+        /// refresh) but leaves <see cref="WalkKey"/> — and so the disk cache — unchanged.
+        /// <para>Once non-zero it names the one walk this cache is committed to; a step that
+        /// derives another key supersedes the walk (<see cref="WalkSuperseded"/>). Normally a
+        /// prime or a <c>Done</c> sets it with <see cref="Fingerprint"/> and the decorations. It is
+        /// set ahead of them — before any row is pulled — in two cases: when the cache adopts a
+        /// partial on-disk store (whose rows are that key's), and when a headless job starts
+        /// (keyed on the tips it probed, which its writes use).</para></summary>
         public long WalkKey { get; set; }
         public int SpilledRows { get; set; }
         public bool MetaComplete { get; set; }   // the whole history is on disk
@@ -182,17 +211,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // re-snapshot + re-gzip the whole window on every one.
         public int WalkCacheSavedRows { get; set; }
 
-        // ── resumable walk (v10.1.2, streaming CLI engine since v10.1.3) ──
-        // A live, primed walk enumerator (the multi-second tip-priority cost on a big repo, or —
-        // for the CLI engine — the process spawn) pulled forward in chunks by EnsureWalkedAsync —
-        // the quick phase, each scroll Extend, the silent crawler and the §7.6 background spill
-        // all continue this ONE walk instead of restarting from the tips every time. Two engines:
-        // a libgit2 revwalk (wrapped as RawCommit by LibGit2RawCommitEnumerator) which is
-        // libgit2-backed and so ONLY ever touched inside RepositoryContext's gate, and a
-        // GitLogStream (a live `git log` process) which is pulled OFF the gate — see
-        // GraphLayoutService.EnsureWalkedAsync. Engine records which one is currently live so a
-        // resume knows whether it needs the gate. Disposed on reset / Forget / exhaustion / a
-        // walk-key change.
+        // ── resumable walk ──
+        // A live, primed `git log` process (GitLogStream) pulled forward in chunks by
+        // EnsureWalkedAsync — the quick phase, each scroll Extend, the silent crawler and the §7.6
+        // background spill all continue this ONE walk instead of respawning from the tips every
+        // time. Pulled OFF the repo gate, under WalkLock. Disposed on reset / Forget / exhaustion /
+        // failure, and when a tip-set change supersedes the walk (WalkSuperseded) — a walk is
+        // never re-primed over another tip set within one cache.
         public IEnumerator<RawCommit>? LiveWalk { get; set; }
 
         /// <summary>§Phase 3 (3b): despite the name (kept so reflection-based tests that poke this
@@ -201,16 +226,19 @@ public sealed class GraphLayoutService : IGraphLayoutService
         /// checkout/stash/rename, since none of those change the tip set it's reading.</summary>
         public long LiveWalkFingerprint { get; set; }
         public int LiveWalkPos { get; set; } // rows already pulled from LiveWalk
-        public WalkEngine Engine { get; set; }
 
-        // Serializes a CLI-engine prime/resume pull (which runs off the repo gate) against a
-        // concurrent one — e.g. a foreground Extend racing the §7.6 background spill's next
-        // chunk. The libgit2 engine doesn't need this: it's already serialized by the repo gate.
+        /// <summary>The <see cref="RefSnapshot.Token"/> the live walk's tip set was last
+        /// confirmed against. While the repo's ref files still hash to it, a walk step resumes
+        /// straight off the repo gate — no ref read, no tip resolution. 0 = unconfirmed.</summary>
+        public long LiveWalkSnapshotToken { get; set; }
+
+        // Serializes a prime/resume pull (which runs off the repo gate) against a concurrent one
+        // — e.g. a foreground Extend racing the §7.6 background spill's next chunk.
         public readonly SemaphoreSlim WalkLock = new(1, 1);
 
-        /// <summary>Dispose the revwalk enumerator and forget it. Only safe on the repo gate
-        /// (i.e. from inside a WithRepository* callback) or after Cts has been cancelled and the
-        /// spill task has observed it — never while another thread may be mid-MoveNext.</summary>
+        /// <summary>Dispose the walk (killing its git process) and forget it. Never while another
+        /// thread may be mid-MoveNext: callers hold <see cref="WalkLock"/>, or have cancelled
+        /// <see cref="Cts"/> and let the spill task observe it.</summary>
         public void DisposeLiveWalk()
         {
             var w = LiveWalk;
@@ -218,14 +246,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
             try { w?.Dispose(); } catch { /* best effort */ }
         }
 
-        /// <summary>Forget the enumerator without disposing it — for off-gate callers (Forget /
-        /// reset). The orphaned CommitEnumerator frees its git_revwalk from its finalizer, so
-        /// this trades a brief native leak for never racing a Dispose against an in-flight walk.</summary>
+        /// <summary>Forget the walk without disposing it — for callers that can't take
+        /// <see cref="WalkLock"/> (Forget / reset), where a Dispose could race an in-flight
+        /// MoveNext. The orphaned git process exits once its stdout pipe is closed by
+        /// finalization, trading a brief leak for never killing a stream mid-read.</summary>
         public void DropLiveWalk()
         {
             LiveWalk = null;
             LiveWalkFingerprint = 0;
             LiveWalkPos = 0;
+            LiveWalkSnapshotToken = 0;
         }
     }
 
@@ -239,6 +269,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private readonly DagLayoutEngine _engine = new();
     private readonly GraphWalkCache _walkCache = new();
     private readonly ConditionalWeakTable<RepositoryContext, RepoCache> _caches = [];
+    // The walk each layout's rows came from. Extend shares State in place, so one entry covers a
+    // layout and every extension of it. A layout whose walk has since been reset (a RefsChanged
+    // re-walk) must never be extended from the new walk — its row N is a different commit there.
+    private readonly ConditionalWeakTable<GraphLayoutState, RepoCache> _layoutOwners = [];
     // Keyed by repository path, not context: survives tab close/reopen and context re-creation,
     // and decorations are a function of the repo's refs, not the context object.
     private readonly Dictionary<string, DecoCache> _decoByPath = new(StringComparer.OrdinalIgnoreCase);
@@ -250,13 +284,15 @@ public sealed class GraphLayoutService : IGraphLayoutService
     {
         Diagnostics.PerfLog.Mark($"ComputeLayout enter (maxRows={maxRows})");
         var cache = GetOrResetCache(context, query, force: false);
-        if (TotalWalked(cache) > 0 && cache.Fingerprint != 0)
-        {
-            var currentFp = await context.WithRepositoryAsync(repo =>
-                ComputeFingerprint(repo, query, out _), ct).ConfigureAwait(false);
-            if (currentFp != cache.Fingerprint)
-                cache = GetOrResetCache(context, query, force: true);
-        }
+        // A superseded walk can't grow — its tips moved — so a compute always starts a fresh one.
+        if (cache.WalkSuperseded)
+            cache = GetOrResetCache(context, query, force: true);
+        // Refs that can't be read right now are no evidence the painted rows are stale — keep the
+        // cache; EnsureWalkedAsync records the failure if it needs refs to go further.
+        if (TotalWalked(cache) > 0 && cache.Fingerprint != 0
+            && await TryGetRefStateAsync(context, query, background: false, ct).ConfigureAwait(false) is { } state
+            && state.Fingerprint != cache.Fingerprint)
+            cache = GetOrResetCache(context, query, force: true);
         await EnsureWalkedAsync(context, query, cache, maxRows + WalkOverscan, ct).ConfigureAwait(false);
         Diagnostics.PerfLog.Mark($"ComputeLayout walked ({TotalWalked(cache)} commits cached)");
 
@@ -279,23 +315,21 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
         var input = read.Rows;
 
-        // The trunk pre-pass's ancestry check no longer needs a
-        // repo handle at all — DagLayoutEngine.SeedTipPriority answers it with an exact in-window
-        // walk over the already-fetched commit prefix (isAncestor: null below) instead of the
-        // retired libgit2 CalculateHistoryDivergence oracle, which cost up to ~22s per call on a
-        // large repo (measured on linux) and ran INSIDE the foreground repo gate. Compute now runs
-        // fully off the gate.
+        // The trunk pre-pass's ancestry check needs no repo handle: DagLayoutEngine.SeedTipPriority
+        // answers it with an exact in-window walk over the already-fetched commit prefix
+        // (isAncestor: null below), so Compute runs fully off the repo gate.
         GraphLayoutResult result;
         using (Diagnostics.PerfLog.Scope("engine.Compute"))
             result = _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct, retainCommits: !spill);
 
         result = result with { Fingerprint = cache.Fingerprint };
+        _layoutOwners.AddOrUpdate(result.State, cache);
 
         if (!spill)
             return result;
         var swapped = SpillAndSwap(context, cache, query.IncludeRemoteBranches, result);
         if (cache.Exhausted && cache.MetaComplete)
-            await RetireLiveWalkAsync(context, cache).ConfigureAwait(false);
+            await RetireLiveWalkAsync(cache).ConfigureAwait(false);
         MaybeStartBackgroundSpill(context, cache, query);
         return swapped with { Fingerprint = cache.Fingerprint };
     }
@@ -319,7 +353,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // frame paints commits/lanes with no decorations for that one moment.
         if (GraphWalkCache.Supports(query))
         {
-            var probe = GraphMetaStore.ProbeAny(context.RepositoryPath, query.IncludeRemoteBranches, ExpectedEngine(query));
+            var probe = GraphMetaStore.ProbeAny(context.RepositoryPath, query.IncludeRemoteBranches);
             if (probe.Ok)
             {
                 DiskCommitStore? store = null;
@@ -366,9 +400,15 @@ public sealed class GraphLayoutService : IGraphLayoutService
         if (cache is null)
             return existing;
 
+        // `existing` was laid out from an earlier walk (a RefsChanged re-walk reset the cache
+        // while this layout was still on screen): the current walk's rows don't line up with its
+        // rows, so splicing them on would duplicate commits and SpillAndSwap would shift every
+        // row's metadata. Its replacement is already being computed — leave it as it is.
+        if (!_layoutOwners.TryGetValue(existing.State, out var owner) || !ReferenceEquals(owner, cache))
+            return existing;
+
         var want = existing.State.Rows.Count + additionalRows + WalkOverscan;
-        await EnsureWalkedAsync(context, new GraphQuery { RefScope = cache.Scope, IncludeRemoteBranches = cache.IncludeRemotes },
-            cache, want, ct, background).ConfigureAwait(false);
+        await EnsureWalkedAsync(context, cache.Query, cache, want, ct, background).ConfigureAwait(false);
 
         // Extend mutates existing.State in place; run it to completion (a handful of ms for
         // <=5k rows) rather than risk a cancellation leaving that shared state half-updated.
@@ -405,13 +445,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
             result = _engine.Extend(existing, read.Rows, cache.Decorations, additionalRows, CancellationToken.None);
         }
 
-        var extQuery = new GraphQuery { RefScope = cache.Scope, IncludeRemoteBranches = cache.IncludeRemotes };
-        if (!SpillEnabled(extQuery))
+        if (!SpillEnabled(cache.Query))
             return result with { Fingerprint = cache.Fingerprint };
         var swapped = SpillAndSwap(context, cache, cache.IncludeRemotes, result);
         if (cache.Exhausted && cache.MetaComplete)
-            await RetireLiveWalkAsync(context, cache).ConfigureAwait(false);
-        MaybeStartBackgroundSpill(context, cache, extQuery); // resume if it stalled/hadn't started
+            await RetireLiveWalkAsync(cache).ConfigureAwait(false);
+        MaybeStartBackgroundSpill(context, cache, cache.Query); // resume if it stalled/hadn't started
         return swapped with { Fingerprint = cache.Fingerprint };
     }
 
@@ -445,14 +484,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // (Usually already handled by PrepareWalk's own warm-store hit, so
                 // this is a defensive fallback for the paths that don't go through it.)
                 if (cache is { SpilledRows: 0, MetaStore: null } && cache.WalkKey != 0
-                    && GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount, cache.Engine) is { } warm
+                    && GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount) is { } warm
                     && warm.Count >= rowCount)
                 {
                     cache.MetaStore = warm;
                     AdoptDurableStore(cache, warm.Count);
                 }
 
-                if (gateOpen && cache.WalkKey != 0 && rowCount > cache.SpilledRows)
+                if (gateOpen && cache.WalkKey != 0 && !cache.WalkHalted && rowCount > cache.SpilledRows)
                 {
                     // Outcome is deliberately unobserved here: Appended/Adopted both leave
                     // cache.MetaStore ready to serve below; a Conflict leaves it null, and the
@@ -463,7 +502,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     cache.MetaStore?.SetCount(Math.Max(cache.MetaStore.Count, rowCount));
 
                 if (cache.MetaStore is null && cache.WalkKey != 0)
-                    cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount, cache.Engine);
+                    cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount);
 
                 if (cache.MetaStore is not null && cache.MetaStore.Count >= rowCount)
                 {
@@ -525,7 +564,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 return SpillOutcome.Appended;
             snap = cache.Commits.GetRange(0, to - from);
         }
-        cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, includeRemotes, cache.Engine);
+        cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, includeRemotes);
 
         var (outcome, rowCount) = cache.MetaWriter.AppendSpillBatch(snap, from, to, exhausted, fullWalkElapsed, sortedTips);
         switch (outcome)
@@ -540,9 +579,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
             case SpillOutcome.Adopted:
                 cache.MetaStore?.Dispose();
-                cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount, cache.Engine);
+                cache.MetaStore = GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount);
                 AdoptDurableStore(cache, rowCount);
-                var probe = GraphMetaStore.Probe(repoPath, cache.WalkKey, includeRemotes, cache.Engine);
+                var probe = GraphMetaStore.Probe(repoPath, cache.WalkKey, includeRemotes);
                 if (probe is { Ok: true, Exhausted: true })
                 {
                     cache.MetaComplete = true;
@@ -554,7 +593,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 cache.MetaComplete = exhausted;
                 Diagnostics.PerfLog.Mark($"graph cache write: spill {snap.Count} rows ({repoPath})");
 
-                cache.MetaStore ??= GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, to, cache.Engine);
+                cache.MetaStore ??= GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, to);
                 cache.MetaStore?.SetCount(to);
                 if (cache.MetaStore is { } store && store.Count >= to)
                     TrimConfirmedSpilled(cache, to);
@@ -681,7 +720,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // Note: cache.Exhausted (the walk finished) is NOT a reason to skip — that is exactly
             // when the remaining rows are already walked and just need spilling.
             if (!SpillEnabled(query) || cache.Fingerprint == 0 || cache.BackgroundSpillRunning
-                || cache.MetaComplete)
+                || cache.MetaComplete || cache.WalkHalted)
                 return;
             var have = TotalWalked(cache);
             if (cache.SpilledRows >= have && cache.Exhausted)
@@ -727,6 +766,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     lock (cache) walkTarget = cache.SpilledRows + cache.Commits.Count + SpillWalkChunkRows;
                     await EnsureWalkedAsync(context, query, cache, walkTarget, ct, background: true, lowestPriority: true)
                         .ConfigureAwait(false);
+                    if (cache.WalkHalted)
+                        break;
 
                     // Schedule commit-graph maintenance as soon as this repo is known to
                     // be large (§9.3), rather than waiting for spilling to also finish —
@@ -792,7 +833,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // external cancel Forget/reset already DropLiveWalk'd it. This is just a
                 // belt-and-braces no-op for those paths.
                 if (ct.IsCancellationRequested || cache.Exhausted || cache.MetaComplete)
-                    await RetireLiveWalkAsync(context, cache).ConfigureAwait(false);
+                    await RetireLiveWalkAsync(cache).ConfigureAwait(false);
 
                 // Safety net: the per-chunk call above already schedules commit-graph maintenance
                 // as soon as the repo crosses the size threshold, so this normally no-ops (already
@@ -839,14 +880,15 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         var spoolTask = Task.Run(async () =>
         {
-            var probe = await ProbeStoreAsync(context, query, ct).ConfigureAwait(false);
+            if (await ProbeStoreAsync(context, query, ct).ConfigureAwait(false) is not { } probe)
+                return 0; // refs unreadable — nothing to walk
 
             var rowsProgress = progress is null
                 ? null
                 : new SynchronousProgress<int>(rows =>
                     progress.Report(new GitProgress { Phase = CloneStatus.CachingPhase, ObjectsDone = rows }));
 
-            return await RunHeadlessSpoolAsync(context, query, probe.Tips, ct, ignoreGate: true, rowsSpilled: rowsProgress)
+            return await RunHeadlessSpoolAsync(context, query, probe.Tips, probe.WalkKey, ct, ignoreGate: true, rowsSpilled: rowsProgress)
                 .ConfigureAwait(false);
         }, ct);
 
@@ -856,26 +898,26 @@ public sealed class GraphLayoutService : IGraphLayoutService
         _backgroundWriter?.RecordWrite(context.GitDirectory, rows);
     }
 
-    private Task<(
+    /// <summary>Null when the repo's refs can't be read — there is nothing to walk or key a store
+    /// on.</summary>
+    private static async Task<(
         long WalkKey,
         string[] Tips,
         (bool Ok, int RowCount, bool Exhausted) Current,
-        (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) Existing)> ProbeStoreAsync(
+        (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) Existing)?> ProbeStoreAsync(
         RepositoryContext context, GraphQuery query, CancellationToken ct)
     {
+        // Off the repo gate: the tips come from the ref snapshot, and the probes are header reads
+        // of Historia's own files.
         var repoPath = context.RepositoryPath;
-        var expectedEngine = ExpectedEngine(query);
-        return context.WithRepositoryBackgroundAsync(repo =>
-        {
-            var fp = ComputeFingerprint(repo, query, out var allRefs);
-            var tips = ResolveTipShas(repo, query, allRefs);
-            var walkKey = ComputeWalkKey(tips, query);
-            return (
-                WalkKey: walkKey,
-                Tips: tips,
-                Current: GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches, expectedEngine),
-                Existing: GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches, expectedEngine));
-        }, ct);
+        if (await TryGetRefStateAsync(context, query, background: true, ct).ConfigureAwait(false) is not { } state)
+            return null;
+        var (_, _, tips, walkKey) = state;
+        return (
+            WalkKey: walkKey,
+            Tips: tips,
+            Current: GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches),
+            Existing: GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches));
     }
 
     /// <inheritdoc/>
@@ -883,13 +925,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
     {
         if (!SpillEnabled(query))
             return; // disk-backed metadata off, or an unsupported query shape — nothing to do headlessly
+        if (!_locator.Current.Found)
+            return; // no git.exe — nothing can walk; the startup notice already says so
 
         var repoPath = context.RepositoryPath;
 
-        // Step 1 — one low-priority gate turn: tip resolution + walk key (ms even at linux's 948
-        // refs) and a header-only probe both at the current key and at whatever key
-        // the store was last written under, regardless of match.
-        var probe = await ProbeStoreAsync(context, query, ct).ConfigureAwait(false);
+        // Step 1 — off the repo gate: tip resolution + walk key from the ref snapshot, and a
+        // header-only probe both at the current key and at whatever key the store was last
+        // written under, regardless of match.
+        if (await ProbeStoreAsync(context, query, ct).ConfigureAwait(false) is not { } probe)
+            return; // refs unreadable — nothing to walk, nothing written
 
         if (probe.Current is { Ok: true, Exhausted: true })
         {
@@ -930,7 +975,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // Try the guarded splice first when the setting is on —
             // it falls back to false on ANY guard rejection or query/write failure, in which case
             // the ordinary reorder below is always correct, just potentially slower.
-            if (_settings?.Current.EnableGraphSplice == true)
+            if (_settings.Current.EnableGraphSplice)
             {
                 var splicedRows = await TryHeadlessSpliceAsync(
                     context, query, repoPath, probe.Tips, probe.WalkKey, probe.Existing, ct).ConfigureAwait(false);
@@ -943,7 +988,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             await RunHeadlessReorderAsync(context, query, repoPath, probe.Tips, probe.WalkKey, ct).ConfigureAwait(false);
         }
         else
-            await RunHeadlessSpoolAsync(context, query, probe.Tips, ct).ConfigureAwait(false);
+            await RunHeadlessSpoolAsync(context, query, probe.Tips, probe.WalkKey, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -960,7 +1005,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) oldProbe,
         CancellationToken ct)
     {
-        if (_locator is null || _cli is null || !_cli.IsGitAvailable)
+        if (_cli is null || !_cli.IsGitAvailable)
             return -1;
         // Guard 3's threshold, checked up front — no point running two git processes on a history
         // too small for splicing to ever pay off.
@@ -1062,7 +1107,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
             var plan = GraphMetaSplice.Build(oldStore.ToOrderArray(), removedRecords, addedCommits, oldProbe.RecordCount);
 
-            var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches, ExpectedEngine(query));
+            var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches);
             if (plan.NewRecords.Count > 0 && !writer.AppendReorderBatch(plan.NewRecords, oldProbe.WalkKey))
                 return -1;
 
@@ -1096,11 +1141,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// Cancelling <paramref name="ct"/> stops at the next batch boundary; whatever was already
     /// spilled stays on disk.</summary>
     private async Task<int> RunHeadlessSpoolAsync(
-        RepositoryContext context, GraphQuery query, string[] sortedTips, CancellationToken ct,
+        RepositoryContext context, GraphQuery query, string[] sortedTips, long walkKey, CancellationToken ct,
         bool ignoreGate = false, IProgress<int>? rowsSpilled = null)
     {
+        if (!_locator.Current.Found)
+            return 0; // no git.exe — nothing can walk; the startup notice already says so
+
         var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
-        var cache = new RepoCache { Scope = query.RefScope, IncludeRemotes = query.IncludeRemoteBranches };
+        // Committed to the probed walk from the start: the store's key and the tips recorded with
+        // it are the probe's, so tips that moved before the first step supersede this spool
+        // instead of walking other rows under them.
+        var cache = new RepoCache { Query = query, WalkKey = walkKey };
         // Times this spool from the moment it starts pulling rows so a walk that
         // reaches exhaustion having started at row 0 (a genuine full walk, not a resumed partial
         // one — the ONLY case that stamp is meaningful for) can record GraphMetaSplice's guard-4
@@ -1125,6 +1176,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 lock (cache) target = cache.SpilledRows + cache.Commits.Count + batchRows;
                 await EnsureWalkedAsync(context, query, cache, target, ct, background: true, lowestPriority: true)
                     .ConfigureAwait(false);
+                if (cache.WalkHalted)
+                    break;
 
                 bool walkDone;
                 lock (cache) walkDone = cache.Exhausted;
@@ -1193,12 +1246,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         RepositoryContext context, GraphQuery query, string repoPath, string[] sortedTips, long newWalkKey,
         CancellationToken ct)
     {
-        var engine = ExpectedEngine(query);
+        if (!_locator.Current.Found)
+            return; // no git.exe — nothing can walk; the startup notice already says so
 
         // Open the old store and build its SHA index up front — everything the walk
         // below needs to map each batch as it streams in, rather than only after the whole new
         // history has been walked and copied resident.
-        var oldProbe = GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches, engine);
+        var oldProbe = GraphMetaStore.ProbeExisting(repoPath, query.IncludeRemoteBranches);
         if (!oldProbe.Ok || !oldProbe.Exhausted || oldProbe.WalkKey == newWalkKey)
             return; // stale, gone, or someone else already brought it up to date
 
@@ -1208,8 +1262,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
         using (var oldStore = DiskCommitStore.Open(repoPath, oldProbe.RowCount, oldProbe.RecordCount, oldProbe.OrderVersion))
             builder = new GraphMetaReorderBuilder(oldStore.BuildShaIndex(), oldStore.RecordCount);
 
-        var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches, engine);
-        var cache = new RepoCache { Scope = query.RefScope, IncludeRemotes = query.IncludeRemoteBranches };
+        var writer = new GraphMetaWriter(repoPath, newWalkKey, query.IncludeRemoteBranches);
+        // Committed to the probed walk: the order is written under newWalkKey with sortedTips, so
+        // tips that moved before the first step supersede this reorder rather than feed it
+        // another walk's rows.
+        var cache = new RepoCache { Query = query, WalkKey = newWalkKey };
         try
         {
             var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
@@ -1225,6 +1282,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // is" (tracked separately, by RepoCache.LiveWalkPos), not an absolute total.
                 await EnsureWalkedAsync(context, query, cache, batchRows, ct, background: true, lowestPriority: true)
                     .ConfigureAwait(false);
+                if (cache.WalkHalted)
+                    return; // the new order can't be completed — the old one stays authoritative
 
                 List<RawCommit> batch;
                 lock (cache)
@@ -1280,9 +1339,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
     {
         if (reason == InvalidationReason.RefsChanged && previous.Fingerprint != 0)
         {
-            var currentFp = await context.WithRepositoryAsync(repo =>
-                ComputeFingerprint(repo, query, out _), ct).ConfigureAwait(false);
-            if (currentFp == previous.Fingerprint)
+            // Unreadable refs: keep what is painted; the next RefsChanged tries again.
+            if (await TryGetRefStateAsync(context, query, background: false, ct).ConfigureAwait(false) is not { } state
+                || state.Fingerprint == previous.Fingerprint)
                 return previous;
         }
 
@@ -1338,31 +1397,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
         {
             try
             {
-                if (cache.Engine == WalkEngine.Cli)
+                // GitLogStream is a separate process — no repo gate needed, only serialization
+                // against a concurrent pull.
+                await cache.WalkLock.WaitAsync().ConfigureAwait(false);
+                try
                 {
-                    // GitLogStream is a separate process, not libgit2-backed — no repo gate
-                    // needed, only serialization against a concurrent foreground pull.
-                    await cache.WalkLock.WaitAsync().ConfigureAwait(false);
-                    try
-                    {
-                        if (ReferenceEquals(cache.LiveWalk, walk))
-                            cache.DisposeLiveWalk();
-                    }
-                    finally { cache.WalkLock.Release(); }
+                    if (ReferenceEquals(cache.LiveWalk, walk))
+                        cache.DisposeLiveWalk();
                 }
-                else
-                {
-                    // The libgit2 revwalk enumerator holds native handles — dispose it from
-                    // inside a repo-gate turn like every other libgit2 access.
-                    await context.WithRepositoryBackgroundAsync(_ =>
-                    {
-                        if (ReferenceEquals(cache.LiveWalk, walk))
-                            cache.DisposeLiveWalk();
-                        return true;
-                    }).ConfigureAwait(false);
-                }
+                finally { cache.WalkLock.Release(); }
             }
-            catch { cache.DropLiveWalk(); } // repo already closing / gate unavailable — best effort
+            catch { cache.DropLiveWalk(); } // best effort
         }
 
         lock (cache)
@@ -1390,8 +1435,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     {
         lock (_sync)
         {
-            if (!force && _caches.TryGetValue(context, out var existing)
-                && existing.Scope == query.RefScope && existing.IncludeRemotes == query.IncludeRemoteBranches)
+            if (!force && _caches.TryGetValue(context, out var existing) && SameWalkShape(existing.Query, query))
                 return existing;
 
             // A forced reset (stale fingerprint) discards a cache that may have a background
@@ -1407,17 +1451,28 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
 
             _caches.Remove(context);
-            var fresh = new RepoCache { Scope = query.RefScope, IncludeRemotes = query.IncludeRemoteBranches };
+            var fresh = new RepoCache { Query = query };
             _caches.Add(context, fresh);
             return fresh;
         }
     }
 
+    /// <summary>True when two queries walk the same history — every knob that changes the tip
+    /// set or the rows (scope, remotes, stashes, path filter, selected refs). <see cref="GraphQuery"/>'s
+    /// own record equality can't be used: it compares <see cref="GraphQuery.SelectedRefs"/> by
+    /// reference, and includes <see cref="GraphQuery.MaxLanes"/>, which only affects layout.</summary>
+    private static bool SameWalkShape(GraphQuery a, GraphQuery b) =>
+        a.RefScope == b.RefScope
+        && a.IncludeRemoteBranches == b.IncludeRemoteBranches
+        && a.IncludeStashes == b.IncludeStashes
+        && string.Equals(a.PathFilter ?? "", b.PathFilter ?? "", StringComparison.Ordinal)
+        && (a.SelectedRefs ?? []).SequenceEqual(b.SelectedRefs ?? [], StringComparer.Ordinal);
+
     private async Task EnsureWalkedAsync(
         RepositoryContext context, GraphQuery query, RepoCache cache, int wantCount, CancellationToken ct,
         bool background = false, bool lowestPriority = false)
     {
-        if (cache.Exhausted || TotalWalked(cache) >= wantCount)
+        if (cache.Exhausted || cache.WalkHalted || TotalWalked(cache) >= wantCount)
             return;
 
         DecoCache? deco;
@@ -1426,7 +1481,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         Diagnostics.PerfLog.Mark($"EnsureWalked need {wantCount}, have {TotalWalked(cache)}, decoFp={deco?.Fingerprint ?? 0}");
         var repoPath = context.RepositoryPath;
-        var expectedEngine = ExpectedEngine(query);
         // §V10.1.2: three gate tiers, not two — a genuine foreground caller always wins; the
         // commit-graph's own silent crawl (background, but user-visible — it grows the
         // scrollbar) comes next; the §7.6 full-history disk spill (background, no urgency of its
@@ -1439,30 +1493,104 @@ public sealed class GraphLayoutService : IGraphLayoutService
             _ => context.WithRepositoryAsync(work, ct),
         };
 
-        // Step 1 — on the repo gate: fingerprint, the on-disk cache probe, and (only for the
-        // libgit2 engine) the actual walk pull. For the CLI engine this deliberately stops short
-        // of spawning/pulling the process — tip resolution + BuildDecorations here cost ms even
-        // on linux; the walk itself is what must never sit inside the gate (§3).
-        var prep = await WithRepo(repo =>
-            PrepareWalk(repo, repoPath, query, wantCount, deco, cache, _metaFromDisk, _walkCache, expectedEngine, ct))
-            .ConfigureAwait(false);
+        GatePrep prep = default;
+        for (var pass = 0; pass < 2; pass++)
+        {
+            // Step 0 — off the gate: the repo's refs. A file-state check (ms) unless a ref moved
+            // since the last read, in which case one `git for-each-ref` — never a LibGit2Sharp
+            // enumeration, which costs seconds at tens of thousands of refs.
+            RefSnapshot? snapshot = null;
+            string failure = "git.exe was not found";
+            if (_locator.Current.Found)
+            {
+                try { snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false); }
+                catch (HistoriaGitException ex) { failure = ex.Message; }
+            }
+            if (snapshot is null)
+            {
+                // Nothing can walk without the refs — the same outcome as `git log` failing to
+                // start (Rule 11: no fallback): the graph keeps what it has and this cache stops
+                // trying.
+                await cache.WalkLock.WaitAsync(ct).ConfigureAwait(false);
+                try { MarkWalkFailed(context, cache, $"reading refs failed: {failure}"); }
+                finally { cache.WalkLock.Release(); }
+                return;
+            }
 
+            long liveToken = cache.LiveWalkSnapshotToken;
+            if (cache.LiveWalk is not null && liveToken != 0 && liveToken == snapshot.Token)
+            {
+                // No ref file changed since this walk's tip set was confirmed: the tips,
+                // fingerprint and decorations are exactly the cache's — resume without touching
+                // the repo gate. (The token covers HEAD and the stash reflog too, so this holds
+                // with stashes on.) A resume never writes the cache's ref state, so nothing it
+                // reads here can be merged back stale.
+                prep = GatePrep.ForResumeCli(cache.Fingerprint, cache.LiveWalkFingerprint, TotalWalked(cache),
+                    wantCount, cache.Decorations, snapshot.Token);
+                break;
+            }
+
+            // Step 1 — on the repo gate: what still needs LibGit2Sharp (stash list, remote names
+            // for decorations, the on-disk cache probe), plus the fingerprint and tip set derived
+            // from the snapshot. It deliberately stops short of spawning or pulling `git log` —
+            // the walk itself is what must never sit inside the gate (§3).
+            prep = await WithRepo(repo =>
+                PrepareWalk(repo, repoPath, query, wantCount, deco, cache, snapshot, _metaFromDisk, _walkCache))
+                .ConfigureAwait(false);
+
+            // The snapshot was read before the gate wait, which for the spill can be long. A prime
+            // from tips that have since moved would only be superseded on the next step, so when a
+            // ref file changed meanwhile, prepare once more from fresh refs — but only while this
+            // cache holds nothing yet. Once PrepareWalk adopted a partial on-disk store, the
+            // prime must walk that store's own tips (its rows are the walk's first rows); a real
+            // tip change then supersedes the walk on the next step.
+            if (pass > 0 || prep.Kind != GatePrepKind.PrimeCli || prep.Have != 0
+                || RefStateToken.Compute(context.GitDirectory).Token == prep.SnapshotToken)
+                break;
+            Diagnostics.PerfLog.Mark("refs moved during the gate wait — re-preparing");
+        }
+
+        if (prep.Kind == GatePrepKind.Superseded)
+        {
+            await cache.WalkLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                cache.DisposeLiveWalk();
+                cache.WalkSuperseded = true;
+            }
+            finally { cache.WalkLock.Release(); }
+            Diagnostics.PerfLog.Mark(
+                $"graph walk superseded: tip set changed (walk key {cache.WalkKey:X} → {prep.WalkKey:X}) — waiting for reset");
+            return;
+        }
+
+        // Step 2 — off the gate: prime or resume the walk.
         WalkResult walked = prep.Kind switch
         {
-            GatePrepKind.PrimeCli => await PrimeCliWalkAsync(context, cache, query, deco, prep, ct).ConfigureAwait(false),
-            GatePrepKind.ResumeCli => await ResumeCliWalkAsync(cache, prep, ct).ConfigureAwait(false),
+            GatePrepKind.PrimeCli => await PrimeCliWalkAsync(context, cache, query, prep, ct).ConfigureAwait(false),
+            GatePrepKind.ResumeCli => await ResumeCliWalkAsync(context, cache, prep, ct).ConfigureAwait(false),
             _ => prep.Result,
         };
 
         lock (cache)
         {
             cache.Commits.AddRange(walked.Commits);
-            cache.Decorations = walked.Decorations;
-            cache.Exhausted = walked.Exhausted;
-            if (walked.Fingerprint != 0)
-                cache.Fingerprint = walked.Fingerprint; // ref-based: RecomputeAsync's short-circuit + badges
-            if (walked.WalkKey != 0)
-                cache.WalkKey = walked.WalkKey; // §Phase 3 (3b): the disk/resume identity key
+            // Never back to false: a concurrent step that exhausted the walk may merge before one
+            // that saw the walk already gone and reported the flag it read before that merge.
+            cache.Exhausted |= walked.Exhausted;
+            // The fingerprint, walk key and decorations describe one ref state and change
+            // together, written only by the step that derived them: a prime publishes them under
+            // WalkLock before pulling a row (PublishRefState), and only a Done from PrepareWalk
+            // carries them here. A resume carries none, so it can never write back values it read
+            // before a newer prime published.
+            if (walked.CarriesRefState)
+            {
+                cache.Decorations = walked.Decorations;
+                if (walked.Fingerprint != 0)
+                    cache.Fingerprint = walked.Fingerprint; // ref-based: RecomputeAsync's short-circuit + badges
+                if (walked.WalkKey != 0)
+                    cache.WalkKey = walked.WalkKey; // §Phase 3 (3b): the disk/resume identity key
+            }
             if (walked.MetaStore is not null && cache.MetaStore is null)
             {
                 cache.MetaStore = walked.MetaStore;
@@ -1471,7 +1599,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // the store's row count can exceed anything this cache has walked so far.
                 AdoptDurableStore(cache, walked.MetaStore.Count);
                 cache.MetaComplete = walked.MetaExhausted;
-                cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, cache.IncludeRemotes, cache.Engine);
+                cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, cache.IncludeRemotes);
             }
         }
 
@@ -1495,13 +1623,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // key, exhausted flag, and now ReadRawRange) is a strictly better warm-start source, and
         // this avoids ever building `[.. cache.Commits]` (an O(n) copy of the pending buffer)
         // for a file nothing reads anymore in disk mode (see PrepareWalk / TryOptimisticSnapshot).
-        if (!background && !_metaFromDisk && !walked.FromDisk && walked.Fingerprint != 0 && GraphWalkCache.Supports(query))
+        if (!background && !_metaFromDisk && !walked.FromDisk && !cache.WalkHalted && walked.Fingerprint != 0
+            && GraphWalkCache.Supports(query))
         {
             List<RawCommit> commits;
             Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decos;
             bool exhausted;
             long walkKeyToSave;
-            WalkEngine engine;
             var save = false;
             lock (cache)
             {
@@ -1515,7 +1643,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 commits = save ? [.. cache.Commits] : [];
                 decos = cache.Decorations;
                 walkKeyToSave = cache.WalkKey; // §Phase 3 (3b): key the .gz on the walk, not every ref
-                engine = cache.Engine;
             }
             if (save)
                 // Background-write gate: queued until the gate opens rather than fired
@@ -1524,17 +1651,19 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 _ = Task.Run(async () =>
                 {
                     await WaitForGateAsync(CancellationToken.None).ConfigureAwait(false);
-                    _walkCache.Save(repoPath, query, walkKeyToSave, exhausted, commits, decos, engine);
+                    _walkCache.Save(repoPath, query, walkKeyToSave, exhausted, commits, decos);
                 });
         }
     }
 
-    private enum GatePrepKind { Done, PrimeCli, ResumeCli }
+    private enum GatePrepKind { Done, PrimeCli, ResumeCli, Superseded }
 
     /// <summary>Result of the on-gate half of a walk step. <see cref="GatePrepKind.Done"/> carries
-    /// a finished <see cref="WalkResult"/> (the libgit2 engine, or a disk-cache hit); the two CLI
-    /// cases hand back just enough (fingerprint, row counts, tips, decorations) for the caller to
-    /// finish the work OFF the gate.</summary>
+    /// a finished <see cref="WalkResult"/> (a disk-cache hit, nothing left to walk, or an empty
+    /// tip set); the prime and resume cases hand back just enough (fingerprint, row counts, tips,
+    /// decorations) for the caller to finish the work OFF the gate;
+    /// <see cref="GatePrepKind.Superseded"/> says the tip set moved under this cache's walk
+    /// (<see cref="RepoCache.WalkSuperseded"/>), with the new walk key for the log.</summary>
     private readonly record struct GatePrep(
         GatePrepKind Kind,
         WalkResult Result,
@@ -1544,49 +1673,66 @@ public sealed class GraphLayoutService : IGraphLayoutService
         int WantCount,
         string[]? Tips,
         Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Decorations,
-        bool DecosFresh)
+        bool DecosFresh,
+        long SnapshotToken)
     {
         public static GatePrep Done(WalkResult result) =>
-            new(GatePrepKind.Done, result, result.Fingerprint, result.WalkKey, 0, 0, null, result.Decorations, result.DecosFresh);
+            new(GatePrepKind.Done, result, result.Fingerprint, result.WalkKey, 0, 0, null, result.Decorations, result.DecosFresh, 0);
 
-        public static GatePrep ForResumeCli(long fp, long walkKey, int have, int want, Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations) =>
-            new(GatePrepKind.ResumeCli, default, fp, walkKey, have, want, null, decorations, false);
+        public static GatePrep ForResumeCli(
+            long fp, long walkKey, int have, int want,
+            Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations, long snapshotToken) =>
+            new(GatePrepKind.ResumeCli, default, fp, walkKey, have, want, null, decorations, false, snapshotToken);
 
         public static GatePrep ForPrimeCli(
             long fp, long walkKey, int have, int want, string[] tips,
-            Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations, bool decosFresh) =>
-            new(GatePrepKind.PrimeCli, default, fp, walkKey, have, want, tips, decorations, decosFresh);
+            Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations, bool decosFresh, long snapshotToken) =>
+            new(GatePrepKind.PrimeCli, default, fp, walkKey, have, want, tips, decorations, decosFresh, snapshotToken);
     }
 
-    /// <summary>Caller holds the repo gate. Computes the fingerprint, tries the on-disk caches,
-    /// resumes an already-primed libgit2 walk, or — when nothing is usable — either starts a
-    /// fresh libgit2 walk (engine = LibGit2) or resolves tips/decorations for a CLI prime the
-    /// caller spawns off the gate (engine = Cli). Never spawns or pulls a <see cref="GitLogStream"/>
-    /// itself.</summary>
+    /// <summary>Caller holds the repo gate. Derives the fingerprint and walk key from
+    /// <paramref name="snapshot"/> (plus the stash list, when the query includes stashes) and tries
+    /// the on-disk caches; otherwise hands back what the caller needs to resume the live
+    /// <see cref="GitLogStream"/> or prime a fresh one, both OFF the gate. Never spawns or pulls
+    /// the stream itself.</summary>
     private static GatePrep PrepareWalk(
         Repository repo, string repoPath, GraphQuery query, int wantCount, DecoCache? decoCache,
-        RepoCache cache, bool metaFromDisk, GraphWalkCache walkCache, WalkEngine expectedEngine, CancellationToken ct)
+        RepoCache cache, RefSnapshot snapshot, bool metaFromDisk, GraphWalkCache walkCache)
     {
-        var fp = ComputeFingerprint(repo, query, out var allRefs);
-        // §Phase 3 (3b): resolved once, always, regardless of engine — cheap (milliseconds even
-        // at linux's 948 refs) — so the disk cache, live-walk resume, and .gz identity can all key
-        // on the sorted TIP SET the walk actually reads instead of every ref + HEAD (`fp`, still
+        // Read fresh on the gate — a concurrent EnsureWalkedAsync (the silent crawler vs the
+        // background spill) serialises here and has usually already walked what this caller
+        // wanted. Checked before any ref work: on a repo with tens of thousands of refs that work
+        // costs seconds, and a satisfied caller needs none of it. "Have" is TOTAL rows walked
+        // (spilled + resident pending), not cache.Commits.Count alone — confirmed-spilled rows no
+        // longer stay resident. Carries no ref state: the cache's own stays untouched.
+        var have = cache.SpilledRows + cache.Commits.Count;
+        if (have >= wantCount || cache.Exhausted)
+        {
+            Diagnostics.PerfLog.Mark($"EnsureWalked satisfied on gate (have {have} >= want {wantCount})");
+            return GatePrep.Done(new WalkResult([], cache.Decorations, cache.Exhausted, Fingerprint: 0, DecosFresh: false,
+                WalkKey: 0, CarriesRefState: false));
+        }
+
+        // §Phase 3 (3b): the disk cache, live-walk resume, and .gz identity all key on the sorted
+        // TIP SET the walk actually reads (`walkKey`) instead of every ref + HEAD (`fp`, still
         // used below for badges/decorations and by the caller for RecomputeAsync's short-circuit).
         // A checkout, a stash push/pop, a branch rename, or a ref outside this set changes `fp`
         // but leaves `walkKey` — and so the on-disk cache — untouched.
-        var tips = ResolveTipShas(repo, query, allRefs);
-        var walkKey = ComputeWalkKey(tips, query);
+        var stashShas = query.IncludeStashes ? ReadStashShas(repo) : [];
+        var (fp, tips, walkKey) = DeriveRefState(snapshot, query, stashShas, repoPath);
 
-        // Read fresh on the gate — a concurrent EnsureWalkedAsync (foreground extend vs the
-        // background spill) serialises here and may have appended since the outer check.
-        // "Have" is TOTAL rows walked (spilled + resident pending), not
-        // cache.Commits.Count alone — confirmed-spilled rows no longer stay resident.
-        var have = cache.SpilledRows + cache.Commits.Count;
-        if (have >= wantCount || cache.Exhausted)
-            return GatePrep.Done(new WalkResult([], cache.Decorations, cache.Exhausted, fp, DecosFresh: false, WalkKey: walkKey));
+        // This cache already walked (or adopted from disk) rows of another tip set. A walk over
+        // the new tips doesn't match those rows one for one — new commits land anywhere in its
+        // first rows — so neither resuming nor skipping ahead in a fresh walk is correct, and the
+        // rows must never reach the old walk's on-disk store. Stop; a reset rebuilds from row 0.
+        // Keyed on the walk key, not `have`: the headless reorder empties cache.Commits after
+        // every batch.
+        if (cache.WalkKey != 0 && walkKey != cache.WalkKey)
+            return new GatePrep(GatePrepKind.Superseded, default, fp, walkKey, have, wantCount, null, cache.Decorations, false, snapshot.Token);
 
-        // Fresh cache, nothing primed: try the on-disk walk before touching either engine at all.
-        if (have == 0 && cache.LiveWalk is null)
+        // Fresh cache, nothing primed: try the on-disk walk before spawning anything. Only the
+        // plain all-refs shape is ever cached on disk.
+        if (have == 0 && cache.LiveWalk is null && GraphWalkCache.Supports(query))
         {
             // Prefer the §7.6 meta store over the (in disk mode, retired) .gz walk
             // cache — it never needs a resident copy of rows already durable. An exhausted store
@@ -1595,41 +1741,47 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // instead of reloading any of its rows into memory.
             if (metaFromDisk)
             {
-                var probe = GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches, expectedEngine);
+                var probe = GraphMetaStore.Probe(repoPath, walkKey, query.IncludeRemoteBranches);
                 if (probe.Ok && probe.RowCount > 0
                     && GraphMetaStore.TryOpen(repoPath, walkKey, query.IncludeRemoteBranches,
-                        probe.Exhausted ? probe.RowCount : 0, expectedEngine) is { } store)
+                        probe.Exhausted ? probe.RowCount : 0) is { } store)
                 {
-                    cache.Engine = expectedEngine;
                     if (probe.Exhausted)
                     {
                         // The .meta store has no decoration data (unlike the retired .gz DTO) —
                         // resolve it the same way a fresh walk would, so a warm reopen doesn't
                         // paint with empty ref badges (GraphSpillTrunkStabilityTests: the tip-
                         // priority pre-pass also depends on which commit is decorated).
-                        var (decorations, decosFresh) = ResolveDecorations(repo, query, allRefs, decoCache, fp);
+                        var (decorations, decosFresh) = ResolveDecorations(repo, query, snapshot, decoCache, fp);
                         Diagnostics.PerfLog.Mark($"meta store HIT (exhausted): {store.Count} rows on disk, no resident copy");
                         return GatePrep.Done(new WalkResult([], decorations, true, fp, decosFresh, FromDisk: true, MetaStore: store, MetaExhausted: true, WalkKey: walkKey));
                     }
 
                     cache.MetaStore = store;
-                    cache.MetaWriter ??= new GraphMetaWriter(repoPath, walkKey, query.IncludeRemoteBranches, expectedEngine);
+                    cache.MetaWriter ??= new GraphMetaWriter(repoPath, walkKey, query.IncludeRemoteBranches);
                     AdoptDurableStore(cache, store.Count);
+                    // The adopted rows commit this cache to the store's walk now, not at the
+                    // prime: a step that prepares before that prime and sees other tips must
+                    // supersede, not prime its own walk over these rows.
+                    lock (cache)
+                        cache.WalkKey = walkKey;
                     have = store.Count;
                     Diagnostics.PerfLog.Mark($"meta store HIT (partial): resuming walk after {store.Count} durable rows");
                     if (have >= wantCount)
                     {
-                        var (decorations, decosFresh) = ResolveDecorations(repo, query, allRefs, decoCache, fp);
+                        var (decorations, decosFresh) = ResolveDecorations(repo, query, snapshot, decoCache, fp);
                         return GatePrep.Done(new WalkResult([], decorations, false, fp, decosFresh, FromDisk: true, WalkKey: walkKey));
                     }
                     // fall through below to prime/continue a walk with skip = have
                 }
             }
-            else if (walkCache.TryLoad(repoPath, query, wantCount, walkKey, expectedEngine, metadataOnDisk: false) is { } hit)
+            else if (walkCache.TryLoad(repoPath, query, wantCount, walkKey, metadataOnDisk: false) is { } hit)
             {
+                // The file is keyed on the tip set, which ignores HEAD — its saved badges can
+                // predate a checkout. Badges come from the refs now, as for the meta store.
+                var (decorations, decosFresh) = ResolveDecorations(repo, query, snapshot, decoCache, fp);
                 Diagnostics.PerfLog.Mark($"walk cache HIT: {hit.Commits.Count} commits, exhausted={hit.Exhausted}");
-                cache.Engine = expectedEngine;
-                return GatePrep.Done(new WalkResult(hit.Commits, hit.Decorations, hit.Exhausted, fp, DecosFresh: true, FromDisk: true, WalkKey: walkKey));
+                return GatePrep.Done(new WalkResult(hit.Commits, decorations, hit.Exhausted, fp, decosFresh, FromDisk: true, WalkKey: walkKey));
             }
         }
 
@@ -1637,47 +1789,33 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // This is what makes an Extend / silent-crawl / spill chunk cheap on a big repo after the
         // first (unavoidably expensive) prime, and what lets it survive a checkout/stash/rename
         // that leaves the tip set — and so the walk key — unchanged.
-        if (cache.LiveWalk is { } live && cache.LiveWalkFingerprint == walkKey)
-        {
-            if (cache.Engine == WalkEngine.Cli)
-                // Pulling from the git process is what must stay off the gate — hand it back.
-                return GatePrep.ForResumeCli(fp, walkKey, have, wantCount, cache.Decorations);
+        // Pulling from the git process is what must stay off the gate — hand it back.
+        if (cache.LiveWalk is not null && cache.LiveWalkFingerprint == walkKey)
+            return GatePrep.ForResumeCli(fp, walkKey, have, wantCount, cache.Decorations, snapshot.Token);
 
-            var need = wantCount - have;
-            var delta = new List<RawCommit>(Math.Min(need, 8192));
-            var exhaustedNow = PumpCommits(live, delta, skip: 0, want: need, cache, ct);
-            if (exhaustedNow)
-                cache.DisposeLiveWalk();
-            Diagnostics.PerfLog.Mark($"walk resumed +{delta.Count} (pos {cache.LiveWalkPos}, exhausted={exhaustedNow})");
-            return GatePrep.Done(new WalkResult(delta, cache.Decorations, exhaustedNow, fp, DecosFresh: false, WalkKey: walkKey));
-        }
-
-        // No usable primed walk (first walk, or the tip set changed): prime a fresh one.
+        // No live walk for this tip set: prime one. The tip set is this cache's own (or the cache
+        // is fresh, possibly holding a partial on-disk store of this same walk key), so the `have`
+        // rows the prime skips are exactly the walk's first rows. A prime publishes its walk key
+        // with LiveWalk (PublishRefState), so no other live walk can be left here; the dispose is
+        // a guard, not a path.
         cache.DisposeLiveWalk();
-        cache.Engine = expectedEngine;
-
-        if (expectedEngine == WalkEngine.Cli)
-        {
-            var (decorations, decosFresh) = ResolveDecorations(repo, query, allRefs, decoCache, fp);
-            if (tips.Length == 0)
-                return GatePrep.Done(new WalkResult([], decorations, true, fp, decosFresh, WalkKey: walkKey));
-            return GatePrep.ForPrimeCli(fp, walkKey, have, wantCount, tips, decorations, decosFresh);
-        }
-
-        return GatePrep.Done(StartWalk(repo, query, wantCount, have, decoCache, allRefs, fp, walkKey, cache, ct));
+        var (primeDecorations, primeDecosFresh) = ResolveDecorations(repo, query, snapshot, decoCache, fp);
+        if (tips.Length == 0)
+            return GatePrep.Done(new WalkResult([], primeDecorations, true, fp, primeDecosFresh, WalkKey: walkKey));
+        return GatePrep.ForPrimeCli(fp, walkKey, have, wantCount, tips, primeDecorations, primeDecosFresh, snapshot.Token);
     }
 
     /// <summary>§Phase 3 (3b): the disk-cache / live-walk-resume identity key — a hash of the
-    /// SORTED tip SHAs the walk actually reads plus the remote-branch flag. Unlike <see
+    /// SORTED tip SHAs the walk actually reads (stash tips included when the query includes
+    /// stashes), the remote-branch flag and, only when set, the path filter. Unlike <see
     /// cref="ComputeFingerprint"/> it does not depend on HEAD or on any ref outside the walk's
-    /// scope, so a checkout, a stash, a branch rename, or `pack-refs`/`gc` leaves it unchanged as
-    /// long as the tip set is the same. Deliberately excludes the walk engine — a CLI-primed walk
-    /// that falls back to libgit2 mid-prime (<see cref="FallbackToLibGit2Async"/>) must keep the
-    /// SAME walk key; engine compatibility is already gated separately by the store/`.gz` header's
-    /// own <c>WalkEngine</c> field (see <see cref="GraphMetaStore.TryOpen"/>, <see
-    /// cref="GraphWalkCache.TryLoad"/>). <paramref name="sortedTips"/> must already be ordinally
-    /// sorted (<see cref="ResolveTipShas"/> guarantees this) — the hash itself doesn't re-sort, so
-    /// a caller feeding an unsorted list would silently defeat the point.</summary>
+    /// tips, so a checkout, a stash outside the walk, a branch rename, or `pack-refs`/`gc` leaves
+    /// it unchanged as long as the tip set is the same. The path is fed only when non-empty, so a
+    /// filtered walk can never be resumed as the unfiltered one (or another path's) while every
+    /// unfiltered key — and so every existing on-disk store — stays as it is.
+    /// <paramref name="sortedTips"/> must already be ordinally sorted (<see cref="ResolveTipShas"/>
+    /// guarantees this) — the hash itself doesn't re-sort, so a caller feeding an unsorted list
+    /// would silently defeat the point.</summary>
     private static long ComputeWalkKey(IReadOnlyList<string> sortedTips, GraphQuery query)
     {
         var h = StableHash.Fnv64OffsetBasis;
@@ -1685,53 +1823,71 @@ public sealed class GraphLayoutService : IGraphLayoutService
         foreach (var sha in sortedTips)
             Feed(sha);
         Feed(query.IncludeRemoteBranches ? "R1" : "R0");
+        if (!string.IsNullOrEmpty(query.PathFilter))
+            Feed("P:" + query.PathFilter);
         return unchecked((long)h);
     }
 
     /// <summary>Spawns <see cref="GitLogStream"/> and pulls the first batch — entirely off the
-    /// repo gate. A spawn failure, or a failure before the very first row, falls back to a fresh
-    /// libgit2 <see cref="StartWalk"/> (which re-takes the gate).</summary>
+    /// repo gate. When git is missing, the process can't start, or it fails, the walk stops there
+    /// (<see cref="RepoCache.WalkFailed"/>): the rows already pulled are kept and returned
+    /// non-exhausted, so an empty or partial history is never recorded as complete.
+    /// <para>The prime's ref state (fingerprint, walk key, decorations) reaches the cache here,
+    /// under <see cref="RepoCache.WalkLock"/> and before any row is pulled, so a resume that takes
+    /// the lock next already sees it. The result carries none for the caller to merge.</para></summary>
     private async Task<WalkResult> PrimeCliWalkAsync(
-        RepositoryContext context, RepoCache cache, GraphQuery query, DecoCache? deco, GatePrep prep, CancellationToken ct)
+        RepositoryContext context, RepoCache cache, GraphQuery query, GatePrep prep, CancellationToken ct)
     {
         await cache.WalkLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Another step primed (or superseded the walk) while this one waited for the lock — its
+            // outcome stands; the next step resumes it, or supersedes it when the tips differ. A
+            // walk that already ran to the end leaves no LiveWalk behind, so the row count tells
+            // too: priming now would skip only the rows this step saw and pull the rest again.
+            if (cache.WalkHalted || cache.LiveWalk is not null
+                || (cache.WalkKey != 0 && cache.WalkKey != prep.WalkKey)
+                || TotalWalked(cache) != prep.Have)
+                return new WalkResult([], prep.Decorations, Exhausted: false, prep.Fingerprint, DecosFresh: false,
+                    WalkKey: prep.WalkKey, CarriesRefState: false);
+
             using var walkTimer = Diagnostics.PerfLog.Scope("Walk loop (cli)");
-            var stream = _locator is not null
-                ? GitLogStream.TryStart(_locator, context.RepositoryPath, prep.Tips!, context.ActiveProfile)
-                : null;
+            PublishRefState(cache, prep);
+            var stream = GitLogStream.TryStart(
+                _locator, context.RepositoryPath, prep.Tips!, context.ActiveProfile, query.PathFilter);
 
             if (stream is null)
             {
-                Diagnostics.PerfLog.Mark("GitLogStream spawn failed — falling back to libgit2 walk");
-                return await FallbackToLibGit2Async(context, cache, query, deco, prep, ct).ConfigureAwait(false);
+                MarkWalkFailed(context, cache,
+                    _locator.Current.Found ? "git log could not be started" : "git.exe was not found");
+                return new WalkResult([], prep.Decorations, Exhausted: false, prep.Fingerprint, prep.DecosFresh,
+                    WalkKey: prep.WalkKey, CarriesRefState: false);
             }
 
             cache.LiveWalk = stream;
             cache.LiveWalkFingerprint = prep.WalkKey;
             cache.LiveWalkPos = 0;
+            cache.LiveWalkSnapshotToken = prep.SnapshotToken;
 
             var need = prep.WantCount - prep.Have;
             var delta = new List<RawCommit>(Math.Min(need, 8192));
-            // prep.Have rows may already be resident from a partial on-disk cache
-            // (GraphWalkCache.TryLoad seeded cache.Commits from a non-exhausted .gz). StartWalk's
-            // libgit2 path already re-skips those with `skip: have`; this fresh CLI prime must do
-            // the same or the walk's rows [0, need) land duplicated after the cached ones.
+            // prep.Have rows may already be resident from a partial on-disk cache (a
+            // non-exhausted .gz or .meta store), so the fresh walk re-skips them or its rows
+            // [0, need) would land duplicated after the cached ones.
             var exhausted = PumpCommits(stream, delta, skip: prep.Have, want: need, cache, ct);
 
-            if (delta.Count == 0 && !exhausted && stream.Failed)
+            if (stream.Failed)
             {
-                cache.DisposeLiveWalk();
-                Diagnostics.PerfLog.Mark("GitLogStream failed before yielding a row — falling back to libgit2 walk");
-                return await FallbackToLibGit2Async(context, cache, query, deco, prep, ct).ConfigureAwait(false);
+                MarkWalkFailed(context, cache, stream.FailureReason ?? "git log failed");
+                exhausted = false;
             }
-
-            if (exhausted)
+            else if (exhausted)
                 cache.DisposeLiveWalk();
 
+            AppendWalked(cache, delta);
             Diagnostics.PerfLog.Mark($"Walk loop (cli) read {delta.Count} commits (pos {cache.LiveWalkPos}, exhausted={exhausted})");
-            return new WalkResult(delta, prep.Decorations, exhausted, prep.Fingerprint, prep.DecosFresh, WalkKey: prep.WalkKey);
+            return new WalkResult([], prep.Decorations, exhausted, prep.Fingerprint, prep.DecosFresh,
+                WalkKey: prep.WalkKey, CarriesRefState: false);
         }
         finally
         {
@@ -1739,10 +1895,33 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
     }
 
+    /// <summary>Writes a prime's fingerprint, walk key and decorations to the cache together.
+    /// Caller holds <see cref="RepoCache.WalkLock"/>.</summary>
+    private static void PublishRefState(RepoCache cache, GatePrep prep)
+    {
+        lock (cache)
+        {
+            cache.Fingerprint = prep.Fingerprint;
+            cache.WalkKey = prep.WalkKey;
+            cache.Decorations = prep.Decorations;
+        }
+    }
+
+    /// <summary>Stops the walk for good — see <see cref="RepoCache.WalkFailed"/> — and records
+    /// why. Caller holds <see cref="RepoCache.WalkLock"/>.</summary>
+    private static void MarkWalkFailed(RepositoryContext context, RepoCache cache, string reason)
+    {
+        cache.DisposeLiveWalk();
+        cache.WalkFailed = true;
+        Diagnostics.PerfLog.Mark($"graph walk failed: {reason}");
+        AppLog.Write(AppLogLevel.Warn, "graph", $"Commit graph walk failed for {context.RepositoryPath}: {reason}");
+    }
+
     /// <summary>Resumes an already-primed <see cref="GitLogStream"/> — off the repo gate, so a
     /// scroll Extend or the §7.6 background spill's next chunk never queues behind status/diff
     /// work on this repo.</summary>
-    private static async Task<WalkResult> ResumeCliWalkAsync(RepoCache cache, GatePrep prep, CancellationToken ct)
+    private static async Task<WalkResult> ResumeCliWalkAsync(
+        RepositoryContext context, RepoCache cache, GatePrep prep, CancellationToken ct)
     {
         await cache.WalkLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -1750,16 +1929,35 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // The walk may have been disposed/replaced between PrepareWalk's read and here (a
             // concurrent Forget/reset) — nothing to add this round; the caller's next attempt
             // re-evaluates from scratch.
-            if (cache.LiveWalk is not { } live || cache.Engine != WalkEngine.Cli || cache.LiveWalkFingerprint != prep.WalkKey)
-                return new WalkResult([], prep.Decorations, cache.Exhausted, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey);
+            if (cache.LiveWalk is not { } live || cache.LiveWalkFingerprint != prep.WalkKey)
+                return new WalkResult([], prep.Decorations, cache.Exhausted, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey, CarriesRefState: false);
 
-            var need = prep.WantCount - prep.Have;
+            // PrepareWalk just matched this walk's key against a tip set derived from this
+            // snapshot, so later steps may skip the gate until a ref file changes again.
+            if (prep.SnapshotToken != 0)
+                cache.LiveWalkSnapshotToken = prep.SnapshotToken;
+
+            // Sized from the rows walked now, not prep.Have: a concurrent resume may have pulled a
+            // whole chunk while this one waited on WalkLock, after PrepareWalk read it. Exact
+            // here because every pull appends its rows before releasing WalkLock (AppendWalked).
+            // Not LiveWalkPos: the reorder pass clears cache.Commits after every batch and asks
+            // for batchRows each time, i.e. relative to what the cache holds, not to the stream.
+            var need = prep.WantCount - TotalWalked(cache);
+            if (need <= 0)
+                return new WalkResult([], cache.Decorations, Exhausted: false, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey, CarriesRefState: false);
+
             var delta = new List<RawCommit>(Math.Min(need, 8192));
             var exhausted = PumpCommits(live, delta, skip: 0, want: need, cache, ct);
-            if (exhausted)
+            if (live is GitLogStream { Failed: true } failed)
+            {
+                MarkWalkFailed(context, cache, failed.FailureReason ?? "git log failed");
+                exhausted = false;
+            }
+            else if (exhausted)
                 cache.DisposeLiveWalk();
+            AppendWalked(cache, delta);
             Diagnostics.PerfLog.Mark($"walk resumed (cli) +{delta.Count} (pos {cache.LiveWalkPos}, exhausted={exhausted})");
-            return new WalkResult(delta, cache.Decorations, exhausted, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey);
+            return new WalkResult([], cache.Decorations, exhausted, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey, CarriesRefState: false);
         }
         finally
         {
@@ -1767,42 +1965,41 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
     }
 
+    /// <summary>Appends a pull's rows to the pending buffer while the caller still holds
+    /// <see cref="RepoCache.WalkLock"/>, so two pulls in a row can never land in the buffer in the
+    /// opposite order to the one they were read from the stream in.</summary>
+    private static void AppendWalked(RepoCache cache, List<RawCommit> delta)
+    {
+        if (delta.Count == 0)
+            return;
+        lock (cache)
+            cache.Commits.AddRange(delta);
+    }
+
     private const int RetireWalkLockTimeoutMs = 5_000;
 
     /// <summary>
-    /// Safely retires and disposes the cache's live walk enumerator off the spill lock.
-    /// Safe contexts: under <see cref="RepoCache.WalkLock"/> for <see cref="WalkEngine.Cli"/>,
-    /// and inside the repo gate (<see cref="RepositoryContext.WithRepositoryAsync{T}"/>) for
-    /// <see cref="WalkEngine.LibGit2"/>.
+    /// Safely retires and disposes the cache's live walk off the spill lock, under
+    /// <see cref="RepoCache.WalkLock"/> so it never races an in-flight pull. Gives up after
+    /// <see cref="RetireWalkLockTimeoutMs"/> rather than stall a layout.
     /// </summary>
-    private static async Task RetireLiveWalkAsync(RepositoryContext context, RepoCache cache)
+    private static async Task RetireLiveWalkAsync(RepoCache cache)
     {
         if (cache.LiveWalk is null)
             return;
 
         try
         {
-            if (cache.Engine == WalkEngine.Cli)
+            if (await cache.WalkLock.WaitAsync(RetireWalkLockTimeoutMs).ConfigureAwait(false))
             {
-                if (await cache.WalkLock.WaitAsync(RetireWalkLockTimeoutMs).ConfigureAwait(false))
-                {
-                    try
-                    {
-                        cache.DisposeLiveWalk();
-                    }
-                    finally
-                    {
-                        cache.WalkLock.Release();
-                    }
-                }
-            }
-            else
-            {
-                await context.WithRepositoryAsync(_ =>
+                try
                 {
                     cache.DisposeLiveWalk();
-                    return 0;
-                }, CancellationToken.None).ConfigureAwait(false);
+                }
+                finally
+                {
+                    cache.WalkLock.Release();
+                }
             }
         }
         catch
@@ -1811,30 +2008,14 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
     }
 
-    /// <summary>Re-takes the repo gate and runs the libgit2 walk from scratch — the CLI engine's
-    /// fallback when git is missing, the spawn fails, or the process fails before yielding a
-    /// single row.</summary>
-    private async Task<WalkResult> FallbackToLibGit2Async(
-        RepositoryContext context, RepoCache cache, GraphQuery query, DecoCache? deco, GatePrep prep, CancellationToken ct)
-    {
-        cache.Engine = WalkEngine.LibGit2;
-        return await context.WithRepositoryAsync(repo =>
-        {
-            var fp = ComputeFingerprint(repo, query, out var allRefs);
-            cache.DisposeLiveWalk();
-            return StartWalk(repo, query, prep.WantCount, prep.Have, deco, allRefs, fp, prep.WalkKey, cache, ct);
-        }, ct).ConfigureAwait(false);
-    }
-
     /// <summary>Pull up to <paramref name="want"/> commits from an already-positioned walk
     /// enumerator into <paramref name="into"/>, discarding the first <paramref name="skip"/>
     /// still-unconsumed rows (used once, when a partial on-disk cache seeded
     /// <c>cache.Commits</c> and the fresh walk has to re-skip them). Returns true when the walk
-    /// ran out. Cooperative: a cancelled <paramref name="ct"/> stops early and leaves the
-    /// enumerator valid for the next call. Works for both engines — the libgit2 engine's
-    /// enumerator is wrapped by <see cref="LibGit2RawCommitEnumerator"/> so both yield
-    /// <see cref="RawCommit"/> directly; the caller must hold the repo gate for the libgit2
-    /// engine, but not for a <see cref="GitLogStream"/>.</summary>
+    /// ran out — which, for a <see cref="GitLogStream"/>, is also how a failure surfaces, so
+    /// callers check <see cref="GitLogStream.Failed"/> before treating it as exhaustion.
+    /// Cooperative: a cancelled <paramref name="ct"/> stops early and leaves the enumerator valid
+    /// for the next call. Caller holds <see cref="RepoCache.WalkLock"/>.</summary>
     private static bool PumpCommits(
         IEnumerator<RawCommit> walk, List<RawCommit> into, int skip, int want, RepoCache cache, CancellationToken ct)
     {
@@ -1854,126 +2035,61 @@ public sealed class GraphLayoutService : IGraphLayoutService
         return false;
     }
 
-    /// <summary>Adapts a libgit2 <c>Commit</c> revwalk enumerator to <see cref="RawCommit"/> so
-    /// <see cref="PumpCommits"/> and <see cref="RepoCache.LiveWalk"/> need only ever know about
-    /// one shape regardless of which engine is walking.</summary>
-    private sealed class LibGit2RawCommitEnumerator(IEnumerator<Commit> inner) : IEnumerator<RawCommit>
-    {
-        public RawCommit Current { get; private set; }
-        object IEnumerator.Current => Current;
-
-        public bool MoveNext()
-        {
-            if (!inner.MoveNext())
-                return false;
-            var commit = inner.Current;
-            // Enumerate Parents once — each access re-parses the commit object in libgit2.
-            var parentIds = commit.Parents.Select(p => p.Id).ToList();
-            Current = new RawCommit(
-                commit.Id,
-                parentIds,
-                new CommitMetadata
-                {
-                    Id = commit.Id,
-                    MessageShort = commit.MessageShort,
-                    AuthorName = commit.Author.Name,
-                    AuthorEmail = commit.Author.Email,
-                    AuthorWhen = commit.Author.When,
-                    CommitWhen = commit.Committer.When,
-                    ParentCount = parentIds.Count,
-                });
-            return true;
-        }
-
-        public void Reset() => inner.Reset();
-        public void Dispose() => inner.Dispose();
-    }
-
-    /// <summary>Sort key for a raw walk tip (a <see cref="Reference"/> or a stash
-    /// <see cref="Commit"/>) — its resolved target sha, falling back to the ref's own name for
-    /// something that can't be resolved. Ordinal, so it does not depend on ref enumeration order
-    /// or a per-process string hash.</summary>
-    private static string TipSortKey(object tip) => tip switch
-    {
-        Commit c => c.Sha,
-        Reference r => r.ResolveToDirectReference()?.TargetIdentifier ?? r.CanonicalName,
-        _ => tip.ToString() ?? "",
-    };
-
-    /// <summary>Resolves the same tip set <see cref="StartWalk"/> would (local / remote / tag,
-    /// filtered by <see cref="GraphQuery.RefScope"/> and <see cref="Resolvable"/>), peeled to
+    /// <summary>Resolves the walk's tips from <paramref name="snapshot"/> — local / remote / tag
+    /// refs filtered by <see cref="GraphQuery.RefScope"/>, plus each stash's work-tree commit
+    /// (<paramref name="stashShas"/>) when <see cref="GraphQuery.IncludeStashes"/> is set — as
     /// commit SHAs for <c>git log --stdin</c>.
-    /// <para>An ANNOTATED tag's ref target is the tag object, not a commit —
-    /// <c>repo.Lookup&lt;Commit&gt;(target)</c> returns null for it, so before this fix the tip was
-    /// silently dropped and history reachable only from that tag (typically a release tagged on a
-    /// branch later deleted) never entered the CLI walk. libgit2's own <c>StartWalk</c> fallback
-    /// doesn't have this gap: it feeds <see cref="Reference"/> objects straight to
-    /// <c>CommitFilter.IncludeReachableFrom</c>, which peels them internally. Fixed here by
-    /// falling back to <c>repo.Lookup(target)?.Peel&lt;Commit&gt;()</c> when the direct commit
-    /// lookup misses.</para>
-    /// <para>Verified against LibGit2Sharp 0.31.0 (see the commit body): <c>GitObject.Peel&lt;T&gt;()</c>
-    /// is generic and takes no argument (confirmed by reflection over the installed package), and
-    /// peeling a target that cannot reach a commit — e.g. a lightweight tag pointing straight at a
-    /// tree, such as linux's <c>v2.6.11-tree</c> — throws <see cref="InvalidSpecificationException"/>
-    /// rather than returning null (confirmed against a scratch repo built with the same package).
-    /// That case is caught and skipped, matching how <see cref="StartWalk"/>'s libgit2 walk treats
-    /// an unpeelable tip.</para>
-    /// Caller holds the repo gate. The returned array is sorted ordinally — git's
-    /// topological sort depends on the order tips are fed to it (measured), and the fingerprint
-    /// already ignores ref enumeration order, so an unsorted list would let `git gc`/`pack-refs`
-    /// silently reorder the walk under an unchanged fingerprint.</summary>
-    private static string[] ResolveTipShas(Repository repo, GraphQuery query, List<Reference> allRefs)
+    /// <para>An annotated tag reaches the walk through its peeled commit (a release tagged on a
+    /// branch later deleted is only reachable that way); a ref that reaches a tree or blob, such
+    /// as linux's <c>v2.6.11-tree</c>, is dropped (<see cref="RefEntry.PeeledCommit"/>). A dangling
+    /// symbolic ref never appears in the snapshot at all. The scope filters are the plain
+    /// <c>refs/heads/</c> / <c>refs/remotes/</c> / <c>refs/tags/</c> prefix tests LibGit2Sharp's
+    /// <c>IsLocalBranch</c> / <c>IsRemoteTrackingBranch</c> / <c>IsTag</c> apply (verified against
+    /// 0.31.0), and <see cref="GraphRefScope.Selected"/> names are full ref names or <c>HEAD</c> —
+    /// so the walk key over this tip set is the one LibGit2Sharp-resolved tips gave, and existing
+    /// on-disk stores stay valid.</para>
+    /// The returned array is sorted ordinally — git's topological sort depends on the order tips
+    /// are fed to it (measured), and the fingerprint already ignores ref enumeration order, so an
+    /// unsorted list would let `git gc`/`pack-refs` silently reorder the walk under an unchanged
+    /// fingerprint.</summary>
+    private static string[] ResolveTipShas(RefSnapshot snapshot, GraphQuery query, IReadOnlyList<string?> stashShas)
     {
-        static bool Resolvable(Reference? r) => r?.ResolveToDirectReference() is not null;
-        static Commit? SafeLookupCommit(Repository repo, string targetIdentifier)
-        {
-            try
-            {
-                if (repo.Lookup<Commit>(targetIdentifier) is { } direct)
-                    return direct;
-                // Not a commit itself (an annotated tag's target is the tag object; a lightweight
-                // tag can point at any object type) — try to peel it down to one. Throws
-                // InvalidSpecificationException when the target can't reach a commit at all (a
-                // tree/blob tag) — that tip is dropped, same as StartWalk's libgit2 path.
-                return repo.Lookup(targetIdentifier)?.Peel<Commit>();
-            }
-            catch { return null; }
-        }
-
         var shas = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        void Add(Commit? c) { if (c is not null && seen.Add(c.Sha)) shas.Add(c.Sha); }
+        void Add(string? sha) { if (sha is not null && seen.Add(sha)) shas.Add(sha); }
 
         switch (query.RefScope)
         {
             case GraphRefScope.CurrentBranch:
-                if (!repo.Info.IsHeadUnborn)
-                    Add(repo.Head.Tip);
+                Add(snapshot.HeadTarget?.Sha);
                 break;
 
             case GraphRefScope.Selected:
                 foreach (var name in query.SelectedRefs ?? [])
                 {
-                    var r = repo.Refs[name];
-                    if (!Resolvable(r))
-                        continue;
-                    var target = r!.ResolveToDirectReference()!.TargetIdentifier;
-                    if (target is not null)
-                        Add(SafeLookupCommit(repo, target));
+                    if (string.Equals(name, "HEAD", StringComparison.Ordinal))
+                        Add(snapshot.HeadTarget?.Sha);
+                    else
+                        Add(snapshot.Find(name)?.PeeledCommit?.Sha);
                 }
                 break;
 
             default:
-                foreach (var r in allRefs)
+                foreach (var r in snapshot.Refs)
                 {
-                    if (!(r.IsLocalBranch || (query.IncludeRemoteBranches && r.IsRemoteTrackingBranch) || r.IsTag) || !Resolvable(r))
-                        continue;
-                    var target = r.ResolveToDirectReference()!.TargetIdentifier;
-                    if (target is not null)
-                        Add(SafeLookupCommit(repo, target));
+                    var name = r.CanonicalName;
+                    if (name.StartsWith("refs/heads/", StringComparison.Ordinal)
+                        || (query.IncludeRemoteBranches && name.StartsWith("refs/remotes/", StringComparison.Ordinal))
+                        || name.StartsWith("refs/tags/", StringComparison.Ordinal))
+                        Add(r.PeeledCommit?.Sha);
                 }
                 break;
         }
+
+        // §V2-17.3: stashes are reachable roots only when the flag is set.
+        if (query.IncludeStashes)
+            foreach (var sha in stashShas)
+                Add(sha);
 
         shas.Sort(StringComparer.Ordinal);
         return [.. shas];
@@ -1988,32 +2104,78 @@ public sealed class GraphLayoutService : IGraphLayoutService
         bool FromDisk = false,
         DiskCommitStore? MetaStore = null,
         bool MetaExhausted = false,
-        long WalkKey = 0);
+        long WalkKey = 0,
+        // Whether the merge writes Fingerprint / WalkKey / Decorations to the cache: only a Done
+        // that derived them on the gate. A prime publishes its own under WalkLock; a resume
+        // derives none.
+        bool CarriesRefState = true);
+
+    /// <summary>Each stash's work-tree commit, newest first — the one ref-derived input the
+    /// snapshot can't supply (older stashes live only in the stash reflog). Caller holds the
+    /// repo gate; only read when the query includes stashes.</summary>
+    private static string?[] ReadStashShas(Repository repo) =>
+        [.. repo.Stashes.Select(st => st.WorkTree?.Sha)];
+
+    /// <summary>The fingerprint, sorted tip set and walk key for one query over one snapshot —
+    /// pure computation, milliseconds even at chromium's 39k refs.</summary>
+    private static (long Fingerprint, string[] Tips, long WalkKey) DeriveRefState(
+        RefSnapshot snapshot, GraphQuery query, IReadOnlyList<string?> stashShas, string repositoryPath)
+    {
+        CountRefScan(repositoryPath);
+        var fp = ComputeFingerprint(snapshot, query, stashShas);
+        var tips = ResolveTipShas(snapshot, query, stashShas);
+        return (fp, tips, ComputeWalkKey(tips, query));
+    }
+
+    /// <summary>The current ref state for <paramref name="query"/>, read off the repo gate (the
+    /// snapshot is a token check or one separate process); only a query that includes stashes
+    /// takes one short gate turn, for the stash list. Null when the refs can't be read — the
+    /// <see cref="HistoriaGitException"/> has already logged why, and each caller decides what an
+    /// unknown ref state means for it; none lets the failure escape the service.</summary>
+    private static async Task<(RefSnapshot Snapshot, long Fingerprint, string[] Tips, long WalkKey)?> TryGetRefStateAsync(
+        RepositoryContext context, GraphQuery query, bool background, CancellationToken ct)
+    {
+        RefSnapshot snapshot;
+        try { snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false); }
+        catch (HistoriaGitException ex)
+        {
+            Diagnostics.PerfLog.Mark($"ref state unreadable: {ex.Message}");
+            return null;
+        }
+        IReadOnlyList<string?> stashShas = [];
+        if (query.IncludeStashes)
+            stashShas = background
+                ? await context.WithRepositoryBackgroundAsync(ReadStashShas, ct).ConfigureAwait(false)
+                : await context.WithRepositoryAsync(ReadStashShas, ct).ConfigureAwait(false);
+        var (fp, tips, walkKey) = DeriveRefState(snapshot, query, stashShas, context.RepositoryPath);
+        return (snapshot, fp, tips, walkKey);
+    }
 
     /// <summary>
-    /// Stable (cross-process) fingerprint of everything that changes the walk output: every
-    /// ref's name+target, HEAD's resolved target, and the query knobs (scope, remote-branch and
-    /// stash inclusion, path filter, selected refs, and — only when stashes are in scope — the
-    /// stash list). FNV-1a over sorted input, so it does not depend on ref enumeration order or
-    /// per-process <see cref="string.GetHashCode()"/> randomisation.
+    /// Stable (cross-process) fingerprint of everything that changes the walk output or its
+    /// badges: every ref's name + target (a symbolic ref's target ref name), where HEAD points
+    /// and what it resolves to, and the query knobs (scope, remote-branch and stash inclusion,
+    /// path filter, selected refs, and — only when stashes are in scope — the stash list).
+    /// FNV-1a over ordinally sorted input, so it does not depend on ref enumeration order or
+    /// per-process <see cref="string.GetHashCode()"/> randomisation. In-memory only — the disk
+    /// stores key on <see cref="ComputeWalkKey"/>.
     /// </summary>
-    private static long ComputeFingerprint(Repository repo, GraphQuery query, out List<Reference> allRefs)
+    private static long ComputeFingerprint(RefSnapshot snapshot, GraphQuery query, IReadOnlyList<string?> stashShas)
     {
-        allRefs = repo.Refs.ToList();
-
         var h = StableHash.Fnv64OffsetBasis;
         void Feed(string s) => h = StableHash.Fnv1a64Step(h, s);
 
-        foreach (var r in allRefs.OrderBy(x => x.CanonicalName, StringComparer.Ordinal))
+        foreach (var r in snapshot.Refs) // already ordinal by name
         {
             Feed(r.CanonicalName);
-            Feed(r.TargetIdentifier ?? "");
+            Feed(r.SymrefTarget ?? r.Target?.Sha ?? "");
         }
 
-        Feed("HEAD");
-        Feed(repo.Refs.Head?.ResolveToDirectReference()?.TargetIdentifier ?? "");
+        Feed("HEAD");
+        Feed(snapshot.HeadSymref ?? "");
+        Feed(snapshot.HeadTarget?.Sha ?? "");
 
-        Feed("query");
+        Feed("query");
         Feed(query.RefScope.ToString());
         Feed(query.IncludeRemoteBranches ? "R1" : "R0");
         Feed(query.IncludeStashes ? "S1" : "S0");
@@ -2024,102 +2186,26 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         if (query.IncludeStashes)
         {
-            var n = 0;
-            foreach (var st in repo.Stashes) { Feed(st.WorkTree?.Sha ?? ""); n++; }
-            Feed("n" + n);
+            foreach (var sha in stashShas)
+                Feed(sha ?? "");
+            Feed("n" + stashShas.Count);
         }
 
         return unchecked((long)h);
     }
 
-    /// <summary>Shared by <see cref="StartWalk"/> (libgit2) and <see cref="PrepareWalk"/> (CLI
-    /// prime): the decoration cache hit/rebuild decision is identical for both engines — the
-    /// walk row order never affects which refs decorate which commit.</summary>
+    /// <summary>Reuses the per-path decoration cache while the ref fingerprint is unchanged;
+    /// otherwise rebuilds it with <see cref="BuildDecorations"/>.</summary>
     private static (Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Decorations, bool Fresh) ResolveDecorations(
-        Repository repo, GraphQuery query, List<Reference> allRefs, DecoCache? decoCache, long fingerprint)
+        Repository repo, GraphQuery query, RefSnapshot snapshot, DecoCache? decoCache, long fingerprint)
     {
         if (decoCache is not null && fingerprint != 0 && decoCache.Fingerprint == fingerprint)
             return (decoCache.Decos, false);
 
         Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations;
         using (Diagnostics.PerfLog.Scope("BuildDecorations"))
-            decorations = BuildDecorations(repo, query, allRefs);
+            decorations = BuildDecorations(repo, query, snapshot);
         return (decorations, true);
-    }
-
-    /// <summary>Primes a fresh topological revwalk (the expensive tip-priority setup on a large
-    /// repo), stores its enumerator on <paramref name="cache"/> so later Extends / spill chunks
-    /// continue it instead of re-priming, and pulls the first <c>wantCount - have</c> rows.
-    /// <paramref name="have"/> rows are re-skipped when a partial on-disk cache already seeded
-    /// <c>cache.Commits</c>. Caller holds the repo gate.</summary>
-    private static WalkResult StartWalk(
-        Repository repo, GraphQuery query, int wantCount, int have, DecoCache? decoCache,
-        List<Reference> allRefs, long fingerprint, long walkKey, RepoCache cache, CancellationToken ct)
-    {
-        // A ref whose target object is missing (a corrupt packed-refs, a half-deleted branch)
-        // makes repo.Commits.QueryBy throw and blanks the whole graph — drop it from the tips.
-        static bool Resolvable(Reference? r) => r?.ResolveToDirectReference() is not null;
-
-        List<object> tipList = query.RefScope switch
-        {
-            GraphRefScope.CurrentBranch => repo.Info.IsHeadUnborn ? [] : [repo.Head],
-            GraphRefScope.Selected => (query.SelectedRefs ?? [])
-                .Select(r => repo.Refs[r]).Where(Resolvable).Cast<object>().ToList(),
-            _ => allRefs
-                .Where(r => (r.IsLocalBranch || (query.IncludeRemoteBranches && r.IsRemoteTrackingBranch) || r.IsTag)
-                            && Resolvable(r))
-                .Cast<object>().ToList(),
-        };
-
-        var (decorations, decosFresh) = ResolveDecorations(repo, query, allRefs, decoCache, fingerprint);
-
-        // §V2-17.3: stashes are reachable roots only when the flag is set.
-        if (query.IncludeStashes)
-            foreach (var stash in repo.Stashes)
-                if (stash.WorkTree is not null)
-                    tipList.Add(stash.WorkTree);
-
-        // Git's topological sort depends on the
-        // order tips are fed to it (measured), so an unsorted, enumeration-order tip list makes
-        // the walk's row order drift under a `git gc`/`pack-refs` that only reorders how refs
-        // enumerate — same ref set, same fingerprint (which already sorts by name), different
-        // row order. Sort by each tip's target sha so both engines see one canonical order.
-        tipList = [.. tipList.OrderBy(TipSortKey, StringComparer.Ordinal)];
-
-        object[] tips = [.. tipList];
-        Diagnostics.PerfLog.Mark($"Walk tips resolved: {tips.Length}, decosFresh={decosFresh}");
-
-        var result = new List<RawCommit>(Math.Min(Math.Max(wantCount - have, 0), 8192));
-        if (tips.Length == 0)
-            return new WalkResult(result, decorations, true, fingerprint, decosFresh, WalkKey: walkKey);
-
-        var filter = new CommitFilter
-        {
-            SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time,
-            IncludeReachableFrom = tips,
-        };
-
-        // §V2-17.3: a pathspec-limited history is a real Git concept with its own valid
-        // topology — restrict the walk rather than filter the finished graph.
-        var walk = string.IsNullOrWhiteSpace(query.PathFilter)
-            ? repo.Commits.QueryBy(filter)
-            : repo.Commits.QueryBy(query.PathFilter, filter).Select(e => e.Commit);
-
-        // Keep the enumerator alive on the cache — the first MoveNext() below pays the topo
-        // tip-priority prime; every later Extend / silent-crawl / spill chunk resumes from here.
-        var walkEnum = new LibGit2RawCommitEnumerator(walk.GetEnumerator());
-        cache.LiveWalk = walkEnum;
-        cache.LiveWalkFingerprint = walkKey;
-        cache.LiveWalkPos = 0;
-        cache.Engine = WalkEngine.LibGit2;
-
-        using var walkTimer = Diagnostics.PerfLog.Scope($"Walk loop (sort={filter.SortBy})");
-        var exhausted = PumpCommits(walkEnum, result, skip: have, want: wantCount - have, cache, ct);
-        if (exhausted)
-            cache.DisposeLiveWalk();
-        Diagnostics.PerfLog.Mark($"Walk loop read {result.Count} commits (pos {cache.LiveWalkPos}, exhausted={exhausted})");
-
-        return new WalkResult(result, decorations, exhausted, fingerprint, decosFresh, WalkKey: walkKey);
     }
 
     private enum Family { Branch, Tag, Stash }
@@ -2136,14 +2222,15 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
     /// <summary>
     /// Builds the per-commit decoration list, folding a branch that exists both locally and on
-    /// one or more remotes into a single badge (§V3-7.3). Works straight off the raw
-    /// <paramref name="allRefs"/> — branch tips are read from the ref's own target id with no
-    /// object load; only tags are peeled. The remote prefix is stripped by matching the
+    /// one or more remotes into a single badge (§V3-7.3). Works straight off
+    /// <paramref name="snapshot"/> — branch tips are the ref's resolved target, tags their
+    /// peeled commit, with no object load; only the remote names and the stash list come from
+    /// <paramref name="repo"/>. The remote prefix is stripped by matching the
     /// configured remote names (longest first), falling back to the first path segment only for
     /// an orphan remote-tracking ref whose remote no longer exists.
     /// </summary>
     private static Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> BuildDecorations(
-        Repository repo, GraphQuery query, IReadOnlyList<Reference> allRefs)
+        Repository repo, GraphQuery query, RefSnapshot snapshot)
     {
         // commit id → ((family, shortName) → builder)
         var map = new Dictionary<ObjectId, Dictionary<(Family, string), BadgeBuilder>>();
@@ -2158,23 +2245,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
             return b;
         }
 
-        static ObjectId? DirectTargetId(Reference r)
-        {
-            var sha = r.ResolveToDirectReference()?.TargetIdentifier;
-            return sha is { Length: 40 } ? new ObjectId(sha) : null;
-        }
-
         string[] remoteNames;
         try { remoteNames = repo.Network.Remotes.Select(rm => rm.Name).OrderByDescending(n => n.Length).ToArray(); }
         catch { remoteNames = []; }
 
-        foreach (var r in allRefs)
+        foreach (var r in snapshot.Refs)
         {
             var name = r.CanonicalName;
 
             if (name.StartsWith("refs/heads/", StringComparison.Ordinal))
             {
-                if (DirectTargetId(r) is { } tip)
+                if (r.Target is { } tip)
                     Get(tip, Family.Branch, name["refs/heads/".Length..]).IsLocal = true;
             }
             else if (name.StartsWith("refs/remotes/", StringComparison.Ordinal))
@@ -2200,7 +2281,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // branch, not a branch of its own — never a badge.
                 if (string.Equals(shortName, "HEAD", StringComparison.Ordinal))
                     continue;
-                if (DirectTargetId(r) is not { } tip)
+                if (r.Target is not { } tip)
                     continue;
                 var b = Get(tip, Family.Branch, shortName);
                 if (!b.Remotes.Contains(remote))
@@ -2208,15 +2289,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
             else if (name.StartsWith("refs/tags/", StringComparison.Ordinal))
             {
-                if (DirectTargetId(r) is not { } immediate)
-                    continue;
-                var id = repo.Lookup<Commit>(immediate)?.Id;
-                if (id is null)
-                {
-                    try { id = repo.Lookup(immediate)?.Peel<Commit>()?.Id; }
-                    catch { id = null; }
-                }
-                if (id is not null)
+                if (r.PeeledCommit is { } id)
                     Get(id, Family.Tag, name["refs/tags/".Length..]);
             }
         }
@@ -2234,14 +2307,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
 
         // HEAD folds into its branch badge; a standalone HEAD badge only when detached (§V3-7.3).
-        var headRef = repo.Refs.Head;
-        if (!repo.Info.IsHeadUnborn && headRef is not null && DirectTargetId(headRef) is { } headTip)
+        if (snapshot.HeadTarget is { } headTip)
         {
-            if (repo.Info.IsHeadDetached)
+            if (snapshot.IsHeadDetached)
                 Get(headTip, Family.Branch, "HEAD").IsHead = true;
             else
             {
-                var t = headRef.TargetIdentifier;
+                var t = snapshot.HeadSymref;
                 var shortName = t is not null && t.StartsWith("refs/heads/", StringComparison.Ordinal)
                     ? t["refs/heads/".Length..]
                     : t ?? "HEAD";
@@ -2249,7 +2321,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
         }
 
-        var defaultBranch = ResolveDefaultBranchShortName(repo);
+        var defaultBranch = ResolveDefaultBranchShortName(snapshot);
         return map.ToDictionary(
             kv => kv.Key,
             kv => BuildInputs(kv.Value.Values, defaultBranch));
@@ -2260,30 +2332,26 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// Precedence: the currently checked-out branch, then <c>origin/HEAD</c>'s target, then a
     /// branch literally named <c>main</c>, then <c>master</c>, else none.
     /// </summary>
-    private static string? ResolveDefaultBranchShortName(Repository repo)
+    private static string? ResolveDefaultBranchShortName(RefSnapshot snapshot)
     {
-        if (!repo.Info.IsHeadUnborn && !repo.Info.IsHeadDetached)
+        if (!snapshot.IsHeadUnborn && !snapshot.IsHeadDetached)
         {
-            var t = repo.Refs.Head?.TargetIdentifier;
+            var t = snapshot.HeadSymref;
             return t is not null && t.StartsWith("refs/heads/", StringComparison.Ordinal)
                 ? t["refs/heads/".Length..]
                 : t;
         }
 
-        try
+        if (snapshot.Find("refs/remotes/origin/HEAD")?.SymrefTarget is { } target)
         {
-            if (repo.Refs["refs/remotes/origin/HEAD"] is SymbolicReference sym && sym.TargetIdentifier is { } t)
-            {
-                const string prefix = "refs/remotes/";
-                var s = t.StartsWith(prefix, StringComparison.Ordinal) ? t[prefix.Length..] : t;
-                var slash = s.IndexOf('/');
-                return slash >= 0 ? s[(slash + 1)..] : s;
-            }
+            const string prefix = "refs/remotes/";
+            var s = target.StartsWith(prefix, StringComparison.Ordinal) ? target[prefix.Length..] : target;
+            var slash = s.IndexOf('/');
+            return slash >= 0 ? s[(slash + 1)..] : s;
         }
-        catch { /* no origin/HEAD */ }
 
-        if (repo.Refs["refs/heads/main"] is not null) return "main";
-        if (repo.Refs["refs/heads/master"] is not null) return "master";
+        if (snapshot.Find("refs/heads/main") is not null) return "main";
+        if (snapshot.Find("refs/heads/master") is not null) return "master";
         return null;
     }
 

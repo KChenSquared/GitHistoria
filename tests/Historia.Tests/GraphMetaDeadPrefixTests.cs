@@ -12,7 +12,6 @@ public sealed class GraphMetaDeadPrefixTests : IDisposable
     private const long KeyA = 0x1111_2222_3333_4444;
     private const long KeyB = 0x5555_6666_7777_8888;
     private const string Repo = @"C:\repos\dead-prefix-demo";
-    private const WalkEngine Engine = WalkEngine.LibGit2;
 
     public void Dispose() => _state.Dispose();
 
@@ -36,17 +35,17 @@ public sealed class GraphMetaDeadPrefixTests : IDisposable
     public void A_respill_under_a_live_reader_leaves_no_dead_prefix()
     {
         var rowsA = Enumerable.Range(0, 10).Select(i => Commit(i, i == 0 ? [] : [i - 1])).ToList();
-        var writerA = new GraphMetaWriter(Repo, KeyA, true, Engine);
+        var writerA = new GraphMetaWriter(Repo, KeyA, true);
         var outcomeA = writerA.AppendSpillBatch(rowsA, 0, 10, exhausted: true);
         Assert.Equal(SpillOutcome.Appended, outcomeA.Outcome);
 
-        var storeA = GraphMetaStore.TryOpen(Repo, KeyA, true, 10, Engine)!;
+        var storeA = GraphMetaStore.TryOpen(Repo, KeyA, true, 10)!;
         Assert.NotNull(storeA);
         var paintedLease = storeA.AddRef()!;
         storeA.Dispose();
 
         var rowsB = Enumerable.Range(100, 15).Select(i => Commit(i, i == 100 ? [] : [i - 1])).ToList();
-        var writerB = new GraphMetaWriter(Repo, KeyB, true, Engine);
+        var writerB = new GraphMetaWriter(Repo, KeyB, true);
         var outcomeB = writerB.AppendSpillBatch(rowsB, 0, 15, exhausted: true);
         Assert.Equal(SpillOutcome.Appended, outcomeB.Outcome);
 
@@ -58,7 +57,7 @@ public sealed class GraphMetaDeadPrefixTests : IDisposable
         for (var i = 0; i < 10; i++)
             Assert.Equal(rowsA[i].Id, paintedLease[i].Id);
 
-        using (var storeB = GraphMetaStore.TryOpen(Repo, KeyB, true, 15, Engine)!)
+        using (var storeB = GraphMetaStore.TryOpen(Repo, KeyB, true, 15)!)
         {
             Assert.NotNull(storeB);
             Assert.Equal(15, storeB.Count);
@@ -79,7 +78,7 @@ public sealed class GraphMetaDeadPrefixTests : IDisposable
             return; // On Unix platforms, open files can always be renamed and unlinked regardless of sharing flags.
 
         var rowsA = Enumerable.Range(0, 5).Select(i => Commit(i, i == 0 ? [] : [i - 1])).ToList();
-        var writerA = new GraphMetaWriter(Repo, KeyA, true, Engine);
+        var writerA = new GraphMetaWriter(Repo, KeyA, true);
         writerA.AppendSpillBatch(rowsA, 0, 5, exhausted: true);
 
         var idxPath = GraphCachePaths.File(Repo, GraphMetaStore.IdxExt);
@@ -89,14 +88,14 @@ public sealed class GraphMetaDeadPrefixTests : IDisposable
         using (var foreignHandle = new FileStream(idxPath, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             var rowsB = Enumerable.Range(10, 5).Select(i => Commit(i, i == 10 ? [] : [i - 1])).ToList();
-            var writerB = new GraphMetaWriter(Repo, KeyB, true, Engine);
+            var writerB = new GraphMetaWriter(Repo, KeyB, true);
             var outcome = writerB.AppendSpillBatch(rowsB, 0, 5, exhausted: true);
 
             Assert.Equal(SpillOutcome.Conflict, outcome.Outcome);
         }
 
         // Header still names KeyA
-        var probe = GraphMetaStore.ProbeExisting(Repo, true, Engine);
+        var probe = GraphMetaStore.ProbeExisting(Repo, true);
         Assert.True(probe.Ok);
         Assert.Equal(KeyA, probe.WalkKey);
 
@@ -120,7 +119,7 @@ public sealed class GraphMetaDeadPrefixTests : IDisposable
         File.WriteAllBytes(retiredOther, [4, 5, 6]);
 
         var rows = Enumerable.Range(0, 5).Select(i => Commit(i, i == 0 ? [] : [i - 1])).ToList();
-        var writer = new GraphMetaWriter(Repo, KeyA, true, Engine);
+        var writer = new GraphMetaWriter(Repo, KeyA, true);
         writer.AppendSpillBatch(rows, 0, 5, exhausted: true);
 
         Assert.False(File.Exists(retiredThis), "Reset must sweep leftover .retired files for its own stem");
@@ -139,7 +138,7 @@ public sealed class GraphMetaDeadPrefixTests : IDisposable
         File.WriteAllBytes(datPath, new byte[K]);
 
         // Append rows through writer WITHOUT calling Reset:
-        var w = new GraphMetaWriter(Repo, KeyA, true, Engine);
+        var w = new GraphMetaWriter(Repo, KeyA, true);
         var rows = Enumerable.Range(0, 5).Select(i => Commit(i, i == 0 ? [] : [i - 1])).ToList();
         w.Append(rows, 0, 5);
         w.Commit(5, exhausted: true);

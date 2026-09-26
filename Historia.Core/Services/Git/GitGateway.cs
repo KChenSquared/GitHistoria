@@ -96,8 +96,18 @@ public sealed class GitGateway(
     public Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default)
         => context.WithRepositoryAsync(lib.ProjectBranches, ct);
 
-    public Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default)
-        => context.WithRepositoryAsync(lib.ProjectTags, ct);
+    /// <summary>From the repo's cached ref snapshot — one <c>git for-each-ref</c>, shared with
+    /// the commit graph, and never the repo gate (LibGit2Sharp's tag enumeration held it for
+    /// 9–13 s at chromium's 39k tags, queueing status behind it). LibGit2Sharp only when git.exe
+    /// is missing (Rule 0.4).</summary>
+    public async Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default)
+    {
+        if (!cli.IsGitAvailable)
+            return await context.WithRepositoryAsync(lib.ProjectTags, ct).ConfigureAwait(false);
+
+        var snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false);
+        return TagProjection.FromSnapshot(snapshot);
+    }
 
     public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default)
         => context.WithRepositoryAsync(lib.ProjectRemotes, ct);

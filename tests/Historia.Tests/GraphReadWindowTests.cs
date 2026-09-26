@@ -16,7 +16,6 @@ public sealed class GraphReadWindowTests : IDisposable
     private readonly StateDir _state = new();
     private const long WalkKey = 0x1122_3344_5566_7788;
     private const string Repo = @"C:\repos\readwindow-demo";
-    private const WalkEngine Engine = WalkEngine.LibGit2;
 
     public void Dispose() => _state.Dispose();
 
@@ -67,12 +66,12 @@ public sealed class GraphReadWindowTests : IDisposable
 
     private static DiskCommitStore OpenStoreWithRows(int rowCount, bool exhausted)
     {
-        var writer = new GraphMetaWriter(Repo, WalkKey, includeRemoteBranches: true, Engine);
+        var writer = new GraphMetaWriter(Repo, WalkKey, includeRemoteBranches: true);
         writer.Reset();
         var rows = RawRange(0, rowCount);
         writer.Append(rows, 0, rows.Count);
         writer.Commit(rowCount, exhausted);
-        return GraphMetaStore.TryOpen(Repo, WalkKey, includeRemoteBranches: true, wantCount: rowCount, Engine)!;
+        return GraphMetaStore.TryOpen(Repo, WalkKey, includeRemoteBranches: true, wantCount: rowCount)!;
     }
 
     [Fact]
@@ -171,7 +170,7 @@ public sealed class GraphReadWindowTests : IDisposable
         var cache = NewCache(spilledRows: 20, resident: [], store);
         CacheType.GetProperty("Exhausted")!.SetValue(cache, true);
 
-        var svc = new GraphLayoutService();
+        var svc = new GraphLayoutService(host.Settings, host.Locator);
         var cachesField = typeof(GraphLayoutService).GetField(
             "_caches", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
         var caches = cachesField.GetValue(svc)!;

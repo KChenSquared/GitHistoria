@@ -53,7 +53,7 @@ public sealed class GraphSpoolTests : IAsyncDisposable
     private async Task<GraphLayoutService> DiskBackedServiceAsync()
     {
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
-        return new GraphLayoutService(_host.Settings);
+        return new GraphLayoutService(_host.Settings, _host.Locator);
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public sealed class GraphSpoolTests : IAsyncDisposable
 
         // Ground truth: the same history laid out entirely in memory (no spilling at all).
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
-        var memSvc = new GraphLayoutService(_host.Settings);
+        var memSvc = new GraphLayoutService(_host.Settings, _host.Locator);
         await using var memCtx = _host.Open(_repo.Path);
         var expected = await memSvc.ComputeLayoutAsync(memCtx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
         Assert.Equal(total, expected.Layout.RowCount);

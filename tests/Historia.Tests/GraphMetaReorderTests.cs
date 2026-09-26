@@ -13,7 +13,6 @@ public sealed class GraphMetaReorderTests : IDisposable
     private readonly StateDir _state = new();
     private const long WalkKey = 0x0123_4567_89ab_cdef;
     private const string Repo = @"C:\repos\reorder-demo";
-    private const WalkEngine Engine = WalkEngine.LibGit2;
 
     public void Dispose() => _state.Dispose();
 
@@ -111,7 +110,7 @@ public sealed class GraphMetaReorderTests : IDisposable
 
     private static GraphMetaWriter FreshIdentityStore(int n)
     {
-        var w = new GraphMetaWriter(Repo, WalkKey, true, Engine);
+        var w = new GraphMetaWriter(Repo, WalkKey, true);
         w.Reset();
         var rows = Enumerable.Range(0, n).Select(i => Commit(i, i == 0 ? [] : [i - 1])).ToList();
         w.Append(rows, 0, n);
@@ -124,7 +123,7 @@ public sealed class GraphMetaReorderTests : IDisposable
     {
         var w = FreshIdentityStore(5); // records/rows 0..4, in that order
 
-        using (var store = GraphMetaStore.TryOpen(Repo, WalkKey, true, 5, Engine)!)
+        using (var store = GraphMetaStore.TryOpen(Repo, WalkKey, true, 5)!)
         {
             var existing = store.BuildShaIndex();
             Assert.Equal(5, existing.Count);
@@ -138,7 +137,7 @@ public sealed class GraphMetaReorderTests : IDisposable
             w.CommitReorder(rowCount: plan.Order.Length, recordCount: store.RecordCount + plan.NewRecords.Count, orderVersion: 1, exhausted: true);
         }
 
-        using var reordered = GraphMetaStore.TryOpen(Repo, WalkKey, true, 6, Engine)!;
+        using var reordered = GraphMetaStore.TryOpen(Repo, WalkKey, true, 6)!;
         Assert.Equal(6, reordered.Count);
         Assert.Equal(6, reordered.RecordCount); // 5 old + 1 new (commit 5)
 
@@ -154,7 +153,7 @@ public sealed class GraphMetaReorderTests : IDisposable
     public void ReadRawRange_over_a_reordered_store_matches_ReadRaw_per_row()
     {
         var w = FreshIdentityStore(6);
-        using (var store = GraphMetaStore.TryOpen(Repo, WalkKey, true, 6, Engine)!)
+        using (var store = GraphMetaStore.TryOpen(Repo, WalkKey, true, 6)!)
         {
             var existing = store.BuildShaIndex();
             // Reverse the order — no new commits, pure reshuffle.
@@ -166,7 +165,7 @@ public sealed class GraphMetaReorderTests : IDisposable
             w.CommitReorder(6, store.RecordCount, 1, exhausted: true);
         }
 
-        using var reordered = GraphMetaStore.TryOpen(Repo, WalkKey, true, 6, Engine)!;
+        using var reordered = GraphMetaStore.TryOpen(Repo, WalkKey, true, 6)!;
         var range = reordered.ReadRawRange(0, 6);
         Assert.Equal(6, range.Count);
         for (var row = 0; row < 6; row++)
@@ -180,7 +179,7 @@ public sealed class GraphMetaReorderTests : IDisposable
     public void Search_maps_record_hits_back_to_rows_after_a_reorder()
     {
         var w = FreshIdentityStore(4); // "commit 0".."commit 3", records 0..3
-        using (var store = GraphMetaStore.TryOpen(Repo, WalkKey, true, 4, Engine)!)
+        using (var store = GraphMetaStore.TryOpen(Repo, WalkKey, true, 4)!)
         {
             var existing = store.BuildShaIndex();
             var newWalk = new List<RawCommit> { Commit(3), Commit(1), Commit(2), Commit(0) }; // reshuffled
@@ -190,7 +189,7 @@ public sealed class GraphMetaReorderTests : IDisposable
             w.CommitReorder(4, store.RecordCount, 1, exhausted: true);
         }
 
-        using var reordered = GraphMetaStore.TryOpen(Repo, WalkKey, true, 4, Engine)!;
+        using var reordered = GraphMetaStore.TryOpen(Repo, WalkKey, true, 4)!;
         // "commit 2" is record 2, which the new order places at row 2.
         Assert.Equal([2], reordered.Search("commit 2"));
         // A term matching everything should hit every row, sorted.
@@ -201,7 +200,7 @@ public sealed class GraphMetaReorderTests : IDisposable
     public void A_reorder_cancelled_before_CommitReorder_leaves_the_old_identity_order_intact()
     {
         var w = FreshIdentityStore(3);
-        using (var store = GraphMetaStore.TryOpen(Repo, WalkKey, true, 3, Engine)!)
+        using (var store = GraphMetaStore.TryOpen(Repo, WalkKey, true, 3)!)
         {
             var existing = store.BuildShaIndex();
             var plan = GraphMetaReorder.Build(existing, store.RecordCount, [Commit(2), Commit(0), Commit(1)]);
@@ -210,7 +209,7 @@ public sealed class GraphMetaReorderTests : IDisposable
             w.WriteOrder(1, plan.Order);
         }
 
-        using var stillIdentity = GraphMetaStore.TryOpen(Repo, WalkKey, true, 3, Engine)!;
+        using var stillIdentity = GraphMetaStore.TryOpen(Repo, WalkKey, true, 3)!;
         Assert.Equal(Oid(0), stillIdentity.ReadRaw(0).Id);
         Assert.Equal(Oid(1), stillIdentity.ReadRaw(1).Id);
         Assert.Equal(Oid(2), stillIdentity.ReadRaw(2).Id);
@@ -220,14 +219,14 @@ public sealed class GraphMetaReorderTests : IDisposable
     public void Version_5_header_round_trips_RecordCount_and_OrderVersion()
     {
         var w = FreshIdentityStore(3);
-        using (var store = GraphMetaStore.TryOpen(Repo, WalkKey, true, 3, Engine)!)
+        using (var store = GraphMetaStore.TryOpen(Repo, WalkKey, true, 3)!)
         {
             var plan = GraphMetaReorder.Build(store.BuildShaIndex(), store.RecordCount, [Commit(2), Commit(1), Commit(0)]);
             w.WriteOrder(1, plan.Order);
             w.CommitReorder(3, store.RecordCount, 1, exhausted: true);
         }
 
-        var probe = GraphMetaStore.Probe(Repo, WalkKey, true, Engine);
+        var probe = GraphMetaStore.Probe(Repo, WalkKey, true);
         Assert.True(probe.Ok);
         Assert.Equal(3, probe.RowCount);
     }
@@ -240,7 +239,7 @@ public sealed class GraphMetaReorderTests : IDisposable
         var json = $$"""{"Version":4,"Fingerprint":{{WalkKey}},"IncludeRemoteBranches":true,"RowCount":3,"Exhausted":true,"WalkEngine":0}""";
         File.WriteAllText(hdrPath, json);
 
-        Assert.Null(GraphMetaStore.TryOpen(Repo, WalkKey, true, 3, Engine));
+        Assert.Null(GraphMetaStore.TryOpen(Repo, WalkKey, true, 3));
     }
 
     private static void AssertMetadataEqual(CommitMetadata expected, CommitMetadata actual)

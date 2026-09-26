@@ -25,7 +25,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
     private async Task<GraphLayoutService> DiskBackedServiceAsync()
     {
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
-        return new GraphLayoutService(_host.Settings);
+        return new GraphLayoutService(_host.Settings, _host.Locator);
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
         (bool Ok, int RowCount, bool Exhausted) probe = default;
         while (DateTime.UtcNow < deadline)
         {
-            probe = GraphMetaStore.Probe(_repo.Path, FingerprintOf(svc, ctx), includeRemoteBranches: true, WalkEngine.LibGit2);
+            probe = GraphMetaStore.Probe(_repo.Path, FingerprintOf(svc, ctx), includeRemoteBranches: true);
             if (probe is { Ok: true, Exhausted: true })
                 break;
             await Task.Delay(100);
@@ -110,7 +110,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
         // A fresh GraphLayoutService instance has no in-memory RepoCache for ctx at all — same
         // shape as a new launch reopening the same path. The optimistic path must seed itself
         // from the .meta store the compute above just spilled, not require a live walk.
-        var cold = new GraphLayoutService(_host.Settings);
+        var cold = new GraphLayoutService(_host.Settings, _host.Locator);
         var snapshot = cold.TryOptimisticSnapshot(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs }, maxRows: 5);
 
         Assert.NotNull(snapshot);
@@ -163,7 +163,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
     public async Task Falls_back_to_in_memory_when_the_setting_is_off()
     {
         await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
-        var svc = new GraphLayoutService(_host.Settings);
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
         await using var ctx = _host.Open(_repo.Path);
 
         var result = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
