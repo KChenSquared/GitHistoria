@@ -1504,8 +1504,12 @@ public sealed partial class CommitGraphControl : Control
     private static T Pooled<T>(Dictionary<int, T> pool, int colorIndex, Func<int, T> build)
         => pool.TryGetValue(colorIndex, out var v) ? v : pool[colorIndex] = build(colorIndex);
 
+    // Lane and emphasis pens use a square cap: each piece overhangs its ends by half the pen
+    // width, so butted runs, elbows and colour changes overlap instead of meeting at a
+    // fractional y, where anti-aliasing would leave a faint seam. The overhang at a line's
+    // real end sits under its commit dot or is clipped by the row area.
     private Pen LanePen(int colorIndex) => Pooled(_lanePens, colorIndex,
-        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), LaneStrokeWidth));
+        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), LaneStrokeWidth, lineCap: PenLineCap.Square));
 
     /// <summary>§V6-G2: a thin, faint version of the lane colour for a non-HEAD badge→node
     /// connector. 1 DIP at 45% alpha — the crisp, stable equivalent of "thin and faint" (a
@@ -1520,7 +1524,7 @@ public sealed partial class CommitGraphControl : Control
         i => new SolidColorBrush(ToColor(LaneRgb(i))));
 
     private Pen EmphPen(int colorIndex) => Pooled(_emphPens, colorIndex,
-        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 3.0));
+        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 3.0, lineCap: PenLineCap.Square));
 
     /// <summary>§V6-G1: the badge is a solid opaque lane-colour fill, so its label and icons
     /// need ink that contrasts against that hue — near-black on a light badge, near-white on a
@@ -3359,8 +3363,8 @@ public sealed partial class CommitGraphControl : Control
         // Vertical lane pieces of the visible rows are merged into maximal same-colour runs and
         // drawn as one line each — about lanes plus lane breaks, not rows × lanes. Where several
         // pieces share a lane in one row, the builder keeps the last one listed, which is the one
-        // that would cover the rest on screen (same x, same pen width). Pens use the default flat
-        // cap, so a run covers exactly the pixels of its pieces butted end to end.
+        // that would cover the rest on screen (same x, same pen width). Pens use a square cap, so
+        // where two runs meet (a colour change, an elbow) they overlap rather than leave a seam.
         _laneRuns.Begin(layout.TotalLaneCount);
         var piecesSeen = 0;
         for (var row = first; row <= last; row++)
@@ -3412,13 +3416,23 @@ public sealed partial class CommitGraphControl : Control
             }
         }
 
-        // The right-edge lane tick sits ON TOP of the lines
+        // The right-edge lane tick sits ON TOP of the lines. Consecutive same-colour rows are
+        // drawn as one rectangle, and each rectangle runs 1px into the next (which paints over
+        // it), so the tick has no anti-aliased seams at fractional row boundaries.
         if (_graphColWidth > 0)
         {
             var tickX = colX + _graphColWidth - TickWidth;
+            var runStart = first;
             for (var row = first; row <= last; row++)
-                dc.DrawRectangle(LaneTick(layout.Rows[row].ColorIndex), null,
-                    new Rect(tickX, RowY(row), TickWidth, _rowHeight));
+            {
+                var color = layout.Rows[row].ColorIndex;
+                if (row < last && layout.Rows[row + 1].ColorIndex == color)
+                    continue;
+                var top = RowY(runStart);
+                var bottom = RowY(row + 1) + (row < last ? 1 : 0);
+                dc.DrawRectangle(LaneTick(color), null, new Rect(tickX, top, TickWidth, bottom - top));
+                runStart = row + 1;
+            }
         }
     }
 
