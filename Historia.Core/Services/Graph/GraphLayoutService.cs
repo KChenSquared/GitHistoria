@@ -251,6 +251,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private readonly DagLayoutEngine _engine = new();
     private readonly GraphWalkCache _walkCache = new();
     private readonly ConditionalWeakTable<RepositoryContext, RepoCache> _caches = [];
+    // The walk each layout's rows came from. Extend shares State in place, so one entry covers a
+    // layout and every extension of it. A layout whose walk has since been reset (a RefsChanged
+    // re-walk) must never be extended from the new walk — its row N is a different commit there.
+    private readonly ConditionalWeakTable<GraphLayoutState, RepoCache> _layoutOwners = [];
     // Keyed by repository path, not context: survives tab close/reopen and context re-creation,
     // and decorations are a function of the repo's refs, not the context object.
     private readonly Dictionary<string, DecoCache> _decoByPath = new(StringComparer.OrdinalIgnoreCase);
@@ -298,6 +302,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             result = _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct, retainCommits: !spill);
 
         result = result with { Fingerprint = cache.Fingerprint };
+        _layoutOwners.AddOrUpdate(result.State, cache);
 
         if (!spill)
             return result;
@@ -372,6 +377,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         lock (_sync)
             _caches.TryGetValue(context, out cache);
         if (cache is null)
+            return existing;
+
+        // `existing` was laid out from an earlier walk (a RefsChanged re-walk reset the cache
+        // while this layout was still on screen): the current walk's rows don't line up with its
+        // rows, so splicing them on would duplicate commits and SpillAndSwap would shift every
+        // row's metadata. Its replacement is already being computed — leave it as it is.
+        if (!_layoutOwners.TryGetValue(existing.State, out var owner) || !ReferenceEquals(owner, cache))
             return existing;
 
         var want = existing.State.Rows.Count + additionalRows + WalkOverscan;

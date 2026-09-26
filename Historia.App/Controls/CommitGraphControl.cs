@@ -1266,6 +1266,10 @@ public sealed partial class CommitGraphControl : Control
                             {
                                 if (ct.IsCancellationRequested || !ReferenceEquals(req.Context, _context))
                                     return;
+                                // A recompute applied a new layout while this extend ran: the
+                                // extension belongs to the layout it replaced — drop it.
+                                if (!ReferenceEquals(_layout?.State, current.State))
+                                    return;
 
                                 SetLayout(extended);
                                 InvalidateMeasure();
