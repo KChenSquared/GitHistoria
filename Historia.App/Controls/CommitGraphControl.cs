@@ -3054,6 +3054,10 @@ public sealed partial class CommitGraphControl : Control
         // passes start indexing it row by row (§7.6). A no-op for the in-memory store.
         layout.Commits.Prefetch(first, last);
 
+        // Derive the lane segments for the whole drawn block up front, with a tight window after
+        // a jump such as a scrollbar drag (§7.6).
+        layout.EnsureRows(first, last);
+
         _pillRects.Clear();
         _iconRects.Clear();
         _overflowChips.Clear();
