@@ -57,6 +57,10 @@ public sealed class GitCliService : IGitCliService
         Action<string>? onStdoutLine,
         CancellationToken ct)
     {
+        var raw = request.RawStandardOutput;
+        if (raw && (request.StreamOutput || onStdoutLine is not null))
+            throw new ArgumentException("Raw stdout capture can't also stream stdout lines.", nameof(request));
+
         var git = _locator.Current;
         if (!git.Found || git.Path is null)
         {
@@ -87,15 +91,19 @@ public sealed class GitCliService : IGitCliService
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
+        var rawStdout = raw ? new MemoryStream() : null;
         var stdoutDone = new TaskCompletionSource();
         var stderrDone = new TaskCompletionSource();
 
-        process.OutputDataReceived += (_, e) =>
+        if (!raw)
         {
-            if (e.Data is null) { stdoutDone.TrySetResult(); return; }
-            stdout.AppendLine(e.Data);
-            onStdoutLine?.Invoke(e.Data);
-        };
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data is null) { stdoutDone.TrySetResult(); return; }
+                stdout.AppendLine(e.Data);
+                onStdoutLine?.Invoke(e.Data);
+            };
+        }
         process.ErrorDataReceived += (_, e) =>
         {
             if (e.Data is null) { stderrDone.TrySetResult(); return; }
@@ -123,7 +131,11 @@ public sealed class GitCliService : IGitCliService
             catch { }
         }
 
-        process.BeginOutputReadLine();
+        // Both streams drain concurrently from here on (Rule 10) — in raw mode stdout is copied
+        // as bytes instead of being read line by line.
+        var stdoutDrained = raw ? CopyRawAsync(process.StandardOutput.BaseStream, rawStdout!) : stdoutDone.Task;
+        if (!raw)
+            process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
         if (request.StandardInput is { } stdin)
@@ -159,7 +171,7 @@ public sealed class GitCliService : IGitCliService
             {
                 await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
                 // Drain both pipes fully before reading — never before this point (§6.5.1).
-                await Task.WhenAll(stdoutDone.Task, stderrDone.Task).ConfigureAwait(false);
+                await Task.WhenAll(stdoutDrained, stderrDone.Task).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -169,27 +181,35 @@ public sealed class GitCliService : IGitCliService
 
         stopwatch.Stop();
 
+        var stdoutBytes = rawStdout?.ToArray();
+        var stdoutText = stdoutBytes is not null ? Utf8NoBom.GetString(stdoutBytes) : stdout.ToString();
+        GitCliResult Result(int exitCode, GitErrorKind kind) =>
+            new(exitCode, stdoutText, stderr.ToString(), kind, stopwatch.Elapsed) { StandardOutputBytes = stdoutBytes };
+
         // The caller's own token and the per-request Timeout both trip `cancelled` via the same
         // linked registration — tell them apart so a stalled invocation (killed by the timeout,
         // with nothing in stderr to classify) isn't reported as an opaque Unknown failure.
         if (cancelled && ct.IsCancellationRequested)
-        {
-            return new GitCliResult(-1, stdout.ToString(), stderr.ToString(),
-                GitErrorKind.Cancelled, stopwatch.Elapsed);
-        }
+            return Result(-1, GitErrorKind.Cancelled);
 
         if (cancelled && timeoutCts.IsCancellationRequested)
-        {
-            return new GitCliResult(-1, stdout.ToString(), stderr.ToString(),
-                GitErrorKind.TimedOut, stopwatch.Elapsed);
-        }
+            return Result(-1, GitErrorKind.TimedOut);
 
         var exitCode = SafeExitCode(process);
         var kind = exitCode == 0
             ? GitErrorKind.None
             : GitErrorClassifier.Classify(exitCode, stderr.ToString());
 
-        return new GitCliResult(exitCode, stdout.ToString(), stderr.ToString(), kind, stopwatch.Elapsed);
+        return Result(exitCode, kind);
+    }
+
+    /// <summary>Copies raw stdout to <paramref name="into"/> until git closes the pipe. A pipe
+    /// broken by a kill (cancel / timeout) just ends the copy — whatever arrived is kept.</summary>
+    private static async Task CopyRawAsync(Stream stdout, MemoryStream into)
+    {
+        try { await stdout.CopyToAsync(into).ConfigureAwait(false); }
+        catch (IOException) { }
+        catch (ObjectDisposedException) { }
     }
 
     private static int SafeExitCode(Process process)
