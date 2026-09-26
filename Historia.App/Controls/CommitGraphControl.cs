@@ -430,6 +430,13 @@ public sealed partial class CommitGraphControl : Control
         // it is driven by the ScrollBar's OWN Scroll event type, not pointer capture: a
         // ThumbTrack means a drag is in progress, and EVERY drag ends with EndScroll regardless
         // of where the pointer is released.
+        //
+        // Avalonia's Track adds each DragDelta to Value, and a DragDelta is the pointer's offset
+        // from the grab point measured against the thumb's last-arranged position. When the UI
+        // thread is starved (rows loading) several moves arrive before one layout pass, each
+        // carrying the whole offset since that arrange, so they are double-counted and the thumb
+        // races to the bottom and stays offset from the pointer. Re-arranging the bar after every
+        // drag move keeps one move per arrange. Wheel, keys and track clicks don't need it.
         _scrollBar.Scroll += (_, e) =>
         {
             _scrollBarUserActive = e.ScrollEventType == ScrollEventType.ThumbTrack;
@@ -437,6 +444,8 @@ public sealed partial class CommitGraphControl : Control
                 LogScrollEvent(e.ScrollEventType);
             _scrollOffset = _scrollBar.Value;
             OnScrolled();
+            if (_scrollBarUserActive)
+                _scrollBar.UpdateLayout();
         };
         // Belt-and-braces: any of these unlatch too, and can never leave it stuck.
         _scrollBar.AddHandler(PointerReleasedEvent, (_, _) => _scrollBarUserActive = false, RoutingStrategies.Tunnel);
