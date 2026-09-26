@@ -282,6 +282,10 @@ public sealed partial class CommitGraphControl : Control
     internal bool MsgFetchInFlightForTesting => _msgFetchInFlight is not null;
     internal int MsgBodyCacheCountForTesting => _msgBodyCache.Count;
     internal void FireHoverDwellTimerForTesting() => HandleHoverDwellElapsed();
+    internal int LaneRunsDrawnForTesting => _laneRunsDrawn;
+    internal int LanePiecesSeenForTesting => _lanePiecesSeen;
+    internal int LaneRunGrowthsForTesting => _laneRuns.Growths;
+    internal void ResetLaneRunCountersForTesting() => _laneRuns.ResetCounters();
 
     /// <summary>Test-only: simulates a horizontal scroll/pan without driving the real
     /// <see cref="ScrollBar"/> or lane-pan gestures.</summary>
@@ -344,6 +348,10 @@ public sealed partial class CommitGraphControl : Control
     private readonly Dictionary<int, SolidColorBrush> _laneFills = [];
     private readonly Dictionary<int, SolidColorBrush> _laneTicks = [];
     private readonly Dictionary<(int Tag, int Size, int WidthKey, string Text), FormattedText> _textCache = [];
+    // Reused every frame to merge vertical lane pieces into runs (Rule 24: counts its growths).
+    private readonly LaneRunBuilder _laneRuns = new();
+    private int _lanePiecesSeen;
+    private int _laneRunsDrawn;
 
     private double CornerRadius => Math.Min(LaneWidth, _rowHeight) * 0.75;
 
@@ -3344,33 +3352,42 @@ public sealed partial class CommitGraphControl : Control
         var minVisibleX = Math.Max(colX, 0) - 4;
         var maxVisibleX = Math.Min(colX + _graphColWidth, viewportWidth) + 4;
 
-        // Draw segments and elbows directly for visible rows in O(visible rows) time
+        // Vertical lane pieces of the visible rows are merged into maximal same-colour runs and
+        // drawn as one line each — about lanes plus lane breaks, not rows × lanes. Where several
+        // pieces share a lane in one row, the builder keeps the last one listed, which is the one
+        // that would cover the rest on screen (same x, same pen width). Pens use the default flat
+        // cap, so a run covers exactly the pixels of its pieces butted end to end.
+        _laneRuns.Begin(layout.TotalLaneCount);
+        var piecesSeen = 0;
+        for (var row = first; row <= last; row++)
+        {
+            var segments = layout.GetRowSegments(row);
+            piecesSeen += segments.Length;
+            _laneRuns.AddRow(segments);
+        }
+
+        var yBase = RowY(first);
+        var halfRow = _rowHeight / 2;
+        var runsDrawn = 0;
+        foreach (var run in _laneRuns.Finish())
+        {
+            var x = LaneX(run.Lane);
+            if (x < minVisibleX || x > maxVisibleX)
+                continue;
+
+            var isEmph = hoverLane >= 0 && run.Lane == hoverLane;
+            var pen = isEmph ? EmphPen(run.ColorIndex) : LanePen(run.ColorIndex);
+            dc.DrawLine(pen, new Point(x, yBase + run.StartHalf * halfRow), new Point(x, yBase + run.EndHalf * halfRow));
+            runsDrawn++;
+        }
+        _lanePiecesSeen = piecesSeen;
+        _laneRunsDrawn = runsDrawn;
+
+        // Elbows after every lane run: no row's lines overlap the previous row's elbows, so this
+        // keeps the per-row stacking.
         for (var row = first; row <= last; row++)
         {
             var y = RowY(row);
-            var yMid = y + _rowHeight / 2;
-
-            var segments = layout.GetRowSegments(row);
-            if (!segments.IsEmpty)
-            {
-                foreach (var seg in segments)
-                {
-                    var x = LaneX(seg.Lane);
-                    if (x < minVisibleX || x > maxVisibleX)
-                        continue;
-
-                    var isEmph = hoverLane >= 0 && seg.Lane == hoverLane;
-                    var pen = isEmph ? EmphPen(seg.ColorIndex) : LanePen(seg.ColorIndex);
-
-                    if (seg.Type == LaneSegmentType.Full)
-                        dc.DrawLine(pen, new Point(x, y), new Point(x, y + _rowHeight));
-                    else if (seg.Type == LaneSegmentType.TopToNode)
-                        dc.DrawLine(pen, new Point(x, y), new Point(x, yMid));
-                    else if (seg.Type == LaneSegmentType.NodeToBottom)
-                        dc.DrawLine(pen, new Point(x, yMid), new Point(x, y + _rowHeight));
-                }
-            }
-
             var elbows = layout.GetRowElbows(row);
             if (!elbows.IsEmpty)
             {
