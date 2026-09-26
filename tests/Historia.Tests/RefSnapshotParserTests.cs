@@ -1,9 +1,10 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// <see cref="ForEachRefParser"/> reads NUL-delimited <c>for-each-ref</c> output as
-/// <see cref="GitCliService"/> hands it back: captured line by line and rejoined with CRLF, so a
-/// record's trailing newline and every line break in a tag message arrive as <c>\r\n</c>.
+/// <see cref="ForEachRefParser"/> reads NUL-delimited <c>for-each-ref</c> output exactly as git
+/// wrote it (<see cref="GitCliRequest.RawStandardOutput"/>): each record ends in <c>\n</c>, and a
+/// tag message keeps its own line breaks, CRLF and lone CR included. <see cref="CatFileParser"/>
+/// reads the <c>cat-file</c> output the scan falls back to when a ref's object is missing.
 /// </summary>
 [Trait("tier", "unit")]
 public sealed class RefSnapshotParserTests
@@ -14,7 +15,7 @@ public sealed class RefSnapshotParserTests
     private static string Record(params string[] fields)
     {
         Assert.Equal(ForEachRefParser.FieldCount, fields.Length);
-        return string.Concat(fields.Select(f => f + "\0")) + "\r\n";
+        return string.Concat(fields.Select(f => f + "\0")) + "\n";
     }
 
     [Fact]
@@ -50,7 +51,7 @@ public sealed class RefSnapshotParserTests
         Assert.Equal(new ObjectId(TagObj), annotated.Target);
         Assert.Equal(new ObjectId(Commit), annotated.PeeledCommit);
         Assert.Equal("Tëster Ü", annotated.TaggerName);
-        Assert.Equal("line one\n\nline three\n", annotated.Message);
+        Assert.Equal("line one\r\n\r\nline three\r\n", annotated.Message);
         Assert.Equal(new DateTimeOffset(2023, 11, 14, 20, 43, 20, TimeSpan.FromMinutes(-90)), annotated.TaggerWhen);
         Assert.Equal(TimeSpan.FromMinutes(-90), annotated.TaggerWhen!.Value.Offset);
     }
@@ -90,6 +91,82 @@ public sealed class RefSnapshotParserTests
     [InlineData("")]
     [InlineData("not a date")]
     [InlineData("1700000000 0100")]
+    [InlineData("99999999999999 +0000")]
+    [InlineData("1700000000 +9900")]
     public void Malformed_tagger_dates_are_null(string raw) =>
         Assert.Null(ForEachRefParser.ParseRawDate(raw));
+
+    [Fact]
+    public void Tag_message_keeps_lf_crlf_and_lone_cr()
+    {
+        const string message = "plain\ncrlf\r\nlone\rend\n";
+        var refs = ForEachRefParser.Parse(
+            Record("refs/tags/v1", TagObj, "tag", Commit, "commit", "", "T", "1700000000 +0000", message));
+        Assert.Equal(message, Assert.Single(refs).Message);
+    }
+
+    [Fact]
+    public void The_object_free_listing_parses_names_ids_and_symrefs()
+    {
+        var stdout = $"refs/heads/main\0{Commit}\0\0\nrefs/remotes/origin/HEAD\0{Commit}\0refs/remotes/origin/main\0\n";
+        List<(string Name, string ObjectName, string? SymrefTarget)> expected =
+            [("refs/heads/main", Commit, null), ("refs/remotes/origin/HEAD", Commit, "refs/remotes/origin/main")];
+        Assert.Equal(expected, ForEachRefParser.ParseList(stdout));
+    }
+
+    [Fact]
+    public void Batch_check_answers_in_input_order_with_missing_as_null()
+    {
+        var answers = CatFileParser.ParseBatchCheck($"{Commit} commit\n1111111111111111111111111111111111111111 missing\n{TagObj}^{{}} missing\n", 3);
+        List<(ObjectId? Id, string? Type)> expected = [(new ObjectId(Commit), "commit"), (null, null), (null, null)];
+        Assert.Equal(expected, answers);
+    }
+
+    [Fact]
+    public void A_short_batch_check_answer_is_rejected() =>
+        Assert.Throws<FormatException>(() => CatFileParser.ParseBatchCheck($"{Commit} commit\n", 2));
+
+    private static byte[] BatchRecord(string sha, string type, string body)
+    {
+        var bytes = Encoding.UTF8.GetBytes(body);
+        return [.. Encoding.UTF8.GetBytes($"{sha} {type} {bytes.Length}\n"), .. bytes, (byte)'\n'];
+    }
+
+    [Fact]
+    public void Tag_objects_give_tagger_date_and_the_verbatim_body()
+    {
+        var crlfTag = $"object {Commit}\ntype commit\ntag crlf\ntagger Tëster Ü <t@example.com> 1700000000 -0130\n\nsubject\r\n\r\nbody\r\n";
+        var noTagger = $"object {Commit}\ntype commit\ntag old\n\nold style\n";
+        var empty = $"object {Commit}\ntype commit\ntag empty\ntagger A <a@b> 1700000000 +0000\n";
+        const string second = "0123456789abcdef0123456789abcdef01234567";
+        const string third = "89abcdef0123456789abcdef0123456789abcdef";
+        byte[] stdout = [
+            .. BatchRecord(TagObj, "tag", crlfTag),
+            .. Encoding.UTF8.GetBytes("1111111111111111111111111111111111111111 missing\n"),
+            .. BatchRecord(second, "tag", noTagger),
+            .. BatchRecord(third, "tag", empty),
+        ];
+
+        var tags = CatFileParser.ParseTagObjects(stdout);
+
+        Assert.Equal(3, tags.Count);
+        var crlf = tags[new ObjectId(TagObj)];
+        Assert.Equal("Tëster Ü", crlf.TaggerName);
+        Assert.Equal(new DateTimeOffset(2023, 11, 14, 20, 43, 20, TimeSpan.FromMinutes(-90)), crlf.TaggerWhen);
+        Assert.Equal("subject\r\n\r\nbody\r\n", crlf.Message);
+
+        var old = tags[new ObjectId(second)];
+        Assert.Null(old.TaggerName);
+        Assert.Null(old.TaggerWhen);
+        Assert.Equal("old style\n", old.Message);
+
+        Assert.Equal("", tags[new ObjectId(third)].Message);
+    }
+
+    [Fact]
+    public void A_batch_record_running_past_the_output_is_rejected()
+    {
+        var record = BatchRecord(TagObj, "tag", "object x\n\nmsg\n");
+        Assert.Throws<FormatException>(() => CatFileParser.ParseTagObjects(record.AsSpan(0, record.Length - 5)));
+    }
 }

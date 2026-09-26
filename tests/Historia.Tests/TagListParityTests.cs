@@ -14,7 +14,7 @@ public sealed class TagListParityTests : IAsyncDisposable
 
     public TagListParityTests()
     {
-        _repo = TestRepositoryBuilder.FromTemplate("tag-shapes", b =>
+        _repo = TestRepositoryBuilder.FromTemplate("tag-shapes-v2", b =>
         {
             RefSnapshotProviderTests.BuildRefShapes(b);
             var tagger = new Dictionary<string, string>
@@ -25,6 +25,11 @@ public sealed class TagListParityTests : IAsyncDisposable
             };
             b.Git(tagger, "tag", "-a", "-m", "subject line\n\nbody para\nsecond line", "offset-tagger", "HEAD~1");
             b.Git(tagger, "tag", "-a", "-m", "points at a tree", "annotated-tree", "HEAD^{tree}");
+
+            // Stored verbatim, as LibGit2Sharp's ApplyTag (Historia's own tag creation) stores it.
+            var messageFile = Path.Combine(TestScratch.NewDirectory("historia-tagmsg-"), "message.txt");
+            File.WriteAllBytes(messageFile, "subject\r\n\r\nbody\rwith a lone CR\r\n"u8.ToArray());
+            b.Git(tagger, "tag", "-a", "--cleanup=verbatim", "-F", messageFile, "crlf-message", "HEAD~2");
         });
     }
 
@@ -57,6 +62,7 @@ public sealed class TagListParityTests : IAsyncDisposable
         Assert.Equal("subject line\n\nbody para\nsecond line\n", offsetTag.Message);
         Assert.Contains(actual, t => t.Name == "annotated-tree");
         Assert.Contains(actual, t => t.Name == "nested");
+        Assert.Equal("subject\r\n\r\nbody\rwith a lone CR\r\n", actual.Single(t => t.Name == "crlf-message").Message);
     }
 
     [Fact]

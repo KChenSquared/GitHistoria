@@ -6,9 +6,16 @@ namespace Historia.Services.Git;
 /// <see cref="RefStateToken"/> says a ref file changed. Never touches the repo gate — the scan is
 /// a separate process — so the graph's walk steps and the tag list stop queueing status and diff
 /// work behind a multi-second LibGit2Sharp ref enumeration.
-/// <para>Single-flight: callers that miss on the same token share one scan. The scan runs on the
-/// repository's lifetime token, not a caller's, and each caller waits with its own token — one
+/// <para>One scan at a time: callers that miss on the same token share one scan, and a caller
+/// whose token differs from the scan in flight waits for it to finish before looking again, so a
+/// burst of ref writes (a fetch) never stacks up overlapping scans of every ref. The scan runs on
+/// the repository's lifetime token, not a caller's, and each caller waits with its own token — one
 /// caller giving up never cancels the scan the others are waiting on.</para>
+/// <para>A ref that points at a missing object (a half-deleted branch, a corrupt
+/// <c>packed-refs</c>) is left out, as LibGit2Sharp-based reads always did — the full format
+/// makes git stop at the first one, so the scan then reads refs without their objects and asks
+/// <c>cat-file</c> about each object instead. Any other failure is a
+/// <see cref="HistoriaGitException"/> (Rule 11).</para>
 /// </summary>
 public sealed class RefSnapshotProvider
 {
@@ -25,10 +32,8 @@ public sealed class RefSnapshotProvider
     private (long Token, long Seq, Task<RefSnapshot> Scan)? _inflight;
 
     // Scans are numbered as they start. A finished scan becomes current only if it started after
-    // the current one and after the last Invalidate — an older scan finishing late never steps
-    // the cache back, and a scan that began before an Invalidate never repopulates it.
+    // the current one — an older scan finishing late never steps the cache back.
     private long _nextSeq;
-    private long _minAcceptedSeq;
     private int _scanCount;
 
     public RefSnapshotProvider(IGitCliService cli, string gitDir, string workingDirectory, CancellationToken lifetime)
@@ -44,42 +49,42 @@ public sealed class RefSnapshotProvider
     internal int ScanCountForTesting => Volatile.Read(ref _scanCount);
 
     /// <summary>The snapshot for the refs on disk right now. A token check costs milliseconds; a
-    /// miss runs one <c>for-each-ref</c> (≈0.75 s at 39k refs). Throws
-    /// <see cref="HistoriaGitException"/> when the scan fails — a failed scan is never cached.</summary>
-    public Task<RefSnapshot> GetAsync(CancellationToken ct = default)
+    /// miss runs one <c>for-each-ref</c> (≈0.75 s at 39k refs). Throws only
+    /// <see cref="HistoriaGitException"/> (the refs can't be read — never cached) or
+    /// <see cref="OperationCanceledException"/>.</summary>
+    public async Task<RefSnapshot> GetAsync(CancellationToken ct = default)
     {
-        var state = RefStateToken.Compute(_gitDir);
-        Task<RefSnapshot> scan;
-        lock (_sync)
+        while (true)
         {
-            if (_current is { } cur && cur.Token == state.Token)
-                return Task.FromResult(cur);
-
-            if (_inflight is { } f && f.Token == state.Token)
+            var state = RefStateToken.Compute(_gitDir);
+            Task<RefSnapshot> scan;
+            var join = true;
+            lock (_sync)
             {
-                scan = f.Scan;
-            }
-            else
-            {
-                var seq = ++_nextSeq;
-                scan = ScanAsync(state, seq);
-                _inflight = (state.Token, seq, scan);
-            }
-        }
+                if (_current is { } cur && cur.Token == state.Token)
+                    return cur;
 
-        return scan.WaitAsync(ct);
-    }
+                if (_inflight is { } f)
+                {
+                    scan = f.Scan;
+                    join = f.Token == state.Token;
+                }
+                else
+                {
+                    var seq = ++_nextSeq;
+                    scan = ScanAsync(state, seq);
+                    _inflight = (state.Token, seq, scan);
+                }
+            }
 
-    /// <summary>Drops the cached snapshot so the next <see cref="GetAsync"/> rescans even if the
-    /// token did not move — for a write Historia knows happened but a coarse filesystem clock
-    /// might hide.</summary>
-    public void Invalidate()
-    {
-        lock (_sync)
-        {
-            _current = null;
-            _inflight = null;
-            _minAcceptedSeq = _nextSeq + 1;
+            if (join)
+                return await scan.WaitAsync(ct).ConfigureAwait(false);
+
+            // A scan of older refs is running: let it finish rather than start a second one over
+            // every ref, then look again — its result may already be what is on disk now.
+            try { await scan.WaitAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch { /* its failure is its own callers'; this caller rescans */ }
         }
     }
 
@@ -91,17 +96,11 @@ public sealed class RefSnapshotProvider
         try
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var result = await _cli.RunAsync(new GitCliRequest
-            {
-                Arguments = ForEachRefParser.Arguments,
-                WorkingDirectory = _workingDirectory,
-                Timeout = ScanTimeout,
-            }, _lifetime).ConfigureAwait(false);
+            var result = await RunAsync(ForEachRefParser.Arguments).ConfigureAwait(false);
 
-            if (result.ExitCode != 0)
-                throw HistoriaGitException.FromCli(result, "Reading refs");
-
-            var refs = ForEachRefParser.Parse(result.StandardOutput);
+            var refs = result.ExitCode == 0
+                ? Parse(() => ForEachRefParser.Parse(result.StandardOutput))
+                : await ScanPastMissingObjectsAsync(result).ConfigureAwait(false);
             await PeelNestedTagsAsync(refs).ConfigureAwait(false);
             var (headSymref, headTarget) = state.IsReftable
                 ? await ResolveHeadWithCliAsync().ConfigureAwait(false)
@@ -113,7 +112,7 @@ public sealed class RefSnapshotProvider
             lock (_sync)
             {
                 ClearInflight(seq);
-                if (seq >= _minAcceptedSeq && seq > _currentSeq)
+                if (seq > _currentSeq)
                 {
                     _current = snapshot;
                     _currentSeq = seq;
@@ -127,6 +126,122 @@ public sealed class RefSnapshotProvider
                 ClearInflight(seq);
             throw;
         }
+    }
+
+    private Task<GitCliResult> RunAsync(IReadOnlyList<string> arguments, string? stdin = null) =>
+        _cli.RunAsync(new GitCliRequest
+        {
+            Arguments = arguments,
+            WorkingDirectory = _workingDirectory,
+            StandardInput = stdin,
+            Timeout = ScanTimeout,
+            RawStandardOutput = true,
+        }, _lifetime);
+
+    /// <summary>A failed read of refs: cancelled when the repo is closing, otherwise the
+    /// classified git failure.</summary>
+    private HistoriaGitException Failure(GitCliResult result, string operation)
+    {
+        _lifetime.ThrowIfCancellationRequested();
+        return HistoriaGitException.FromCli(result, operation);
+    }
+
+    /// <summary>Output git produced but this parser can't read is a failure to read refs, never
+    /// a partial list.</summary>
+    private static T Parse<T>(Func<T> parse)
+    {
+        try { return parse(); }
+        catch (FormatException ex)
+        {
+            throw new HistoriaGitException(GitErrorKind.Unknown, "Reading refs failed (unreadable output).", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// The full scan failed. If that is because refs point at missing objects — git stops at the
+    /// first one (<c>fatal: missing object … for refs/…</c>) — rebuild the same entries without
+    /// them: list refs without reading objects, type every object with one
+    /// <c>cat-file --batch-check</c>, and read tag data with one <c>cat-file --batch</c>. When no
+    /// object is missing, the original failure is unexplained and is thrown as is (Rule 11).
+    /// </summary>
+    private async Task<List<RefEntry>> ScanPastMissingObjectsAsync(GitCliResult failed)
+    {
+        if (failed.ErrorKind is GitErrorKind.Cancelled or GitErrorKind.TimedOut)
+            throw Failure(failed, "Reading refs");
+
+        var listed = await RunAsync(ForEachRefParser.ListArguments).ConfigureAwait(false);
+        if (listed.ExitCode != 0)
+            throw Failure(failed, "Reading refs");
+        var list = Parse(() => ForEachRefParser.ParseList(listed.StandardOutput));
+
+        var objects = list.Select(r => r.ObjectName).Distinct(StringComparer.Ordinal).ToList();
+        var types = await BatchCheckAsync(objects).ConfigureAwait(false);
+        var typeOf = new Dictionary<string, (ObjectId? Id, string? Type)>(StringComparer.Ordinal);
+        for (var i = 0; i < objects.Count; i++)
+            typeOf[objects[i]] = types[i];
+
+        var dropped = list.Where(r => typeOf[r.ObjectName].Type is null).Select(r => r.Name).ToList();
+        if (dropped.Count == 0)
+            throw Failure(failed, "Reading refs");
+
+        // Annotated tags: peel all the way (as %(*objectname) does) and read tagger + message.
+        var tagObjects = objects.Where(o => typeOf[o].Type == "tag").ToList();
+        var peeled = await BatchCheckAsync([.. tagObjects.Select(o => o + "^{}")]).ConfigureAwait(false);
+        var peelOf = new Dictionary<string, (ObjectId? Id, string? Type)>(StringComparer.Ordinal);
+        for (var i = 0; i < tagObjects.Count; i++)
+            peelOf[tagObjects[i]] = peeled[i];
+        var tagData = await ReadTagObjectsAsync(tagObjects).ConfigureAwait(false);
+
+        var refs = new List<RefEntry>(list.Count - dropped.Count);
+        foreach (var (name, objectName, symref) in list)
+        {
+            var (id, type) = typeOf[objectName];
+            if (id is null || type is null)
+                continue;
+            var annotated = type == "tag";
+            var peel = annotated ? peelOf[objectName] : default;
+            var tag = annotated && tagData.TryGetValue(id, out var t) ? t : default;
+            refs.Add(new RefEntry(
+                CanonicalName: name,
+                Target: id,
+                ObjectType: type,
+                Peeled: peel.Id,
+                PeeledType: peel.Type,
+                SymrefTarget: symref,
+                TaggerName: annotated ? tag.TaggerName : null,
+                TaggerWhen: annotated ? tag.TaggerWhen : null,
+                Message: annotated ? tag.Message ?? "" : null));
+        }
+        refs.Sort((a, b) => StringComparer.Ordinal.Compare(a.CanonicalName, b.CanonicalName));
+
+        var names = string.Join(", ", dropped.Take(5)) + (dropped.Count > 5 ? $" and {dropped.Count - 5} more" : "");
+        AppLog.Write(AppLogLevel.Warn, "git", $"Ignoring {dropped.Count} ref(s) whose objects are missing in {_workingDirectory}: {names}");
+        Diagnostics.PerfLog.Mark($"ref snapshot: degraded scan, dropped {dropped.Count} refs with missing objects");
+        return refs;
+    }
+
+    /// <summary>One <c>cat-file --batch-check</c> over <paramref name="inputs"/>; answers in
+    /// input order, a missing object as a null id and type.</summary>
+    private async Task<List<(ObjectId? Id, string? Type)>> BatchCheckAsync(IReadOnlyList<string> inputs)
+    {
+        if (inputs.Count == 0)
+            return [];
+        var result = await RunAsync(
+            ["cat-file", "--batch-check=" + CatFileParser.BatchCheckFormat],
+            string.Join("\n", inputs) + "\n").ConfigureAwait(false);
+        if (result.ExitCode != 0)
+            throw Failure(result, "Reading refs");
+        return Parse(() => CatFileParser.ParseBatchCheck(result.StandardOutput, inputs.Count));
+    }
+
+    private async Task<Dictionary<ObjectId, CatFileParser.TagData>> ReadTagObjectsAsync(IReadOnlyList<string> tagObjects)
+    {
+        if (tagObjects.Count == 0)
+            return [];
+        var result = await RunAsync(["cat-file", "--batch"], string.Join("\n", tagObjects) + "\n").ConfigureAwait(false);
+        if (result.ExitCode != 0)
+            throw Failure(result, "Reading tags");
+        return Parse(() => CatFileParser.ParseTagObjects(result.StandardOutputBytes ?? []));
     }
 
     /// <summary>
@@ -144,25 +259,11 @@ public sealed class RefSnapshotProvider
         if (nested.Count == 0)
             return;
 
-        var stdin = string.Join("\n", nested.Select(i => refs[i].Target!.Sha + "^{}")) + "\n";
-        var result = await _cli.RunAsync(new GitCliRequest
+        var peeled = await BatchCheckAsync([.. nested.Select(i => refs[i].Target!.Sha + "^{}")]).ConfigureAwait(false);
+        for (var k = 0; k < nested.Count; k++)
         {
-            Arguments = ["cat-file", "--batch-check=%(objectname) %(objecttype)"],
-            WorkingDirectory = _workingDirectory,
-            StandardInput = stdin,
-            Timeout = ScanTimeout,
-        }, _lifetime).ConfigureAwait(false);
-        if (result.ExitCode != 0)
-            throw HistoriaGitException.FromCli(result, "Peeling tags");
-
-        var lines = result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        for (var k = 0; k < nested.Count && k < lines.Length; k++)
-        {
-            var parts = lines[k].Split(' ');
             var i = nested[k];
-            refs[i] = parts is [var sha, var type] && sha.Length is 40 or 64
-                ? refs[i] with { Peeled = new ObjectId(sha), PeeledType = type }
-                : refs[i] with { Peeled = null, PeeledType = null }; // "<input> missing"
+            refs[i] = refs[i] with { Peeled = peeled[k].Id, PeeledType = peeled[k].Type };
         }
     }
 

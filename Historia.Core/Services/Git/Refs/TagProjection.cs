@@ -4,7 +4,9 @@ namespace Historia.Services.Git;
 /// Builds the tag list (<see cref="TagInfo"/>) from a <see cref="RefSnapshot"/>, with the same
 /// values LibGit2Sharp's <see cref="LibGit2Service.ProjectTags"/> gives: the peeled commit when
 /// the tag reaches one, otherwise the object it points at (a tag of a tree keeps the tree id);
-/// tagger and message only for annotated tags, the message byte-for-byte as stored.
+/// tagger and message only for annotated tags, the message byte-for-byte as stored (the scan
+/// reads git's output byte-exact, so CRLF and lone CR survive). A tag whose object is missing is
+/// not in the snapshot, so it is left out, as <c>ProjectTags</c> skips it.
 /// <para>Order is ordinal by name. <c>repo.Tags</c> enumerates loose tags before packed ones, so
 /// the first refresh after switching sources raises one extra <c>RefsChanged</c> per repo; the
 /// UI sorts tags itself and doesn't depend on either order.</para>

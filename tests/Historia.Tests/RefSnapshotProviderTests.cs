@@ -108,7 +108,7 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_ref_write_rescans_and_invalidate_forces_one()
+    public async Task A_ref_write_rescans()
     {
         await using var ctx = _host.Open(_repo.Path);
         await ctx.RefSnapshots.GetAsync();
@@ -117,11 +117,54 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
         var after = await ctx.RefSnapshots.GetAsync();
         Assert.NotNull(after.Find("refs/heads/added-later"));
         Assert.Equal(2, ctx.RefSnapshots.ScanCountForTesting);
+    }
 
-        ctx.RefSnapshots.Invalidate();
-        var forced = await ctx.RefSnapshots.GetAsync();
-        Assert.NotSame(after, forced);
-        Assert.Equal(3, ctx.RefSnapshots.ScanCountForTesting);
+    /// <summary>Counts <c>for-each-ref</c> runs that overlap, and holds each one open a while so
+    /// callers pile up behind it.</summary>
+    private sealed class OverlapCountingCli(IGitCliService inner) : IGitCliService
+    {
+        private int _running;
+        private int _maxRunning;
+        public int MaxConcurrentScans => Volatile.Read(ref _maxRunning);
+        public bool IsGitAvailable => inner.IsGitAvailable;
+
+        public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default) =>
+            RunAsync(request, progress: null, onStdoutLine: null, ct);
+
+        public async Task<GitCliResult> RunAsync(GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default)
+        {
+            if (request.Arguments is not ["for-each-ref", ..])
+                return await inner.RunAsync(request, progress, onStdoutLine, ct);
+
+            var now = Interlocked.Increment(ref _running);
+            int seen;
+            while ((seen = Volatile.Read(ref _maxRunning)) < now && Interlocked.CompareExchange(ref _maxRunning, now, seen) != seen) { }
+            try
+            {
+                await Task.Delay(200, ct);
+                return await inner.RunAsync(request, progress, onStdoutLine, ct);
+            }
+            finally { Interlocked.Decrement(ref _running); }
+        }
+    }
+
+    [Fact]
+    public async Task Scans_never_overlap_while_refs_keep_changing()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var cli = new OverlapCountingCli(_host.Provider.GetRequiredService<IGitCliService>());
+        var provider = new RefSnapshotProvider(cli, ctx.GitDirectory, ctx.RepositoryPath, CancellationToken.None);
+
+        var first = provider.GetAsync();
+        _repo.Git("branch", "burst-1", "HEAD~1");
+        var second = provider.GetAsync();
+        _repo.Git("branch", "burst-2", "HEAD~2");
+        var third = provider.GetAsync();
+        await Task.WhenAll(first, second, third);
+
+        Assert.Equal(1, cli.MaxConcurrentScans);
+        Assert.NotNull((await third).Find("refs/heads/burst-1"));
+        Assert.NotNull((await third).Find("refs/heads/burst-2"));
     }
 
     [Fact]
