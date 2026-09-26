@@ -106,6 +106,11 @@ public sealed partial class CommitGraphControl : Control
     private readonly ScrollBar _scrollBar;
     private readonly ScrollBar _hScrollBar;
     private bool _scrollBarUserActive;
+    // Thumb-drag diagnostics (`graph-scroll` log): when the previous ThumbTrack arrived, and
+    // whether an arrange pass ran since. Two ThumbTracks with no arrange between are drag moves
+    // that queued up while the UI thread was busy.
+    private long _lastThumbTrackTimestamp;
+    private bool _arrangedSinceThumbTrack;
 
     private RepositoryContext? _context;
     private IRepositoryStateService? _state;
@@ -286,6 +291,24 @@ public sealed partial class CommitGraphControl : Control
     internal int LanePiecesSeenForTesting => _lanePiecesSeen;
     internal int LaneRunGrowthsForTesting => _laneRuns.Growths;
     internal void ResetLaneRunCountersForTesting() => _laneRuns.ResetCounters();
+    internal ScrollBar VerticalScrollBarForTesting => _scrollBar;
+    internal double ScrollOffsetForTesting => _scrollOffset;
+    /// <summary>Test-only: replaces the layout's row count when sizing the vertical scroll
+    /// range, so a test can make the bar scrollable (and grow it) without a repository.</summary>
+    internal int? ContentRowCountOverrideForTesting
+    {
+        get => _contentRowCountOverrideForTesting;
+        set
+        {
+            _contentRowCountOverrideForTesting = value;
+            InvalidateArrange();
+        }
+    }
+    private int? _contentRowCountOverrideForTesting;
+    /// <summary>Test-only: receives the <c>graph-scroll</c> lines in place of <see cref="AppLog"/>.</summary>
+    internal IAppLog? ScrollLogForTesting { get; set; }
+    private bool ScrollLogOn => ScrollLogForTesting is not null || AppLog.Enabled;
+    private void LogScroll(string message) => (ScrollLogForTesting ?? AppLog.Current).Debug("graph-scroll", message);
 
     /// <summary>Test-only: simulates a horizontal scroll/pan without driving the real
     /// <see cref="ScrollBar"/> or lane-pan gestures.</summary>
@@ -410,6 +433,8 @@ public sealed partial class CommitGraphControl : Control
         _scrollBar.Scroll += (_, e) =>
         {
             _scrollBarUserActive = e.ScrollEventType == ScrollEventType.ThumbTrack;
+            if (ScrollLogOn)
+                LogScrollEvent(e.ScrollEventType);
             _scrollOffset = _scrollBar.Value;
             OnScrolled();
         };
@@ -1587,13 +1612,14 @@ public sealed partial class CommitGraphControl : Control
 
     protected override Size ArrangeOverride(Size finalSize)
     {
+        _arrangedSinceThumbTrack = true;
         _queryBar.Arrange(new Rect(0, HeaderHeight, finalSize.Width, QueryBarHeight));
 
         // Resolve the band before the scrollbar logic below reads _bandWidth — during an
         // interactive sidebar drag the arrange pass would otherwise see last frame's width.
         ResolveColumnBand(finalSize.Width);
 
-        var contentHeight = (_layout?.Layout.RowCount ?? 0) * _rowHeight;
+        var contentHeight = (_contentRowCountOverrideForTesting ?? _layout?.Layout.RowCount ?? 0) * _rowHeight;
         var rowArea = finalSize.Height - RowsTop;
         var showV = contentHeight > rowArea;
         _scrollBar.IsVisible = showV && !RevealBlanking;
@@ -1606,7 +1632,10 @@ public sealed partial class CommitGraphControl : Control
         {
             _scrollBar.Arrange(new Rect(finalSize.Width - 12, RowsTop, 12, viewport));
             _scrollBar.Minimum = 0;
-            _scrollBar.Maximum = Math.Max(0, contentHeight - viewport);
+            var maximum = Math.Max(0, contentHeight - viewport);
+            if (_scrollBarUserActive && maximum != _scrollBar.Maximum && ScrollLogOn)
+                LogScroll(string.Create(CultureInfo.InvariantCulture, $"maximum {_scrollBar.Maximum:F1} -> {maximum:F1} mid-drag"));
+            _scrollBar.Maximum = maximum;
             _scrollBar.ViewportSize = viewport;
             _scrollBar.LargeChange = viewport;
             _scrollBar.SmallChange = _rowHeight;
@@ -1710,6 +1739,29 @@ public sealed partial class CommitGraphControl : Control
         _scrollOffset = Math.Clamp(_scrollOffset - delta * 40, 0, Math.Max(0, _scrollBar.Maximum));
         OnScrolled();
         e.Handled = true;
+    }
+
+    /// <summary>One <c>graph-scroll</c> line per vertical thumb move and one at drag end.
+    /// <c>arranged=False</c> on a track line means no arrange pass ran since the previous move:
+    /// the two moves queued up behind other UI-thread work.</summary>
+    private void LogScrollEvent(ScrollEventType type)
+    {
+        if (type == ScrollEventType.ThumbTrack)
+        {
+            var now = Stopwatch.GetTimestamp();
+            var sincePrev = _lastThumbTrackTimestamp == 0
+                ? "-"
+                : Stopwatch.GetElapsedTime(_lastThumbTrackTimestamp, now).TotalMilliseconds.ToString("F1", CultureInfo.InvariantCulture);
+            LogScroll(string.Create(CultureInfo.InvariantCulture,
+                $"track value={_scrollBar.Value:F1} max={_scrollBar.Maximum:F1} viewport={_scrollBar.ViewportSize:F1} offset={_scrollOffset:F1} rows={_layout?.Layout.RowCount ?? 0} sincePrevMs={sincePrev} arranged={_arrangedSinceThumbTrack}"));
+            _lastThumbTrackTimestamp = now;
+            _arrangedSinceThumbTrack = false;
+        }
+        else if (type == ScrollEventType.EndScroll)
+        {
+            LogScroll("drag end");
+            _lastThumbTrackTimestamp = 0;
+        }
     }
 
     private void OnScrolled()
