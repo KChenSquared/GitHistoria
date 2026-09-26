@@ -153,8 +153,9 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
     }
 
     /// <summary>
-    /// Writes <paramref name="bytes"/> through a sibling temp file and a rename, so a crash or a full
-    /// disk never leaves a truncated working file. Re-checks the on-disk hash just before the rename
+    /// Writes <paramref name="bytes"/> through a sibling temp file that then replaces the target, so a
+    /// crash or a full disk never leaves a truncated working file, and the target keeps its
+    /// attributes and ACLs. Re-checks the on-disk hash just before the replace
     /// and returns the differing hash (nothing written) when the file changed meanwhile; null on success.
     /// A symlinked path is written in place so the link survives.
     /// </summary>
@@ -178,7 +179,11 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             if (!string.Equals(currentHash, expectedDiskHash, StringComparison.OrdinalIgnoreCase))
                 return currentHash;
 
-            File.Move(temp, full, overwrite: true);
+            // Replace, not rename-over: ReplaceFile keeps the destination's attributes and ACLs.
+            if (File.Exists(full))
+                File.Replace(temp, full, destinationBackupFileName: null);
+            else
+                File.Move(temp, full);
             return null;
         }
         finally

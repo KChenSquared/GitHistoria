@@ -198,6 +198,28 @@ public class ConflictServiceTests
     }
 
     [Fact]
+    public async Task Save_resolution_keeps_the_files_attributes()
+    {
+        if (!OperatingSystem.IsWindows())
+            return; // Windows file attributes
+
+        await using var host = new MiniHost();
+        using var repoDir = ConflictedRepo();
+        await using var ctx = host.Open(repoDir.Path);
+        var svc = Make(host);
+        var full = Path.Combine(repoDir.Path, "f.txt");
+
+        var copy = await svc.LoadWorkingCopyAsync(ctx, "f.txt");
+        File.SetAttributes(full, File.GetAttributes(full) | FileAttributes.Hidden);
+        var res = await svc.SaveResolutionAsync(ctx, "f.txt", "resolved\n", copy.Format ?? default, copy.DiskHash, stage: false);
+
+        Assert.True(res.Saved);
+        Assert.Equal("resolved\n", await File.ReadAllTextAsync(full));
+        Assert.True(File.GetAttributes(full).HasFlag(FileAttributes.Hidden), "the saved file lost its Hidden attribute");
+        Assert.Empty(Directory.GetFiles(repoDir.Path, ".historia-save-*"));
+    }
+
+    [Fact]
     public async Task Disk_hash_is_readable_while_another_process_holds_the_file_open()
     {
         await using var host = new MiniHost();
