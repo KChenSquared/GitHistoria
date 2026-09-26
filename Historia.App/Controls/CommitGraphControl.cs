@@ -3396,9 +3396,17 @@ public sealed partial class CommitGraphControl : Control
         for (var row = first; row <= last; row++)
         {
             var y = RowY(row);
-            var elbows = layout.GetRowElbows(row);
-            if (!elbows.IsEmpty)
+            var rowElbows = layout.GetRowElbows(row);
+            if (!rowElbows.IsEmpty)
             {
+                // Elbows on one row share the node-height horizontal, so paint order decides
+                // which colour shows where they overlap: longest first, so each stretch shows
+                // the nearest branch that still runs past it. Hover-emphasised ones go on top.
+                if (_elbowScratch.Length < rowElbows.Length)
+                    _elbowScratch = new RowElbow[Math.Max(16, rowElbows.Length)];
+                var elbows = _elbowScratch.AsSpan(0, rowElbows.Length);
+                OrderElbowsForPaint(rowElbows, elbows, hoverLane);
+
                 foreach (var elbow in elbows)
                 {
                     var fromX = LaneX(elbow.FromLane);
@@ -3697,6 +3705,35 @@ public sealed partial class CommitGraphControl : Control
             var ft = Text(text, brush, maxW);
             var midY = RowY(row) + (_rowHeight - ft.Height) / 2;
             dc.DrawText(ft, new Point(colX + 8, midY));
+        }
+    }
+
+    private RowElbow[] _elbowScratch = Array.Empty<RowElbow>();
+
+    /// <summary>Copies <paramref name="source"/> into <paramref name="dest"/> in paint order:
+    /// elbows touching <paramref name="hoverLane"/> last, and within each group the widest lane
+    /// span first. Stable, so equal spans keep their layout order.</summary>
+    internal static void OrderElbowsForPaint(ReadOnlySpan<RowElbow> source, Span<RowElbow> dest, int hoverLane)
+    {
+        static int Key(in RowElbow e, int hoverLane)
+        {
+            var emph = hoverLane >= 0 && (e.FromLane == hoverLane || e.ToLane == hoverLane);
+            // Higher key paints later: emphasised above plain, shorter above longer.
+            return (emph ? 1 << 20 : 0) - Math.Abs(e.ToLane - e.FromLane);
+        }
+
+        source.CopyTo(dest);
+        for (var i = 1; i < dest.Length; i++)
+        {
+            var item = dest[i];
+            var key = Key(item, hoverLane);
+            var j = i - 1;
+            while (j >= 0 && Key(dest[j], hoverLane) > key)
+            {
+                dest[j + 1] = dest[j];
+                j--;
+            }
+            dest[j + 1] = item;
         }
     }
 
