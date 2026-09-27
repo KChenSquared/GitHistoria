@@ -9,22 +9,25 @@ A high-performance, open-source Windows Git client built with **C# (.NET 10)** a
 ## 💡 Why Historia?
 
 I've used GitKraken as my primary Git tool for many years. I love the way it presents the
-commit graph; it's extremely useful for keeping up with my repos. Over time, though, it
-became extremely sluggish on the repos I work in day to day. Each one has 200k–350k
-commits, and switching between them had become a very poor experience. Then my annual
-GitKraken renewal came around and the price was going up again.
+commit graph; it's extremely useful for keeping up with my repos. With the rise of agentic
+coding, commits pile up faster than ever across branches and worktrees, and an easy way to
+understand that history matters more than ever. Over time, though, GitKraken became
+extremely sluggish on the repos I work in day to day. Each one has 100k–350k commits, and
+switching between them had become a very poor experience. To add insult to injury, my
+GitKraken renewal was only a month away, and the cost was going to double from what I paid
+last year, then almost double again the year after.
 
-So I set out to build a free, better-performing alternative to the commit graph and the
-core Git features I rely on. The graph keeps the same easy-to-read orthogonal edge
-routing, but it can render repos with hundreds of thousands of commits and scroll through
-them quickly and smoothly.
+So I decided to put my Claude and Gemini subscriptions to use and build a free,
+better-performing alternative to the commit graph and the core Git features I rely on.
+The graph keeps the same easy-to-read orthogonal edge routing, but it can render repos
+with hundreds of thousands of commits and scroll through them quickly and smoothly.
 
 **Trade-offs.** Historia loads your entire commit history instead of capping it at the
-most recent few thousand commits. That means it won't feel as fast as native clients that
-do cap it, and memory grows with the size of the repo: about 200 MB for a 350k-commit
-repo, and about 3 GB for Chromium's ~2.5 million commits. In return, the whole history is
-in one graph, and scrolling through it stays smooth. A lightweight mode that caps the
-commits displayed, for faster loads and less memory, is on the [roadmap](docs/roadmap.md).
+most recent few thousand commits. That means memory grows with the size of the repo:
+about 200 MB for a 350k-commit repo, and about 3 GB for Chromium's ~2.5 million commits.
+In return, the whole history is in one graph, and scrolling through it stays smooth. A
+lightweight mode that caps the graph at 30k commits for lower memory use is available in
+settings.
 
 ---
 
@@ -33,7 +36,7 @@ commits displayed, for faster loads and less memory, is on the [roadmap](docs/ro
 Our goal is to create the premier Windows Git GUI that unites:
 1. **Raw Speed and Responsiveness** — fast launch, zero UI lag, and smooth handling of massive repositories (hundreds of thousands of commits), keeping the full history loaded rather than capping it.
 2. **Feature Completeness & Simplicity** — advanced power tools (interactive rebase\*, line/hunk staging, cherry-pick, submodules, stash management) paired with an intuitive, clean workflow for everyday commits, branching, and conflict resolution.
-3. **Visual Elegance** — vivid, color-coded branch lanes, round commit nodes, branch/tag labels, merge arcs, and visual drag-and-drop actions — engineered for high-performance rendering.
+3. **Visual Elegance** — vivid, color-coded branch lanes, round commit nodes, branch/tag labels, merge arcs, and visual drag-and-drop actions\* — engineered for high-performance rendering.
 4. **Progressive Disclosure** — essential, everyday workflows (inspecting history, staging, committing, branch switching) remain immediate and distraction-free, while deep Git power tools (interactive rebase\*, conflict resolver, hunk staging, submodules, worktrees, terminal, error diagnostics) disclose on demand through context menus, collapsible drawers, and dedicated inspection panels without overwhelming the user.
 
 ---
@@ -47,11 +50,8 @@ Our goal is to create the premier Windows Git GUI that unites:
 - **Performance-First Architecture:** Powered by native .NET and Avalonia UI; non-blocking Git operations, fast cold starts, and memory that scales with history size (see [Trade-offs](#-why-historia)).
 - **Progressive Disclosure UI:** A layered interface philosophy ensuring zero visual clutter. Common daily operations take center stage with high ergonomic polish; advanced Git machinery and deep technical metadata remain readily accessible but stay tucked behind collapsible sections, contextual actions, and detail drawers until needed.
 - **Next-Gen Commit Graph:** Virtualized rendering (60+ FPS) designed to scroll smoothly across repositories with hundreds of thousands of commits. Features vibrant multi-color branch lanes and orthogonal edge routing with rounded corners.
-- **Power-User Feature Parity:** 100% core Git autonomy, visual interactive rebase\*, granular staging, 3-way conflict resolver, and full repository management (submodules, worktrees, LFS).
-- **Tri-State Network Policy:**
-  - **Quiet Network (Local/SSH):** Zero background API polling, telemetry, or avatar leaks.
-  - **Hybrid (Default):** Seamlessly supports SSH and HTTPS.
-  - **OAuth Only:** Manages all credentials via browser OAuth with rich integrations.
+- **Power-User Feature Parity:** 100% core Git autonomy, visual interactive rebase\*, granular staging, 3-way conflict resolver, and full repository management (submodules, worktrees, LFS\*).
+- **SSH Only Mode:** By default, fetch, pull, and push try the remote's own scheme first and fall back between SSH and HTTPS. Switch a repo to SSH Only to force every network operation over SSH with no HTTPS fallback.
 
 <sub>\* On the [roadmap](docs/roadmap.md).</sub>
 
