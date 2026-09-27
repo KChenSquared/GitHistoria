@@ -23,7 +23,8 @@ them quickly and smoothly.
 most recent few thousand commits. That means it won't feel as fast as native clients that
 do cap it, and memory grows with the size of the repo: about 200 MB for a 350k-commit
 repo, and about 3 GB for Chromium's ~2.5 million commits. In return, the whole history is
-in one graph, and scrolling through it stays smooth.
+in one graph, and scrolling through it stays smooth. A lightweight mode that caps the
+commits displayed, for faster loads and less memory, is on the [roadmap](docs/roadmap.md).
 
 ---
 
