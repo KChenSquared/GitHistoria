@@ -306,18 +306,26 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     `AppLog.Write` / `AppLog.Operation` call at a new seam only when it is not already covered by
     one of those. `PerfLog` stays a **separate** tool, scoped to startup/latency timing
     only — it is not part of this system and is not a model for adding another one.
-39. **Source files document the present, never their own edit history.**
+39. **Source files document the present, never their own edit history or other documents.**
     - **39.1 — No transition comments.** Never leave comments explaining what you changed, why
       you changed it, or what the previous code looked like (e.g., `// Updated to fix X`,
       `// Iteration 3`, `// OLD CODE:`).
     - **39.2 — No inline changelogs.** Source files are not a git log. Do not add modification
       history to file headers, function blocks, or inline comments.
-    - **39.3 — State-based documentation only.** Comments must only explain the business logic
-      and "why" of the current state for future developers. A comment that would not make sense
-      to someone reading the file for the first time — because it references a previous version
-      of the code — does not belong.
+    - **39.3 — State-based documentation only.** A comment describes what the code does at the
+      time the comment is written or updated, and why — nothing else. A comment that would not
+      make sense to someone reading the file for the first time — because it references a
+      previous version of the code — does not belong. When you change code, update its comments
+      to match in the same edit.
     - **39.4 — Explain in chat only.** If you need to summarize changes or explain your
       reasoning, do so entirely in the chat window or commit message. Never put change
       explanations in the source files.
     - **39.5 — Clean up stale history.** If you encounter old transition comments from previous
       AI iterations while editing a file, delete them silently.
+    - **39.6 — Never reference documents.** Comments (and user-visible strings) must not cite
+      any document: no design-spec sections (`§7.6`, `§V3-B/19.24`), version or build plans,
+      review findings or item ids (`F9`, `R6`, `finding #17`), milestones, or file paths into
+      `Historia-DevDocs`. Documents are renumbered, rotated and archived; a pointer into them rots
+      silently and misleads. If the reason behind the code matters, state it in the comment
+      itself. The dependency runs one way: design documents may point at code, code never
+      points at documents.
