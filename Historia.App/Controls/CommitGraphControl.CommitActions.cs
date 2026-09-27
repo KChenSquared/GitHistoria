@@ -365,7 +365,7 @@ public sealed partial class CommitGraphControl
     {
         if (_context is not { } ctx)
             return;
-        var isMerge = ids.Count == 1 && await IsMergeCommitAsync(ctx, ids[0], ctx.Lifetime);
+        var isMerge = ids.Count == 1 && await CommitMergeDetection.IsMergeAsync(_layout, _query, ctx.Gateway, ids[0], ctx.Lifetime);
         var mainline = isMerge ? 1 : (int?)null;
         if (!await _dialogs.ConfirmAsync("Cherry-pick",
                 $"Cherry-pick {ids.Count} commit(s) onto {_state?.CurrentBranch?.Name ?? "the current branch"}?"
@@ -388,7 +388,7 @@ public sealed partial class CommitGraphControl
     {
         if (_context is not { } ctx)
             return;
-        var isMerge = ids.Count == 1 && await IsMergeCommitAsync(ctx, ids[0], ctx.Lifetime);
+        var isMerge = ids.Count == 1 && await CommitMergeDetection.IsMergeAsync(_layout, _query, ctx.Gateway, ids[0], ctx.Lifetime);
         if (!await _dialogs.ConfirmAsync("Revert", $"Revert {ids.Count} commit(s)?" + (isMerge ? " (merge commit — mainline parent 1)" : "")))
             return;
         try
@@ -403,52 +403,6 @@ public sealed partial class CommitGraphControl
             _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails());
         }
     }
-
-    internal GraphLayoutResult? LayoutForTesting
-    {
-        get => _layout;
-        set => _layout = value;
-    }
-
-    internal IGitGateway? GatewayOverrideForTesting { get; set; }
-
-    /// <summary>
-    /// Determines whether <paramref name="id"/> is a merge commit (parent count &gt; 1),
-    /// reading from the current layout row if resident, or falling back to
-    /// <see cref="IGitGateway.GetCommitDetailAsync"/> when not resident.
-    /// </summary>
-    internal async Task<bool> IsMergeCommitAsync(RepositoryContext? ctx, GitObjectId id, CancellationToken ct)
-    {
-        if (_layout is { } lay && lay.Layout.RowByCommitId.TryGetValue(id, out var row)
-            && row >= 0 && row < lay.Layout.Commits.Count)
-        {
-            return lay.Layout.Commits[row].ParentCount > 1;
-        }
-
-        var gateway = GatewayOverrideForTesting ?? ctx?.Gateway;
-        if (gateway is null)
-            return false;
-
-        try
-        {
-            var detail = await gateway.GetCommitDetailAsync(id, ct);
-            return detail.ParentIds.Count > 1;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception)
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Returns mainline parent 1 if <paramref name="id"/> is a merge commit, else null.
-    /// </summary>
-    internal async Task<int?> DetermineMainlineAsync(RepositoryContext? ctx, GitObjectId id, CancellationToken ct)
-        => await IsMergeCommitAsync(ctx, id, ct) ? 1 : null;
 
     private async Task MergeAsync(RepositoryContext ctx, string refish, string display)
     {

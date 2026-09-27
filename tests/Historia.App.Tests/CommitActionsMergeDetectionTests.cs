@@ -3,136 +3,116 @@ namespace HistoriaApp.Tests;
 [Trait("tier", "ui")]
 public sealed class CommitActionsMergeDetectionTests
 {
-    [AvaloniaFact]
-    public async Task Resident_merge_commit_resolves_mainline_1_without_gateway_call()
+    [Fact]
+    public async Task Resident_merge_commit_unfiltered_returns_true_with_zero_gateway_calls()
     {
         var mergeId = new GitObjectId("1111111111111111111111111111111111111111");
         var layout = CreateLayout(mergeId, parentCount: 2);
-
-        var graph = new CommitGraphControl();
-        graph.LayoutForTesting = layout;
-
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, PathFilter = null };
         var gateway = new FakeGitGateway();
-        graph.GatewayOverrideForTesting = gateway;
 
-        var isMerge = await graph.IsMergeCommitAsync(ctx: null, mergeId, CancellationToken.None);
-        var mainline = await graph.DetermineMainlineAsync(ctx: null, mergeId, CancellationToken.None);
+        var isMerge = await CommitMergeDetection.IsMergeAsync(layout, query, gateway, mergeId, CancellationToken.None);
 
         Assert.True(isMerge);
-        Assert.Equal(1, mainline);
         Assert.Equal(0, gateway.GetCommitDetailCalls);
     }
 
-    [AvaloniaFact]
-    public async Task Resident_single_parent_commit_resolves_null_mainline_without_gateway_call()
+    [Fact]
+    public async Task Resident_single_parent_commit_unfiltered_returns_false_with_zero_gateway_calls()
     {
         var commitId = new GitObjectId("2222222222222222222222222222222222222222");
         var layout = CreateLayout(commitId, parentCount: 1);
-
-        var graph = new CommitGraphControl();
-        graph.LayoutForTesting = layout;
-
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, PathFilter = "" };
         var gateway = new FakeGitGateway();
-        graph.GatewayOverrideForTesting = gateway;
 
-        var isMerge = await graph.IsMergeCommitAsync(ctx: null, commitId, CancellationToken.None);
-        var mainline = await graph.DetermineMainlineAsync(ctx: null, commitId, CancellationToken.None);
+        var isMerge = await CommitMergeDetection.IsMergeAsync(layout, query, gateway, commitId, CancellationToken.None);
 
         Assert.False(isMerge);
-        Assert.Null(mainline);
         Assert.Equal(0, gateway.GetCommitDetailCalls);
     }
 
-    [AvaloniaFact]
-    public async Task Resident_root_commit_resolves_null_mainline_without_gateway_call()
+    [Fact]
+    public async Task Resident_root_commit_unfiltered_returns_false_with_zero_gateway_calls()
     {
         var rootId = new GitObjectId("3333333333333333333333333333333333333333");
         var layout = CreateLayout(rootId, parentCount: 0);
-
-        var graph = new CommitGraphControl();
-        graph.LayoutForTesting = layout;
-
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, PathFilter = null };
         var gateway = new FakeGitGateway();
-        graph.GatewayOverrideForTesting = gateway;
 
-        var isMerge = await graph.IsMergeCommitAsync(ctx: null, rootId, CancellationToken.None);
-        var mainline = await graph.DetermineMainlineAsync(ctx: null, rootId, CancellationToken.None);
+        var isMerge = await CommitMergeDetection.IsMergeAsync(layout, query, gateway, rootId, CancellationToken.None);
 
         Assert.False(isMerge);
-        Assert.Null(mainline);
         Assert.Equal(0, gateway.GetCommitDetailCalls);
     }
 
-    [AvaloniaFact]
-    public async Task Non_resident_merge_commit_consults_gateway_once()
+    [Fact]
+    public async Task Resident_single_parent_row_under_path_filter_consults_gateway()
     {
-        var nonResidentMergeId = new GitObjectId("4444444444444444444444444444444444444444");
+        var mergeId = new GitObjectId("4444444444444444444444444444444444444444");
+        var layout = CreateLayout(mergeId, parentCount: 1);
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, PathFilter = "src/File.cs" };
         var parent1 = new GitObjectId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         var parent2 = new GitObjectId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-
-        var graph = new CommitGraphControl();
-        graph.LayoutForTesting = null;
 
         var gateway = new FakeGitGateway
         {
             OnGetCommitDetail = id => CreateCommitDetail(id, [parent1, parent2]),
         };
-        graph.GatewayOverrideForTesting = gateway;
 
-        var isMerge = await graph.IsMergeCommitAsync(ctx: null, nonResidentMergeId, CancellationToken.None);
+        var isMerge = await CommitMergeDetection.IsMergeAsync(layout, query, gateway, mergeId, CancellationToken.None);
+
         Assert.True(isMerge);
         Assert.Equal(1, gateway.GetCommitDetailCalls);
-
-        var mainline = await graph.DetermineMainlineAsync(ctx: null, nonResidentMergeId, CancellationToken.None);
-        Assert.Equal(1, mainline);
-        Assert.Equal(2, gateway.GetCommitDetailCalls);
     }
 
-    [AvaloniaFact]
-    public async Task Non_resident_single_parent_commit_consults_gateway_once()
+    [Fact]
+    public async Task Non_resident_commit_consults_gateway_once()
     {
-        var nonResidentSingleId = new GitObjectId("5555555555555555555555555555555555555555");
-        var parent1 = new GitObjectId("cccccccccccccccccccccccccccccccccccccccc");
-
-        var graph = new CommitGraphControl();
-        graph.LayoutForTesting = null;
+        var nonResidentId = new GitObjectId("5555555555555555555555555555555555555555");
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, PathFilter = null };
+        var parent1 = new GitObjectId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        var parent2 = new GitObjectId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
 
         var gateway = new FakeGitGateway
         {
-            OnGetCommitDetail = id => CreateCommitDetail(id, [parent1]),
+            OnGetCommitDetail = id => CreateCommitDetail(id, [parent1, parent2]),
         };
-        graph.GatewayOverrideForTesting = gateway;
 
-        var isMerge = await graph.IsMergeCommitAsync(ctx: null, nonResidentSingleId, CancellationToken.None);
-        Assert.False(isMerge);
+        var isMerge = await CommitMergeDetection.IsMergeAsync(layout: null, query, gateway, nonResidentId, CancellationToken.None);
+
+        Assert.True(isMerge);
         Assert.Equal(1, gateway.GetCommitDetailCalls);
-
-        var mainline = await graph.DetermineMainlineAsync(ctx: null, nonResidentSingleId, CancellationToken.None);
-        Assert.Null(mainline);
-        Assert.Equal(2, gateway.GetCommitDetailCalls);
     }
 
-    [AvaloniaFact]
-    public async Task Non_resident_root_commit_consults_gateway_once()
+    [Fact]
+    public async Task Gateway_failure_returns_false()
     {
-        var nonResidentRootId = new GitObjectId("6666666666666666666666666666666666666666");
-
-        var graph = new CommitGraphControl();
-        graph.LayoutForTesting = null;
+        var commitId = new GitObjectId("6666666666666666666666666666666666666666");
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, PathFilter = null };
 
         var gateway = new FakeGitGateway
         {
-            OnGetCommitDetail = id => CreateCommitDetail(id, []),
+            OnGetCommitDetail = _ => throw new InvalidOperationException("gateway error"),
         };
-        graph.GatewayOverrideForTesting = gateway;
 
-        var isMerge = await graph.IsMergeCommitAsync(ctx: null, nonResidentRootId, CancellationToken.None);
+        var isMerge = await CommitMergeDetection.IsMergeAsync(layout: null, query, gateway, commitId, CancellationToken.None);
+
         Assert.False(isMerge);
         Assert.Equal(1, gateway.GetCommitDetailCalls);
+    }
 
-        var mainline = await graph.DetermineMainlineAsync(ctx: null, nonResidentRootId, CancellationToken.None);
-        Assert.Null(mainline);
-        Assert.Equal(2, gateway.GetCommitDetailCalls);
+    [Fact]
+    public async Task Cancellation_propagates()
+    {
+        var commitId = new GitObjectId("7777777777777777777777777777777777777777");
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, PathFilter = null };
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var gateway = new FakeGitGateway();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CommitMergeDetection.IsMergeAsync(layout: null, query, gateway, commitId, cts.Token));
     }
 
     private static GraphLayoutResult CreateLayout(GitObjectId id, int parentCount)
@@ -181,6 +161,7 @@ public sealed class CommitActionsMergeDetectionTests
 
         public Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default)
         {
+            ct.ThrowIfCancellationRequested();
             Interlocked.Increment(ref GetCommitDetailCalls);
             if (OnGetCommitDetail != null)
                 return Task.FromResult(OnGetCommitDetail(id));
