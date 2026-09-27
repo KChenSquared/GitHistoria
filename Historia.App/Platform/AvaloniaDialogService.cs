@@ -338,9 +338,24 @@ internal static class CloneDialog
     internal static bool ShouldAutoFillFolder(string currentFolderText, string? lastAutoFilled) =>
         string.IsNullOrEmpty(currentFolderText) || currentFolderText == lastAutoFilled;
 
+    /// <summary>the identity-picker index to pre-select. Index 0 is <i>Local config</i>;
+    /// profile <c>i</c> sits at <c>i + 1</c>. Picks the default profile, falling back to the
+    /// global profile when the default is unset or no longer exists, and to <i>Local config</i>
+    /// only when there are no profiles at all.</summary>
+    internal static int InitialProfileIndex(IReadOnlyList<Historia.Models.GitProfile> profiles, Guid? defaultProfileId)
+    {
+        for (var i = 0; i < profiles.Count; i++)
+            if (defaultProfileId is { } id && profiles[i].Id == id)
+                return i + 1;
+        for (var i = 0; i < profiles.Count; i++)
+            if (profiles[i].IsGlobal)
+                return i + 1;
+        return profiles.Count > 0 ? 1 : 0;
+    }
+
     public static async Task<CloneDialogResult?> ShowAsync(
         IDialogService dialogs, string defaultRoot, Func<string, string> guessFolderName,
-        IReadOnlyList<Historia.Models.GitProfile> profiles)
+        IReadOnlyList<Historia.Models.GitProfile> profiles, Guid? defaultProfileId)
     {
         var sep = System.IO.Path.DirectorySeparatorChar.ToString();
 
@@ -357,7 +372,7 @@ internal static class CloneDialog
         // finishes; "(Local config)" writes the Local-config marker row.
         var profileLabels = new List<string> { "Local config" };
         profileLabels.AddRange(profiles.Select(p => p.IsGlobal ? "Global (~/.gitconfig)" : p.DisplayName));
-        var profileBox = new ComboBox { ItemsSource = profileLabels, Width = 260, SelectedIndex = profiles.Count > 0 ? 1 : 0 };
+        var profileBox = new ComboBox { ItemsSource = profileLabels, Width = 260, SelectedIndex = InitialProfileIndex(profiles, defaultProfileId) };
         Historia.Models.GitProfile? SelectedProfile() => profileBox.SelectedIndex > 0 ? profiles[profileBox.SelectedIndex - 1] : null;
 
         var confirm = new Button { Content = "Clone", IsDefault = true, MinWidth = 80, IsEnabled = false };

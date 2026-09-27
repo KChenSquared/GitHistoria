@@ -249,7 +249,8 @@ public sealed class HomeView : UserControl, IDisposable
         if (_cloneService.IsRunning)
             return;
 
-        var r = await Historia.Platform.CloneDialog.ShowAsync(_dialogs, DefaultCloneRoot(), GuessRepoName, _profiles.GetAllProfiles());
+        var r = await Historia.Platform.CloneDialog.ShowAsync(_dialogs, DefaultCloneRoot(), GuessRepoName,
+            _profiles.GetAllProfiles(), _profiles.GetDefaultProfile()?.Id);
         if (r is null) return;
 
         if (_cloneService.IsRunning)

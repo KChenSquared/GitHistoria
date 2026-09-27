@@ -36,4 +36,33 @@ public class CloneDialogTests
 
         Assert.False(CloneDialog.ShouldAutoFillFolder("my-custom-folder", lastAutoFilled));
     }
+
+    private static Historia.Models.GitProfile Profile(string name, bool global = false) => new()
+    {
+        Id = Guid.NewGuid(), DisplayName = name, GitUserName = name, GitUserEmail = $"{name}@example.com", IsGlobal = global,
+    };
+
+    // the clone dialog pre-selects the default profile (picker index = profile index + 1).
+    [AvaloniaFact]
+    public void InitialProfileIndex_selects_a_non_global_default()
+    {
+        var global = Profile("global", global: true);
+        var work = Profile("work");
+        Assert.Equal(2, CloneDialog.InitialProfileIndex([global, work], work.Id));
+    }
+
+    [AvaloniaFact]
+    public void InitialProfileIndex_falls_back_to_the_global_profile_when_unset_or_missing()
+    {
+        var work = Profile("work");
+        var global = Profile("global", global: true);
+        Assert.Equal(2, CloneDialog.InitialProfileIndex([work, global], null));
+        Assert.Equal(2, CloneDialog.InitialProfileIndex([work, global], Guid.NewGuid()));
+    }
+
+    [AvaloniaFact]
+    public void InitialProfileIndex_is_local_config_with_no_profiles()
+    {
+        Assert.Equal(0, CloneDialog.InitialProfileIndex([], null));
+    }
 }
