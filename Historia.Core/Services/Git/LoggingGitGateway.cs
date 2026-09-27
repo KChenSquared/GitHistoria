@@ -63,9 +63,6 @@ public sealed class LoggingGitGateway(IGitGateway inner, string repositoryPath) 
     public Task<RepositoryStatus> GetStatusAsync(CancellationToken ct = default)
         => Run("GetStatusAsync", () => inner.GetStatusAsync(ct));
 
-    public Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default)
-        => Run("GetCommitsAsync", () => inner.GetCommitsAsync(query, ct), r => Count(r, "commits"));
-
     public Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default)
         => Run($"GetCommitDetailAsync({Short(id)})", () => inner.GetCommitDetailAsync(id, ct));
 
@@ -83,10 +80,6 @@ public sealed class LoggingGitGateway(IGitGateway inner, string repositoryPath) 
 
     public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default)
         => Run("GetFileDiffAsync", () => inner.GetFileDiffAsync(request, ct));
-
-    public Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default)
-        => Run($"GetAheadBehindAsync({branchCanonicalName})", () => inner.GetAheadBehindAsync(branchCanonicalName, ct),
-            r => r is { } ab ? $"+{ab.Ahead}/-{ab.Behind}" : "none");
 
     public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default)
         => Run($"GetDivergenceAsync({local}...{remote})", () => inner.GetDivergenceAsync(local, remote, ct),

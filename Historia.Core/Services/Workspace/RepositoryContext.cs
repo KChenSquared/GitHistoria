@@ -75,6 +75,10 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// file changes — the commit graph and the tag list read refs here, off the repo gate.</summary>
     public RefSnapshotProvider RefSnapshots { get; }
 
+    /// <summary>This repo's remotes, read via Git CLI and cached until the common config
+    /// file timestamp changes.</summary>
+    public RepoConfigReader RemoteConfig { get; }
+
     public IRepositoryStateService State { get; }
     internal FileWatcherService Watcher { get; }
     internal IWorkspaceService? Workspace { get; set; }
@@ -106,6 +110,9 @@ public sealed class RepositoryContext : IAsyncDisposable
 
         RefSnapshots = new RefSnapshotProvider(
             services.GetRequiredService<IGitCliService>(), GitDirectory, RepositoryPath, Lifetime);
+
+        RemoteConfig = new RepoConfigReader(
+            services.GetRequiredService<IGitCliService>(), GitDirectory, RepositoryPath);
 
         Gateway = new LoggingGitGateway(
             new GitGateway(

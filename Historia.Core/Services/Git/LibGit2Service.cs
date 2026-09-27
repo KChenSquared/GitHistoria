@@ -115,53 +115,6 @@ public sealed class LibGit2Service
         };
     }
 
-    public IReadOnlyList<CommitSummary> ProjectCommits(Repository repo, CommitQuery query)
-    {
-        if (repo.Info.IsHeadUnborn && query.RefScope == CommitRefScope.CurrentBranch)
-            return [];
-
-        var filter = new CommitFilter
-        {
-            SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time,
-            IncludeReachableFrom = query.RefScope == CommitRefScope.CurrentBranch
-                ? repo.Head
-                : repo.Refs.Where(r => r.IsLocalBranch || r.IsRemoteTrackingBranch || r.IsTag).ToArray(),
-        };
-
-        var decorations = BuildDecorationMap(repo);
-        var search = query.SearchText;
-        IEnumerable<Commit> commits = repo.Commits.QueryBy(filter);
-
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            commits = commits.Where(c =>
-                c.MessageShort.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                c.Author.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                c.Author.Email.Contains(search, StringComparison.OrdinalIgnoreCase));
-        }
-
-        if (!string.IsNullOrWhiteSpace(query.PathFilter))
-        {
-            var path = query.PathFilter;
-            commits = commits.Where(c => CommitTouchesPath(repo, c, path));
-        }
-
-        return commits
-            .Skip(query.Skip)
-            .Take(query.Take)
-            .Select(c => new CommitSummary
-            {
-                Id = c.Id.ToGitObjectId(),
-                MessageShort = c.MessageShort,
-                AuthorName = c.Author.Name,
-                AuthorEmail = c.Author.Email,
-                AuthorWhen = c.Author.When,
-                ParentCount = c.Parents.Count(),
-                Decorations = decorations.TryGetValue(c.Sha, out var d) ? d : [],
-            })
-            .ToList();
-    }
-
     public CommitDetail ProjectCommitDetail(Repository repo, GitObjectId id)
     {
         var commit = repo.Lookup<Commit>(id.ToLibGit2())
@@ -277,16 +230,6 @@ public sealed class LibGit2Service
         => repo.Network.Remotes
             .Select(r => new RemoteInfo { Name = r.Name, Url = r.Url, PushUrl = r.PushUrl })
             .ToList();
-
-    public AheadBehind? CalculateAheadBehind(Repository repo, string branchCanonicalName)
-    {
-        var branch = repo.Branches[branchCanonicalName];
-        if (branch is null || branch.TrackedBranch is null || branch.Tip is null || branch.TrackedBranch.Tip is null)
-            return null;
-
-        var divergence = repo.ObjectDatabase.CalculateHistoryDivergence(branch.Tip, branch.TrackedBranch.Tip);
-        return new AheadBehind(divergence.AheadBy ?? 0, divergence.BehindBy ?? 0);
-    }
 
     /// <summary>
     /// Projects a single-file diff for one of the sources in including the
@@ -664,46 +607,6 @@ public sealed class LibGit2Service
         if (headTip is null)
             return false;
         return repo.ObjectDatabase.CalculateHistoryDivergence(branch.Tip, headTip).AheadBy == 0;
-    }
-
-    private static bool CommitTouchesPath(Repository repo, Commit commit, string path)
-    {
-        var parent = commit.Parents.FirstOrDefault();
-        var oldTree = parent?.Tree;
-        using var changes = repo.Diff.Compare<TreeChanges>(oldTree, commit.Tree);
-        return changes.Any(c => c.Path == path || c.OldPath == path);
-    }
-
-    private static Dictionary<string, List<CommitDecoration>> BuildDecorationMap(Repository repo)
-    {
-        var map = new Dictionary<string, List<CommitDecoration>>(StringComparer.Ordinal);
-
-        void Add(string? sha, DecorationType type, string label)
-        {
-            if (string.IsNullOrEmpty(sha))
-                return;
-            if (!map.TryGetValue(sha, out var list))
-                map[sha] = list = [];
-            list.Add(new CommitDecoration { Type = type, Label = label });
-        }
-
-        foreach (var branch in repo.Branches)
-        {
-            Add(branch.Tip?.Sha,
-                branch.IsRemote ? DecorationType.RemoteBranch : DecorationType.LocalBranch,
-                branch.FriendlyName);
-        }
-
-        foreach (var tag in repo.Tags)
-        {
-            var target = (tag.PeeledTarget as Commit)?.Sha ?? tag.Target.Sha;
-            Add(target, DecorationType.Tag, tag.FriendlyName);
-        }
-
-        if (!repo.Info.IsHeadUnborn)
-            Add(repo.Head.Tip?.Sha, DecorationType.Head, "HEAD");
-
-        return map;
     }
 
     private static bool HasIndexChange(StatusEntry entry, out FileChangeKind kind, out string? oldPath)

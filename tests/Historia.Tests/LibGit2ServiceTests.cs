@@ -136,24 +136,6 @@ public class LibGit2ServiceTests
     }
 
     [Fact]
-    public void Commits_are_paged_and_carry_head_decoration()
-    {
-        using var repo = TestRepositoryBuilder.FromTemplate("libgit2-paged-commits", r =>
-        {
-            r.WriteFile("f", "a").Stage().Commit("c1");
-            r.WriteFile("f", "b").Stage().Commit("c2");
-            r.WriteFile("f", "c").Stage().Commit("c3");
-        });
-
-        using var git = new Repository(repo.Path);
-        var page = _svc.ProjectCommits(git, new CommitQuery { Skip = 0, Take = 2 });
-
-        Assert.Equal(2, page.Count);
-        Assert.Equal("c3", page[0].MessageShort);
-        Assert.Contains(page[0].Decorations, d => d.Type == DecorationType.Head);
-    }
-
-    [Fact]
     public void Diff_for_a_commit_against_its_parent()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("libgit2-diff-seed", r =>

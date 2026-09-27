@@ -43,18 +43,3 @@ public readonly record struct CommitDecoration
     /// <summary>e.g. "main", "v2.1.0", "origin/main".</summary>
     public required string Label { get; init; }
 }
-
-/// <summary>
-/// Paged history query. History is <b>always</b> paged — no call ever materializes
-/// an unbounded commit list.
-/// </summary>
-public sealed record CommitQuery
-{
-    public int Skip { get; init; }
-    public int Take { get; init; } = 500;
-    public string? PathFilter { get; init; }
-    public CommitRefScope RefScope { get; init; } = CommitRefScope.AllRefs;
-
-    /// <summary>Free-text filter over message and author (server-side, via the query — never client-side filtering of a loaded page).</summary>
-    public string? SearchText { get; init; }
-}

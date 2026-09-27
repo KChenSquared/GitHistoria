@@ -23,14 +23,12 @@ public sealed class BranchMenuDivergenceTests
         private static T No<T>() => throw new NotSupportedException("not exercised by this test");
         public Task<RepositoryInfo> GetRepositoryInfoAsync(CancellationToken ct = default) => No<Task<RepositoryInfo>>();
         public Task<Historia.Models.RepositoryStatus> GetStatusAsync(CancellationToken ct = default) => No<Task<Historia.Models.RepositoryStatus>>();
-        public Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default) => No<Task<IReadOnlyList<CommitSummary>>>();
         public Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default) => No<Task<CommitDetail>>();
         public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default) => No<Task<IReadOnlyList<FileStatusEntry>>>();
         public Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<BranchInfo>>>();
         public Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<TagInfo>>>();
         public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<RemoteInfo>>>();
         public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => No<Task<FileDiff>>();
-        public Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default) => No<Task<AheadBehind?>>();
         public Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default) => No<Task<(string?, string?)>>();
         public Task<(string? Name, string? Email)> GetGlobalIdentityAsync(CancellationToken ct = default) => No<Task<(string?, string?)>>();
         public Task<bool> GetGpgSignConfiguredAsync(CancellationToken ct = default) => No<Task<bool>>();

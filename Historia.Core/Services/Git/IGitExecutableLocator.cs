@@ -1,4 +1,4 @@
-﻿
+
 namespace Historia.Services.Git;
 
 /// <summary>
@@ -13,4 +13,7 @@ public interface IGitExecutableLocator
 
     /// <summary>Runs discovery (PATH, well-known dirs, registry) and captures the version.</summary>
     Task<GitExecutableInfo> ResolveAsync(string? userOverridePath, CancellationToken ct = default);
+
+    /// <summary>Completes when the first resolution attempt finishes, success or not.</summary>
+    Task<GitExecutableInfo> WhenResolvedAsync(CancellationToken ct = default);
 }

@@ -1,4 +1,4 @@
-﻿
+
 namespace Historia.Services.Git;
 
 /// <summary>
@@ -90,6 +90,7 @@ public static class GitErrorClassifier
             "couldn't find remote ref",
             "no such ref",
             "pathspec",
+            "bad object",
         ]),
     ];
 

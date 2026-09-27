@@ -259,6 +259,8 @@ public sealed class GraphCliQueryShapeTests : IAsyncDisposable
         public GitExecutableInfo Current => Missing ? GitExecutableInfo.NotFound : real.Current;
         public Task<GitExecutableInfo> ResolveAsync(string? userOverridePath, CancellationToken ct = default) =>
             Task.FromResult(Current);
+        public Task<GitExecutableInfo> WhenResolvedAsync(CancellationToken ct = default) =>
+            Task.FromResult(Current);
     }
 
     private static string[] CacheFilesFor(string repoPath)

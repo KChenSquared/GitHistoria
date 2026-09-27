@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Git;
+namespace Historia.Services.Git;
 
 /// <inheritdoc cref="IGitCliService"/>
 public sealed class GitCliService : IGitCliService
@@ -24,6 +24,8 @@ public sealed class GitCliService : IGitCliService
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        await _locator.WhenResolvedAsync(ct).ConfigureAwait(false);
 
         if (!AppLog.Enabled)
             return await RunCoreAsync(request, progress, onStdoutLine, ct).ConfigureAwait(false);
@@ -65,7 +67,7 @@ public sealed class GitCliService : IGitCliService
         if (!git.Found || git.Path is null)
         {
             return new GitCliResult(-1, string.Empty,
-                "git.exe was not found. Set its location in Settings.",
+                git.NotFoundReason ?? "git.exe was not found. Set its location in Settings.",
                 GitErrorKind.Unknown, TimeSpan.Zero);
         }
 

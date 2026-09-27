@@ -374,11 +374,9 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
             });
         }
 
-        public Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default) => Task.FromResult<AheadBehind?>(null);
         public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default) => Task.FromResult<AheadBehind?>(null);
         public Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default) => Task.FromResult<(string?, string?)>((null, null));
         public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<(string? Name, string? Email)> GetGlobalIdentityAsync(CancellationToken ct = default) => Task.FromResult<(string?, string?)>((null, null));

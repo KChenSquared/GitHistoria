@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>
 /// Result of a single Git CLI invocation. Raw stderr is carried but never surfaced
@@ -80,9 +80,11 @@ public sealed record GitExecutableInfo
     public required bool Found { get; init; }
     public string? Path { get; init; }
     public Version? Version { get; init; }
+    public string? NotFoundReason { get; init; }
 
-    /// <summary>Minimum supported version is 2.35.</summary>
-    public bool MeetsMinimumVersion => Version is not null && Version >= new Version(2, 35);
+    /// <summary>Minimum supported version is 2.31.</summary>
+    public static readonly Version MinimumVersion = new(2, 31);
+    public bool MeetsMinimumVersion => Version is not null && Version >= MinimumVersion;
 
     public static GitExecutableInfo NotFound { get; } = new() { Found = false };
 }

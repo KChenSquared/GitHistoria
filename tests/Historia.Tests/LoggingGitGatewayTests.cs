@@ -167,13 +167,11 @@ public sealed class LoggingGitGatewayTests : IDisposable
 
         public Task<RepositoryInfo> GetRepositoryInfoAsync(CancellationToken ct = default) => No<Task<RepositoryInfo>>();
         public Task<Historia.Models.RepositoryStatus> GetStatusAsync(CancellationToken ct = default) => No<Task<Historia.Models.RepositoryStatus>>();
-        public Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default) => No<Task<IReadOnlyList<CommitSummary>>>();
         public Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default) => No<Task<CommitDetail>>();
         public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default) => No<Task<IReadOnlyList<FileStatusEntry>>>();
         public Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<TagInfo>>>();
         public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<RemoteInfo>>>();
         public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => No<Task<FileDiff>>();
-        public Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default) => No<Task<AheadBehind?>>();
         public AheadBehind? DivergenceResult { get; set; }
         public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default)
             => DivergenceResult is { } ab ? Task.FromResult<AheadBehind?>(ab) : No<Task<AheadBehind?>>();

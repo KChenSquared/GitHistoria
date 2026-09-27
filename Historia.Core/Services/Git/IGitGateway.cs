@@ -14,20 +14,12 @@ public interface IGitGateway
     Task<RepositoryInfo> GetRepositoryInfoAsync(CancellationToken ct = default);
     Task<RepositoryStatus> GetStatusAsync(CancellationToken ct = default);
 
-    /// <summary>
-    /// Paged linear commit history. Retained as the paged-history API surface — the
-    /// underlying <c>LibGit2Service.ProjectCommits</c> is still covered by tests.
-    /// </summary>
-    Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default);
     Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default);
     Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default);
     Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default);
     Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default);
-
-    /// <summary>Ahead/behind of a local branch versus its upstream, computed lazily per visible row.</summary>
-    Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default);
 
     /// <summary>Ahead/behind between any two refs via <c>git rev-list --left-right --count</c>
     /// (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c>).
