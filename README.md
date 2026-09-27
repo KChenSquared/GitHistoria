@@ -1,6 +1,6 @@
 # Historia 📜
 
-> *The commit graph you love, without the subscription.*
+> *The commit graph you love: every commit, no lag, no subscriptions.*
 
 A high-performance, open-source Windows Git client built with **C# (.NET 10)** and **Avalonia UI**.
 
