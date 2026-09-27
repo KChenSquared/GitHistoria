@@ -2,17 +2,17 @@
 
 /// <summary>
 /// A small, dependency-free GitHub-Flavored-Markdown renderer for commit bodies, notes, and
-/// READMEs (§V2-17.5, D12: bundled, must sanitize).
+/// READMEs (bundled, must sanitize).
 /// <para>
 /// Security model: the input is untrusted (whoever wrote the commit / README). Raw HTML never
 /// passes through — every source character is HTML-encoded before markup is added. Link hrefs
 /// are restricted to <c>http</c>/<c>https</c>/<c>mailto</c>; anything else (notably
 /// <c>javascript:</c>) is neutralised to a non-link. Images are <b>never</b> emitted as
-/// <c>&lt;img&gt;</c> — a remote <c>src</c> would both be an XSS vector and a Rule 0 violation
-/// (the app would fetch it) — they render as a bracketed "[image: alt]" note instead.
+/// <c>&lt;img&gt;</c> — a remote <c>src</c> would both be an XSS vector and an unsolicited
+/// network request (the app would fetch it) — they render as a bracketed "[image: alt]" note instead.
 /// </para>
 /// </summary>
-// ── V4: a UI-agnostic block model so the Avalonia MarkdownView can render without HTML. ──
+// ── A UI-agnostic block model so the Avalonia MarkdownView can render without HTML. ──
 
 public enum MdInlineKind { Text, Code, Bold, Italic, Strike, Link }
 
@@ -33,7 +33,7 @@ public sealed record MdTable(
 public static class MarkdownRenderer
 {
     /// <summary>
-    /// Parses GFM into a block model (V4). Same block grammar as <see cref="ToHtml"/> — fenced
+    /// Parses GFM into a block model. Same block grammar as <see cref="ToHtml"/> — fenced
     /// code, headings, HR, blockquote (recursive), GFM tables, flat lists, paragraphs — with
     /// inline runs for bold / italic / strike / code / links / bare autolinks. Untrusted input:
     /// no run carries raw markup, and link hrefs are restricted to http / https / mailto.
@@ -302,8 +302,8 @@ public static class MarkdownRenderer
         // Inline code
         s = Regex.Replace(s, @"`([^`]+)`", "<code>$1</code>");
 
-        // Links [text](href). Emitted with data-href (not href) so the WebView never navigates
-        // itself — Historia.wireMarkdown hands the URL to the system browser (§V2-17.5).
+        // Links [text](href). Emitted with data-href (not href) so HTML rendered
+        // from this never navigates by itself; the host decides whether to open the URL.
         s = Regex.Replace(s, @"\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)", m =>
         {
             var href = SafeHref(WebUtility.HtmlDecode(m.Groups[2].Value));

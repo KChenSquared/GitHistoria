@@ -1,11 +1,11 @@
 namespace Historia.Models;
 
-/// <summary>Request to create a commit (§6.9.2).</summary>
+/// <summary>Request to create a commit.</summary>
 public sealed record CommitRequest
 {
     public required string Message { get; init; }
 
-    /// <summary>Author identity. Supplied explicitly from the active profile (§9.5.1).</summary>
+    /// <summary>Author identity. Supplied explicitly from the active profile.</summary>
     public required string AuthorName { get; init; }
     public required string AuthorEmail { get; init; }
 
@@ -16,7 +16,7 @@ public sealed record CommitRequest
     public bool AmendPreviousCommit { get; init; }
     public bool AllowEmptyCommit { get; init; }
 
-    /// <summary>Sign the commit with the active profile's key (routes through the CLI, §6.4.1).</summary>
+    /// <summary>Sign the commit with the active profile's key (routes through the CLI).</summary>
     public bool Sign { get; init; }
 }
 
@@ -34,8 +34,8 @@ public sealed record GitFetchOptions
     public bool Tags { get; init; }
     public bool All { get; init; }
 
-    /// <summary>§12.1: this fetch is an auto-fetch, not a user-initiated one. Routing must not
-    /// raise the switch-to-Local-config fallback (that prompt is user-ops only, §13.1); the
+    /// <summary>this fetch is an auto-fetch, not a user-initiated one. Routing must not
+    /// raise the switch-to-Local-config fallback (that prompt is user-ops only); the
     /// caller swallows failures quietly.</summary>
     public bool Background { get; init; }
 
@@ -62,16 +62,16 @@ public sealed record GitPullOptions
     };
 }
 
-/// <summary>What to push and how (§6.13).</summary>
+/// <summary>What to push and how.</summary>
 public sealed record PushSpec
 {
     public required string RefSpec { get; init; }
     public bool SetUpstream { get; init; }
 
-    /// <summary>Force push uses <c>--force-with-lease --force-if-includes</c> — never plain <c>--force</c> (§6.13).</summary>
+    /// <summary>Force push uses <c>--force-with-lease --force-if-includes</c> — never plain <c>--force</c>.</summary>
     public bool ForceWithLease { get; init; }
     public bool PushTags { get; init; }
 }
 
-/// <summary>Divergence of a local branch from its upstream (§6.12).</summary>
+/// <summary>Divergence of a local branch from its upstream.</summary>
 public readonly record struct AheadBehind(int Ahead, int Behind);

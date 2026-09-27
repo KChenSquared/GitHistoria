@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>M2.2: <c>IRepoActionBus</c> — the un-targeted overload keeps working for the
+/// <summary><c>IRepoActionBus</c> — the un-targeted overload keeps working for the
 /// shortcuts bar's three existing call sites, and a targeted request round-trips its
 /// remote/branch.</summary>
 [Trait("tier", "unit")]

@@ -2,7 +2,7 @@
 
 /// <summary>
 /// The OS-level appearance signal — light/dark and high-contrast — abstracted so
-/// <see cref="Historia.Core"/> needs no platform code (V4 §split). The App layer implements it
+/// <see cref="Historia.Core"/> needs no platform code. The App layer implements it
 /// over <c>Application.Current.PlatformSettings.ColorValuesChanged</c>, which is cross-platform;
 /// tests supply a fixed implementation.
 /// </summary>

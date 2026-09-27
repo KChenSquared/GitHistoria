@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// Silent-cancel M1.1: declining the push-rejection modal, dismissing it a second time, and
+/// Declining the push-rejection modal, dismissing it a second time, and
 /// cancelling an in-flight network op must never publish a "…cancelled." card that just restates
 /// the outcome of the click the user just made — the decline is logged under the "declined"
 /// dev-log category (a no-op unless dev logging is on) instead.
@@ -39,7 +39,7 @@ public sealed class NetworkCancelSilenceTests
     }
 
     /// <summary>Scripts <see cref="ChooseAsync"/> to a fixed choice (default -1: Cancel) and
-    /// counts calls; every other member throws since this M1.1 flow never reaches them.</summary>
+    /// counts calls; every other member throws since this flow never reaches them.</summary>
     private sealed class FakeDialogService : IDialogService
     {
         public int ChooseCalls;
@@ -214,13 +214,17 @@ public sealed class NetworkCancelSilenceTests
         return sc.BuildServiceProvider();
     }
 
-    private static async Task<RepoNetworkProgress> WaitForIdleAsync(IRepoNetworkActionRunner runner)
+    /// <summary>Starts an action and waits for the runner's idle tick. It subscribes before
+    /// <paramref name="start"/> runs: an op that fails or is cancelled before its first real await
+    /// raises the idle tick synchronously inside <c>RequestNetworkAction</c>.</summary>
+    private static async Task<RepoNetworkProgress> WaitForIdleAsync(IRepoNetworkActionRunner runner, Action start)
     {
         RepoNetworkProgress? final = null;
         void OnProgress(object? s, RepoNetworkProgress p) { if (p.Progress is null) final = p; }
         runner.ProgressChanged += OnProgress;
         try
         {
+            start();
             for (int i = 0; i < 200 && final is null; i++)
             {
                 Dispatcher.UIThread.RunJobs();
@@ -255,8 +259,7 @@ public sealed class NetworkCancelSilenceTests
             var bus = sp.GetRequiredService<IRepoActionBus>();
             var runner = sp.GetRequiredService<IRepoNetworkActionRunner>();
 
-            bus.RequestNetworkAction(RepoNetworkAction.Push);
-            await WaitForIdleAsync(runner);
+            await WaitForIdleAsync(runner, () => bus.RequestNetworkAction(RepoNetworkAction.Push));
 
             Assert.Equal(1, dialogs.ChooseCalls);
             Assert.Empty(notify.Published);
@@ -287,10 +290,8 @@ public sealed class NetworkCancelSilenceTests
             var bus = sp.GetRequiredService<IRepoActionBus>();
             var runner = sp.GetRequiredService<IRepoNetworkActionRunner>();
 
-            bus.RequestNetworkAction(RepoNetworkAction.Push);
-            await WaitForIdleAsync(runner);
-            bus.RequestNetworkAction(RepoNetworkAction.Push);
-            await WaitForIdleAsync(runner);
+            await WaitForIdleAsync(runner, () => bus.RequestNetworkAction(RepoNetworkAction.Push));
+            await WaitForIdleAsync(runner, () => bus.RequestNetworkAction(RepoNetworkAction.Push));
 
             Assert.Equal(2, dialogs.ChooseCalls);
             Assert.Empty(notify.Published);
@@ -329,8 +330,7 @@ public sealed class NetworkCancelSilenceTests
                 var bus = sp.GetRequiredService<IRepoActionBus>();
                 var runner = sp.GetRequiredService<IRepoNetworkActionRunner>();
 
-                bus.RequestNetworkAction(RepoNetworkAction.Push);
-                await WaitForIdleAsync(runner);
+                await WaitForIdleAsync(runner, () => bus.RequestNetworkAction(RepoNetworkAction.Push));
             }
             finally
             {
@@ -394,8 +394,7 @@ public sealed class NetworkCancelSilenceTests
             runner.ProgressChanged += CancelOnFirstTick;
             try
             {
-                bus.RequestNetworkAction(RepoNetworkAction.Fetch);
-                await WaitForIdleAsync(runner);
+                await WaitForIdleAsync(runner, () => bus.RequestNetworkAction(RepoNetworkAction.Fetch));
             }
             finally
             {

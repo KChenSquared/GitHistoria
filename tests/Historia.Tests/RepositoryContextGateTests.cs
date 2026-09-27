@@ -1,10 +1,10 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §V10.1.2: the repo gate has three priority tiers — foreground (<see cref="RepositoryContext.WithRepositoryAsync{T}"/>),
+/// the repo gate has three priority tiers — foreground (<see cref="RepositoryContext.WithRepositoryAsync{T}"/>),
 /// background (<see cref="RepositoryContext.WithRepositoryBackgroundAsync{T}"/>, used by the commit-graph's
 /// silent crawl), and spill (<see cref="RepositoryContext.WithRepositorySpillAsync{T}"/>, used only by the
-/// §7.6 full-history disk spill). Ensures the spill tier yields to background-tier callers so the background
+/// full-history disk spill). Ensures the spill tier yields to background-tier callers so the background
 /// spill does not starve the visible-row crawl.
 /// </summary>
 [Trait("tier", "git")]
@@ -26,7 +26,7 @@ public sealed class RepositoryContextGateTests : IAsyncDisposable
 
         using var stopCts = new CancellationTokenSource();
 
-        // Simulate the §7.6 background spill: a tight loop of short spill-tier acquisitions with
+        // Simulate the background spill: a tight loop of short spill-tier acquisitions with
         // no yielding delay of its own between them.
         var spillIterations = 0;
         var spillTask = Task.Run(async () =>

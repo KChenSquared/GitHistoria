@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// M1.1: verify BranchMenu.RunWithStashRecovery integration when a checkout conflict occurs —
+/// Verify BranchMenu.RunWithStashRecovery integration when a checkout conflict occurs —
 /// ensures the classified UncommittedChanges error carries a "Stash &amp; retry" action that
 /// successfully creates and switches to the branch.
 /// </summary>

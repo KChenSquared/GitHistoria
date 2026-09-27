@@ -149,7 +149,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             if (_selectedCommitId == id)
                 return;
             _selectedCommitId = id;
-            // §V2-8.2: selecting a different commit must not leave the previous commit's file
+            // selecting a different commit must not leave the previous commit's file
             // diff filling the center panel — the single most likely stale state in the feature.
             diffCleared = _openDiff is not null;
             _openDiff = null;
@@ -164,7 +164,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     {
         lock (_sync)
         {
-            // Idempotent: DiffRequest is a record, so an equal request raises nothing (§V2-8.2).
+            // Idempotent: DiffRequest is a record, so an equal request raises nothing.
             if (_openDiff == request)
                 return;
             _openDiff = request;
@@ -235,7 +235,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                 _selectedConflictPath = null;
             }
 
-            // §V2-8.1: the centre panel shows the open file diff in place of the commit graph.
+            // the centre panel shows the open file diff in place of the commit graph.
             // A commit, an amend, a stage/unstage, or an external edit can drop the file a
             // working-tree diff was showing (or clean its whole side) with no explicit Close,
             // leaving a permanent "No changes" panel covering the graph — and switching repos
@@ -309,7 +309,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             existingTags = _tags;
         }
 
-        // §F1: publish branches and remotes first so the sidebar populates in ~57ms rather than waiting
+        // publish branches and remotes first so the sidebar populates in ~57ms rather than waiting
         // seconds on thousands of tags to project.
         if (branchesOrRemotesChanged)
             Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, existingTags, remotes)));
@@ -350,7 +350,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         await RefreshStatusAsync(ct).ConfigureAwait(false);
     }
 
-    // ── Status-raise coalescing on a 50 ms trailing window (§6.7) ──
+    // ── Status-raise coalescing on a 50 ms trailing window ──
 
     private void QueueStatusRaise(RepositoryStatus status)
     {
@@ -385,7 +385,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             _ui.Post(action);
     }
 
-    /// <summary>Derives <see cref="OperationState"/> from on-disk sequencer markers (§8.9.2).</summary>
+    /// <summary>Derives <see cref="OperationState"/> from on-disk sequencer markers.</summary>
     internal static OperationState DetectOperationState(string gitDir)
     {
         if (System.IO.Directory.Exists(System.IO.Path.Combine(gitDir, "rebase-merge")) ||

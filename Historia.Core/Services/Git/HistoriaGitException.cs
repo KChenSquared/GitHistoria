@@ -2,7 +2,7 @@
 namespace Historia.Services.Git;
 
 /// <summary>
-/// A Git operation failure already classified into a <see cref="GitErrorKind"/> (§6.5.3), with
+/// A Git operation failure already classified into a <see cref="GitErrorKind"/>, with
 /// an optional verbatim detail string for a "Details" expander. Higher layers map
 /// <see cref="Kind"/> to an actionable message; raw stderr is never surfaced directly.
 /// </summary>
@@ -14,7 +14,7 @@ public sealed class HistoriaGitException : Exception
         Kind = kind;
         Details = details;
 
-        // §V9.6: every classified git failure lands in the developer log the moment it is
+        // every classified git failure lands in the developer log the moment it is
         // created, whether or not a caller turns it into a notification. No-op unless enabled.
         var detail = string.IsNullOrWhiteSpace(details)
             ? ""
@@ -26,7 +26,7 @@ public sealed class HistoriaGitException : Exception
     public string? Details { get; }
 
     /// <summary>
-    /// §13.1: set when a user-initiated fetch/push/pull failed on every transport while a
+    /// set when a user-initiated fetch/push/pull failed on every transport while a
     /// non-<i>Local config</i> profile was the active selection. The app layer offers to switch
     /// the repository to <i>Local config</i> and retry once.
     /// </summary>

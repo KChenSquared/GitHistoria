@@ -3,19 +3,19 @@
 public enum TerminalSessionState { Starting, Running, Exited, Failed }
 
 /// <summary>
-/// One live terminal: a pty, an <c>XTerm.NET</c> emulator, and the pump between them (V5 §3.1).
+/// One live terminal: a pty, an <c>XTerm.NET</c> emulator, and the pump between them.
 /// <para>
 /// The emulator's screen buffer is guarded by a single-slot lock — the same discipline
 /// <c>RepositoryContext</c> applies to its LibGit2Sharp handle. The pty read loop mutates on a
-/// background thread; events are raised on the UI dispatcher (constitution rule 18).
+/// background thread; events are raised on the UI dispatcher.
 /// <c>BufferChanged</c> is coalesced on a ~16 ms trailing window so a flood renders once per
 /// frame, not once per chunk — the parser still sees every byte in order.
 /// </para>
 /// <para>
-/// Deviation D1 (see the M1 spike doc): <c>XTerm.Terminal.Write</c> takes a <c>string</c>, so
+/// <c>XTerm.Terminal.Write</c> takes a <c>string</c>, so
 /// this class owns one stateful <see cref="Decoder"/> that carries partial-UTF-8 state across
-/// pty chunks — preserving the "no mangling at chunk boundaries" intent of design doc §2.
-/// Deviation D2: XTerm.NET 1.2.0 exposes no damage event, so a row-hash diff here synthesises
+/// pty chunks — so a character split across two chunks is never mangled.
+/// XTerm.NET 1.2.0 exposes no damage event, so a row-hash diff here synthesises
 /// the dirty-row set for the control.
 /// </para>
 /// </summary>
@@ -39,7 +39,7 @@ public sealed class TerminalSession : IDisposable
     public TerminalSessionState State { get; private set; } = TerminalSessionState.Starting;
     public int? ExitCode { get; private set; }
 
-    /// <summary>OSC 0/2 title, already sanitised (V5 §9.3): control chars stripped, ≤ 60 chars.
+    /// <summary>OSC 0/2 title, already sanitised: control chars stripped, ≤ 60 chars.
     /// Null until the child sets one.</summary>
     public string? ReportedTitle { get; private set; }
 
@@ -48,11 +48,11 @@ public sealed class TerminalSession : IDisposable
     public string? LastHyperlink { get; private set; }
 
     /// <summary>A one-line notice shown as the session's first line — e.g. the start directory
-    /// fell back. Not a modal (V5 §4.2).</summary>
+    /// fell back. Not a modal.</summary>
     public string? StartupNotice { get; }
 
     /// <summary>Live DEC key/keypad modes, read under the gate — the input the
-    /// <see cref="KeyEncoder"/> needs (V5 §6.5).</summary>
+    /// <see cref="KeyEncoder"/> needs.</summary>
     public TerminalModes CurrentModes
     {
         get { lock (_gate) return new TerminalModes(_term.ApplicationCursorKeys, _term.ApplicationKeypad); }
@@ -148,7 +148,7 @@ public sealed class TerminalSession : IDisposable
             return read(new BufferView(_term));
     }
 
-    /// <summary>Returns the rows that changed since the last call and clears the set (V5 §6.3).</summary>
+    /// <summary>Returns the rows that changed since the last call and clears the set.</summary>
     public IReadOnlyList<int> TakeDirtyRows()
     {
         lock (_gate)
@@ -245,7 +245,7 @@ public sealed class TerminalSession : IDisposable
         RaiseOnDispatcher(StateChanged);
     }
 
-    // ── OSC hardening (V5 §9.3) ─────────────────────────────────────────────────────────────
+    // ── OSC hardening ─────────────────────────────────────────────────────────────
 
     private void OnEmulatorTitleChanged(object? sender, XTermLib.Events.TerminalEvents.TitleChangeEventArgs e)
         => ApplyReportedTitle(e.Title);
@@ -258,7 +258,7 @@ public sealed class TerminalSession : IDisposable
                 ApplyReportedTitle(e.Data);
                 break;
             case 52:
-                // Clipboard write from the child — deliberately ignored (V5 §9.3).
+                // Clipboard write from the child — deliberately ignored.
                 break;
         }
     }

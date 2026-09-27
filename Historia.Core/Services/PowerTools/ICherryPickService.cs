@@ -1,10 +1,10 @@
 ﻿namespace Historia.Services.PowerTools;
 
 /// <summary>
-/// Cherry-pick and revert of one commit or an ordered set (§8.5). Commits must be passed
+/// Cherry-pick and revert of one commit or an ordered set. Commits must be passed
 /// <b>oldest-first</b> regardless of ctrl-click order. Merge commits require a mainline parent.
 /// On conflict the sequencer stops and <c>IConflictService</c> drives continue/skip/abort.
-/// Records the prior HEAD for the session-scoped undo (§8.9.2). Singleton.
+/// Records the prior HEAD for the session-scoped undo. Singleton.
 /// </summary>
 public interface ICherryPickService
 {

@@ -43,7 +43,7 @@ public class StashServiceTests
     }
 
     [Fact]
-    public async Task StashStaged_stashes_only_the_staged_content(/* v8 M15 */)
+    public async Task StashStaged_stashes_only_the_staged_content()
     {
         await using var host = new MiniHost();
         var b = TestRepositoryBuilder.FromTemplate("stash-staged-seed", r =>

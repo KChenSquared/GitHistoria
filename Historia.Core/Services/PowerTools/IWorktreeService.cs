@@ -11,7 +11,7 @@ public sealed record WorktreeAddRequest
     public string? Commit { get; init; }
 }
 
-/// <summary>Worktree add / remove / lock / unlock / move / prune / repair (§8.7.2). Singleton.</summary>
+/// <summary>Worktree add / remove / lock / unlock / move / prune / repair. Singleton.</summary>
 public interface IWorktreeService
 {
     Task<IReadOnlyList<WorktreeInfo>> ListAsync(RepositoryContext context, CancellationToken ct = default);

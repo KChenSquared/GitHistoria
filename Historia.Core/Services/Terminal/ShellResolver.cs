@@ -12,14 +12,14 @@ public enum OSPlatformKind
 public sealed record ResolvedShell(string Path, IReadOnlyList<string> Arguments);
 
 /// <summary>
-/// Resolves which shell to launch (V5 §4.1). Pure and unit-tested: the filesystem and
+/// Resolves which shell to launch. Pure and unit-tested: the filesystem and
 /// environment are injected so every platform chain is testable from any platform.
 /// <para>
 /// Order, first hit wins:
 /// <list type="number">
 ///   <item><c>configuredPath</c> if non-empty <b>and</b> the file exists. A configured-but-missing
 ///   shell throws <see cref="TerminalStartException"/>(<see cref="TerminalErrorKind.ShellNotFound"/>) —
-///   it never falls through to the platform chain (constitution rule 11: no invented fallback
+///   it never falls through to the platform chain (no invented fallback
 ///   for a failure).</item>
 ///   <item>the platform default chain.</item>
 /// </list>

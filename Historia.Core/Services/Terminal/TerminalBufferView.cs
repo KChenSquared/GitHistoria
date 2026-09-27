@@ -14,7 +14,7 @@ public enum TerminalCellFlags
     Strikethrough = 128,
 }
 
-/// <summary>One resolved screen cell (V5 §6.2). A Core value type so XTerm.NET's own buffer
+/// <summary>One resolved screen cell. A Core value type so XTerm.NET's own buffer
 /// types never reach the App layer.</summary>
 public readonly record struct TerminalCellSnapshot(
     int CodePoint,
@@ -26,7 +26,7 @@ public readonly record struct TerminalCellSnapshot(
 
 /// <summary>
 /// A read-only view of the emulator screen buffer, handed to a callback that runs under the
-/// session's gate (V5 §3.1). Nothing XTerm.NET owns escapes the callback.
+/// session's gate. Nothing XTerm.NET owns escapes the callback.
 /// </summary>
 public interface ITerminalBufferView
 {

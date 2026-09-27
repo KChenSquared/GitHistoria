@@ -1,11 +1,11 @@
 ﻿namespace Historia.Models;
 
-/// <summary>The six first-class regions of the graph panel (§V2-6.1).</summary>
+/// <summary>The six first-class regions of the graph panel.</summary>
 public enum GraphColumnKind { Refs, Graph, Message, Author, Date, Sha }
 
 /// <summary>
 /// One column of the graph panel. Persisted in <see cref="AppSettings"/> as an ordered list —
-/// the list order <i>is</i> the column order (§V2-9.1).
+/// the list order <i>is</i> the column order.
 /// </summary>
 public sealed record GraphColumn
 {
@@ -24,7 +24,7 @@ public static class GraphColumnDefaults
 {
     /// <summary>
     /// Pre-measurement floor for the Refs column, safe to use at settings-load time before any
-    /// window, typeface or DPI exists (§V3-8.1 Trap). <c>GraphColumnLayout.Resolve</c> raises it
+    /// window, typeface or DPI exists (Trap). <c>GraphColumnLayout.Resolve</c> raises it
     /// to the measured <c>refsBaseWidth</c> once a control is available.
     /// </summary>
     public const double RefsStaticFloor = 140;
@@ -40,7 +40,7 @@ public static class GraphColumnDefaults
     ];
 
     /// <summary>
-    /// §V3-8.2 / D2. Keeps its one-argument signature so <c>Normalize</c>, the auto-fit gesture
+    /// Per-column minimum width. Keeps its one-argument signature so <c>Normalize</c>, the auto-fit gesture
     /// and the resize gesture all keep compiling. "Minimum 150 for each other column", with SHA
     /// held at 80 — a seven-character hash in a 150 DIU column is dead space.
     /// </summary>
@@ -55,7 +55,7 @@ public static class GraphColumnDefaults
 
     public const double MaxWidth = 2000;
 
-    /// <summary>§V3.1: Graph's real upper bound is its lane geometry (the resize clamp and
+    /// <summary>Graph's real upper bound is its lane geometry (the resize clamp and
     /// <c>GraphColumnLayout.Resolve</c>). This only guards hand-edited values so a stretched
     /// Graph column is not snapped back to <see cref="MaxWidth"/> on the next save.
     /// 603 lanes × MaxLaneWidth 60 = 36,180, so 65,536 is comfortable headroom.</summary>
@@ -67,7 +67,7 @@ public static class GraphColumnDefaults
         kind == GraphColumnKind.Graph ? GraphMaxWidth : MaxWidth;
 
     /// <summary>
-    /// §V3-9.4 / §V3-B: at every launch the column <i>order</i> is reset to the canonical order
+    /// at every launch the column <i>order</i> is reset to the canonical order
     /// and every <i>width</i> to its default; only <see cref="GraphColumn.Visible"/> and
     /// <see cref="GraphColumn.IsFlex"/> survive. The caller clears its own graph-width-pin flag.
     /// </summary>
@@ -87,7 +87,7 @@ public static class GraphColumnDefaults
     }
 
     /// <summary>
-    /// Makes a hand-edited or migrated-forward column list safe to hand to the panel (§V2-11.1):
+    /// Makes a hand-edited or migrated-forward column list safe to hand to the panel:
     /// drop unknown kinds, append missing kinds hidden in default order, keep the first of any
     /// duplicate, clamp widths, and fall back to <see cref="All"/> when nothing is visible or
     /// the flex column is not unique.

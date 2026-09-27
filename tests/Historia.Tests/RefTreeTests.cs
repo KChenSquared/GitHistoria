@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>§V3-11.2: the pure sidebar ref-tree builder.</summary>
+/// <summary>the pure sidebar ref-tree builder.</summary>
 [Trait("tier", "unit")]
 public class RefTreeTests
 {
@@ -31,7 +31,7 @@ public class RefTreeTests
     [Fact]
     public void Sorts_flat_alphabetically_without_hoisting_folders()
     {
-        // §V3-B: "aaa" is a folder, the rest are leaves — the order is purely alphabetical
+        // "aaa" is a folder, the rest are leaves — the order is purely alphabetical
         // (case-insensitive), folders no longer jump to the top.
         var tree = RefTree.Build([B("zzz"), B("aaa/child"), B("main"), B("Bar/x")], b => b.Name);
 

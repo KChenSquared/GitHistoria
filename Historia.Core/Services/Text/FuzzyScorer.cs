@@ -376,7 +376,7 @@ public static class FuzzyScorer
 
     private static (string PathNormalized, string Normalized, string NormalizedLowercase) NormalizeQuery(string original)
     {
-        // Historia pins separator to '/' always (constitution rule 16).
+        // Historia pins separator to '/' always.
         string pathNormalized = original.Replace('\\', '/');
 
         var sb = new StringBuilder(pathNormalized.Length);

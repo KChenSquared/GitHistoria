@@ -9,9 +9,9 @@ public sealed record StashSaveOptions
 }
 
 /// <summary>
-/// Visual stash manager (§8.3). Every method is keyed by <see cref="StashEntry.CommitId"/> and
+/// Visual stash manager. Every method is keyed by <see cref="StashEntry.CommitId"/> and
 /// re-resolves the current <c>stash@{n}</c> immediately before acting — index-keyed overloads
-/// deliberately do not exist (§8.3.2). Singleton.
+/// deliberately do not exist. Singleton.
 /// </summary>
 public interface IStashService
 {

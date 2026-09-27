@@ -12,7 +12,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// them — deliberately long so a slow-but-progressing large repo is never cut short.</summary>
     private static readonly TimeSpan SpillStartGrace = TimeSpan.FromSeconds(180);
 
-    /// <summary>Rows per chunk of the background full-history walk (§7.6). Each chunk *resumes*
+    /// <summary>Rows per chunk of the background full-history walk. Each chunk *resumes*
     /// the primed <c>git log</c> walk (cheap — no respawn), off the repo gate while no ref file
     /// has changed and otherwise after one low-priority gate turn, so this bounds how long a
     /// foreground extend can wait behind the spill to roughly one chunk's pull.</summary>
@@ -103,7 +103,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// (tests) run un-gated, as if the gate were always open.</summary>
     private readonly IBackgroundWorkGate? _gate;
 
-    /// <summary>§7.6: page per-commit metadata from a random-access file instead of keeping
+    /// <summary>page per-commit metadata from a random-access file instead of keeping
     /// it resident. Read once — the setting takes effect on the next launch.</summary>
     private readonly bool _metaFromDisk;
 
@@ -119,9 +119,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
         _metaFromDisk = settings.Current.GraphMetadataFromDisk;
     }
 
-    /// <summary>DI ctor (§4 linux cold-prime plan): additionally wires up
+    /// <summary>DI ctor (linux cold-prime plan): additionally wires up
     /// <see cref="GraphBackgroundWriter"/>, scheduled once a repo's background history spill
-    /// (§7.6) reaches completion. The 2-arg ctor above keeps working with no commit-graph
+    /// reaches completion. The 2-arg ctor above keeps working with no commit-graph
     /// maintenance — used by tests that don't care about it.</summary>
     public GraphLayoutService(ISettingsService settings, IGitExecutableLocator locator, IGitCliService cli)
         : this(settings, locator)
@@ -158,7 +158,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         public bool Exhausted { get; set; }
 
         /// <summary>The walk could not run or continue — git.exe missing, the process failed to
-        /// start, or it failed before exhausting (Rule 11: no fallback). The graph keeps whatever
+        /// start, or it failed before exhausting (no fallback). The graph keeps whatever
         /// rows were already walked (none, for a failure before the first row) and nothing more
         /// is attempted for this cache: no respawn from the crawler or the spill, no disk write.
         /// <see cref="Forget"/> or a forced reset drops the cache, so a ref change or a reopen
@@ -176,10 +176,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
         /// <summary>Nothing more is walked or written for this cache.</summary>
         public bool WalkHalted => WalkFailed || WalkSuperseded;
 
-        // ── §7.6 disk-backed metadata ──
+        // ── disk-backed metadata ──
         public long Fingerprint { get; set; }
 
-        /// <summary>§Phase 3 (3b): the sorted-tip-set key the on-disk store/`.gz`/live-walk
+        /// <summary>3 (3b): the sorted-tip-set key the on-disk store/`.gz`/live-walk
         /// resume are keyed on, computed by <see cref="ComputeWalkKey"/> — NOT <see
         /// cref="Fingerprint"/>, which still covers every ref + HEAD and stays the key
         /// <c>RecomputeAsync</c> and the ref-badge cache use. A checkout, a stash, a branch
@@ -206,21 +206,21 @@ public sealed class GraphLayoutService : IGraphLayoutService
         /// chunk that may still be mid-<c>MoveNext</c>.</summary>
         public Task? BackgroundSpillTask { get; set; }
 
-        // §V10.1.2: row count as of the last queued GraphWalkCache.Save — debounces the .gz
+        // row count as of the last queued GraphWalkCache.Save — debounces the .gz
         // rewrite so a long run of small foreground extends (the silent crawler) doesn't
         // re-snapshot + re-gzip the whole window on every one.
         public int WalkCacheSavedRows { get; set; }
 
         // ── resumable walk ──
         // A live, primed `git log` process (GitLogStream) pulled forward in chunks by
-        // EnsureWalkedAsync — the quick phase, each scroll Extend, the silent crawler and the §7.6
+        // EnsureWalkedAsync — the quick phase, each scroll Extend, the silent crawler and the
         // background spill all continue this ONE walk instead of respawning from the tips every
         // time. Pulled OFF the repo gate, under WalkLock. Disposed on reset / Forget / exhaustion /
         // failure, and when a tip-set change supersedes the walk (WalkSuperseded) — a walk is
         // never re-primed over another tip set within one cache.
         public IEnumerator<RawCommit>? LiveWalk { get; set; }
 
-        /// <summary>§Phase 3 (3b): despite the name (kept so reflection-based tests that poke this
+        /// <summary>3 (3b): despite the name (kept so reflection-based tests that poke this
         /// field by name still compile), this now holds the WALK KEY (<see cref="WalkKey"/>'s
         /// value at prime time), not the full ref fingerprint — a live walk resumes across a
         /// checkout/stash/rename, since none of those change the tip set it's reading.</summary>
@@ -233,7 +233,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         public long LiveWalkSnapshotToken { get; set; }
 
         // Serializes a prime/resume pull (which runs off the repo gate) against a concurrent one
-        // — e.g. a foreground Extend racing the §7.6 background spill's next chunk.
+        // — e.g. a foreground Extend racing the background spill's next chunk.
         public readonly SemaphoreSlim WalkLock = new(1, 1);
 
         /// <summary>Dispose the walk (killing its git process) and forget it. Never while another
@@ -344,7 +344,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             if (_caches.TryGetValue(context, out var existing) && TotalWalked(existing) > 0)
                 return null;
 
-        // §V10.1.2: try the §7.6 metadata store first. Unlike the .gz walk cache below, it is
+        // try the metadata store first. Unlike the .gz walk cache below, it is
         // written incrementally to the FULL history by the background spill, isn't bounded by
         // whatever a single foreground walk reached, and (since GraphMetaStore.Version 2) now
         // carries real parent SHAs — enough to lay out a genuine DAG frame, not just a row list.
@@ -454,12 +454,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
         return swapped with { Fingerprint = cache.Fingerprint };
     }
 
-    /// <summary>§7.6: metadata is disk-backed only for the plain all-refs query the walk cache
+    /// <summary>metadata is disk-backed only for the plain all-refs query the walk cache
     /// already supports; a path filter / single branch / stashes keep the in-memory store.</summary>
     private bool SpillEnabled(GraphQuery query) => _metaFromDisk && GraphWalkCache.Supports(query);
 
     /// <summary>
-    /// §7.6: append the freshly laid-out rows' metadata to the on-disk store, point
+    /// append the freshly laid-out rows' metadata to the on-disk store, point
     /// <see cref="GraphLayout.Commits"/> at the paged reader, and release the resident strings
     /// for the spilled rows. On any IO failure the layout falls back to an in-memory array
     /// rebuilt from the still-resident walk records — correctness never depends on the file.
@@ -702,7 +702,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     /// <summary>
-    /// §7.6: once the visible window is spilled, keep walking + spilling the rest of the
+    /// once the visible window is spilled, keep walking + spilling the rest of the
     /// history in the background so the whole repo is cached on disk without the user
     /// scrolling. Cancelled by <see cref="Forget"/> when the ref set changes or the tab closes.
     /// <para>The heavy full-history walk does not start until this context's first graph paint
@@ -770,7 +770,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                         break;
 
                     // Schedule commit-graph maintenance as soon as this repo is known to
-                    // be large (§9.3), rather than waiting for spilling to also finish —
+                    // be large, rather than waiting for spilling to also finish —
                     // `git commit-graph write --reachable` is a self-contained git operation that
                     // reads the ODB directly and does not depend on Historia's own walk/spill
                     // being complete. MaybeSchedule is idempotent per repo per process (an
@@ -957,7 +957,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // unreachable dead prefix is >= 25% of .meta.dat, is compacted by a from-row-0 re-spill
         // instead of yet another reorder — RunHeadlessSpoolAsync resets the store to identity order
         // (RecordCount == RowCount) under the new key, which RunHeadlessReorderAsync's incremental
-        // append-only shape can never do on its own (R8).
+        // append-only shape can never do on its own.
         var deadRecordsTooHigh = probe.Existing is { Ok: true } existing
             && (long)existing.RecordCount * 3 > (long)existing.RowCount * 4;
         var prefix = GraphMetaStore.ProbeDeadPrefix(repoPath);
@@ -1156,8 +1156,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // reaches exhaustion having started at row 0 (a genuine full walk, not a resumed partial
         // one — the ONLY case that stamp is meaningful for) can record GraphMetaSplice's guard-4
         // baseline. Only the headless spool times itself this way (not the active tab's own
-        // foreground background spill or the extend-spill fallback) — a deliberate scope narrowing
-        // for M5.1: the splice trigger itself only ever runs from this headless pipeline (step 5),
+        // foreground background spill or the extend-spill fallback) — a deliberate scope narrowing:
+        // the splice trigger itself only ever runs from this headless pipeline (step 5),
         // so only this path's timing is ever read back.
         var walkStopwatch = Stopwatch.StartNew();
         bool? fullWalkFromZero = null;
@@ -1346,7 +1346,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
 
         // Every invalidation reason recomputes the whole window: lane assignment is a
-        // left-to-right dependency chain, so a change at row k can alter every later row (§7.3).
+        // left-to-right dependency chain, so a change at row k can alter every later row.
         Forget(context);
         return await ComputeLayoutAsync(context, query, maxRows, ct).ConfigureAwait(false);
     }
@@ -1379,7 +1379,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         try { cache.Cts.Cancel(); } catch (ObjectDisposedException) { }
 
-        // R3a: let the background spill observe the cancellation and finish its own turn before
+        // Let the background spill observe the cancellation and finish its own turn before
         // this touches LiveWalk — disposing it while a chunk may still be mid-MoveNext is exactly
         // the race DropLiveWalk exists to avoid. A stuck spill (repo gate never freed) falls back
         // to the same off-gate drop Forget already uses, rather than hanging tab-switch forever.
@@ -1417,7 +1417,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
         try { cache.Cts.Dispose(); } catch { /* best effort */ }
 
-        // R4: drop this repo's .gz read-cache entry too — kept resident it would outlive the tab
+        // Drop this repo's .gz read-cache entry too — kept resident it would outlive the tab
         // switch for the rest of the session.
         _walkCache.Evict(context.RepositoryPath);
     }
@@ -1481,9 +1481,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         Diagnostics.PerfLog.Mark($"EnsureWalked need {wantCount}, have {TotalWalked(cache)}, decoFp={deco?.Fingerprint ?? 0}");
         var repoPath = context.RepositoryPath;
-        // §V10.1.2: three gate tiers, not two — a genuine foreground caller always wins; the
+        // three gate tiers, not two — a genuine foreground caller always wins; the
         // commit-graph's own silent crawl (background, but user-visible — it grows the
-        // scrollbar) comes next; the §7.6 full-history disk spill (background, no urgency of its
+        // scrollbar) comes next; the full-history disk spill (background, no urgency of its
         // own) is lowestPriority and stands aside for either of the other two so it can never
         // starve the crawl the way it used to when both were the same tier.
         Task<GatePrep> WithRepo(Func<Repository, GatePrep> work) => (background, lowestPriority) switch
@@ -1509,7 +1509,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             if (snapshot is null)
             {
                 // Nothing can walk without the refs — the same outcome as `git log` failing to
-                // start (Rule 11: no fallback): the graph keeps what it has and this cache stops
+                // start (no fallback): the graph keeps what it has and this cache stops
                 // trying.
                 await cache.WalkLock.WaitAsync(ct).ConfigureAwait(false);
                 try { MarkWalkFailed(context, cache, $"reading refs failed: {failure}"); }
@@ -1533,7 +1533,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // Step 1 — on the repo gate: what still needs LibGit2Sharp (stash list, remote names
             // for decorations, the on-disk cache probe), plus the fingerprint and tip set derived
             // from the snapshot. It deliberately stops short of spawning or pulling `git log` —
-            // the walk itself is what must never sit inside the gate (§3).
+            // the walk itself is what must never sit inside the gate.
             prep = await WithRepo(repo =>
                 PrepareWalk(repo, repoPath, query, wantCount, deco, cache, snapshot, _metaFromDisk, _walkCache))
                 .ConfigureAwait(false);
@@ -1589,7 +1589,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 if (walked.Fingerprint != 0)
                     cache.Fingerprint = walked.Fingerprint; // ref-based: RecomputeAsync's short-circuit + badges
                 if (walked.WalkKey != 0)
-                    cache.WalkKey = walked.WalkKey; // §Phase 3 (3b): the disk/resume identity key
+                    cache.WalkKey = walked.WalkKey; // 3 (3b): the disk/resume identity key
             }
             if (walked.MetaStore is not null && cache.MetaStore is null)
             {
@@ -1615,11 +1615,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         // Persist a freshly-walked window for the next launch (best-effort, off the gate). Only
         // the bounded foreground walks do this — a background spill chunk's rows already reach
-        // disk via the §7.6 MetaStore, and snapshotting cache.Commits per chunk would be O(n²).
+        // disk via the MetaStore, and snapshotting cache.Commits per chunk would be O(n²).
         // Debounced: the silent crawler drives many small extends in a row, and re-snapshotting
         // + re-gzipping the whole window on every one is pure waste (and a kill mid-write can
         // leave a bad .gz). Save on exhaustion, the first fill, or every WalkCacheSaveStride rows.
-        // Retired once disk-backed metadata is on — the §7.6 MetaStore (with its walk
+        // Retired once disk-backed metadata is on — the MetaStore (with its walk
         // key, exhausted flag, and now ReadRawRange) is a strictly better warm-start source, and
         // this avoids ever building `[.. cache.Commits]` (an O(n) copy of the pending buffer)
         // for a file nothing reads anymore in disk mode (see PrepareWalk / TryOptimisticSnapshot).
@@ -1642,12 +1642,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 }
                 commits = save ? [.. cache.Commits] : [];
                 decos = cache.Decorations;
-                walkKeyToSave = cache.WalkKey; // §Phase 3 (3b): key the .gz on the walk, not every ref
+                walkKeyToSave = cache.WalkKey; // 3 (3b): key the .gz on the walk, not every ref
             }
             if (save)
                 // Background-write gate: queued until the gate opens rather than fired
                 // immediately — during first paint this used to run inside the gate-closed
-                // window (R7b).
+                // window.
                 _ = Task.Run(async () =>
                 {
                     await WaitForGateAsync(CancellationToken.None).ConfigureAwait(false);
@@ -1713,7 +1713,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 WalkKey: 0, CarriesRefState: false));
         }
 
-        // §Phase 3 (3b): the disk cache, live-walk resume, and .gz identity all key on the sorted
+        // 3 (3b): the disk cache, live-walk resume, and .gz identity all key on the sorted
         // TIP SET the walk actually reads (`walkKey`) instead of every ref + HEAD (`fp`, still
         // used below for badges/decorations and by the caller for RecomputeAsync's short-circuit).
         // A checkout, a stash push/pop, a branch rename, or a ref outside this set changes `fp`
@@ -1734,7 +1734,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // plain all-refs shape is ever cached on disk.
         if (have == 0 && cache.LiveWalk is null && GraphWalkCache.Supports(query))
         {
-            // Prefer the §7.6 meta store over the (in disk mode, retired) .gz walk
+            // Prefer the meta store over the (in disk mode, retired) .gz walk
             // cache — it never needs a resident copy of rows already durable. An exhausted store
             // serves every row straight off disk (WalkResult.Commits stays empty: nothing to add
             // to the pending buffer); a partial store resumes the walk with skip = store.Count
@@ -1805,7 +1805,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         return GatePrep.ForPrimeCli(fp, walkKey, have, wantCount, tips, primeDecorations, primeDecosFresh, snapshot.Token);
     }
 
-    /// <summary>§Phase 3 (3b): the disk-cache / live-walk-resume identity key — a hash of the
+    /// <summary>3 (3b): the disk-cache / live-walk-resume identity key — a hash of the
     /// SORTED tip SHAs the walk actually reads (stash tips included when the query includes
     /// stashes), the remote-branch flag and, only when set, the path filter. Unlike <see
     /// cref="ComputeFingerprint"/> it does not depend on HEAD or on any ref outside the walk's
@@ -1918,7 +1918,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     /// <summary>Resumes an already-primed <see cref="GitLogStream"/> — off the repo gate, so a
-    /// scroll Extend or the §7.6 background spill's next chunk never queues behind status/diff
+    /// scroll Extend or the background spill's next chunk never queues behind status/diff
     /// work on this repo.</summary>
     private static async Task<WalkResult> ResumeCliWalkAsync(
         RepositoryContext context, RepoCache cache, GatePrep prep, CancellationToken ct)
@@ -2086,7 +2086,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 break;
         }
 
-        // §V2-17.3: stashes are reachable roots only when the flag is set.
+        // stashes are reachable roots only when the flag is set.
         if (query.IncludeStashes)
             foreach (var sha in stashShas)
                 Add(sha);
@@ -2222,7 +2222,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
     /// <summary>
     /// Builds the per-commit decoration list, folding a branch that exists both locally and on
-    /// one or more remotes into a single badge (§V3-7.3). Works straight off
+    /// one or more remotes into a single badge. Works straight off
     /// <paramref name="snapshot"/> — branch tips are the ref's resolved target, tags their
     /// peeled commit, with no object load; only the remote names and the stash list come from
     /// <paramref name="repo"/>. The remote prefix is stripped by matching the
@@ -2306,7 +2306,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
         }
 
-        // HEAD folds into its branch badge; a standalone HEAD badge only when detached (§V3-7.3).
+        // HEAD folds into its branch badge; a standalone HEAD badge only when detached.
         if (snapshot.HeadTarget is { } headTip)
         {
             if (snapshot.IsHeadDetached)
@@ -2328,7 +2328,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     /// <summary>
-    /// §V3-B ordering source: the branch whose badge sorts first when several sit on one commit.
+    /// ordering source: the branch whose badge sorts first when several sit on one commit.
     /// Precedence: the currently checked-out branch, then <c>origin/HEAD</c>'s target, then a
     /// branch literally named <c>main</c>, then <c>master</c>, else none.
     /// </summary>
@@ -2356,7 +2356,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     /// <summary>
-    /// §V3-B: as soon as a commit carries at least one branch, that branch's badge stands in for
+    /// as soon as a commit carries at least one branch, that branch's badge stands in for
     /// every ref on the commit — any further branches (default‑first, then alphabetical) and
     /// then any tags ride along in <c>Siblings</c>, shown in the badge's interactive hover list
     /// and folded into its <c>+N</c> counter. Stashes and a detached HEAD keep their own badges;

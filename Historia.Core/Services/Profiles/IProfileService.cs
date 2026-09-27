@@ -2,7 +2,7 @@
 namespace Historia.Services.Profiles;
 
 /// <summary>
-/// Core multi-account profile management (§9.8). All I/O methods are async with
+/// Core multi-account profile management. All I/O methods are async with
 /// <see cref="CancellationToken"/> support. Registered as a singleton.
 /// </summary>
 public interface IProfileService
@@ -15,15 +15,15 @@ public interface IProfileService
     Task<GitProfile> UpdateProfileAsync(Guid id, GitProfileUpdateRequest request, CancellationToken ct = default);
     Task<ProfileDeleteResult> DeleteProfileAsync(Guid id, CancellationToken ct = default);
 
-    // ── Global profile (§14.1) ──
+    // ── Global profile ──
     GitProfile GetGlobalProfile();
     Task SyncGlobalIdentityAsync(CancellationToken ct = default);
 
-    // ── Default profile (§14.2) ──
+    // ── Default profile ──
     GitProfile? GetDefaultProfile();
     Task SetDefaultProfileAsync(Guid? profileId, CancellationToken ct = default);
 
-    // ── Per-repo selection (§14.3) ──
+    // ── Per-repo selection ──
     GitProfile? GetProfileForRepository(RepoIdentityKey repoKey);
     bool IsLocalConfigSelected(RepoIdentityKey repoKey);
     Task BindProfileToRepositoryAsync(RepoIdentityKey repoKey, string displayPath, Guid profileId, CancellationToken ct = default);
@@ -33,7 +33,7 @@ public interface IProfileService
     IReadOnlyList<RepoProfileBinding> GetStaleBindings();
     Task<int> CleanStaleBindingsAsync(CancellationToken ct = default);
 
-    /// <summary>Applies the cascading resolution of §14.3 for the given repo.</summary>
+    /// <summary>Applies the cascading resolution of for the given repo.</summary>
     GitProfile? ResolveActiveProfile(RepoIdentityKey? repoKey = null);
 
     // ── Application ──

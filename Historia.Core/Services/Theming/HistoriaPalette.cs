@@ -2,12 +2,11 @@
 namespace Historia.Services.Theming;
 
 /// <summary>
-/// The single source of truth for every colour the native WPF layer paints — the window
-/// chrome, the generated resource dictionary, and the graph renderer (§V2-3). Token names
-/// match the CSS custom properties in <c>wwwroot/app.css</c> one-for-one, minus the
-/// <c>--color-</c> prefix; <c>PaletteParityTests</c> asserts the two agree (§V2-15.1).
+/// The single source of truth for every colour the app paints — the window
+/// chrome, the generated resource dictionary, and the graph renderer. Every theme
+/// defines exactly the same token set; <c>PaletteParityTests</c> asserts it.
 /// <para>
-/// Dark and Light are Visual Studio Code Dark Modern / Light Modern (§V2-4.2). Every entry
+/// Dark and Light are Visual Studio Code Dark Modern / Light Modern. Every entry
 /// carries its VS Code key (Table A, verified verbatim from the theme JSON) or its derivation
 /// (Table B, recomputed from Table A) so re-verification is a diff against upstream.
 /// </para>
@@ -39,10 +38,10 @@ public static class HistoriaPalette
         "conflict-ours-hl", "conflict-theirs-hl",
         // code editor selection
         "code-selection",
-        // graph ref badge label (§V3-4.3) — white in dark/HC, near-black in light. The web
-        // layer never consumes it, but parity keeps the two copies honest (rule 26).
+        // graph ref badge label — white in dark/HC, near-black in light. The web
+        // layer never consumes it, but parity keeps the two copies honest.
         "ref-label",
-        // terminal (V5 §8)
+        // terminal
         "term-bg", "term-fg", "term-cursor", "term-selection",
         "ansi-black", "ansi-red", "ansi-green", "ansi-yellow",
         "ansi-blue", "ansi-magenta", "ansi-cyan", "ansi-white",
@@ -100,8 +99,8 @@ public static class HistoriaPalette
         ("conflict-ours-hl",     "#0078D466"), // B: primary @ 40% alpha
         ("conflict-theirs-hl",   "#BB800966"), // B: warning @ 40% alpha
         ("code-selection",       "#264F78"),   // A: editor.selectionBackground
-        ("ref-label",     "#FFFFFF"),  // §V3-4.3: graph ref badge label
-        // V5 §8 — terminal. term-* are role aliases (B); the ANSI set is VS Code dark_vs
+        ("ref-label",     "#FFFFFF"),  // graph ref badge label
+        // terminal. term-* are role aliases (B); the ANSI set is VS Code dark_vs
         // terminal.ansi* verbatim (A).
         ("term-bg",         "#1F1F1F"), // B: = bg
         ("term-fg",         "#CCCCCC"), // B: = text
@@ -165,8 +164,8 @@ public static class HistoriaPalette
         ("conflict-ours-hl",     "#005FB84D"), // B: primary @ 30% alpha
         ("conflict-theirs-hl",   "#BB80094D"), // B: warning @ 30% alpha
         ("code-selection",       "#ADD6FF"),   // A: editor.selectionBackground
-        ("ref-label",     "#1F1F1F"),  // §V3-4.3: near-black on the light field
-        // V5 §8 — terminal. term-* are role aliases (B); the ANSI set is VS Code light_vs
+        ("ref-label",     "#1F1F1F"),  // near-black on the light field
+        // terminal. term-* are role aliases (B); the ANSI set is VS Code light_vs
         // terminal.ansi* verbatim (A).
         ("term-bg",         "#FFFFFF"), // B: = bg
         ("term-fg",         "#3B3B3B"), // B: = text
@@ -190,8 +189,8 @@ public static class HistoriaPalette
         ("ansi-br-white",   "#A5A5A5")); // A: terminal.ansiBrightWhite
 
     // ── High Contrast ────────────────────────────────────────────────────────────────────
-    // Its own accessibility contract (§I-11.3); no VS Code counterpart. Additions are derived
-    // from the existing values per §V2-4.2: chrome = bg (one black ground), border-strong =
+    // Its own accessibility contract; no VS Code counterpart. Additions are derived
+    // from the existing values: chrome = bg (one black ground), border-strong =
     // border, list-active = the selection yellow at full opacity, git-*/diff-* from the
     // danger/success pair. Every foreground/background pairing stays above 7:1.
     private static readonly IReadOnlyDictionary<string, Rgb> HighContrast = Build(
@@ -234,10 +233,10 @@ public static class HistoriaPalette
         ("conflict-ours-hl",     "#00ffff66"), // = accent cyan @ 40% alpha
         ("conflict-theirs-hl",   "#ffff0066"), // = primary yellow @ 40% alpha
         ("code-selection",       "#ffff00"),   // = selection yellow at full opacity
-        ("ref-label",     "#ffffff"), // §V3-4.3
-        // V5 §8 — terminal. HC has no VS Code counterpart. term-bg/fg come from the HC
+        ("ref-label",     "#ffffff"),
+        // terminal. HC has no VS Code counterpart. term-bg/fg come from the HC
         // structure tokens; the ANSI set is the dark_vs hues lifted toward #ffffff until each
-        // clears 4.5:1 on #000000 (Table B). TerminalContrastTests (M6) verifies every entry.
+        // clears 4.5:1 on #000000 (Table B). TerminalContrastTests verifies every entry.
         ("term-bg",         "#000000"), // = bg
         ("term-fg",         "#ffffff"), // = text
         ("term-cursor",     "#00ffff"), // = accent
@@ -271,8 +270,8 @@ public static class HistoriaPalette
     public static Rgb Parse(string hex) => Rgb.Parse(hex);
 
     /// <summary>
-    /// Token → WPF resource key. PascalCase with three legacy spellings preserved so existing
-    /// <c>{DynamicResource}</c> bindings in <c>MainWindow.xaml</c> keep working (§V2-3.2).
+    /// Token → Avalonia resource key: <c>Color</c> + the PascalCased token (<c>text-muted</c> →
+    /// <c>ColorTextMuted</c>), except <c>primary-h</c>, which maps to <c>ColorPrimaryHover</c>.
     /// </summary>
     public static string ResourceKey(string token) => token switch
     {

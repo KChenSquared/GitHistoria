@@ -8,7 +8,7 @@ using HistoriaApp.Tests;
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// Headless Avalonia bootstrap for the App test suite (debloat audit §4, Path B). Minimal on
+/// Headless Avalonia bootstrap for the App test suite. Minimal on
 /// purpose: a bare <see cref="Application"/> with the Fluent theme + Inter fonts so controls
 /// construct and resolve their <c>DynamicResource</c> keys, but none of the real
 /// <c>Historia.App</c> startup / DI. Tests construct a control, drive its logic, and

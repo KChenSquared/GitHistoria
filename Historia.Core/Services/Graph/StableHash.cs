@@ -1,7 +1,7 @@
 ﻿namespace Historia.Services.Graph;
 
 /// <summary>
-/// Explicit FNV-1a hash over UTF-8 bytes (§7.5). Used for lane color seeding — <b>not</b>
+/// Explicit FNV-1a hash over UTF-8 bytes. Used for lane color seeding — <b>not</b>
 /// <see cref="string.GetHashCode()"/>, which is randomized per process in .NET and would give
 /// a branch a different color every launch.
 /// </summary>

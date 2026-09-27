@@ -2,7 +2,7 @@ namespace Historia.Tests;
 
 /// <summary>
 /// Every graph query shape — current branch, selected refs, stashes, path filter — walks through
-/// <c>git log</c>, an extend keeps the whole query (F6), and a walk that can't run gives an empty
+/// <c>git log</c>, an extend keeps the whole query, and a walk that can't run gives an empty
 /// graph that persists nothing and retries after <see cref="GraphLayoutService.Forget"/>.
 /// Skipped when git.exe isn't discoverable by <see cref="IGitExecutableLocator"/>.
 /// </summary>

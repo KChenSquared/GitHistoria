@@ -1,6 +1,6 @@
 ﻿namespace Historia.Models;
 
-/// <summary>One row of a rebase todo list (§8.1.2). Target of a squash/fixup is expressed by
+/// <summary>One row of a rebase todo list. Target of a squash/fixup is expressed by
 /// <b>ordering</b> — meld always goes into the preceding entry — never by a field.</summary>
 public sealed record RebaseEntry
 {
@@ -38,5 +38,5 @@ public sealed record RebaseSession
 
 public enum RebaseState { Editing, InProgress, Paused, Conflicted, Completed, Aborted }
 
-/// <summary>A client-side validation problem found before the todo file is written (§8.1.2).</summary>
+/// <summary>A client-side validation problem found before the todo file is written.</summary>
 public sealed record RebaseValidationIssue(string Message, bool RequiresConfirmation);

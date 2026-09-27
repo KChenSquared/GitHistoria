@@ -7,7 +7,7 @@ public sealed record SshKeyInfo(string PrivatePath, string PublicPath, string? P
 }
 
 /// <summary>
-/// v8 M11: generates and reads the <c>ed25519</c> SSH key Historia can create for a profile. The
+/// Generates and reads the <c>ed25519</c> SSH key Historia can create for a profile. The
 /// key is <b>always</b> generated with an empty passphrase — Historia never collects a key
 /// passphrase (safety rules); a user who wants one runs <c>ssh-keygen</c> themselves.
 /// </summary>

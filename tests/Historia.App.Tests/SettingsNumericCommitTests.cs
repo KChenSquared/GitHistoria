@@ -12,7 +12,7 @@ using Xunit;
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// M1.1 (#14): every numeric Settings field commits on <c>LostFocus</c> <b>and</b> on Enter,
+/// Every numeric Settings field commits on <c>LostFocus</c> <b>and</b> on Enter,
 /// only when the clamped value actually changed. <see cref="SettingsView"/>'s private
 /// <c>WireNumericCommit</c> helper is exercised directly through reflection — standing up the
 /// whole view needs seven unrelated services (<c>ISettingsService</c>, <c>IThemeService</c>,

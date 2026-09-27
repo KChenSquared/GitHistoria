@@ -16,7 +16,7 @@ public class SettingsServiceTests : IDisposable
         Assert.Equal(3, svc.Current.MaxTabRows);
         Assert.True(svc.Current.PersistRepoCache);
         Assert.True(svc.Current.GraphMetadataFromDisk); // default on
-        Assert.True(svc.Current.AutoFetchEnabled); // §12.1 default on
+        Assert.True(svc.Current.AutoFetchEnabled); // default on
         Assert.False(svc.Current.EnableGraphSplice); // Default off
         Assert.Equal(DiffViewMode.Unified, svc.Current.DefaultDiffView);
     }
@@ -46,7 +46,7 @@ public class SettingsServiceTests : IDisposable
         Assert.Contains("\"tabWidth\": 6", json);
     }
 
-    // ── §12.1: v15 → v16 (auto-fetch toggle) ──
+    // ── v15 → v16 (auto-fetch toggle) ──
 
     [Fact]
     public void V15_file_loads_with_auto_fetch_enabled_by_default()
@@ -133,7 +133,7 @@ public class SettingsServiceTests : IDisposable
         Assert.Equal(ThemeMode.Dark, svc.Current.AppTheme);
     }
 
-    // ── §V3-13.3: v3 → v4 ──
+    // ── v3 → v4 ──
 
     [Fact]
     public void V3_to_v4_turns_on_session_restore_and_bumps_recents_when_absent()
@@ -183,7 +183,7 @@ public class SettingsServiceTests : IDisposable
         Assert.Contains("999", File.ReadAllText(AppPaths.SettingsFile)); // untouched
     }
 
-    // ── V5 §13: v8 → v9 (terminal) ──
+    // ── v8 → v9 (terminal) ──
 
     [Fact]
     public void V8_file_loads_with_terminal_defaults()
@@ -278,7 +278,7 @@ public class SettingsServiceTests : IDisposable
         Assert.Equal(200, AppSettings.ClampFixedTabWidth(200));
     }
 
-    // ── #25: silent-crawl cap ceiling matches the resident-cap ceiling ──
+    // ── silent-crawl cap ceiling matches the resident-cap ceiling ──
 
     [Fact]
     public void ClampSilentCrawlRowCap_accepts_values_above_the_old_2M_ceiling()
@@ -297,7 +297,7 @@ public class SettingsServiceTests : IDisposable
         Assert.Equal(ThemeMode.System, svc.Current.AppTheme);
     }
 
-    // ── §V10.2: v16 → v17 (silent crawl cap default 100k) ──
+    // ── v16 → v17 (silent crawl cap default 100k) ──
 
     [Fact]
     public void Fresh_settings_default_silent_crawl_cap_is_100k()

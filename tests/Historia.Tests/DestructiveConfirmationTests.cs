@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// Constitution <b>Rule 00</b> guard, half 1 (call sites). Every destructive action must go
+/// Destructive-confirm guard, half 1 (call sites). Every destructive action must go
 /// through the single entry point <c>IDialogService.ConfirmDestructiveAsync</c> (or
 /// <c>ChooseAsync</c> with <c>DialogIcon.Warning</c>), which hard-wires the red
 /// <c>warning</c>, Cancel-as-primary/Enter, and the plain confirm button. No call site
@@ -43,11 +43,11 @@ public class DestructiveConfirmationTests
             var text = File.ReadAllText(file);
             foreach (var (pattern, what) in Forbidden)
                 if (pattern.IsMatch(text))
-                    offenders.Add($"{rel}: {what} — use IDialogService.ConfirmDestructiveAsync instead (constitution Rule 00).");
+                    offenders.Add($"{rel}: {what} — use IDialogService.ConfirmDestructiveAsync instead.");
         }
 
         Assert.True(offenders.Count == 0,
-            "Rule 00 violation — a destructive confirmation is hand-rolled instead of routed through ConfirmDestructiveAsync:\n  "
+            "Destructive-confirm violation — a destructive confirmation is hand-rolled instead of routed through ConfirmDestructiveAsync:\n  "
             + string.Join("\n  ", offenders));
     }
 
@@ -59,13 +59,12 @@ public class DestructiveConfirmationTests
             Path.GetRelativePath(root, f).Replace('\\', '/').StartsWith("Historia.App/", StringComparison.Ordinal)
             && File.ReadAllText(f).Contains("ConfirmDestructiveAsync(", StringComparison.Ordinal));
 
-        Assert.True(used, "No call site uses IDialogService.ConfirmDestructiveAsync — the Rule 00 entry point has no callers.");
+        Assert.True(used, "No call site uses IDialogService.ConfirmDestructiveAsync — the destructive-confirm entry point has no callers.");
     }
 
-    // #23's call-site guard: every call to one of these destructive service methods must sit in
+    // Call-site guard: every call to one of these destructive service methods must sit in
     // a method whose own text also calls ConfirmDestructiveAsync — catching a call site with NO
-    // confirmation at all (what #19 submodule Remove, #20 rebase Start and #22 pushed-amend
-    // looked like before they were fixed), which the hand-rolled-styling guard above can't see.
+    // confirmation at all, which the hand-rolled-styling guard above can't see.
     // Patterns are anchored to the actual call (receiver + method name), not a bare method-name
     // substring, so e.g. BranchMenu's auto-stash `ApplyAndDropAsync` recovery (cleanup of a
     // stash Historia itself made moments earlier, not the user discarding anything) never
@@ -92,7 +91,7 @@ public class DestructiveConfirmationTests
 
     /// <summary>Explicit, commented allowlist for a call site this scan would otherwise flag.
     /// Empty today — every current call site above sits in a confirming method — kept as the
-    /// documented escape hatch the plan calls for, keyed by a short marker string unique to the
+    /// documented escape hatch, keyed by a short marker string unique to the
     /// call site's surrounding text.</summary>
     private static readonly string[] AllowlistMarkers = Array.Empty<string>();
 
@@ -130,7 +129,7 @@ public class DestructiveConfirmationTests
         }
 
         Assert.True(offenders.Count == 0,
-            "Rule 00 violation — a destructive call site has no confirmation (constitution Rule 00):\n  "
+            "Destructive-confirm violation — a destructive call site has no confirmation:\n  "
             + string.Join("\n  ", offenders));
     }
 

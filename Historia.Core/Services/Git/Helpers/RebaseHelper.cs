@@ -1,7 +1,7 @@
 ﻿namespace Historia.Services.Git.Helpers;
 
 /// <summary>
-/// The <c>GIT_SEQUENCE_EDITOR</c> / <c>GIT_EDITOR</c> body for interactive rebase (§8.1.4).
+/// The <c>GIT_SEQUENCE_EDITOR</c> / <c>GIT_EDITOR</c> body for interactive rebase.
 /// Invoked as <c>Historia --rebase-seq &lt;dir&gt; &lt;gitFile&gt;</c> — reads a pre-staged file
 /// from <c>&lt;dir&gt;</c> and overwrites the file Git supplied.
 /// </summary>

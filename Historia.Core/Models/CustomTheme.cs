@@ -1,7 +1,7 @@
 ﻿namespace Historia.Models;
 
 /// <summary>
-/// §V6-G9: a user-authored theme. Persisted as one JSON file per theme under
+/// a user-authored theme. Persisted as one JSON file per theme under
 /// <c>&lt;DataDirectory&gt;/themes/&lt;id&gt;.json</c> (camelCase keys). A custom theme overrides
 /// any subset of <c>HistoriaPalette.Tokens</c> and the nine lane colours over a Dark or Light base;
 /// anything it does not specify falls through to that base.
@@ -49,6 +49,6 @@ public sealed record CustomTheme
             : "avares://Historia/Assets/splash-dark.png";
 }
 
-/// <summary>§V6-G9: a fully resolved colour set — the built-in base with a custom theme's
+/// <summary>a fully resolved colour set — the built-in base with a custom theme's
 /// overrides applied. <see cref="Lanes"/> is always <c>LanePalette.Size</c> long.</summary>
 public sealed record ResolvedPalette(IReadOnlyDictionary<string, Rgb> Tokens, IReadOnlyList<Rgb> Lanes);

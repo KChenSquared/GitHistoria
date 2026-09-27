@@ -11,6 +11,6 @@
         WindowStartupLocation="CenterScreen">
     <!-- Complete splash image (emblem + wordmark + background baked in). The code-behind picks
          splash-light / splash-dark by the effective theme. App owns the window lifetime and
-         closes it after App.SplashDuration (§6.2.2). -->
+         closes it after App.SplashDuration. -->
     <Image x:Name="Art" Stretch="Uniform" />
 </Window>

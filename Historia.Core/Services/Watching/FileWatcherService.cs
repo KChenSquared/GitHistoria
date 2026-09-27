@@ -1,7 +1,7 @@
 namespace Historia.Services.Watching;
 
 /// <summary>
-/// Debounced, gitignore-aware working-directory + <c>.git</c> watcher (§6.8.2). Filters
+/// Debounced, gitignore-aware working-directory + <c>.git</c> watcher. Filters
 /// ignored paths before the debounce fires so a build cannot produce an event storm; falls
 /// back to refresh-on-focus when the watcher cannot be set up or the tree is too large.
 /// Owned by <see cref="RepositoryContext"/>.
@@ -122,7 +122,7 @@ public sealed class FileWatcherService : IAsyncDisposable
         if (_disposed)
             return;
 
-        // Buffer overflow: discard pending state and force one full refresh — never ignored (§6.8.2).
+        // Buffer overflow: discard pending state and force one full refresh — never ignored.
         lock (_sync)
         {
             if (_disposed)
@@ -139,7 +139,7 @@ public sealed class FileWatcherService : IAsyncDisposable
         if (_disposed)
             return;
 
-        // Historia's own Git operations force an explicit refresh on completion (§6.8.2).
+        // Historia's own Git operations force an explicit refresh on completion.
         if (_context.IsSelfOperationInProgress)
             return;
 
@@ -168,7 +168,7 @@ public sealed class FileWatcherService : IAsyncDisposable
             return;
         }
 
-        // Working-tree path: drop ignored paths before the debounce fires (§6.8.2).
+        // Working-tree path: drop ignored paths before the debounce fires.
         var workDir = NormalizePath(_context.RepositoryPath);
         var relPath = Path.GetRelativePath(workDir, normalizedFullPath).Replace('\\', '/');
         if (relPath.StartsWith("../", StringComparison.Ordinal) || relPath == "..")

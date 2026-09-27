@@ -1,8 +1,8 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// The byte table is load-bearing (V5 §6.5). Expected sequences are cross-checked against
-/// XTerm.NET's own generator, captured in <c>docs/memory/2026-08-31-v5-m1-spike.md</c> §5.
+/// The byte table is load-bearing. Expected sequences are cross-checked against
+/// XTerm.NET's own generator, captured in <c>docs/memory/2026-08-31-v5-m1-spike.md</c>.
 /// </summary>
 [Trait("tier", "unit")]
 public class KeyEncoderTests

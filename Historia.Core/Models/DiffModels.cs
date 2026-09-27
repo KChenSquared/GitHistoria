@@ -1,9 +1,9 @@
 namespace Historia.Models;
 
 /// <summary>
-/// A parsed file diff (§6.10.1). <see cref="DiffHunk"/>/<see cref="DiffLine"/> are the single
+/// A parsed file diff. <see cref="DiffHunk"/>/<see cref="DiffLine"/> are the single
 /// shared hunk model used by display and partial staging — no parallel
-/// model is defined elsewhere (§6.10.1, §8.2.2).
+/// model is defined elsewhere.
 /// </summary>
 public sealed record FileDiff
 {
@@ -12,16 +12,16 @@ public sealed record FileDiff
     public required DiffKind Kind { get; init; }
     public required bool IsBinary { get; init; }
 
-    /// <summary>True when the file exceeded the inline-diff size budget (§6.10.3).</summary>
+    /// <summary>True when the file exceeded the inline-diff size budget.</summary>
     public required bool IsTruncated { get; init; }
     public required IReadOnlyList<DiffHunk> Hunks { get; init; }
     public required int AddedLines { get; init; }
     public required int DeletedLines { get; init; }
 
     /// <summary>
-    /// The raw unified-diff text Git produced for this file (§8.2.5). Patches for partial
+    /// The raw unified-diff text Git produced for this file. Patches for partial
     /// staging are generated from this — never by re-reading and re-splitting the file, which
-    /// would break under <c>core.autocrlf</c> and drop the no-newline marker (§8.2.3).
+    /// would break under <c>core.autocrlf</c> and drop the no-newline marker.
     /// </summary>
     public string? RawPatch { get; init; }
 
@@ -37,7 +37,7 @@ public sealed record FileDiff
     };
 }
 
-/// <summary>A contiguous block of changes (§8.2.2).</summary>
+/// <summary>A contiguous block of changes.</summary>
 public sealed record DiffHunk
 {
     public required int OldStart { get; init; }
@@ -50,7 +50,7 @@ public sealed record DiffHunk
     public required IReadOnlyList<DiffLine> Lines { get; init; }
 }
 
-/// <summary>A single line within a hunk (§8.2.2).</summary>
+/// <summary>A single line within a hunk.</summary>
 public sealed record DiffLine
 {
     public required DiffLineType Type { get; init; }
@@ -66,14 +66,14 @@ public enum DiffLineType
     Deletion,
 }
 
-/// <summary>Stable coordinate for a diff line: (hunk index, line index within hunk) (§8.2.5).</summary>
+/// <summary>Stable coordinate for a diff line: (hunk index, line index within hunk).</summary>
 public readonly record struct DiffLineRef(int HunkIndex, int LineIndexInHunk);
 
 public enum PatchScope { WholeFile, SingleHunk, SelectedLines }
 public enum PatchTarget { StagingArea, WorkingTree }
 public sealed record PatchCheckResult(bool CanApply, string? FailureReason);
 
-/// <summary>What to diff (§6.10.2). Exactly one source shape is set.</summary>
+/// <summary>What to diff. Exactly one source shape is set.</summary>
 public sealed record DiffRequest
 {
     public required DiffSource Source { get; init; }
@@ -87,7 +87,7 @@ public sealed record DiffRequest
     /// <summary>"right" side for <see cref="DiffSource.Comparison"/>.</summary>
     public ObjectId? OtherCommitId { get; init; }
 
-    /// <summary>For a merge-commit diff (§6.10.2): which parent to diff against (1-based). Default 1.</summary>
+    /// <summary>For a merge-commit diff: which parent to diff against (1-based). Default 1.</summary>
     public int ParentIndex { get; init; } = 1;
 
     public int ContextLines { get; init; } = 3;

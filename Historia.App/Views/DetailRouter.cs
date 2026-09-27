@@ -1,7 +1,7 @@
 ﻿namespace Historia.Views;
 
 /// <summary>
-/// The detail-pane router (V4 port of Routes.razor + MainLayout.razor). Maps the
+/// The detail-pane router. Maps the
 /// <see cref="INavigationBus"/> route string to a view and overlays the notification host.
 /// Keyboard shortcuts Ctrl+, (settings) and Ctrl+B (home) are registered here.
 /// </summary>

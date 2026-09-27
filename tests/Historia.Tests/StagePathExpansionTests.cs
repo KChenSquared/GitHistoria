@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>M3.2: <c>StagePathExpansion.ForStaging</c> — a selected rename expands to both
+/// <summary><c>StagePathExpansion.ForStaging</c> — a selected rename expands to both
 /// halves of the move so staging it produces one <c>Renamed</c> entry, not a stray add/delete.</summary>
 [Trait("tier", "unit")]
 public sealed class StagePathExpansionTests

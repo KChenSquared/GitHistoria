@@ -3,7 +3,7 @@ namespace Historia.Services.Git;
 
 /// <summary>
 /// Classifies a failed Git CLI invocation into a <see cref="GitErrorKind"/> by exit code plus
-/// stderr pattern matching (§6.5.3). <c>LC_ALL=C</c> guarantees English message text.
+/// stderr pattern matching. <c>LC_ALL=C</c> guarantees English message text.
 /// Unrecognized failures return <see cref="GitErrorKind.Unknown"/> — never a silent fallback.
 /// </summary>
 public static class GitErrorClassifier

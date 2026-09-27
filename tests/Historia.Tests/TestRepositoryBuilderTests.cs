@@ -108,7 +108,7 @@ public sealed class TestRepositoryBuilderTests(ITestOutputHelper output)
         sw.Stop();
         var cliMs = sw.ElapsedMilliseconds;
 
-        // Performance ratio is recorded for visibility rather than gating builds (Constitution Rule 25).
+        // Performance ratio is recorded for visibility rather than gating builds.
         _output.WriteLine($"Template copy: {templateMs} ms, CLI creation: {cliMs} ms (ratio: {(double)cliMs / Math.Max(1, templateMs):F1}x)");
 
         Assert.Equal(count, templateCommitCount);

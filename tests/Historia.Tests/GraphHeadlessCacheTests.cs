@@ -464,7 +464,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
         }
     }
 
-    // ── Dead-prefix reclamation (R8) ──
+    // ── Dead-prefix reclamation ──
 
     private static void InjectDeadPrefix(string repoPath, int k)
     {

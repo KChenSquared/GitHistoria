@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <!-- V4 §split: the portable half of Historia. No UI framework — not WPF, not Avalonia.
+    <!-- The portable half of Historia. No UI framework — not WPF, not Avalonia.
          Colour/point value types are the local Rgb / PointD structs, not Avalonia.Base, so
          this assembly *cannot* take a UI dependency by accident (it would not compile). -->
   </PropertyGroup>
@@ -18,14 +18,14 @@
     <PackageReference Include="DiffPlex" Version="1.9.0" />
     <!-- RepositoryContext resolves per-repo collaborators from the app's IServiceProvider. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
-    <!-- V5 §5: headless VT/ANSI emulator + pseudoterminal. Both are framework-free process /
+    <!-- Headless VT/ANSI emulator + pseudoterminal. Both are framework-free process /
          parsing libraries — the same category as LibGit2Sharp — so Core purity holds. -->
     <PackageReference Include="XTerm.NET" Version="1.2.0" />
     <PackageReference Include="Porta.Pty" Version="2.2.1" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- §V3-17.1: internal storage-resolution seams are exercised from the test project. -->
+    <!-- Internal storage-resolution seams are exercised from the test project. -->
     <InternalsVisibleTo Include="Historia.Tests" />
   </ItemGroup>
 

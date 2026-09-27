@@ -1,6 +1,6 @@
 namespace Historia.Views;
 
-/// <summary>Landing page — open / clone / init and the recents list (V4 port of Home.razor).</summary>
+/// <summary>Landing page — open / clone / init and the recents list.</summary>
 public sealed class HomeView : UserControl, IDisposable
 {
     private readonly IWorkspaceService _workspace;
@@ -29,7 +29,7 @@ public sealed class HomeView : UserControl, IDisposable
 
     public HomeView(IServiceProvider sp) : this(sp, "") { }
 
-    /// <param name="intent">v8 M8: <c>"open"</c> / <c>"clone"</c> / <c>"init"</c> from the
+    /// <param name="intent"><c>"open"</c> / <c>"clone"</c> / <c>"init"</c> from the
     /// app-band <c>+</c> menu — the matching flow is launched once the panel is shown.</param>
     public HomeView(IServiceProvider sp, string intent)
     {
@@ -162,7 +162,7 @@ public sealed class HomeView : UserControl, IDisposable
             grid.Children.Add(remove);
 
             // Transparent fill + grey outline at rest; list-hover fill on pointer-over
-            // (matches Button.secondary / V3 .recent-item).
+            // (matches Button.secondary).
             var row = new Border
             {
                 Child = grid,
@@ -197,7 +197,7 @@ public sealed class HomeView : UserControl, IDisposable
         _busy = true;
         try
         {
-            // §12.1.1: on a cold start this tells the auto-fetch loop to run an [InitialFetch].
+            // on a cold start this tells the auto-fetch loop to run an [InitialFetch].
             _autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.Opened);
             await _workspace.OpenAsync(path);
             _nav.RequestNavigate("repo");
@@ -219,7 +219,7 @@ public sealed class HomeView : UserControl, IDisposable
         _busy = true;
         try
         {
-            // §12.1.1: a fresh init is already current — start the loop with no [InitialFetch].
+            // a fresh init is already current — start the loop with no [InitialFetch].
             _autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.ClonedOrInitialized);
             await _workspace.InitAsync(path, string.IsNullOrWhiteSpace(branch) ? "main" : branch.Trim());
             _nav.RequestNavigate("repo");
@@ -249,7 +249,8 @@ public sealed class HomeView : UserControl, IDisposable
         if (_cloneService.IsRunning)
             return;
 
-        var r = await Historia.Platform.CloneDialog.ShowAsync(_dialogs, DefaultCloneRoot(), GuessRepoName, _profiles.GetAllProfiles());
+        var r = await Historia.Platform.CloneDialog.ShowAsync(_dialogs, DefaultCloneRoot(), GuessRepoName,
+            _profiles.GetAllProfiles(), _profiles.GetDefaultProfile()?.Id);
         if (r is null) return;
 
         if (_cloneService.IsRunning)
@@ -286,7 +287,7 @@ public sealed class HomeView : UserControl, IDisposable
     internal static RepositoryContext? FindClonedRepository(IEnumerable<RepositoryContext> open, string targetDirectory) =>
         open.FirstOrDefault(ctx => PathsEqual(ctx.RepositoryPath, targetDirectory));
 
-    /// <summary>F5: a freshly cloned repository with a top-level `.gitmodules` leaves its
+    /// <summary>A freshly cloned repository with a top-level `.gitmodules` leaves its
     /// submodules uninitialized unless the user opts in here — matches how "Init & update"
     /// already behaves from the sidebar (non-destructive, so a plain <c>ConfirmAsync</c>).</summary>
     private async Task OfferSubmoduleInitAsync(RepositoryContext after)

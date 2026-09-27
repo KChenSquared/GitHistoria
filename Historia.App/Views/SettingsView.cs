@@ -1,6 +1,6 @@
 namespace Historia.Views;
 
-/// <summary>Application settings (V4 port of Settings.razor).</summary>
+/// <summary>Application settings.</summary>
 public sealed class SettingsView : UserControl, IDisposable
 {
     private readonly ISettingsService _cfg;
@@ -41,7 +41,7 @@ public sealed class SettingsView : UserControl, IDisposable
         Rebuild();
     }
 
-    /// <summary>R10: every settings textbox commits on <c>LostFocus</c>, but clicking a
+    /// <summary>Every settings textbox commits on <c>LostFocus</c>, but clicking a
     /// non-focusable label or blank space never moves focus, so an edit sits uncommitted until
     /// the user happens to click another input. Clearing focus here on any press that does not
     /// land on a real input lets the previously focused textbox's own LostFocus commit handler
@@ -84,7 +84,7 @@ public sealed class SettingsView : UserControl, IDisposable
             themeRow.Children.Add(TextButton(m.ToString(), () => _ = _theme.ApplyModeAsync(mode), primary: _theme.CurrentMode == m));
         }
 
-        // §V6-G9: a 4th "Custom" option. With ≥ 1 saved theme it activates the last-selected
+        // a 4th "Custom" option. With ≥ 1 saved theme it activates the last-selected
         // (or first) one; with none it routes straight to the Themes panel.
         var savedThemes = _customThemes.List();
         themeRow.Children.Add(TextButton("Custom", () =>
@@ -155,7 +155,7 @@ public sealed class SettingsView : UserControl, IDisposable
         _root.Children.Add(Muted("Graph-panel columns are configured per repository — the wrench on a repo tab."));
         _root.Children.Add(WithCaption(Check("Show author date instead of commit date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })), "The graph is always sorted by commit date. This only changes which date the Date column and commit details show."));
 
-        // v8 M9: mouse-wheel / trackpad scroll direction for the graph and the tab strip.
+        // Mouse-wheel / trackpad scroll direction for the graph and the tab strip.
         var wheelDir = new ComboBox { Width = 220 };
         wheelDir.Items.Add(new ComboBoxItem { Content = "Match system (natural / inverted)", Tag = WheelScrollDirection.Auto });
         wheelDir.Items.Add(new ComboBoxItem { Content = "Standard", Tag = WheelScrollDirection.Standard });
@@ -184,7 +184,7 @@ public sealed class SettingsView : UserControl, IDisposable
 
         // ── Privacy & Network ──
         _root.Children.Add(Section("Privacy & Network"));
-        _root.Children.Add(Muted("Network routing is per repository — pick an identity, and toggle \"SSH only\", in that repository's settings (the Settings button above the sidebar)."));
+        _root.Children.Add(Muted("Network routing is per repository — pick an identity, and toggle \"SSH only\", in that repository's settings (the cog in the graph's GRAPH column header, or right-click that header)."));
         _root.Children.Add(Check("Allow background API polling", c.EnableBackgroundPolling,
             v => _ = _cfg.UpdateAsync(s => s with { EnableBackgroundPolling = v })));
         _root.Children.Add(Muted("Effective only while a repository's selected profile has a connected token."));
@@ -242,7 +242,7 @@ public sealed class SettingsView : UserControl, IDisposable
             v => _ = _cfg.UpdateAsync(s => s with { UseCustomStashNames = v })),
             "When on, the \"Stash all\" buttons ask you for a message. When off, they name the stash \"Stash of <branch>\"."));
 
-        // ── Terminal (V5 §13) — collapsed ──
+        // ── Terminal — collapsed ──
         var termBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
 
         var shellPath = new TextBox { Text = c.TerminalShellPath ?? "", Watermark = "Platform default (pwsh / zsh / bash)", Width = 360, HorizontalAlignment = HorizontalAlignment.Left };
@@ -424,7 +424,7 @@ public sealed class SettingsView : UserControl, IDisposable
     /// Commits a <see cref="NumericUpDown"/>'s value through <paramref name="clamp"/> to
     /// <paramref name="commit"/> on <c>LostFocus</c> and on Enter, only when the clamped value
     /// changed. Enter is caught with <c>AddHandler(KeyDownEvent, …, handledEventsToo: true)</c> so
-    /// an inner <c>TextBox</c> can't swallow it first (#14).
+    /// an inner <c>TextBox</c> can't swallow it first.
     ///
     /// Verified against Avalonia 11.3.20's <c>NumericUpDown.OnKeyDown</c> source: its own
     /// <c>Key.Enter</c> case calls <c>CommitInput()</c> → <c>SyncTextAndValueProperties</c>, which
@@ -564,7 +564,7 @@ public sealed class SettingsView : UserControl, IDisposable
     }
 }
 
-/// <summary>Per-repository settings (V4 port of RepoSettings.razor + GraphColumnSettings.razor).</summary>
+/// <summary>Per-repository settings.</summary>
 public sealed class RepoSettingsView : UserControl, IDisposable
 {
     private readonly IServiceProvider _sp;
@@ -642,7 +642,7 @@ public sealed class RepoSettingsView : UserControl, IDisposable
             }
             else if (ctx.State.ActiveProfile is { } p)
             {
-                // §14.3 stale rendering: a row that names a missing profile shows "<name> (unavailable)".
+                // stale rendering: a row that names a missing profile shows "<name> (unavailable)".
                 label = _profiles.GetProfileById(p.Id) is null
                     ? $"{p.DisplayName} (unavailable)"
                     : p.IsGlobal ? "Local config" : p.DisplayName;
@@ -683,7 +683,7 @@ public sealed class RepoSettingsView : UserControl, IDisposable
         hint.TextWrapping = TextWrapping.Wrap;
         _root.Children.Add(hint);
 
-        // §V3.1: the editor works on the application-wide column set and shows even with no repo.
+        // the editor works on the application-wide column set and shows even with no repo.
         var columns = _repoLayout.GlobalColumns;
         var path = ctx?.RepositoryPath ?? "";
         _dragRepoPath = path;

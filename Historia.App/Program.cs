@@ -2,7 +2,7 @@ namespace Historia;
 
 internal static class Program
 {
-    /// <summary>Set once in <see cref="Main"/>: whether this process owns the single-instance mutex (§3).</summary>
+    /// <summary>Set once in <see cref="Main"/>: whether this process owns the single-instance mutex.</summary>
     public static bool IsPrimaryInstance { get; private set; }
 
     // Avalonia configuration — referenced by the visual designer and by Main.
@@ -15,7 +15,7 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        // ── Re-invoked-self helpers (§8.1.4). Checked BEFORE anything else: the git process that
+        // ── Re-invoked-self helpers. Checked BEFORE anything else: the git process that
         //    spawns these carries HISTORIA_ASKPASS on its environment too. Each writes one file
         //    Git handed it and exits; the UI never starts. ──
         if (args is [_, ..] && (args[0] == "--rebase-seq" || args[0] == "--rebase-msg") && args.Length >= 3)
@@ -24,7 +24,7 @@ internal static class Program
             return 0;
         }
 
-        // The Historia executable re-invoked as the GIT_ASKPASS / SSH_ASKPASS helper (§6.5.2).
+        // The Historia executable re-invoked as the GIT_ASKPASS / SSH_ASKPASS helper.
         if (Environment.GetEnvironmentVariable("HISTORIA_ASKPASS") == "1")
         {
             var prompt = args.Length > 0 ? args[0] : string.Empty;
@@ -47,7 +47,7 @@ internal static class Program
             return 0;
         }
 
-        // ── Single-instance guard (§3). A second launch forwards its non-switch arguments
+        // ── Single-instance guard. A second launch forwards its non-switch arguments
         //    (repo paths) to the running instance and exits, so only one process ever writes
         //    the shared JSON state files. ──
         IsPrimaryInstance = SingleInstance.TryAcquirePrimary();

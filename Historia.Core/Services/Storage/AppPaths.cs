@@ -1,7 +1,7 @@
 namespace Historia.Services.Storage;
 
 /// <summary>
-/// Well-known on-disk locations for Historia's persistent state (§V3-9.1).
+/// Well-known on-disk locations for Historia's persistent state.
 /// <para>
 /// State is split in two. <b>Portable</b> state (settings, profiles, repo bindings, recent
 /// repositories) follows the user between machines and resolves to <c>Documents\Historia</c>,
@@ -18,7 +18,7 @@ public static class AppPaths
     private static readonly object _sync = new();
 
     /// <summary>Redirects <b>all</b> persistent state to <paramref name="directory"/> (test seam,
-    /// §V3-9.1). Short-circuits the whole resolution and invalidates the cache.</summary>
+    ///). Short-circuits the whole resolution and invalidates the cache.</summary>
     public static void OverrideForTesting(string? directory)
     {
         _override.Value = directory;
@@ -41,7 +41,7 @@ public static class AppPaths
         }
     }
 
-    /// <summary>Portable state — resolved once and cached for the process lifetime (§V3-9.1 Trap).</summary>
+    /// <summary>Portable state — resolved once and cached for the process lifetime (Trap).</summary>
     public static string DataDirectory
     {
         get
@@ -67,15 +67,15 @@ public static class AppPaths
         _override.Value ?? _processOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Historia");
 
     /// <summary>True when neither portable candidate was writable, so persistence is disabled for
-    /// the session (rule 0.4). The last <see cref="ResolveFor"/> call sets this.</summary>
+    /// the session. The last <see cref="ResolveFor"/> call sets this.</summary>
     public static bool PortableResolutionFailed { get; private set; }
 
-    /// <summary>The two paths the resolution tried, for the rule 0.4 warning.</summary>
+    /// <summary>The two paths the resolution tried, for the startup warning.</summary>
     public static (string Documents, string Configs) AttemptedPortablePaths { get; private set; }
 
     /// <summary>
     /// Portable resolution with injectable seams so <c>AppPathsTests</c> can force a probe
-    /// failure without an unwritable filesystem (§V3-9.1 Trap).
+    /// failure without an unwritable filesystem (Trap).
     /// </summary>
     internal static string ResolveFor(Func<string> documents, Func<string, bool> probe)
     {
@@ -96,7 +96,7 @@ public static class AppPaths
             return configs;
         }
 
-        // Rule 0.4: both failed — do not silently redirect into MachineDirectory. Report and
+        // Both failed — do not silently redirect into MachineDirectory. Report and
         // run without persistence. Return the configs path as an in-memory placeholder so
         // callers have a non-null path; writes there will simply fail.
         PortableResolutionFailed = true;
@@ -133,14 +133,14 @@ public static class AppPaths
     public static string RepoLayoutFile => Path.Combine(DataDirectory, "repo-columns.json");
     public static string RecentRepositoriesFile => Path.Combine(DataDirectory, "recent-repositories.json");
 
-    /// <summary>§V6-G9: one JSON file per user-authored theme lives here.</summary>
+    /// <summary>one JSON file per user-authored theme lives here.</summary>
     public static string ThemesDirectory => Path.Combine(DataDirectory, "themes");
 
-    /// <summary>v8 M11: SSH keys Historia generates for a profile live under a per-profile
+    /// <summary>SSH keys Historia generates for a profile live under a per-profile
     /// subfolder here (<c>keys/&lt;profileId&gt;/id_ed25519</c>).</summary>
     public static string KeysDirectory => Path.Combine(DataDirectory, "keys");
 
-    /// <summary>§V6-G9: the file backing the custom theme with the given id (its file stem).</summary>
+    /// <summary>the file backing the custom theme with the given id (its file stem).</summary>
     public static string CustomThemeFile(string id) => Path.Combine(ThemesDirectory, id + ".json");
 
     // ── Machine files ──
@@ -151,22 +151,22 @@ public static class AppPaths
     public static string WindowPlacementFile => Path.Combine(MachineDirectory, "window.json");
     public static string SessionFile => Path.Combine(MachineDirectory, "session.json");
 
-    /// <summary>The portable files, for the one-time copy migration (§V3-9.1).</summary>
+    /// <summary>The portable files, for the one-time copy migration.</summary>
     internal static readonly string[] PortableFileNames =
         ["settings.json", "profiles.json", "repo-profiles.json", "repo-columns.json", "recent-repositories.json"];
 
     public static void EnsureCreated()
     {
-        try { Directory.CreateDirectory(DataDirectory); } catch { /* rule 0.4 */ }
+        try { Directory.CreateDirectory(DataDirectory); } catch { /* best effort: a missing directory must not stop startup */ }
         Directory.CreateDirectory(MachineDirectory);
         Directory.CreateDirectory(LogsDirectory);
         try { Directory.CreateDirectory(CacheDirectory); } catch { /* regenerable */ }
-        try { Directory.CreateDirectory(ThemesDirectory); } catch { /* rule 0.4 */ }
+        try { Directory.CreateDirectory(ThemesDirectory); } catch { /* best effort: a missing directory must not stop startup */ }
         MigratePortableFilesFromAppData();
     }
 
     /// <summary>
-    /// Developer tool (§21): deletes <b>everything</b> under both state roots — settings,
+    /// Developer tool: deletes <b>everything</b> under both state roots — settings,
     /// profiles, repo bindings, recent list, themes, the session file, window geometry, every
     /// cache file and every log. Best-effort: a file held open (an active log, a cache handle)
     /// is skipped and gone on the next launch. The root folders themselves are kept so the
@@ -207,7 +207,7 @@ public static class AppPaths
 
     /// <summary>
     /// One-time copy of the portable set from a prior <c>%APPDATA%\Historia\</c> install into the
-    /// chosen portable directory (§V3-9.1). Copy, never move — a downgrade still finds its state.
+    /// chosen portable directory. Copy, never move — a downgrade still finds its state.
     /// <c>session.json</c> and <c>logs/</c> are machine state and are already in their final home.
     /// </summary>
     private static void MigratePortableFilesFromAppData()
@@ -232,7 +232,7 @@ public static class AppPaths
                     File.Copy(src, dst);
             }
 
-            // §V6-G9: the themes/ folder is portable state too — copied wholesale rather than
+            // the themes/ folder is portable state too — copied wholesale rather than
             // added to PortableFileNames (that list is the fixed one-time file set).
             var themesSrc = Path.Combine(appData, "themes");
             var themesDst = Path.Combine(portable, "themes");

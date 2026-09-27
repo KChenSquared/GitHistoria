@@ -8,7 +8,7 @@ namespace Historia.Services.Workspace;
 /// paint for the current focus (<see cref="ReportGraphSettled"/>) and
 /// <see cref="RepositoryContext.FirstFullLoad"/>. It closes on every focus change and re-evaluates
 /// for the newly focused tab — there is deliberately no "start after N seconds regardless"
-/// fallback in the app path (removed per the plan; only test doubles use one).
+/// fallback in the app path (only test doubles use one).
 /// </summary>
 public interface IBackgroundWorkGate
 {

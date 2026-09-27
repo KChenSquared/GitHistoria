@@ -1,11 +1,11 @@
 namespace Historia.Services.UI;
 
 /// <summary>
-/// App-side bridge for the Core <see cref="IAutoFetchService"/> (§12.1). Reports a tab as fully
+/// App-side bridge for the Core <see cref="IAutoFetchService"/>. Reports a tab as fully
 /// loaded via <see cref="RepositoryContext.FirstFullLoad"/> — forcing a still-deferred
 /// session-restore tab through its initialize path first — and runs a background <c>git fetch</c>
 /// through the same gateway a manual Fetch uses, flagged so routing never raises the
-/// switch-to-Local-config prompt (§13.1).
+/// switch-to-Local-config prompt.
 /// </summary>
 public sealed class AutoFetchHost(IWorkspaceService workspace, ISettingsService settings) : IAutoFetchHost
 {

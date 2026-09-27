@@ -1,7 +1,7 @@
 namespace Historia.Services.PowerTools;
 
 /// <summary>
-/// Detect / parse / resolve / continue / abort for any conflicted operation (§8.4.4). Every
+/// Detect / parse / resolve / continue / abort for any conflicted operation. Every
 /// multi-step operation (merge, rebase, cherry-pick, revert) funnels here.
 /// Registered as a singleton.
 /// </summary>
@@ -41,10 +41,10 @@ public interface IConflictService
     /// <summary>Gets informative labels for Ours and Theirs sides based on the current sequencer operation and branch state.</summary>
     Task<ConflictSideLabels> GetSideLabelsAsync(RepositoryContext context, CancellationToken ct = default);
 
-    /// <summary>Launches the configured external merge tool for one path and waits for exit (§8.4.5).</summary>
+    /// <summary>Launches the configured external merge tool for one path and waits for exit.</summary>
     Task<bool> LaunchExternalMergeToolAsync(RepositoryContext context, string filePath, CancellationToken ct = default);
 
-    /// <summary>Continues the in-progress operation, dispatching on <see cref="OperationState"/> (§6.7).</summary>
+    /// <summary>Continues the in-progress operation, dispatching on <see cref="OperationState"/>.</summary>
     Task ContinueOperationAsync(RepositoryContext context, CancellationToken ct = default);
 
     /// <summary>Skips the current commit — valid for rebase, cherry-pick, revert; not merge.</summary>
