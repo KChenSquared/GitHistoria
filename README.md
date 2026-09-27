@@ -8,8 +8,8 @@ A high-performance, open-source Windows Git client built with **C# (.NET 10)** a
 
 ## 💡 Why Historia?
 
-I love GitKraken. The way it presents the commit graph is extremely useful for keeping up
-with my repos. Over time, though, it became extremely sluggish on the repos I work in day
+I've used GitKraken as my primary Git tool for many years. I love the way it presents the
+commit graph; it's extremely useful for keeping up with my repos. Over time, though, it became extremely sluggish on the repos I work in day
 to day. Each one has 200k–350k commits, and switching between them had become a very poor
 experience. Then my annual GitKraken renewal came around and the price was going up again.
 
