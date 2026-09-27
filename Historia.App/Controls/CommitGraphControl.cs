@@ -439,9 +439,9 @@ public sealed partial class CommitGraphControl : Control
         _scrollBar.Scroll += (_, e) =>
         {
             _scrollBarUserActive = e.ScrollEventType == ScrollEventType.ThumbTrack;
+            _scrollOffset = _scrollBar.Value;
             if (ScrollLogOn)
                 LogScrollEvent(e.ScrollEventType);
-            _scrollOffset = _scrollBar.Value;
             OnScrolled();
             if (_scrollBarUserActive)
                 _scrollBar.UpdateLayout();
@@ -3420,38 +3420,10 @@ public sealed partial class CommitGraphControl : Control
         var minVisibleX = Math.Max(colX, 0) - 4;
         var maxVisibleX = Math.Min(colX + _graphColWidth, viewportWidth) + 4;
 
-        // Elbows BEFORE the lane runs, so every vertical lane line paints over the horizontals
-        // that cross it.
-        for (var row = first; row <= last; row++)
-        {
-            var y = RowY(row);
-            var rowElbows = layout.GetRowElbows(row);
-            if (!rowElbows.IsEmpty)
-            {
-                // Elbows on one row share the node-height horizontal, so paint order decides
-                // which colour shows where they overlap: longest first, so each stretch shows
-                // the nearest branch that still runs past it. Hover-emphasised ones go on top.
-                if (_elbowScratch.Length < rowElbows.Length)
-                    _elbowScratch = new RowElbow[Math.Max(16, rowElbows.Length)];
-                var elbows = _elbowScratch.AsSpan(0, rowElbows.Length);
-                OrderElbowsForPaint(rowElbows, elbows, hoverLane);
-
-                foreach (var elbow in elbows)
-                {
-                    var fromX = LaneX(elbow.FromLane);
-                    var toX = LaneX(elbow.ToLane);
-                    // An elbow spans [min(fromX, toX), max(fromX, toX)]; skip it only when that
-                    // whole span is outside the visible span.
-                    if (Math.Max(fromX, toX) < minVisibleX || Math.Min(fromX, toX) > maxVisibleX)
-                        continue;
-
-                    var isEmph = hoverLane >= 0 && (elbow.FromLane == hoverLane || elbow.ToLane == hoverLane);
-                    var pen = isEmph ? EmphPen(elbow.ColorIndex) : LanePen(elbow.ColorIndex);
-
-                    DrawElbow(dc, pen, elbow.FromLane, elbow.ToLane, fromX, y, elbow.Kind);
-                }
-            }
-        }
+        // Plain elbows go BEFORE the lane runs, so every vertical lane line paints over the
+        // horizontals that cross it. Hover-emphasised elbows go after, so the emphasis stays
+        // unbroken where they cross other lanes.
+        DrawRowElbows(dc, layout, first, last, minVisibleX, maxVisibleX, hoverLane, emphasised: false);
 
         // Vertical lane pieces of the visible rows are merged into maximal same-colour runs and
         // drawn as one line each — about lanes plus lane breaks, not rows × lanes. Where several
@@ -3483,6 +3455,9 @@ public sealed partial class CommitGraphControl : Control
         }
         _lanePiecesSeen = piecesSeen;
         _laneRunsDrawn = runsDrawn;
+
+        if (hoverLane >= 0)
+            DrawRowElbows(dc, layout, first, last, minVisibleX, maxVisibleX, hoverLane, emphasised: true);
 
         // The right-edge lane tick sits ON TOP of the lines. Consecutive same-colour rows are
         // drawn as one rectangle, and each rectangle runs 1px into the next (which paints over
@@ -3765,6 +3740,43 @@ public sealed partial class CommitGraphControl : Control
             var ft = Text(text, brush, maxW);
             var midY = RowY(row) + (_rowHeight - ft.Height) / 2;
             dc.DrawText(ft, new Point(colX + 8, midY));
+        }
+    }
+
+    private void DrawRowElbows(DrawingContext dc, GraphLayout layout, int first, int last,
+        double minVisibleX, double maxVisibleX, int hoverLane, bool emphasised)
+    {
+        for (var row = first; row <= last; row++)
+        {
+            var y = RowY(row);
+            var rowElbows = layout.GetRowElbows(row);
+            if (rowElbows.IsEmpty)
+                continue;
+
+            // Elbows on one row share the node-height horizontal, so paint order decides
+            // which colour shows where they overlap: longest first, so each stretch shows
+            // the nearest branch that still runs past it. Hover-emphasised ones go last.
+            if (_elbowScratch.Length < rowElbows.Length)
+                _elbowScratch = new RowElbow[Math.Max(16, rowElbows.Length)];
+            var elbows = _elbowScratch.AsSpan(0, rowElbows.Length);
+            OrderElbowsForPaint(rowElbows, elbows, hoverLane);
+
+            foreach (var elbow in elbows)
+            {
+                var isEmph = hoverLane >= 0 && (elbow.FromLane == hoverLane || elbow.ToLane == hoverLane);
+                if (isEmph != emphasised)
+                    continue;
+
+                var fromX = LaneX(elbow.FromLane);
+                var toX = LaneX(elbow.ToLane);
+                // An elbow spans [min(fromX, toX), max(fromX, toX)]; skip it only when that
+                // whole span is outside the visible span.
+                if (Math.Max(fromX, toX) < minVisibleX || Math.Min(fromX, toX) > maxVisibleX)
+                    continue;
+
+                var pen = isEmph ? EmphPen(elbow.ColorIndex) : LanePen(elbow.ColorIndex);
+                DrawElbow(dc, pen, elbow.FromLane, elbow.ToLane, fromX, y, elbow.Kind);
+            }
         }
     }
 
