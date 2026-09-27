@@ -273,22 +273,22 @@ public sealed class GraphMetaSpliceTests
 
         // Row -> sha, to check parent-before-child (a valid topo order lists a commit before its
         // parents when walking newest-first, which is the convention used throughout this file).
-        var recordToSha = new Dictionary<int, string> { [0] = Oid(0).Sha, [1] = Oid(1).Sha, [2] = Oid(2).Sha, [3] = Oid(11).Sha, [4] = Oid(10).Sha };
+        var recordToSha = new Dictionary<int, string> { [0] = Oid(0).ToString(), [1] = Oid(1).ToString(), [2] = Oid(2).ToString(), [3] = Oid(11).ToString(), [4] = Oid(10).ToString() };
         var shaToNewRow = new Dictionary<string, int>();
         for (var row = 0; row < plan.Order.Length; row++)
             shaToNewRow[recordToSha[plan.Order[row]]] = row;
 
         var allCommits = new Dictionary<string, RawCommit>
         {
-            [Oid(0).Sha] = Commit(0),
-            [Oid(1).Sha] = Commit(1, 0),
-            [Oid(2).Sha] = Commit(2, 1),
-            [Oid(10).Sha] = Commit(10, 2),
-            [Oid(11).Sha] = Commit(11, 10),
+            [Oid(0).ToString()] = Commit(0),
+            [Oid(1).ToString()] = Commit(1, 0),
+            [Oid(2).ToString()] = Commit(2, 1),
+            [Oid(10).ToString()] = Commit(10, 2),
+            [Oid(11).ToString()] = Commit(11, 10),
         };
         foreach (var (sha, row) in shaToNewRow)
             foreach (var parent in allCommits[sha].ParentIds)
-                Assert.True(shaToNewRow[parent.Sha] > row, $"{sha}'s parent {parent.Sha} must come after it (newest-first)");
+                Assert.True(shaToNewRow[parent.ToString()] > row, $"{sha}'s parent {parent.ToString()} must come after it (newest-first)");
 
         // Assert non-increasing CommitWhen over the spliced rows
         for (var row = 1; row < plan.Order.Length; row++)

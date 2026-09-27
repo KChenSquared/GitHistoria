@@ -211,7 +211,7 @@ public sealed class GraphMetaStoreTests : IDisposable
         var mem = new ArrayCommitStore(Rows(300).ToArray());
         using var disk = GraphMetaStore.TryOpen(Repo, Fp, true, 300)!;
 
-        foreach (var term in new[] { "Alpha", "grace hopper", "widget beta", "commit number 42", Oid(42).Sha, Oid(7).Sha[..8] })
+        foreach (var term in new[] { "Alpha", "grace hopper", "widget beta", "commit number 42", Oid(42).ToString(), Oid(7).ToShortString(8) })
         {
             Assert.Equal(mem.Search(term), disk.Search(term));
         }
@@ -226,7 +226,7 @@ public sealed class GraphMetaStoreTests : IDisposable
         // Every Oid(i).Sha is zero-padded, so a "0000" prefix hits every row while the full
         // 40-char SHA hits exactly one — same as the in-memory store.
         Assert.Equal(40, disk.Search("0000").Count);
-        Assert.Equal(new[] { 31 }, disk.Search(Oid(31).Sha));
+        Assert.Equal(new[] { 31 }, disk.Search(Oid(31).ToString()));
     }
 
     [Fact]

@@ -102,7 +102,7 @@ public sealed class RefSnapshotProvider
     private async Task<RefSnapshot> ScanAsync(RefStateToken.State state, long seq)
     {
         // GetAsync starts this inside its lock — yield first so none of the scan runs there.
-        await Task.Yield();
+        await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
         Interlocked.Increment(ref _scanCount);
         try
         {

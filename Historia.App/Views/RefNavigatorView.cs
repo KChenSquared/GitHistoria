@@ -767,7 +767,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             CopyName: b.Name,
             TrackingRef: b.Name,
             IsLocal: !isRemote,
-            TipSha: b.TipCommitId?.Sha,
+            TipSha: b.TipCommitId?.ToString(),
             CurrentBranch: ctx.State.CurrentBranch?.Name,
             CounterpartRef: counterpartRef,
             RemoteAlias: remoteAlias);

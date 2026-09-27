@@ -227,7 +227,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
             Assert.NotNull(normalParentsList);
             Assert.Equal(2, normalParentsList.Children.Count);
             var parentHash = Assert.IsType<TextBlock>(normalParentsList.Children[1]);
-            Assert.Equal(rootId.Sha[..10], parentHash.Text);
+            Assert.Equal(rootId.ToShortString(10), parentHash.Text);
         }
         finally
         {
@@ -247,8 +247,8 @@ public class CommitDetailPanelLayoutTests : IDisposable
             Assert.Equal(3, mergeParentsList.Children.Count);
             var hash1 = Assert.IsType<TextBlock>(mergeParentsList.Children[1]);
             var hash2 = Assert.IsType<TextBlock>(mergeParentsList.Children[2]);
-            Assert.Equal(parent1Id.Sha[..10], hash1.Text);
-            Assert.Equal(parent2Id.Sha[..10], hash2.Text);
+            Assert.Equal(parent1Id.ToShortString(10), hash1.Text);
+            Assert.Equal(parent2Id.ToShortString(10), hash2.Text);
         }
         finally
         {

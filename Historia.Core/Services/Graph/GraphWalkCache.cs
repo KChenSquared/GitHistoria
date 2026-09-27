@@ -299,8 +299,8 @@ internal sealed class GraphWalkCache
                 WalkEngine = CliWalkMarker,
                 Commits = commits.Select(c => new CommitDto
                 {
-                    Id = c.Id.Sha,
-                    Parents = c.ParentIds.Select(p => p.Sha).ToArray(),
+                    Id = c.Id.ToString(),
+                    Parents = c.ParentIds.Select(p => p.ToString()).ToArray(),
                     MessageShort = c.Metadata.MessageShort,
                     AuthorName = c.Metadata.AuthorName,
                     AuthorEmail = c.Metadata.AuthorEmail,
@@ -309,7 +309,7 @@ internal sealed class GraphWalkCache
                     ParentCount = c.Metadata.ParentCount,
                 }).ToList(),
                 Decorations = decorations.ToDictionary(
-                    kv => kv.Key.Sha,
+                    kv => kv.Key.ToString(),
                     kv => kv.Value.Select(ToDto).ToList()),
             };
 

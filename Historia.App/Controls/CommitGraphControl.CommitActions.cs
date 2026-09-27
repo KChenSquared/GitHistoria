@@ -36,7 +36,7 @@ public sealed partial class CommitGraphControl
     {
         if (_context is not { } ctx)
             return;
-        var sha = id.Sha;
+        var sha = id.ToString();
         var shortSha = sha[..7];
         var items = new List<Control>
         {
@@ -212,10 +212,10 @@ public sealed partial class CommitGraphControl
         if (pillId is { } bid &&
             deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch or DecorationType.Tag)
         {
-            var shortSha = bid.Sha[..7];
+            var shortSha = bid.ToShortString(7);
             if (items.Count > 0) items.Add(new Separator());
-            items.Add(MenuLeaf("Create branch here…", () => PromptCreateBranch(ctx, bid.Sha, shortSha)));
-            items.Add(MenuLeaf("Create tag here…", () => PromptCreateTag(ctx, bid.Sha, shortSha)));
+            items.Add(MenuLeaf("Create branch here…", () => PromptCreateBranch(ctx, bid.ToString(), shortSha)));
+            items.Add(MenuLeaf("Create tag here…", () => PromptCreateTag(ctx, bid.ToString(), shortSha)));
         }
 
         // "Copy branch name" — the one common-denominator item the pill menu still lacked.
@@ -317,8 +317,8 @@ public sealed partial class CommitGraphControl
         {
             new MenuItem { Header = $"Drop {shortSha} → {branchLabel}", IsEnabled = false },
             new Separator(),
-            MenuLeaf($"Merge {shortSha} into current branch", () => MergeAsync(ctx, commitId.Sha, shortSha)),
-            MenuLeaf("Reset current branch to this commit (mixed)", () => ResetAsync(ctx, commitId.Sha, GitResetMode.Mixed, shortSha)),
+            MenuLeaf($"Merge {shortSha} into current branch", () => MergeAsync(ctx, commitId.ToString(), shortSha)),
+            MenuLeaf("Reset current branch to this commit (mixed)", () => ResetAsync(ctx, commitId.ToString(), GitResetMode.Mixed, shortSha)),
             MenuLeaf($"Cherry-pick {shortSha} onto current branch", () => CherryPickAsync([commitId])),
             MenuLeaf($"Rebase current branch onto {branchLabel}", () => _nav.RequestNavigate($"rebase?onto={Uri.EscapeDataString(branchLabel)}")),
         };
@@ -517,6 +517,6 @@ public sealed partial class CommitGraphControl
         {
             return lay.Layout.Commits[row].MessageShort;
         }
-        return id.Sha[..7];
+        return id.ToShortString(7);
     }
 }

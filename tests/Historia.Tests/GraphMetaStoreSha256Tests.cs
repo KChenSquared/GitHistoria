@@ -150,7 +150,7 @@ public sealed class GraphMetaStoreSha256Tests : IDisposable
             AssertRowEqual(src[i], store[i]);
 
         var mem = new ArrayCommitStore(src.ToArray());
-        foreach (var term in new[] { "Alpha", "grace hopper", "widget beta", "commit number 42", Oid256(42).Sha, Oid256(7).Sha[..12] })
+        foreach (var term in new[] { "Alpha", "grace hopper", "widget beta", "commit number 42", Oid256(42).ToString(), Oid256(7).ToShortString(12) })
         {
             Assert.Equal(mem.Search(term), store.Search(term));
         }

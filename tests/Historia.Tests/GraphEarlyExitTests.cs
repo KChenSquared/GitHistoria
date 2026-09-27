@@ -113,7 +113,7 @@ public sealed class GraphEarlyExitTests : IAsyncDisposable
 
         Assert.Equal(2_600, Get<int>(cache, "LiveWalkPos"));
 
-        var walked = Get<System.Collections.IList>(cache, "Commits").Cast<RawCommit>().Select(c => c.Id.Sha).ToList();
+        var walked = Get<System.Collections.IList>(cache, "Commits").Cast<RawCommit>().Select(c => c.Id.ToString()).ToList();
         var expected = _repo.Git("rev-list", "--date-order", "main")
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Take(2_600)

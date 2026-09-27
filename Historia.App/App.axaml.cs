@@ -331,15 +331,15 @@ public sealed class App : Application
         {
             var git = await locator.ResolveAsync(settings.Current.GitExecutablePath).ConfigureAwait(false);
             Historia.Diagnostics.PerfLog.Mark($"Git resolution complete: found={git.Found}, path={git.Path}");
+            // The locator reports a git below the version floor as not found; its reason names
+            // the found and required versions.
             if (!git.Found)
             {
+                var reason = git.Path is not null && git.NotFoundReason is { } r
+                    ? r
+                    : "Git was not found on this system.";
                 notifications.Publish(NotificationSeverity.Warning,
-                    "Git was not found on this system. Network and history operations are disabled until it is installed or its path is set in Settings.");
-            }
-            else if (!git.MeetsMinimumVersion)
-            {
-                notifications.Publish(NotificationSeverity.Warning,
-                    $"Git {git.Version} was detected. Historia needs at least Git 2.35; some operations may not work.");
+                    $"{reason} Network and history operations are disabled until a supported git is installed or its path is set in Settings.");
             }
         }
         catch (Exception ex)

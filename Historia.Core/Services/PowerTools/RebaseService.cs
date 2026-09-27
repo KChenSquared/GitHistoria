@@ -37,7 +37,7 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
 
         foreach (var e in entries.Where(e => e.Action == RebaseAction.Reword))
             if (string.IsNullOrWhiteSpace(e.RewordMessage))
-                issues.Add(new($"Reword of {e.CommitId.Sha[..7]} has an empty message — this would abort the rebase.", false));
+                issues.Add(new($"Reword of {e.CommitId.ToShortString(7)} has an empty message — this would abort the rebase.", false));
 
         return issues;
     }
@@ -137,11 +137,11 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
 
             if (e.Action == RebaseAction.Drop)
             {
-                todo.Append("# drop ").Append(e.CommitId.Sha).Append(' ').Append(e.MessageShort).Append('\n');
+                todo.Append("# drop ").Append(e.CommitId.ToString()).Append(' ').Append(e.MessageShort).Append('\n');
                 continue;
             }
 
-            todo.Append(verb).Append(' ').Append(e.CommitId.Sha).Append(' ').Append(e.MessageShort).Append('\n');
+            todo.Append(verb).Append(' ').Append(e.CommitId.ToString()).Append(' ').Append(e.MessageShort).Append('\n');
 
             if (e.Action is RebaseAction.Reword or RebaseAction.Squash)
                 messages.Add(e.RewordMessage ?? e.MessageShort);

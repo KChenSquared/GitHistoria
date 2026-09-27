@@ -62,4 +62,18 @@ public class GitExecutableLocatorTests
         Assert.Equal(resolved.Found, awaited.Found);
         Assert.Equal(resolved.Path, awaited.Path);
     }
+
+    [Fact]
+    public async Task WhenResolvedAsync_completes_not_found_when_resolution_fails()
+    {
+        var locator = new GitExecutableLocator();
+        var waitTask = locator.WhenResolvedAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            locator.ResolveAsync(null, new CancellationToken(canceled: true)));
+
+        var awaited = await waitTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(awaited.Found);
+        Assert.NotNull(awaited.NotFoundReason);
+    }
 }

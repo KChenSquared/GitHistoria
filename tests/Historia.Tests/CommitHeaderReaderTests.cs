@@ -99,6 +99,37 @@ public sealed class CommitHeaderReaderTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Suppresses_signature_output_and_replace_refs()
+    {
+        // log.showSignature=true prints "Good ... signature" ahead of a signed commit's record,
+        // which would corrupt the NUL-field parse; replace refs would diverge from the graph.
+        var cli = new RecordingCli();
+        var reader = new CommitHeaderReader(cli, Path.GetTempPath());
+
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            reader.ReadAsync([GitObjectId.Parse("0123456789abcdef0123456789abcdef01234567")]));
+
+        var req = Assert.Single(cli.Requests);
+        Assert.Contains("--no-show-signature", req.Arguments);
+        Assert.Equal("1", req.ExtraEnvironment?["GIT_NO_REPLACE_OBJECTS"]);
+    }
+
+    private sealed class RecordingCli : IGitCliService
+    {
+        public List<GitCliRequest> Requests { get; } = [];
+        public bool IsGitAvailable => true;
+
+        public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default)
+        {
+            Requests.Add(request);
+            return Task.FromResult(new GitCliResult(0, "", "", GitErrorKind.None, TimeSpan.Zero));
+        }
+
+        public Task<GitCliResult> RunAsync(GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default)
+            => RunAsync(request, ct);
+    }
+
+    [Fact]
     public async Task Empty_ids_returns_empty_without_spawning()
     {
         var reader = new CommitHeaderReader(Cli, Path.GetTempPath());

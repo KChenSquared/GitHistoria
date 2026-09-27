@@ -23,6 +23,9 @@ public sealed class CommitHeaderReader(IGitCliService cli, string repositoryPath
     public const int FieldCount = 10;
     public const string Format = "%H%x00%P%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%s%x00%B%x00";
 
+    internal static readonly IReadOnlyDictionary<string, string> NoReplaceObjects =
+        new Dictionary<string, string> { ["GIT_NO_REPLACE_OBJECTS"] = "1" };
+
     public async Task<IReadOnlyList<CommitHeaderRecord>> ReadAsync(
         IReadOnlyList<GitObjectId> ids,
         CancellationToken ct = default)
@@ -30,10 +33,12 @@ public sealed class CommitHeaderReader(IGitCliService cli, string repositoryPath
         if (ids.Count == 0)
             return [];
 
-        var args = new List<string>(ids.Count + 3)
+        // log.showSignature=true would print verification text ahead of each record.
+        var args = new List<string>(ids.Count + 4)
         {
             "log",
             "--no-walk=unsorted",
+            "--no-show-signature",
             $"--format={Format}",
         };
 
@@ -45,6 +50,8 @@ public sealed class CommitHeaderReader(IGitCliService cli, string repositoryPath
             Arguments = args,
             WorkingDirectory = repositoryPath,
             RawStandardOutput = true,
+            // Same objects as the graph rows (GitLogStream ignores replace refs too).
+            ExtraEnvironment = NoReplaceObjects,
         }, ct).ConfigureAwait(false);
 
         if (!result.IsSuccess)

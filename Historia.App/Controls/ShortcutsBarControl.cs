@@ -234,13 +234,13 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
         name = name.Trim();
 
         var selected = ctx.State.SelectedCommitId;
-        var startPoint = selected?.Sha ?? ctx.State.CurrentBranch?.CanonicalName ?? "HEAD";
+        var startPoint = selected?.ToString() ?? ctx.State.CurrentBranch?.CanonicalName ?? "HEAD";
         try
         {
             await ctx.Gateway.CreateBranchAsync(name, startPoint, checkout: false, ctx.Lifetime);
             await ctx.State.RefreshAllAsync(ctx.Lifetime);
             _notifications?.Publish(NotificationSeverity.Success,
-                selected is { } id ? $"Created {name} at {id.Sha[..7]}." : $"Created {name}.");
+                selected is { } id ? $"Created {name} at {id.ToShortString(7)}." : $"Created {name}.");
         }
         catch (Exception ex)
         {

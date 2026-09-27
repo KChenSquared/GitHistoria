@@ -25,6 +25,21 @@ public sealed partial class GitExecutableLocator : IGitExecutableLocator
 
     public async Task<GitExecutableInfo> ResolveAsync(string? userOverridePath, CancellationToken ct = default)
     {
+        try
+        {
+            return await ResolveCoreAsync(userOverridePath, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Every CLI call awaits the first resolution; a failed one must still release them
+            // (they then fail classified as "git not found") rather than wait forever.
+            _resolvedTcs.TrySetResult(GitExecutableInfo.NotFound with { NotFoundReason = $"Git resolution failed: {ex.Message}" });
+            throw;
+        }
+    }
+
+    private async Task<GitExecutableInfo> ResolveCoreAsync(string? userOverridePath, CancellationToken ct)
+    {
         var path = await Task.Run(() => Discover(userOverridePath), ct).ConfigureAwait(false);
         GitExecutableInfo info;
 

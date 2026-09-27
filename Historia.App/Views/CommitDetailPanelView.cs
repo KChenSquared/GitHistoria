@@ -238,12 +238,12 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         row.Children.Add(author);
         _authorText = author;
 
-        var hash = Text(detail.Id.Sha[..10], "ColorAccent", 14);
+        var hash = Text(detail.Id.ToShortString(10), "ColorAccent", 14);
         hash.VerticalAlignment = VerticalAlignment.Center;
         hash.TextDecorations = TextDecorations.Underline;
         hash.Cursor = new Cursor(StandardCursorType.Hand);
         ToolTip.SetTip(hash, "Click to copy full commit hash");
-        var fullSha = detail.Id.Sha;
+        var fullSha = detail.Id.ToString();
         hash.PointerPressed += (_, _) =>
             _ = TopLevel.GetTopLevel(hash)?.Clipboard?.SetTextAsync(fullSha);
         Grid.SetColumn(hash, 1);
@@ -285,7 +285,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         {
             foreach (var pid in detail.ParentIds)
             {
-                var parentSha = pid.Sha;
+                var parentSha = pid.ToString();
                 var shortSha = parentSha.Length >= 10 ? parentSha[..10] : parentSha;
                 var hash = Text(shortSha, "ColorText", 12);
                 hash.TextDecorations = TextDecorations.Underline;

@@ -57,6 +57,7 @@ public sealed partial class GitGateway
             WorkingDirectory = context.RepositoryPath,
             RawStandardOutput = true,
             Timeout = Timeout.InfiniteTimeSpan,
+            ExtraEnvironment = CommitHeaderReader.NoReplaceObjects,
         }, ct).ConfigureAwait(false);
 
         if (!result.IsSuccess)

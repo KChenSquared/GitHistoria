@@ -91,7 +91,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
         var store = result.Layout.Commits;
         Assert.Equal(CommitCount, store.Search("commit").Count);
         Assert.Single(store.Search("commit 07"));
-        var sha = store[3].Id.Sha;
+        var sha = store[3].Id.ToString();
         Assert.Equal(new[] { 3 }, store.Search(sha));
         Assert.Equal(new[] { 3 }, store.Search(sha[..10]));
     }

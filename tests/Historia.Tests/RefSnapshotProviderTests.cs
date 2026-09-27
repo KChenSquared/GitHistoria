@@ -64,7 +64,7 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
             .ToList());
 
         var actual = snapshot.Refs
-            .Select(r => (Name: r.CanonicalName, Target: r.Target!.Value.Sha, Peeled: r.PeeledCommit?.Sha))
+            .Select(r => (Name: r.CanonicalName, Target: r.Target!.Value.ToString(), Peeled: r.PeeledCommit?.ToString()))
             .ToList();
 
         Assert.Equal(expected, actual);

@@ -53,7 +53,7 @@ public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
 
         // Explicit oldest-first list — never the exclusive A..B range form.
         foreach (var id in oldestFirst)
-            args.Add(id.Sha);
+            args.Add(id.ToString());
 
         var env = new Dictionary<string, string> { ["GIT_EDITOR"] = "true" };
         var result = await cli.RunAsync(new GitCliRequest

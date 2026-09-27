@@ -1007,7 +1007,7 @@ public sealed partial class CommitGraphControl : Control
         else
         {
             type = DecorationType.LocalBranch;
-            label = id.Sha.Length >= 7 ? id.Sha[..7] : id.Sha;
+            label = id.ToShortString(7);
         }
 
         return new GraphDecoration
@@ -2323,7 +2323,7 @@ public sealed partial class CommitGraphControl : Control
         {
             var target = PillAt(e.GetPosition(this));
             if (target is { } pill && pill.Deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
-                ShowDropIntentMenu(l.Layout.Commits[_dragRow].Id, l.Layout.Commits[_dragRow].Id.Sha[..7], pill.Deco.Label);
+                ShowDropIntentMenu(l.Layout.Commits[_dragRow].Id, l.Layout.Commits[_dragRow].Id.ToShortString(7), pill.Deco.Label);
         }
 
         _dragging = false;
@@ -2382,7 +2382,7 @@ public sealed partial class CommitGraphControl : Control
                 GraphColumnKind.Message => m.MessageShort,
                 GraphColumnKind.Author => m.AuthorName,
                 GraphColumnKind.Date => DateCell(CommitDateDisplay.Pick(m.AuthorWhen, m.CommitWhen, _showAuthorDate)),
-                GraphColumnKind.Sha => m.Id.Sha[..7],
+                GraphColumnKind.Sha => m.Id.ToShortString(7),
                 _ => "",
             };
             if (s.Length == 0)
@@ -3222,7 +3222,7 @@ public sealed partial class CommitGraphControl : Control
                         DrawTextColumn(dc, layout, first, last, x, col.Width, m => DateCell(CommitDateDisplay.Pick(m.AuthorWhen, m.CommitWhen, _showAuthorDate)), _textMuted);
                         break;
                     case GraphColumnKind.Sha:
-                        DrawTextColumn(dc, layout, first, last, x, col.Width, m => m.Id.Sha[..7], _textMuted);
+                        DrawTextColumn(dc, layout, first, last, x, col.Width, m => m.Id.ToShortString(7), _textMuted);
                         break;
                 }
             }

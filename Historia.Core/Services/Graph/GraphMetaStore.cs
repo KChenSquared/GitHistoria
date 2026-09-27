@@ -672,7 +672,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
 
                 // Full SHA so a Ctrl+F prefix of any length matches exactly as the
                 // in-memory store does.
-                search.Write(m.Id.Sha);
+                search.Write(m.Id.ToString());
                 search.Write(GraphMetaStore.Sep);
                 search.Write(Clean(m.MessageShort).ToLowerInvariant());
                 search.Write(GraphMetaStore.Sep);

@@ -638,8 +638,8 @@ public class DagLayoutEngineTests
 
         // Only the trunk + the two near-HEAD tips reserve a lane; the three far tips do not.
         Assert.Equal(
-            new[] { Sha(49), Sha(50), Sha(100) }.OrderBy(x => x.Sha),
-            r.State.TipTargetLane.Keys.OrderBy(x => x.Sha));
+            new[] { Sha(49), Sha(50), Sha(100) }.OrderBy(x => x.ToString()),
+            r.State.TipTargetLane.Keys.OrderBy(x => x.ToString()));
 
         // The far tips pack into the lanes freed by the near branches merging back — far-1/2/3 on
         // lanes 1/2/3 (3 genuinely-concurrent branches), total 4 lanes. Before the fix all six
@@ -749,7 +749,7 @@ public class DagLayoutEngineTests
         var r1 = Compute(commits);
         var r2 = Compute(commits);
         Assert.Equal(r1.Layout.Rows.Select(x => x.ColorIndex), r2.Layout.Rows.Select(x => x.ColorIndex));
-        Assert.Equal((int)(StableHash.Fnv1a(Sha(3).Sha) % LanePalette.Size), r1.Layout.Rows[0].ColorIndex);
+        Assert.Equal((int)(StableHash.Fnv1a(Sha(3).ToString()) % LanePalette.Size), r1.Layout.Rows[0].ColorIndex);
     }
 
     [Fact]

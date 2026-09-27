@@ -133,8 +133,6 @@ public readonly struct GitObjectId : IEquatable<GitObjectId>, IComparable<GitObj
         return TryParse(s.AsSpan(), out result);
     }
 
-    public string Sha => ToString();
-
     public override string ToString()
     {
         if (_length == 0)

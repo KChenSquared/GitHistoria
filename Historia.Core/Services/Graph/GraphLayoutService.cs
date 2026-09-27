@@ -1025,7 +1025,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         var oldTips = GraphMetaStore.ReadTips(repoPath);
         if (oldTips is not { Count: > 0 })
             return -1;
-        var oldTipShas = oldTips.Select(t => t.Sha).ToArray();
+        var oldTipShas = oldTips.Select(t => t.ToString()).ToArray();
 
         // Guard 2 (simplified, same scope cut as GraphMetaSplice's own doc comment): only the
         // CURRENT shallow state is checked, not "unchanged since the old order was built".
@@ -2080,16 +2080,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
         switch (query.RefScope)
         {
             case GraphRefScope.CurrentBranch:
-                Add(snapshot.HeadTarget?.Sha);
+                Add(snapshot.HeadTarget?.ToString());
                 break;
 
             case GraphRefScope.Selected:
                 foreach (var name in query.SelectedRefs ?? [])
                 {
                     if (string.Equals(name, "HEAD", StringComparison.Ordinal))
-                        Add(snapshot.HeadTarget?.Sha);
+                        Add(snapshot.HeadTarget?.ToString());
                     else
-                        Add(snapshot.Find(name)?.PeeledCommit?.Sha);
+                        Add(snapshot.Find(name)?.PeeledCommit?.ToString());
                 }
                 break;
 
@@ -2100,7 +2100,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     if (name.StartsWith("refs/heads/", StringComparison.Ordinal)
                         || (query.IncludeRemoteBranches && name.StartsWith("refs/remotes/", StringComparison.Ordinal))
                         || name.StartsWith("refs/tags/", StringComparison.Ordinal))
-                        Add(r.PeeledCommit?.Sha);
+                        Add(r.PeeledCommit?.ToString());
                 }
                 break;
         }
@@ -2223,12 +2223,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
         foreach (var r in snapshot.Refs) // already ordinal by name
         {
             Feed(r.CanonicalName);
-            Feed(r.SymrefTarget ?? r.Target?.Sha ?? "");
+            Feed(r.SymrefTarget ?? r.Target?.ToString() ?? "");
         }
 
         Feed("HEAD");
         Feed(snapshot.HeadSymref ?? "");
-        Feed(snapshot.HeadTarget?.Sha ?? "");
+        Feed(snapshot.HeadTarget?.ToString() ?? "");
 
         Feed("query");
         Feed(query.RefScope.ToString());
