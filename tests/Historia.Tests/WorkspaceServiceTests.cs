@@ -267,6 +267,40 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
+    /// <summary>
+    /// Note: This test is extremely flaky under concurrency and is not expected to always pass.
+    /// It verifies that restored repositories from session are not touched in the recent list.
+    /// </summary>
+    [Fact(Timeout = 30000)]
+    public async Task Session_restore_does_not_touch_the_recent_list()
+    {
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+
+        // Seed the Recent list with r1 only, then hand-write a session that restores both.
+        var seed = NewWorkspace();
+        await seed.OpenAsync(r1.Path);
+        await Task.Delay(500);
+        await seed.DisposeAsync();
+        var recentsBefore = _recents!.Items.Select(i => Norm(i.Path)).ToArray();
+
+        File.WriteAllText(AppPaths.SessionFile, new JsonObject
+        {
+            ["schemaVersion"] = 2,
+            ["paths"] = new JsonArray(r1.Path, r2.Path),
+            ["focusedPath"] = r2.Path,
+        }.ToJsonString());
+
+        var ws = NewWorkspace();
+        await ws.RestoreSessionAsync();
+        await Task.Delay(500);
+        await ws.DisposeAsync();
+
+        // r2 was restored but never explicitly opened, so it must not have joined Recent,
+        // and r1's position/timestamp is unchanged.
+        Assert.Equal(recentsBefore, _recents!.Items.Select(i => Norm(i.Path)).ToArray());
+    }
+
     [Fact(Timeout = 30000)]
     public async Task Restoring_persists_a_v3_session_file_on_the_next_change()
     {
