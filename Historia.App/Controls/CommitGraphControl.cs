@@ -105,11 +105,6 @@ public sealed partial class CommitGraphControl : Control
     private readonly ScrollBar _scrollBar;
     private readonly ScrollBar _hScrollBar;
     private bool _scrollBarUserActive;
-    // Thumb-drag diagnostics (`graph-scroll` log): when the previous ThumbTrack arrived, and
-    // whether an arrange pass ran since. Two ThumbTracks with no arrange between are drag moves
-    // that queued up while the UI thread was busy.
-    private long _lastThumbTrackTimestamp;
-    private bool _arrangedSinceThumbTrack;
     // Last pointer position over the vertical bar, in the bar's own coordinates (drag log only).
     private Point? _scrollBarPointer;
 
@@ -1640,7 +1635,6 @@ public sealed partial class CommitGraphControl : Control
 
     protected override Size ArrangeOverride(Size finalSize)
     {
-        _arrangedSinceThumbTrack = true;
         _queryBar.Arrange(new Rect(0, HeaderHeight, finalSize.Width, QueryBarHeight));
 
         // Resolve the band before the scrollbar logic below reads _bandWidth — during an
@@ -1769,12 +1763,11 @@ public sealed partial class CommitGraphControl : Control
         e.Handled = true;
     }
 
-    /// <summary>One <c>graph-scroll</c> line per vertical thumb move and one at drag end.
-    /// <c>arranged=False</c> on a track line means no arrange pass ran since the previous move:
-    /// the two moves queued up behind other UI-thread work.</summary>
     /// <summary>Pointer, thumb and track positions for the drag log, all translated into the
     /// vertical bar's own coordinates: <c>ptr</c> pointer Y, <c>thumb</c> thumb top..bottom,
-    /// <c>trackArea</c> track top..bottom.</summary>
+    /// <c>trackArea</c> track top..bottom. <c>trackValue</c>/<c>trackMax</c> are the template
+    /// Track's own copies, which draw the thumb; one that disagrees with the bar's (NaN, stale)
+    /// explains a thumb drawn somewhere the bar's Value doesn't put it.</summary>
     private string ScrollBarGeometry()
     {
         var thumb = _scrollBar.GetVisualDescendants().OfType<Thumb>().FirstOrDefault();
@@ -1785,27 +1778,17 @@ public sealed partial class CommitGraphControl : Control
         var trackTop = track.TranslatePoint(default, _scrollBar)?.Y ?? double.NaN;
         var ptr = _scrollBarPointer?.Y ?? double.NaN;
         return string.Create(CultureInfo.InvariantCulture,
-            $"ptr={ptr:F1} thumb={thumbTop:F1}..{thumbTop + thumb.Bounds.Height:F1} trackArea={trackTop:F1}..{trackTop + track.Bounds.Height:F1} trackValue={track.Value:F1} trackMin={track.Minimum:F1} trackMax={track.Maximum:F1} trackViewport={track.ViewportSize:F1} deferDrag={track.DeferThumbDrag} ignoreDrag={track.IgnoreThumbDrag}");
+            $"ptr={ptr:F1} thumb={thumbTop:F1}..{thumbTop + thumb.Bounds.Height:F1} trackArea={trackTop:F1}..{trackTop + track.Bounds.Height:F1} trackValue={track.Value:F1} trackMax={track.Maximum:F1}");
     }
 
+    /// <summary>One <c>graph-scroll</c> line per vertical thumb move and one at drag end.</summary>
     private void LogScrollEvent(ScrollEventType type)
     {
         if (type == ScrollEventType.ThumbTrack)
-        {
-            var now = Stopwatch.GetTimestamp();
-            var sincePrev = _lastThumbTrackTimestamp == 0
-                ? "-"
-                : Stopwatch.GetElapsedTime(_lastThumbTrackTimestamp, now).TotalMilliseconds.ToString("F1", CultureInfo.InvariantCulture);
             LogScroll(string.Create(CultureInfo.InvariantCulture,
-                $"track value={_scrollBar.Value:F1} max={_scrollBar.Maximum:F1} viewport={_scrollBar.ViewportSize:F1} offset={_scrollOffset:F1} rows={_layout?.Layout.RowCount ?? 0} sincePrevMs={sincePrev} arranged={_arrangedSinceThumbTrack} {ScrollBarGeometry()}"));
-            _lastThumbTrackTimestamp = now;
-            _arrangedSinceThumbTrack = false;
-        }
+                $"track value={_scrollBar.Value:F1} max={_scrollBar.Maximum:F1} viewport={_scrollBar.ViewportSize:F1} offset={_scrollOffset:F1} rows={_layout?.Layout.RowCount ?? 0} {ScrollBarGeometry()}"));
         else if (type == ScrollEventType.EndScroll)
-        {
             LogScroll("drag end");
-            _lastThumbTrackTimestamp = 0;
-        }
     }
 
     private void OnScrolled()

@@ -3,8 +3,10 @@ namespace HistoriaApp.Tests;
 /// <summary>Thumb drags on the commit graph's vertical scrollbar. Avalonia's <c>Track</c>
 /// measures each drag move against the thumb's last-arranged position, so pointer moves that
 /// queue up before a layout pass (the UI thread starved while rows load) are double-counted
-/// and the thumb races to the bottom. Nothing errors when that regresses, so
-/// it is pinned here, along with the opt-in <c>graph-scroll</c> log.</summary>
+/// and the thumb races to the bottom; and a sideways-only move divides by zero in its drag math,
+/// which rows arriving mid-drag turn into a NaN <c>Track.Value</c> and a thumb stuck at the
+/// bottom. Nothing errors when either regresses, so both are pinned here, along with the opt-in
+/// <c>graph-scroll</c> log.</summary>
 [Trait("tier", "ui")]
 public sealed class GraphScrollbarDragTests
 {
@@ -79,7 +81,7 @@ public sealed class GraphScrollbarDragTests
         }
 
         var lines = log.Lines.Where(l => l.Category == "graph-scroll").Select(l => l.Message).ToList();
-        Assert.Contains(lines, m => m.StartsWith("track ", StringComparison.Ordinal) && m.Contains("arranged=False", StringComparison.Ordinal));
+        Assert.Contains(lines, m => m.StartsWith("track ", StringComparison.Ordinal) && m.Contains(" ptr=", StringComparison.Ordinal) && m.Contains(" trackValue=", StringComparison.Ordinal));
         Assert.Contains(lines, m => m.StartsWith("maximum ", StringComparison.Ordinal));
         Assert.Contains(lines, m => m == "drag end");
     }
