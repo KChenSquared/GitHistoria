@@ -9,20 +9,28 @@ A high-performance, open-source Windows Git client built with **C# (.NET 10)** a
 ## 💡 Why Historia?
 
 I've used GitKraken as my primary Git tool for many years. I love the way it presents the
-commit graph; it's extremely useful for keeping up with my repos. Over time, though, it became extremely sluggish on the repos I work in day
-to day. Each one has 200k–350k commits, and switching between them had become a very poor
-experience. Then my annual GitKraken renewal came around and the price was going up again.
+commit graph; it's extremely useful for keeping up with my repos. Over time, though, it
+became extremely sluggish on the repos I work in day to day. Each one has 200k–350k
+commits, and switching between them had become a very poor experience. Then my annual
+GitKraken renewal came around and the price was going up again.
 
-So I set out to build a free, better-performing alternative to the commit graph and the core Git features I
-rely on. The graph keeps the same easy-to-read orthogonal edge routing, but it can render
-repos with hundreds of thousands of commits and scroll through them quickly and smoothly.
+So I set out to build a free, better-performing alternative to the commit graph and the
+core Git features I rely on. The graph keeps the same easy-to-read orthogonal edge
+routing, but it can render repos with hundreds of thousands of commits and scroll through
+them quickly and smoothly.
+
+**Trade-offs.** Historia loads your entire commit history instead of capping it at the
+most recent few thousand commits. That means it won't feel as fast as native clients that
+do cap it, and memory grows with the size of the repo: about 200 MB for a 350k-commit
+repo, and about 3 GB for Chromium's ~2.5 million commits. In return, the whole history is
+in one graph, and scrolling through it stays smooth.
 
 ---
 
 ## 🚀 Vision & Mission
 
 Our goal is to create the premier Windows Git GUI that unites:
-1. **Raw Speed and Responsiveness** — instant launch, lightweight memory usage, zero UI lag, and smooth handling of massive repositories (100k+ commits).
+1. **Raw Speed and Responsiveness** — fast launch, zero UI lag, and smooth handling of massive repositories (hundreds of thousands of commits), keeping the full history loaded rather than capping it.
 2. **Feature Completeness & Simplicity** — advanced power tools (interactive rebase\*, line/hunk staging, cherry-pick, submodules, stash management) paired with an intuitive, clean workflow for everyday commits, branching, and conflict resolution.
 3. **Visual Elegance** — vivid, color-coded branch lanes, round commit nodes, branch/tag labels, merge arcs, and visual drag-and-drop actions — engineered for high-performance rendering.
 4. **Progressive Disclosure** — essential, everyday workflows (inspecting history, staging, committing, branch switching) remain immediate and distraction-free, while deep Git power tools (interactive rebase\*, conflict resolver, hunk staging, submodules, worktrees, terminal, error diagnostics) disclose on demand through context menus, collapsible drawers, and dedicated inspection panels without overwhelming the user.
@@ -35,7 +43,7 @@ Our goal is to create the premier Windows Git GUI that unites:
   action that discards uncommitted work or rewrites history — discard, clean, hard reset,
   branch/tag delete, rebase, force-push, stash drop — runs without an explicit modal alert
   (red warning icon, exact effect named) whose **Cancel** button is the highlighted default.
-- **Performance-First Architecture:** Powered by native .NET and Avalonia UI; minimal memory footprint, non-blocking Git operations, and fast cold starts (< 800ms).
+- **Performance-First Architecture:** Powered by native .NET and Avalonia UI; non-blocking Git operations, fast cold starts, and memory that scales with history size (see [Trade-offs](#-why-historia)).
 - **Progressive Disclosure UI:** A layered interface philosophy ensuring zero visual clutter. Common daily operations take center stage with high ergonomic polish; advanced Git machinery and deep technical metadata remain readily accessible but stay tucked behind collapsible sections, contextual actions, and detail drawers until needed.
 - **Next-Gen Commit Graph:** Virtualized rendering (60+ FPS) designed to scroll smoothly across repositories with hundreds of thousands of commits. Features vibrant multi-color branch lanes and orthogonal edge routing with rounded corners.
 - **Power-User Feature Parity:** 100% core Git autonomy, visual interactive rebase\*, granular staging, 3-way conflict resolver, and full repository management (submodules, worktrees, LFS).

@@ -53,7 +53,7 @@ public sealed class HomeView : UserControl, IDisposable
             sp.GetRequiredService<Historia.Services.Theming.IThemeService>()));
         title.Children.Add(Text("Historia", "ColorText", 28, FontWeight.SemiBold));
         root.Children.Add(title);
-        root.Children.Add(Text("Navigate every timeline without the paradox.", "ColorTextMuted", 13));
+        root.Children.Add(Text("The commit graph you love: every commit, no lag, no subscriptions.", "ColorTextMuted", 13));
 
         _cloneBtn = TextButton("Clone…", () => _ = CloneAsync());
         var actions = BuildActionRow(
