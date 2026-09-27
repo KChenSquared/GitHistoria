@@ -106,6 +106,13 @@ public sealed partial class CommitGraphControl : Control
     private readonly ScrollBar _scrollBar;
     private readonly ScrollBar _hScrollBar;
     private bool _scrollBarUserActive;
+    // Thumb-drag diagnostics (`graph-scroll` log): when the previous ThumbTrack arrived, and
+    // whether an arrange pass ran since. Two ThumbTracks with no arrange between are drag moves
+    // that queued up while the UI thread was busy.
+    private long _lastThumbTrackTimestamp;
+    private bool _arrangedSinceThumbTrack;
+    // Last pointer position over the vertical bar, in the bar's own coordinates (drag log only).
+    private Point? _scrollBarPointer;
 
     private RepositoryContext? _context;
     private IRepositoryStateService? _state;
@@ -282,6 +289,28 @@ public sealed partial class CommitGraphControl : Control
     internal bool MsgFetchInFlightForTesting => _msgFetchInFlight is not null;
     internal int MsgBodyCacheCountForTesting => _msgBodyCache.Count;
     internal void FireHoverDwellTimerForTesting() => HandleHoverDwellElapsed();
+    internal int LaneRunsDrawnForTesting => _laneRunsDrawn;
+    internal int LanePiecesSeenForTesting => _lanePiecesSeen;
+    internal int LaneRunGrowthsForTesting => _laneRuns.Growths;
+    internal void ResetLaneRunCountersForTesting() => _laneRuns.ResetCounters();
+    internal ScrollBar VerticalScrollBarForTesting => _scrollBar;
+    internal double ScrollOffsetForTesting => _scrollOffset;
+    /// <summary>Test-only: replaces the layout's row count when sizing the vertical scroll
+    /// range, so a test can make the bar scrollable (and grow it) without a repository.</summary>
+    internal int? ContentRowCountOverrideForTesting
+    {
+        get => _contentRowCountOverrideForTesting;
+        set
+        {
+            _contentRowCountOverrideForTesting = value;
+            InvalidateArrange();
+        }
+    }
+    private int? _contentRowCountOverrideForTesting;
+    /// <summary>Test-only: receives the <c>graph-scroll</c> lines in place of <see cref="AppLog"/>.</summary>
+    internal IAppLog? ScrollLogForTesting { get; set; }
+    private bool ScrollLogOn => ScrollLogForTesting is not null || AppLog.Enabled;
+    private void LogScroll(string message) => (ScrollLogForTesting ?? AppLog.Current).Debug("graph-scroll", message);
 
     /// <summary>Test-only: simulates a horizontal scroll/pan without driving the real
     /// <see cref="ScrollBar"/> or lane-pan gestures.</summary>
@@ -344,6 +373,10 @@ public sealed partial class CommitGraphControl : Control
     private readonly Dictionary<int, SolidColorBrush> _laneFills = [];
     private readonly Dictionary<int, SolidColorBrush> _laneTicks = [];
     private readonly Dictionary<(int Tag, int Size, int WidthKey, string Text), FormattedText> _textCache = [];
+    // Reused every frame to merge vertical lane pieces into runs (Rule 24: counts its growths).
+    private readonly LaneRunBuilder _laneRuns = new();
+    private int _lanePiecesSeen;
+    private int _laneRunsDrawn;
 
     private double CornerRadius => Math.Min(LaneWidth, _rowHeight) * 0.75;
 
@@ -375,6 +408,23 @@ public sealed partial class CommitGraphControl : Control
 
     private double RowsTop => HeaderHeight + (_queryBar.IsVisible ? QueryBarHeight : 0);
 
+    // Avalonia's Track.ApplyThumbDrag divides the drag vector by the value change; a drag move
+    // with no motion along the track (a sideways wiggle) divides by zero and leaves a NaN drag
+    // record. If the Track re-arranges before the next move — rows streaming in change Maximum —
+    // that NaN is folded into the Thumb's grab point, every later move computes NaN, Track.Value
+    // goes NaN and the thumb sticks at the bottom until something rewrites Value. Such a move
+    // changes nothing, so it is marked handled here; class handlers run before the Track's own
+    // DragDelta handler on the Thumb. Registered once for every Track in the app.
+    static CommitGraphControl()
+    {
+        Thumb.DragDeltaEvent.AddClassHandler<Thumb>((thumb, e) =>
+        {
+            if (thumb.Parent is Track track
+                && (track.Orientation == Orientation.Vertical ? e.Vector.Y : e.Vector.X) == 0)
+                e.Handled = true;
+        });
+    }
+
     public CommitGraphControl()
     {
         UseLayoutRounding = true;
@@ -399,15 +449,27 @@ public sealed partial class CommitGraphControl : Control
         // it is driven by the ScrollBar's OWN Scroll event type, not pointer capture: a
         // ThumbTrack means a drag is in progress, and EVERY drag ends with EndScroll regardless
         // of where the pointer is released.
+        //
+        // Avalonia's Track adds each DragDelta to Value, and a DragDelta is the pointer's offset
+        // from the grab point measured against the thumb's last-arranged position. When the UI
+        // thread is starved (rows loading) several moves arrive before one layout pass, each
+        // carrying the whole offset since that arrange, so they are double-counted and the thumb
+        // races to the bottom and stays offset from the pointer. Re-arranging the bar after every
+        // drag move keeps one move per arrange. Wheel, keys and track clicks don't need it.
         _scrollBar.Scroll += (_, e) =>
         {
             _scrollBarUserActive = e.ScrollEventType == ScrollEventType.ThumbTrack;
+            if (ScrollLogOn)
+                LogScrollEvent(e.ScrollEventType);
             _scrollOffset = _scrollBar.Value;
             OnScrolled();
+            if (_scrollBarUserActive)
+                _scrollBar.UpdateLayout();
         };
         // Belt-and-braces: any of these unlatch too, and can never leave it stuck.
         _scrollBar.AddHandler(PointerReleasedEvent, (_, _) => _scrollBarUserActive = false, RoutingStrategies.Tunnel);
         _scrollBar.PointerCaptureLost += (_, _) => _scrollBarUserActive = false;
+        _scrollBar.AddHandler(PointerMovedEvent, (_, e) => { if (ScrollLogOn) _scrollBarPointer = e.GetPosition(_scrollBar); }, RoutingStrategies.Tunnel, handledEventsToo: true);
         _hScrollBar = new ScrollBar { Orientation = Orientation.Horizontal, Height = 12, IsVisible = false };
         _hScrollBar.Scroll += (_, _) => { _hScrollOffset = _hScrollBar.Value; InvalidateVisual(); };
 
@@ -1496,8 +1558,12 @@ public sealed partial class CommitGraphControl : Control
     private static T Pooled<T>(Dictionary<int, T> pool, int colorIndex, Func<int, T> build)
         => pool.TryGetValue(colorIndex, out var v) ? v : pool[colorIndex] = build(colorIndex);
 
+    // Lane and emphasis pens use a square cap: each piece overhangs its ends by half the pen
+    // width, so butted runs, elbows and colour changes overlap instead of meeting at a
+    // fractional y, where anti-aliasing would leave a faint seam. The overhang at a line's
+    // real end sits under its commit dot or is clipped by the row area.
     private Pen LanePen(int colorIndex) => Pooled(_lanePens, colorIndex,
-        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), LaneStrokeWidth));
+        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), LaneStrokeWidth, lineCap: PenLineCap.Square));
 
     /// <summary>§V6-G2: a thin, faint version of the lane colour for a non-HEAD badge→node
     /// connector. 1 DIP at 45% alpha — the crisp, stable equivalent of "thin and faint" (a
@@ -1512,7 +1578,7 @@ public sealed partial class CommitGraphControl : Control
         i => new SolidColorBrush(ToColor(LaneRgb(i))));
 
     private Pen EmphPen(int colorIndex) => Pooled(_emphPens, colorIndex,
-        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 3.0));
+        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 3.0, lineCap: PenLineCap.Square));
 
     /// <summary>§V6-G1: the badge is a solid opaque lane-colour fill, so its label and icons
     /// need ink that contrasts against that hue — near-black on a light badge, near-white on a
@@ -1575,13 +1641,14 @@ public sealed partial class CommitGraphControl : Control
 
     protected override Size ArrangeOverride(Size finalSize)
     {
+        _arrangedSinceThumbTrack = true;
         _queryBar.Arrange(new Rect(0, HeaderHeight, finalSize.Width, QueryBarHeight));
 
         // Resolve the band before the scrollbar logic below reads _bandWidth — during an
         // interactive sidebar drag the arrange pass would otherwise see last frame's width.
         ResolveColumnBand(finalSize.Width);
 
-        var contentHeight = (_layout?.Layout.RowCount ?? 0) * _rowHeight;
+        var contentHeight = (_contentRowCountOverrideForTesting ?? _layout?.Layout.RowCount ?? 0) * _rowHeight;
         var rowArea = finalSize.Height - RowsTop;
         var showV = contentHeight > rowArea;
         _scrollBar.IsVisible = showV && !RevealBlanking;
@@ -1594,7 +1661,10 @@ public sealed partial class CommitGraphControl : Control
         {
             _scrollBar.Arrange(new Rect(finalSize.Width - 12, RowsTop, 12, viewport));
             _scrollBar.Minimum = 0;
-            _scrollBar.Maximum = Math.Max(0, contentHeight - viewport);
+            var maximum = Math.Max(0, contentHeight - viewport);
+            if (_scrollBarUserActive && maximum != _scrollBar.Maximum && ScrollLogOn)
+                LogScroll(string.Create(CultureInfo.InvariantCulture, $"maximum {_scrollBar.Maximum:F1} -> {maximum:F1} mid-drag"));
+            _scrollBar.Maximum = maximum;
             _scrollBar.ViewportSize = viewport;
             _scrollBar.LargeChange = viewport;
             _scrollBar.SmallChange = _rowHeight;
@@ -1698,6 +1768,45 @@ public sealed partial class CommitGraphControl : Control
         _scrollOffset = Math.Clamp(_scrollOffset - delta * 40, 0, Math.Max(0, _scrollBar.Maximum));
         OnScrolled();
         e.Handled = true;
+    }
+
+    /// <summary>One <c>graph-scroll</c> line per vertical thumb move and one at drag end.
+    /// <c>arranged=False</c> on a track line means no arrange pass ran since the previous move:
+    /// the two moves queued up behind other UI-thread work.</summary>
+    /// <summary>Pointer, thumb and track positions for the drag log, all translated into the
+    /// vertical bar's own coordinates: <c>ptr</c> pointer Y, <c>thumb</c> thumb top..bottom,
+    /// <c>trackArea</c> track top..bottom.</summary>
+    private string ScrollBarGeometry()
+    {
+        var thumb = _scrollBar.GetVisualDescendants().OfType<Thumb>().FirstOrDefault();
+        var track = _scrollBar.GetVisualDescendants().OfType<Track>().FirstOrDefault();
+        if (thumb is null || track is null)
+            return "geometry=none";
+        var thumbTop = thumb.TranslatePoint(default, _scrollBar)?.Y ?? double.NaN;
+        var trackTop = track.TranslatePoint(default, _scrollBar)?.Y ?? double.NaN;
+        var ptr = _scrollBarPointer?.Y ?? double.NaN;
+        return string.Create(CultureInfo.InvariantCulture,
+            $"ptr={ptr:F1} thumb={thumbTop:F1}..{thumbTop + thumb.Bounds.Height:F1} trackArea={trackTop:F1}..{trackTop + track.Bounds.Height:F1} trackValue={track.Value:F1} trackMin={track.Minimum:F1} trackMax={track.Maximum:F1} trackViewport={track.ViewportSize:F1} deferDrag={track.DeferThumbDrag} ignoreDrag={track.IgnoreThumbDrag}");
+    }
+
+    private void LogScrollEvent(ScrollEventType type)
+    {
+        if (type == ScrollEventType.ThumbTrack)
+        {
+            var now = Stopwatch.GetTimestamp();
+            var sincePrev = _lastThumbTrackTimestamp == 0
+                ? "-"
+                : Stopwatch.GetElapsedTime(_lastThumbTrackTimestamp, now).TotalMilliseconds.ToString("F1", CultureInfo.InvariantCulture);
+            LogScroll(string.Create(CultureInfo.InvariantCulture,
+                $"track value={_scrollBar.Value:F1} max={_scrollBar.Maximum:F1} viewport={_scrollBar.ViewportSize:F1} offset={_scrollOffset:F1} rows={_layout?.Layout.RowCount ?? 0} sincePrevMs={sincePrev} arranged={_arrangedSinceThumbTrack} {ScrollBarGeometry()}"));
+            _lastThumbTrackTimestamp = now;
+            _arrangedSinceThumbTrack = false;
+        }
+        else if (type == ScrollEventType.EndScroll)
+        {
+            LogScroll("drag end");
+            _lastThumbTrackTimestamp = 0;
+        }
     }
 
     private void OnScrolled()
@@ -3046,6 +3155,10 @@ public sealed partial class CommitGraphControl : Control
         // passes start indexing it row by row (§7.6). A no-op for the in-memory store.
         layout.Commits.Prefetch(first, last);
 
+        // Derive the lane segments for the whole drawn block up front, with a tight window after
+        // a jump such as a scrollbar drag (§7.6).
+        layout.EnsureRows(first, last);
+
         _pillRects.Clear();
         _iconRects.Clear();
         _overflowChips.Clear();
@@ -3344,36 +3457,53 @@ public sealed partial class CommitGraphControl : Control
         var minVisibleX = Math.Max(colX, 0) - 4;
         var maxVisibleX = Math.Min(colX + _graphColWidth, viewportWidth) + 4;
 
-        // Draw segments and elbows directly for visible rows in O(visible rows) time
+        // Vertical lane pieces of the visible rows are merged into maximal same-colour runs and
+        // drawn as one line each — about lanes plus lane breaks, not rows × lanes. Where several
+        // pieces share a lane in one row, the builder keeps the last one listed, which is the one
+        // that would cover the rest on screen (same x, same pen width). Pens use a square cap, so
+        // where two runs meet (a colour change, an elbow) they overlap rather than leave a seam.
+        _laneRuns.Begin(layout.TotalLaneCount);
+        var piecesSeen = 0;
+        for (var row = first; row <= last; row++)
+        {
+            var segments = layout.GetRowSegments(row);
+            piecesSeen += segments.Length;
+            _laneRuns.AddRow(segments);
+        }
+
+        var yBase = RowY(first);
+        var halfRow = _rowHeight / 2;
+        var runsDrawn = 0;
+        foreach (var run in _laneRuns.Finish())
+        {
+            var x = LaneX(run.Lane);
+            if (x < minVisibleX || x > maxVisibleX)
+                continue;
+
+            var isEmph = hoverLane >= 0 && run.Lane == hoverLane;
+            var pen = isEmph ? EmphPen(run.ColorIndex) : LanePen(run.ColorIndex);
+            dc.DrawLine(pen, new Point(x, yBase + run.StartHalf * halfRow), new Point(x, yBase + run.EndHalf * halfRow));
+            runsDrawn++;
+        }
+        _lanePiecesSeen = piecesSeen;
+        _laneRunsDrawn = runsDrawn;
+
+        // Elbows after every lane run: no row's lines overlap the previous row's elbows, so this
+        // keeps the per-row stacking.
         for (var row = first; row <= last; row++)
         {
             var y = RowY(row);
-            var yMid = y + _rowHeight / 2;
-
-            var segments = layout.GetRowSegments(row);
-            if (!segments.IsEmpty)
+            var rowElbows = layout.GetRowElbows(row);
+            if (!rowElbows.IsEmpty)
             {
-                foreach (var seg in segments)
-                {
-                    var x = LaneX(seg.Lane);
-                    if (x < minVisibleX || x > maxVisibleX)
-                        continue;
+                // Elbows on one row share the node-height horizontal, so paint order decides
+                // which colour shows where they overlap: longest first, so each stretch shows
+                // the nearest branch that still runs past it. Hover-emphasised ones go on top.
+                if (_elbowScratch.Length < rowElbows.Length)
+                    _elbowScratch = new RowElbow[Math.Max(16, rowElbows.Length)];
+                var elbows = _elbowScratch.AsSpan(0, rowElbows.Length);
+                OrderElbowsForPaint(rowElbows, elbows, hoverLane);
 
-                    var isEmph = hoverLane >= 0 && seg.Lane == hoverLane;
-                    var pen = isEmph ? EmphPen(seg.ColorIndex) : LanePen(seg.ColorIndex);
-
-                    if (seg.Type == LaneSegmentType.Full)
-                        dc.DrawLine(pen, new Point(x, y), new Point(x, y + _rowHeight));
-                    else if (seg.Type == LaneSegmentType.TopToNode)
-                        dc.DrawLine(pen, new Point(x, y), new Point(x, yMid));
-                    else if (seg.Type == LaneSegmentType.NodeToBottom)
-                        dc.DrawLine(pen, new Point(x, yMid), new Point(x, y + _rowHeight));
-                }
-            }
-
-            var elbows = layout.GetRowElbows(row);
-            if (!elbows.IsEmpty)
-            {
                 foreach (var elbow in elbows)
                 {
                     var fromX = LaneX(elbow.FromLane);
@@ -3391,13 +3521,23 @@ public sealed partial class CommitGraphControl : Control
             }
         }
 
-        // The right-edge lane tick sits ON TOP of the lines
+        // The right-edge lane tick sits ON TOP of the lines. Consecutive same-colour rows are
+        // drawn as one rectangle, and each rectangle runs 1px into the next (which paints over
+        // it), so the tick has no anti-aliased seams at fractional row boundaries.
         if (_graphColWidth > 0)
         {
             var tickX = colX + _graphColWidth - TickWidth;
+            var runStart = first;
             for (var row = first; row <= last; row++)
-                dc.DrawRectangle(LaneTick(layout.Rows[row].ColorIndex), null,
-                    new Rect(tickX, RowY(row), TickWidth, _rowHeight));
+            {
+                var color = layout.Rows[row].ColorIndex;
+                if (row < last && layout.Rows[row + 1].ColorIndex == color)
+                    continue;
+                var top = RowY(runStart);
+                var bottom = RowY(row + 1) + (row < last ? 1 : 0);
+                dc.DrawRectangle(LaneTick(color), null, new Rect(tickX, top, TickWidth, bottom - top));
+                runStart = row + 1;
+            }
         }
     }
 
@@ -3662,6 +3802,35 @@ public sealed partial class CommitGraphControl : Control
             var ft = Text(text, brush, maxW);
             var midY = RowY(row) + (_rowHeight - ft.Height) / 2;
             dc.DrawText(ft, new Point(colX + 8, midY));
+        }
+    }
+
+    private RowElbow[] _elbowScratch = Array.Empty<RowElbow>();
+
+    /// <summary>Copies <paramref name="source"/> into <paramref name="dest"/> in paint order:
+    /// elbows touching <paramref name="hoverLane"/> last, and within each group the widest lane
+    /// span first. Stable, so equal spans keep their layout order.</summary>
+    internal static void OrderElbowsForPaint(ReadOnlySpan<RowElbow> source, Span<RowElbow> dest, int hoverLane)
+    {
+        static int Key(in RowElbow e, int hoverLane)
+        {
+            var emph = hoverLane >= 0 && (e.FromLane == hoverLane || e.ToLane == hoverLane);
+            // Higher key paints later: emphasised above plain, shorter above longer.
+            return (emph ? 1 << 20 : 0) - Math.Abs(e.ToLane - e.FromLane);
+        }
+
+        source.CopyTo(dest);
+        for (var i = 1; i < dest.Length; i++)
+        {
+            var item = dest[i];
+            var key = Key(item, hoverLane);
+            var j = i - 1;
+            while (j >= 0 && Key(dest[j], hoverLane) > key)
+            {
+                dest[j + 1] = dest[j];
+                j--;
+            }
+            dest[j + 1] = item;
         }
     }
 
