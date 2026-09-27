@@ -1,6 +1,6 @@
 # Historia 📜
 
-> *Navigate every timeline without the paradox.*
+> *The commit graph you love, without the subscription.*
 
 A high-performance, open-source Windows Git client built with **C# (.NET 10)** and **Avalonia UI**.
 
