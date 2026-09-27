@@ -60,12 +60,22 @@ internal static class GraphCacheLocks
 /// history) — one <see cref="int"/> per ROW: which record occupies that row. Absent
 /// (<c>OrderVersion == 0</c>) means the identity order — row <c>i</c> IS record <c>i</c>, exactly
 /// the common case, and the only one before any reorder has ever run.</item>
-/// <item><c>.meta.tips</c> — the sorted tip SHAs (20 bytes each) the current order was
+/// <item><c>.meta.tips</c> — the sorted tip SHAs (20 or 32 bytes each) the current order was
 /// built from; not versioned, always describes the CURRENT order.</item>
 /// </list>
 /// All writes are append-only and best-effort; any read fault downgrades the caller to the
 /// in-memory path.
 /// </summary>
+/// <summary>
+/// Thrown when a graph store is invalid, corrupted, or receives an object ID with a mismatched hash size.
+/// </summary>
+public sealed class StoreInvalidException : InvalidOperationException
+{
+    public StoreInvalidException() { }
+    public StoreInvalidException(string message) : base(message) { }
+    public StoreInvalidException(string message, Exception innerException) : base(message, innerException) { }
+}
+
 internal sealed class GraphMetaStore
 {
     // Format version history:
@@ -119,6 +129,15 @@ internal sealed class GraphMetaStore
         /// ignores it (unknown JSON members are ignored by <c>System.Text.Json</c> by default), so
         /// no <see cref="Version"/> bump.</summary>
         public long LastFullWalkMs { get; set; }
+
+        private int _hashSize;
+
+        /// <summary>Byte length of object ids in this store (20 for SHA-1, 32 for SHA-256).</summary>
+        public int HashSize
+        {
+            get => _hashSize == 0 ? 20 : _hashSize;
+            set => _hashSize = value;
+        }
     }
 
     /// <summary>
@@ -147,7 +166,11 @@ internal sealed class GraphMetaStore
             if (!hdr.Exhausted && hdr.RowCount < wantCount)
                 return null;
 
-            return DiskCommitStore.Open(repoPath, hdr.RowCount, hdr.RecordCount, hdr.OrderVersion);
+            var hashSize = hdr.HashSize == 0 ? 20 : hdr.HashSize;
+            if (hashSize != 20 && hashSize != 32)
+                return null;
+
+            return DiskCommitStore.Open(repoPath, hdr.RowCount, hdr.RecordCount, hdr.OrderVersion, hashSize);
         }
         catch
         {
@@ -169,6 +192,9 @@ internal sealed class GraphMetaStore
             var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
             if (hdr is null || hdr.Version != Version || hdr.Fingerprint != fingerprint
                 || hdr.IncludeRemoteBranches != includeRemoteBranches || hdr.WalkEngine != GraphWalkCache.CliWalkMarker)
+                return (false, 0, false);
+            var hashSize = hdr.HashSize == 0 ? 20 : hdr.HashSize;
+            if (hashSize != 20 && hashSize != 32)
                 return (false, 0, false);
             return (true, hdr.RowCount, hdr.Exhausted);
         }
@@ -197,6 +223,9 @@ internal sealed class GraphMetaStore
             if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
                 || hdr.WalkEngine != GraphWalkCache.CliWalkMarker || hdr.RowCount <= 0)
                 return (false, 0);
+            var hashSize = hdr.HashSize == 0 ? 20 : hdr.HashSize;
+            if (hashSize != 20 && hashSize != 32)
+                return (false, 0);
             return (true, hdr.RowCount);
         }
         catch
@@ -223,6 +252,9 @@ internal sealed class GraphMetaStore
             if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
                 || hdr.WalkEngine != GraphWalkCache.CliWalkMarker)
                 return (false, 0, 0, 0, 0, false, 0);
+            var hashSize = hdr.HashSize == 0 ? 20 : hdr.HashSize;
+            if (hashSize != 20 && hashSize != 32)
+                return (false, 0, 0, 0, 0, false, 0);
             return (true, hdr.Fingerprint, hdr.RowCount, hdr.RecordCount, hdr.OrderVersion, hdr.Exhausted, hdr.LastFullWalkMs);
         }
         catch
@@ -236,7 +268,7 @@ internal sealed class GraphMetaStore
     /// file is missing (a store that has never had its order committed with a known tip set — a
     /// never-reordered store) or unreadable; <see
     /// cref="GraphMetaSplice.Evaluate"/>'s guard 1 treats that as "tips don't match" (reject).</summary>
-    public static IReadOnlyList<GitObjectId>? ReadTips(string repoPath)
+    public static IReadOnlyList<GitObjectId>? ReadTips(string repoPath, int hashSize = 0)
     {
         try
         {
@@ -244,11 +276,28 @@ internal sealed class GraphMetaStore
             if (!File.Exists(path))
                 return null;
             var bytes = ReadAllBytesShared(path);
-            if (bytes.Length % 20 != 0)
+            if (hashSize <= 0)
+            {
+                var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
+                if (File.Exists(hdrPath))
+                {
+                    var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
+                    if (hdr is not null && hdr.HashSize > 0)
+                        hashSize = hdr.HashSize;
+                }
+                else if (bytes.Length > 0 && bytes.Length % 32 == 0 && bytes.Length % 20 != 0)
+                {
+                    hashSize = 32;
+                }
+            }
+            if (hashSize <= 0)
+                hashSize = 20;
+
+            if (bytes.Length % hashSize != 0)
                 return null;
-            var tips = new GitObjectId[bytes.Length / 20];
+            var tips = new GitObjectId[bytes.Length / hashSize];
             for (var i = 0; i < tips.Length; i++)
-                tips[i] = new GitObjectId(bytes.AsSpan(i * 20, 20));
+                tips[i] = new GitObjectId(bytes.AsSpan(i * hashSize, hashSize));
             return tips;
         }
         catch
@@ -380,6 +429,9 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     private readonly string _idx = GraphCachePaths.File(repoPath, GraphMetaStore.IdxExt);
     private readonly string _search = GraphCachePaths.File(repoPath, GraphMetaStore.SearchExt);
     private readonly string _tips = GraphCachePaths.File(repoPath, GraphMetaStore.TipsExt);
+    private int _hashSize;
+
+    public int HashSize => _hashSize > 0 ? _hashSize : EnsureHashSize();
 
     /// <summary>
     /// Retires every sibling file for this repository so a from-row-0 re-spill starts the store
@@ -401,6 +453,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// </summary>
     public bool Reset()
     {
+        _hashSize = 0;
         try
         {
             var cacheDir = AppPaths.CacheDirectory;
@@ -532,10 +585,58 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     public void Append(IReadOnlyList<RawCommit> rows, int start, int count)
         => Append(i => rows[i].Metadata, i => rows[i].ParentIds, start, count);
 
+    private int EnsureHashSize()
+    {
+        if (_hashSize != 0)
+            return _hashSize;
+        if (File.Exists(_hdr))
+        {
+            try
+            {
+                var hdr = JsonSerializer.Deserialize<GraphMetaStore.Header>(GraphMetaStore.ReadAllBytesShared(_hdr), GraphMetaStore.Json);
+                if (hdr is not null)
+                    _hashSize = hdr.HashSize == 0 ? 20 : hdr.HashSize;
+            }
+            catch { }
+        }
+        return _hashSize;
+    }
+
     private void Append(Func<int, CommitMetadata> get, Func<int, IReadOnlyList<GitObjectId>?> getParents, int start, int count)
     {
         if (count <= 0)
             return;
+
+        EnsureHashSize();
+
+        for (var i = 0; i < count; i++)
+        {
+            var m = get(start + i);
+            var idSize = m.Id.HashSize;
+            if (idSize != 20 && idSize != 32)
+                throw new StoreInvalidException($"Invalid commit id hash size: {idSize}");
+
+            if (_hashSize == 0)
+            {
+                _hashSize = idSize;
+            }
+            else if (_hashSize != idSize)
+            {
+                throw new StoreInvalidException($"Commit id hash size mismatch: expected {_hashSize}, got {idSize}");
+            }
+
+            var parents = getParents(start + i);
+            if (parents is not null)
+            {
+                for (var p = 0; p < parents.Count; p++) 
+                {
+                    var parent = parents[p];
+                    if (!parent.IsEmpty && !parent.IsZero && parent.HashSize != _hashSize)
+                        throw new StoreInvalidException($"Parent commit id hash size mismatch: expected {_hashSize}, got {parent.HashSize}");
+                }
+            }
+        }
+
         try
         {
             Directory.CreateDirectory(AppPaths.CacheDirectory);
@@ -544,7 +645,8 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             using var search = new StreamWriter(new FileStream(_search, FileMode.Append, FileAccess.Write, FileShare.Read), new UTF8Encoding(false));
             var bw = new BinaryWriter(dat, new UTF8Encoding(false), leaveOpen: true);
             var idxBuf = new byte[8];
-            Span<byte> zeroSha = stackalloc byte[20];
+            Span<byte> zeroSha = stackalloc byte[_hashSize];
+            zeroSha.Clear();
 
             for (var i = 0; i < count; i++)
             {
@@ -562,13 +664,13 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 bw.Write(m.ParentCount);
                 for (var p = 0; p < m.ParentCount; p++)
                 {
-                    if (parents is not null && p < parents.Count)
+                    if (parents is not null && p < parents.Count && !parents[p].IsEmpty && !parents[p].IsZero)
                         bw.Write(parents[p].AsSpan());
                     else
                         bw.Write(zeroSha); // no real parent SHA available for this record
                 }
 
-                // Full 40-char SHA so a Ctrl+F prefix of any length matches exactly as the
+                // Full SHA so a Ctrl+F prefix of any length matches exactly as the
                 // in-memory store does.
                 search.Write(m.Id.Sha);
                 search.Write(GraphMetaStore.Sep);
@@ -578,6 +680,10 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 search.Write('\n');
             }
             bw.Flush();
+        }
+        catch (StoreInvalidException)
+        {
+            throw;
         }
         catch { }
     }
@@ -614,6 +720,9 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             var lastFullWalkMs = fullWalkElapsed is { } elapsed && elapsed > TimeSpan.Zero
                 ? (long)elapsed.TotalMilliseconds
                 : ReadCurrentLastFullWalkMs();
+            var hashSize = _hashSize > 0 ? _hashSize : ReadCurrentHashSize();
+            if (hashSize <= 0)
+                hashSize = 20;
             var hdr = new GraphMetaStore.Header
             {
                 Version = GraphMetaStore.Version,
@@ -625,6 +734,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 Exhausted = exhausted,
                 WalkEngine = GraphWalkCache.CliWalkMarker,
                 LastFullWalkMs = lastFullWalkMs,
+                HashSize = hashSize,
             };
             var tmp = $"{_hdr}.{Guid.NewGuid():N}.tmp";
             File.WriteAllBytes(tmp, JsonSerializer.SerializeToUtf8Bytes(hdr, GraphMetaStore.Json));
@@ -647,6 +757,21 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 return 0;
             var existing = JsonSerializer.Deserialize<GraphMetaStore.Header>(GraphMetaStore.ReadAllBytesShared(_hdr), GraphMetaStore.Json);
             return existing is not null && existing.Fingerprint == fingerprint ? existing.LastFullWalkMs : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private int ReadCurrentHashSize()
+    {
+        try
+        {
+            if (!File.Exists(_hdr))
+                return 0;
+            var existing = JsonSerializer.Deserialize<GraphMetaStore.Header>(GraphMetaStore.ReadAllBytesShared(_hdr), GraphMetaStore.Json);
+            return existing is not null ? existing.HashSize : 0;
         }
         catch
         {
@@ -686,12 +811,29 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         try
         {
             Directory.CreateDirectory(AppPaths.CacheDirectory);
-            var bytes = new byte[sortedTips.Count * 20];
+            var hashSize = _hashSize > 0 ? _hashSize : (sortedTips.Count > 0 ? sortedTips[0].HashSize : 20);
+            if (hashSize <= 0)
+                hashSize = 20;
+
             for (var i = 0; i < sortedTips.Count; i++)
-                sortedTips[i].AsSpan().CopyTo(bytes.AsSpan(i * 20, 20));
+            {
+                if (sortedTips[i].HashSize != hashSize)
+                    throw new StoreInvalidException($"Tip id hash size mismatch: expected {hashSize}, got {sortedTips[i].HashSize}");
+            }
+
+            if (_hashSize == 0 && sortedTips.Count > 0)
+                _hashSize = hashSize;
+
+            var bytes = new byte[sortedTips.Count * hashSize];
+            for (var i = 0; i < sortedTips.Count; i++)
+                sortedTips[i].AsSpan().CopyTo(bytes.AsSpan(i * hashSize, hashSize));
             var tmp = $"{_tips}.{Guid.NewGuid():N}.tmp";
             File.WriteAllBytes(tmp, bytes);
             File.Move(tmp, _tips, overwrite: true);
+        }
+        catch (StoreInvalidException)
+        {
+            throw;
         }
         catch { }
     }
@@ -733,6 +875,10 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         {
             var existing = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches);
             var matchesKey = existing.Ok && existing.WalkKey == fingerprint;
+            var rowHashSize = rows.Count > 0 ? rows[0].Id.HashSize : 20;
+            var existingHashSize = EnsureHashSize();
+            if (matchesKey && existingHashSize > 0 && rowHashSize > 0 && existingHashSize != rowHashSize)
+                matchesKey = false;
 
             if (!matchesKey)
             {
@@ -753,7 +899,14 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 return (SpillOutcome.Conflict, existing.RowCount);
             }
 
-            Append(rows, 0, to - from);
+            try
+            {
+                Append(rows, 0, to - from);
+            }
+            catch (StoreInvalidException)
+            {
+                return (SpillOutcome.Conflict, existing.RowCount);
+            }
             Commit(to, exhausted, fullWalkElapsed);
             // Without this, a store's tips are only ever written by
             // a REORDER (TryCommitReorder) — a never-reordered store (the common case for a repo
@@ -783,8 +936,15 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             var existing = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches);
             if (!existing.Ok || existing.WalkKey != expectedWalkKey)
                 return false;
-            Append(newRecords, 0, newRecords.Count);
-            return true;
+            try
+            {
+                Append(newRecords, 0, newRecords.Count);
+                return true;
+            }
+            catch (StoreInvalidException)
+            {
+                return false;
+            }
         }
     }
 
@@ -813,7 +973,14 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             var newOrderVersion = expectedOldOrderVersion + 1;
             if (!WriteOrder(newOrderVersion, order))
                 return false;
-            WriteTips(sortedTips);
+            try
+            {
+                WriteTips(sortedTips);
+            }
+            catch (StoreInvalidException)
+            {
+                return false;
+            }
             CommitReorder(
                 rowCount: order.Length,
                 recordCount: expectedOldRecordCount + newRecordCount,
@@ -854,6 +1021,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     private long[] _offsets;            // [record] -> start byte in .dat
     private long _datLength;
     private int _count;                 // row count (== record count until the first reorder)
+    private readonly int _hashSize;
 
     /// <summary>[row] -&gt; record index, or null for the identity order (row IS
     /// record — every store before its first reorder, and the overwhelming majority always).
@@ -888,7 +1056,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         ParentCount = 0,
     };
 
-    private DiskCommitStore(string repoPath, SafeFileHandle dat, long[] offsets, long datLength, int count, int[]? order)
+    private DiskCommitStore(string repoPath, SafeFileHandle dat, long[] offsets, long datLength, int count, int[]? order, int hashSize)
     {
         _repoPath = repoPath;
         _dat = dat;
@@ -896,18 +1064,38 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         _datLength = datLength;
         _count = count;
         _order = order;
+        _hashSize = hashSize > 0 ? hashSize : 20;
     }
 
     /// <summary>Opens a store at the IDENTITY order — row <c>i</c> IS record <c>i</c>. Every
     /// caller, and the only shape <see cref="SetCount"/>
     /// supports growing in place.</summary>
-    public static DiskCommitStore Open(string repoPath, int rowCount) => Open(repoPath, rowCount, rowCount, orderVersion: 0);
+    public static DiskCommitStore Open(string repoPath, int rowCount) => Open(repoPath, rowCount, rowCount, orderVersion: 0, hashSize: 0);
 
     /// <summary>Opens a store whose current header names an explicit order version.
     /// <paramref name="recordCount"/> sizes the <c>.idx</c>/offset table (records, not rows);
     /// <paramref name="orderVersion"/> 0 means identity (no order file to load).</summary>
-    public static DiskCommitStore Open(string repoPath, int rowCount, int recordCount, int orderVersion)
+    public static DiskCommitStore Open(string repoPath, int rowCount, int recordCount, int orderVersion) => Open(repoPath, rowCount, recordCount, orderVersion, hashSize: 0);
+
+    public static DiskCommitStore Open(string repoPath, int rowCount, int recordCount, int orderVersion, int hashSize)
     {
+        if (hashSize <= 0)
+        {
+            var hdrPath = GraphCachePaths.File(repoPath, GraphMetaStore.HdrExt);
+            if (File.Exists(hdrPath))
+            {
+                try
+                {
+                    var hdr = JsonSerializer.Deserialize<GraphMetaStore.Header>(GraphMetaStore.ReadAllBytesShared(hdrPath), GraphMetaStore.Json);
+                    if (hdr is not null && hdr.HashSize > 0)
+                        hashSize = hdr.HashSize;
+                }
+                catch { }
+            }
+            if (hashSize <= 0)
+                hashSize = 20;
+        }
+
         var datPath = GraphCachePaths.File(repoPath, GraphMetaStore.DatExt);
         var idxPath = GraphCachePaths.File(repoPath, GraphMetaStore.IdxExt);
         var offsets = ReadOffsets(idxPath, recordCount);
@@ -920,7 +1108,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
             order = ReadOrder(orderPath, rowCount);
         }
         var count = order is not null ? Math.Min(rowCount, order.Length) : Math.Min(rowCount, offsets.Length);
-        return new DiskCommitStore(repoPath, dat, offsets, len, count, order);
+        return new DiskCommitStore(repoPath, dat, offsets, len, count, order, hashSize);
     }
 
     private static int[] ReadOrder(string orderPath, int rowCount)
@@ -957,6 +1145,8 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         }
     }
 
+    public int HashSize => _hashSize;
+
     public int Count => Volatile.Read(ref _count);
 
     /// <summary>Total distinct commit records in <c>.meta.dat</c> right now (can exceed
@@ -976,7 +1166,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     public int[] ToOrderArray() => _order is not null ? [.. _order] : [.. Enumerable.Range(0, _count)];
 
     /// <summary>Builds a SHA -&gt; record-index table by reading just the leading
-    /// 20-byte SHA of every existing record (skips message/author/parent bytes entirely) — used
+    /// SHA of every existing record (skips message/author/parent bytes entirely) — used
     /// by the reorder job to find which commits in a freshly walked history already have a
     /// durable record, so it only appends genuinely new ones. One small read per record; this is
     /// a background, gated, lowest-priority job (never on the render thread), so it trades read
@@ -995,10 +1185,10 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         {
             if (_closed)
                 return index;
-            Span<byte> shaBuf = stackalloc byte[20];
+            Span<byte> shaBuf = stackalloc byte[_hashSize];
             for (var rec = 0; rec < _offsets.Length; rec++)
             {
-                if (RandomAccess.Read(_dat, shaBuf, _offsets[rec]) != 20)
+                if (RandomAccess.Read(_dat, shaBuf, _offsets[rec]) != _hashSize)
                     continue;
                 index.Add(new GitObjectId(shaBuf), rec);
             }
@@ -1085,7 +1275,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                     var re = (row + 1 < _offsets.Length ? _offsets[row + 1] : _datLength) - start;
                     if (rs < 0 || re > read || re <= rs)
                         break;
-                    var (meta, parents) = DecodeFrom(buf.AsSpan((int)rs, (int)(re - rs)));
+                    var (meta, parents) = DecodeFrom(buf.AsSpan((int)rs, (int)(re - rs)), _hashSize);
                     Cache(row, meta);
                     result.Add(new RawCommit(meta.Id, parents, meta));
                 }
@@ -1162,7 +1352,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                     var re = (row + 1 < _offsets.Length ? _offsets[row + 1] : _datLength) - start;
                     if (rs < 0 || re > read || re <= rs)
                         break;
-                    Cache(row, DecodeFrom(buf.AsSpan((int)rs, (int)(re - rs))).Meta);
+                    Cache(row, DecodeFrom(buf.AsSpan((int)rs, (int)(re - rs)), _hashSize).Meta);
                 }
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException
@@ -1331,17 +1521,17 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         var read = RandomAccess.Read(_dat, buf, start);
         if (read < len)
             throw new InvalidDataException("graph meta record truncated");
-        return DecodeFrom(buf);
+        return DecodeFrom(buf, _hashSize);
     }
 
     /// <summary>Parses one <c>.dat</c> record. Records written before <see cref="GraphMetaStore.Version"/>
     /// 2 have no parent-SHA bytes; that format is rejected wholesale by the header version check
     /// before any record is ever read, so a mismatch here would only mean real corruption.</summary>
-    private static (CommitMetadata Meta, GitObjectId[] Parents) DecodeFrom(ReadOnlySpan<byte> record)
+    private static (CommitMetadata Meta, GitObjectId[] Parents) DecodeFrom(ReadOnlySpan<byte> record, int hashSize)
     {
         using var ms = new MemoryStream(record.ToArray(), writable: false);
         using var br = new BinaryReader(ms, new UTF8Encoding(false));
-        var sha = br.ReadBytes(20);
+        var sha = br.ReadBytes(hashSize);
         var id = new GitObjectId(sha);
         var msg = br.ReadString();
         var author = br.ReadString();
@@ -1351,7 +1541,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         var parentCount = br.ReadInt32();
         var parents = new GitObjectId[parentCount];
         for (var i = 0; i < parentCount; i++)
-            parents[i] = new GitObjectId(br.ReadBytes(20));
+            parents[i] = new GitObjectId(br.ReadBytes(hashSize));
         var meta = new CommitMetadata
         {
             Id = id,
@@ -1439,7 +1629,11 @@ internal sealed class CompactShaIndex(int capacity = 0)
 
     public int Count { get; private set; }
 
-    private static long Prefix(GitObjectId id) => BitConverter.ToInt64(id.AsSpan());
+    private static long Prefix(GitObjectId id)
+    {
+        var span = id.AsSpan();
+        return span.Length >= 8 ? BitConverter.ToInt64(span) : 0;
+    }
 
     public void Add(GitObjectId id, int record)
     {
