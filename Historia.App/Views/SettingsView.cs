@@ -184,7 +184,7 @@ public sealed class SettingsView : UserControl, IDisposable
 
         // ── Privacy & Network ──
         _root.Children.Add(Section("Privacy & Network"));
-        _root.Children.Add(Muted("Network routing is per repository — pick an identity, and toggle \"SSH only\", in that repository's settings (the Settings button above the sidebar)."));
+        _root.Children.Add(Muted("Network routing is per repository — pick an identity, and toggle \"SSH only\", in that repository's settings (the cog in the graph's GRAPH column header, or right-click that header)."));
         _root.Children.Add(Check("Allow background API polling", c.EnableBackgroundPolling,
             v => _ = _cfg.UpdateAsync(s => s with { EnableBackgroundPolling = v })));
         _root.Children.Add(Muted("Effective only while a repository's selected profile has a connected token."));
