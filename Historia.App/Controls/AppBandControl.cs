@@ -23,6 +23,7 @@ public sealed class AppBandControl : UserControl, IDisposable
     private ITerminalSessionService _terminals = default!;
     private INavigationBus _nav = default!;
     private IProfileService _profiles = default!;
+    private IServiceProvider _services = default!;
     private ISettingsService _settings = default!;
     private Historia.Services.UI.IExternalLauncher _launcher = default!;
     private Historia.Services.UI.IScrollDirectionProbe _scrollProbe = default!;
@@ -265,6 +266,7 @@ public sealed class AppBandControl : UserControl, IDisposable
 
     public void Initialize(IServiceProvider services)
     {
+        _services = services;
         _workspace = services.GetRequiredService<IWorkspaceService>();
         _autoFetch = services.GetRequiredService<IAutoFetchService>();
         _terminals = services.GetRequiredService<ITerminalSessionService>();
@@ -432,8 +434,8 @@ public sealed class AppBandControl : UserControl, IDisposable
                 Header = p.IsGlobal ? "Global (~/.gitconfig)" : p.DisplayName,
                 Icon = defaultProfile is not null && defaultProfile.Id == p.Id ? new TextBlock { Text = "✓" } : null,
             };
-            var id = p.Id;
-            item.Click += async (_, _) => await _profiles.SetDefaultProfileAsync(id);
+            var profile = p;
+            item.Click += async (_, _) => await Historia.Views.DefaultProfileFlow.SetAsync(_services, profile);
             profileItems.Add(item);
         }
         if (profileItems.Count > 0)
