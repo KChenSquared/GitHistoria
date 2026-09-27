@@ -949,6 +949,11 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             {
                 if (_bgQueue.Count == 0) { _bgInitPumpIdle = true; return; }
                 foreground = _foregroundInit;
+                // A closed foreground tab (or every tab, after DisposeAsync) will never finish
+                // loading, and its cancelled Lifetime makes the wait below return instantly —
+                // waiting on it would spin this loop forever. Treat it as no foreground.
+                if (foreground is not null && !_open.Contains(foreground))
+                    foreground = null;
                 next = SelectNextBackgroundItemLocked();
                 foregroundChanged = _foregroundChanged.Task;
             }

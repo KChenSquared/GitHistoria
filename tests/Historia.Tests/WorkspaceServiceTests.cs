@@ -268,8 +268,10 @@ public class WorkspaceServiceTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// Note: This test is extremely flaky under concurrency and is not expected to always pass.
-    /// It verifies that restored repositories from session are not touched in the recent list.
+    /// Verifies that restored repositories from session are not touched in the recent list.
+    /// Also guards the dispose path: the restored background tab is still queued when the
+    /// workspace is disposed, which once spun DrainBackgroundInitQueueAsync forever on the
+    /// closed foreground tab and hung DisposeAsync.
     /// </summary>
     [Fact(Timeout = 30000)]
     public async Task Session_restore_does_not_touch_the_recent_list()
