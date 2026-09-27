@@ -3420,39 +3420,8 @@ public sealed partial class CommitGraphControl : Control
         var minVisibleX = Math.Max(colX, 0) - 4;
         var maxVisibleX = Math.Min(colX + _graphColWidth, viewportWidth) + 4;
 
-        // Vertical lane pieces of the visible rows are merged into maximal same-colour runs and
-        // drawn as one line each — about lanes plus lane breaks, not rows × lanes. Where several
-        // pieces share a lane in one row, the builder keeps the last one listed, which is the one
-        // that would cover the rest on screen (same x, same pen width). Pens use a square cap, so
-        // where two runs meet (a colour change, an elbow) they overlap rather than leave a seam.
-        _laneRuns.Begin(layout.TotalLaneCount);
-        var piecesSeen = 0;
-        for (var row = first; row <= last; row++)
-        {
-            var segments = layout.GetRowSegments(row);
-            piecesSeen += segments.Length;
-            _laneRuns.AddRow(segments);
-        }
-
-        var yBase = RowY(first);
-        var halfRow = _rowHeight / 2;
-        var runsDrawn = 0;
-        foreach (var run in _laneRuns.Finish())
-        {
-            var x = LaneX(run.Lane);
-            if (x < minVisibleX || x > maxVisibleX)
-                continue;
-
-            var isEmph = hoverLane >= 0 && run.Lane == hoverLane;
-            var pen = isEmph ? EmphPen(run.ColorIndex) : LanePen(run.ColorIndex);
-            dc.DrawLine(pen, new Point(x, yBase + run.StartHalf * halfRow), new Point(x, yBase + run.EndHalf * halfRow));
-            runsDrawn++;
-        }
-        _lanePiecesSeen = piecesSeen;
-        _laneRunsDrawn = runsDrawn;
-
-        // Elbows after every lane run: no row's lines overlap the previous row's elbows, so this
-        // keeps the per-row stacking.
+        // Elbows BEFORE the lane runs, so every vertical lane line paints over the horizontals
+        // that cross it.
         for (var row = first; row <= last; row++)
         {
             var y = RowY(row);
@@ -3483,6 +3452,37 @@ public sealed partial class CommitGraphControl : Control
                 }
             }
         }
+
+        // Vertical lane pieces of the visible rows are merged into maximal same-colour runs and
+        // drawn as one line each — about lanes plus lane breaks, not rows × lanes. Where several
+        // pieces share a lane in one row, the builder keeps the last one listed, which is the one
+        // that would cover the rest on screen (same x, same pen width). Pens use a square cap, so
+        // where two runs meet (a colour change, an elbow) they overlap rather than leave a seam.
+        _laneRuns.Begin(layout.TotalLaneCount);
+        var piecesSeen = 0;
+        for (var row = first; row <= last; row++)
+        {
+            var segments = layout.GetRowSegments(row);
+            piecesSeen += segments.Length;
+            _laneRuns.AddRow(segments);
+        }
+
+        var yBase = RowY(first);
+        var halfRow = _rowHeight / 2;
+        var runsDrawn = 0;
+        foreach (var run in _laneRuns.Finish())
+        {
+            var x = LaneX(run.Lane);
+            if (x < minVisibleX || x > maxVisibleX)
+                continue;
+
+            var isEmph = hoverLane >= 0 && run.Lane == hoverLane;
+            var pen = isEmph ? EmphPen(run.ColorIndex) : LanePen(run.ColorIndex);
+            dc.DrawLine(pen, new Point(x, yBase + run.StartHalf * halfRow), new Point(x, yBase + run.EndHalf * halfRow));
+            runsDrawn++;
+        }
+        _lanePiecesSeen = piecesSeen;
+        _laneRunsDrawn = runsDrawn;
 
         // The right-edge lane tick sits ON TOP of the lines. Consecutive same-colour rows are
         // drawn as one rectangle, and each rectangle runs 1px into the next (which paints over
