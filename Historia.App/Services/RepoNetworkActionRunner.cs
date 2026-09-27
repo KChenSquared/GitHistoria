@@ -266,6 +266,11 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
 
     public void CancelCurrent() => _cts?.Cancel();
 
+    private static string? FirstDetailLine(HistoriaGitException ex) =>
+        (ex.Details ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .LastOrDefault(l => l.StartsWith("fatal:", StringComparison.OrdinalIgnoreCase) || l.StartsWith("error:", StringComparison.OrdinalIgnoreCase))
+        ?? ex.Message;
+
     private async Task RunAsync(RepoNetworkRequest request)
     {
         var op = request.Action;
@@ -309,7 +314,8 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             var previous = repo.State.ActiveProfile;
             var confirmed = await _dialogs.ConfirmAsync(
                 "Switch to Local config?",
-                $"Couldn't reach '{remote}' as '{previous?.DisplayName ?? "the selected profile"}'. "
+                $"{op} from '{remote}' failed as '{previous?.DisplayName ?? "the selected profile"}'"
+                + (FirstDetailLine(ex) is { } detail ? $":\n\n{detail}\n\n" : ". ")
                 + "Switch this repository to Local config and try again?",
                 confirmLabel: "Switch and retry");
             if (confirmed)
