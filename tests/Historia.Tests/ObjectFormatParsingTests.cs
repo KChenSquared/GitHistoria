@@ -117,16 +117,16 @@ public sealed class ObjectFormatParsingTests
     public void ForEachRefParser_Parse_parses_sha256_refs_with_equivalent_structure()
     {
         var stdoutSha1 =
-            RefRecord("refs/tags/v1", Sha1Commit2, "tag", Sha1Commit1, "commit", "", "Tëster Ü", "1700000000 -0130", "line one\r\n\r\nline three\r\n")
-            + RefRecord("refs/heads/main", Sha1Commit1, "commit", "", "", "", "", "", "")
-            + RefRecord("refs/remotes/origin/HEAD", Sha1Commit1, "commit", "", "", "refs/remotes/origin/main", "", "", "")
-            + RefRecord("refs/tags/light-ünï", Sha1Commit1, "commit", "", "", "", "", "", "");
+            RefRecord("refs/tags/v1", Sha1Commit2, "tag", Sha1Commit1, "commit", "", "", "Tëster Ü", "1700000000 -0130", "line one\r\n\r\nline three\r\n")
+            + RefRecord("refs/heads/main", Sha1Commit1, "commit", "", "", "", "", "", "", "")
+            + RefRecord("refs/remotes/origin/HEAD", Sha1Commit1, "commit", "", "", "refs/remotes/origin/main", "", "", "", "")
+            + RefRecord("refs/tags/light-ünï", Sha1Commit1, "commit", "", "", "", "", "", "", "");
 
         var stdoutSha256 =
-            RefRecord("refs/tags/v1", Sha256Commit2, "tag", Sha256Commit1, "commit", "", "Tëster Ü", "1700000000 -0130", "line one\r\n\r\nline three\r\n")
-            + RefRecord("refs/heads/main", Sha256Commit1, "commit", "", "", "", "", "", "")
-            + RefRecord("refs/remotes/origin/HEAD", Sha256Commit1, "commit", "", "", "refs/remotes/origin/main", "", "", "")
-            + RefRecord("refs/tags/light-ünï", Sha256Commit1, "commit", "", "", "", "", "", "");
+            RefRecord("refs/tags/v1", Sha256Commit2, "tag", Sha256Commit1, "commit", "", "", "Tëster Ü", "1700000000 -0130", "line one\r\n\r\nline three\r\n")
+            + RefRecord("refs/heads/main", Sha256Commit1, "commit", "", "", "", "", "", "", "")
+            + RefRecord("refs/remotes/origin/HEAD", Sha256Commit1, "commit", "", "", "refs/remotes/origin/main", "", "", "", "")
+            + RefRecord("refs/tags/light-ünï", Sha256Commit1, "commit", "", "", "", "", "", "", "");
 
         var refsSha1 = ForEachRefParser.Parse(stdoutSha1);
         var refsSha256 = ForEachRefParser.Parse(stdoutSha256);
@@ -165,11 +165,11 @@ public sealed class ObjectFormatParsingTests
     [Fact]
     public void ForEachRefParser_ParseList_parses_sha256_names_and_ids()
     {
-        var stdout = $"refs/heads/main\0{Sha256Commit1}\0\0\nrefs/remotes/origin/HEAD\0{Sha256Commit1}\0refs/remotes/origin/main\0\n";
+        var stdout = $"refs/heads/main\0{Sha256Commit1}\0\0\0\nrefs/remotes/origin/HEAD\0{Sha256Commit1}\0refs/remotes/origin/main\0\0\n";
         var parsed = ForEachRefParser.ParseList(stdout);
 
-        List<(string Name, string ObjectName, string? SymrefTarget)> expected =
-            [("refs/heads/main", Sha256Commit1, null), ("refs/remotes/origin/HEAD", Sha256Commit1, "refs/remotes/origin/main")];
+        List<(string Name, string ObjectName, string? SymrefTarget, string? Upstream)> expected =
+            [("refs/heads/main", Sha256Commit1, null, null), ("refs/remotes/origin/HEAD", Sha256Commit1, "refs/remotes/origin/main", null)];
         Assert.Equal(expected, parsed);
     }
 

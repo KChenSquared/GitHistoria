@@ -152,7 +152,7 @@ public sealed class FileWatcherService : IAsyncDisposable
             var rel = Path.GetRelativePath(gitDir, normalizedFullPath).Replace('\\', '/');
             // Only a few .git entries matter; everything else (objects/**, logs/**) is noise.
             var meaningful = rel is "HEAD" or "index" or "packed-refs" or "MERGE_HEAD" or "REBASE_HEAD"
-                                 or "CHERRY_PICK_HEAD" or "REVERT_HEAD" or "ORIG_HEAD"
+                                 or "CHERRY_PICK_HEAD" or "REVERT_HEAD" or "ORIG_HEAD" or "config"
                              || rel.StartsWith("refs/", StringComparison.Ordinal)
                              || rel.StartsWith("rebase-merge", StringComparison.Ordinal)
                              || rel.StartsWith("rebase-apply", StringComparison.Ordinal);

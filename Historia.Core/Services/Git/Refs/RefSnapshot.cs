@@ -17,6 +17,8 @@ public sealed record RefEntry(
     DateTimeOffset? TaggerWhen,
     string? Message)
 {
+    public string? Upstream { get; init; }
+
     public bool IsAnnotatedTag => ObjectType == "tag";
 
     /// <summary>The commit this ref reaches — its own target when that is a commit, else the

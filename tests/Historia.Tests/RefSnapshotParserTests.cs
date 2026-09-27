@@ -22,10 +22,10 @@ public sealed class RefSnapshotParserTests
     public void Parses_branches_symrefs_and_both_tag_kinds_sorted_by_name()
     {
         var stdout =
-            Record("refs/tags/v1", TagObj, "tag", Commit, "commit", "", "Tëster Ü", "1700000000 -0130", "line one\r\n\r\nline three\r\n")
-            + Record("refs/heads/main", Commit, "commit", "", "", "", "", "", "")
-            + Record("refs/remotes/origin/HEAD", Commit, "commit", "", "", "refs/remotes/origin/main", "", "", "")
-            + Record("refs/tags/light-ünï", Commit, "commit", "", "", "", "", "", "");
+            Record("refs/tags/v1", TagObj, "tag", Commit, "commit", "", "", "Tëster Ü", "1700000000 -0130", "line one\r\n\r\nline three\r\n")
+            + Record("refs/heads/main", Commit, "commit", "", "", "", "origin/main", "", "", "")
+            + Record("refs/remotes/origin/HEAD", Commit, "commit", "", "", "refs/remotes/origin/main", "", "", "", "")
+            + Record("refs/tags/light-ünï", Commit, "commit", "", "", "", "", "", "", "");
 
         var refs = ForEachRefParser.Parse(stdout);
 
@@ -37,6 +37,7 @@ public sealed class RefSnapshotParserTests
         Assert.Equal(new GitObjectId(Commit), main.Target);
         Assert.Equal(new GitObjectId(Commit), main.PeeledCommit);
         Assert.Null(main.SymrefTarget);
+        Assert.Equal("origin/main", main.Upstream);
         Assert.False(main.IsAnnotatedTag);
 
         Assert.Equal("refs/remotes/origin/main", refs[1].SymrefTarget);
@@ -59,7 +60,7 @@ public sealed class RefSnapshotParserTests
     [Fact]
     public void A_ref_to_a_tree_reaches_no_commit()
     {
-        var refs = ForEachRefParser.Parse(Record("refs/tags/tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "tree", "", "", "", "", "", ""));
+        var refs = ForEachRefParser.Parse(Record("refs/tags/tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "tree", "", "", "", "", "", "", ""));
         Assert.Null(Assert.Single(refs).PeeledCommit);
     }
 
@@ -70,7 +71,7 @@ public sealed class RefSnapshotParserTests
     [Fact]
     public void A_truncated_record_is_rejected_not_dropped()
     {
-        var full = Record("refs/heads/main", Commit, "commit", "", "", "", "", "", "");
+        var full = Record("refs/heads/main", Commit, "commit", "", "", "", "", "", "", "");
         var truncated = full + "refs/heads/next\0" + Commit + "\0commit\0";
         Assert.Throws<FormatException>(() => ForEachRefParser.Parse(truncated));
     }
@@ -101,16 +102,16 @@ public sealed class RefSnapshotParserTests
     {
         const string message = "plain\ncrlf\r\nlone\rend\n";
         var refs = ForEachRefParser.Parse(
-            Record("refs/tags/v1", TagObj, "tag", Commit, "commit", "", "T", "1700000000 +0000", message));
+            Record("refs/tags/v1", TagObj, "tag", Commit, "commit", "", "", "T", "1700000000 +0000", message));
         Assert.Equal(message, Assert.Single(refs).Message);
     }
 
     [Fact]
     public void The_object_free_listing_parses_names_ids_and_symrefs()
     {
-        var stdout = $"refs/heads/main\0{Commit}\0\0\nrefs/remotes/origin/HEAD\0{Commit}\0refs/remotes/origin/main\0\n";
-        List<(string Name, string ObjectName, string? SymrefTarget)> expected =
-            [("refs/heads/main", Commit, null), ("refs/remotes/origin/HEAD", Commit, "refs/remotes/origin/main")];
+        var stdout = $"refs/heads/main\0{Commit}\0\0origin/main\0\nrefs/remotes/origin/HEAD\0{Commit}\0refs/remotes/origin/main\0\0\n";
+        List<(string Name, string ObjectName, string? SymrefTarget, string? Upstream)> expected =
+            [("refs/heads/main", Commit, null, "origin/main"), ("refs/remotes/origin/HEAD", Commit, "refs/remotes/origin/main", null)];
         Assert.Equal(expected, ForEachRefParser.ParseList(stdout));
     }
 

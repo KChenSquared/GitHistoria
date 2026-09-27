@@ -12,17 +12,17 @@ namespace Historia.Services.Git;
 /// </summary>
 public static class ForEachRefParser
 {
-    public const int FieldCount = 9;
+    public const int FieldCount = 10;
 
     public const string Format =
-        "%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)%00%(symref)%00"
+        "%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)%00%(symref)%00%(upstream:short)%00"
         + "%(if:equals=tag)%(objecttype)%(then)%(taggername)%00%(taggerdate:raw)%00%(contents)%(else)%00%00%(end)%00";
 
     public static IReadOnlyList<string> Arguments { get; } = ["for-each-ref", "--format=" + Format];
 
-    public const int ListFieldCount = 3;
+    public const int ListFieldCount = 4;
 
-    public const string ListFormat = "%(refname)%00%(objectname)%00%(symref)%00";
+    public const string ListFormat = "%(refname)%00%(objectname)%00%(symref)%00%(upstream:short)%00";
 
     public static IReadOnlyList<string> ListArguments { get; } = ["for-each-ref", "--format=" + ListFormat];
 
@@ -45,9 +45,12 @@ public static class ForEachRefParser
                 Peeled: ParseId(f[3]),
                 PeeledType: NullIfEmpty(f[4]),
                 SymrefTarget: NullIfEmpty(f[5]),
-                TaggerName: annotated ? NullIfEmpty(f[6]) : null,
-                TaggerWhen: annotated ? ParseRawDate(f[7]) : null,
-                Message: annotated ? f[8] : null));
+                TaggerName: annotated ? NullIfEmpty(f[7]) : null,
+                TaggerWhen: annotated ? ParseRawDate(f[8]) : null,
+                Message: annotated ? f[9] : null)
+            {
+                Upstream = NullIfEmpty(f[6]),
+            });
         }
 
         result.Sort((a, b) => StringComparer.Ordinal.Compare(a.CanonicalName, b.CanonicalName));
@@ -56,8 +59,8 @@ public static class ForEachRefParser
 
     /// <summary>Parses <see cref="ListFormat"/>'s stdout: name, object id (as git printed it) and
     /// symref target, in git's order.</summary>
-    public static List<(string Name, string ObjectName, string? SymrefTarget)> ParseList(string stdout) =>
-        [.. Records(stdout, ListFieldCount).Select(f => (f[0], f[1], NullIfEmpty(f[2])))];
+    public static List<(string Name, string ObjectName, string? SymrefTarget, string? Upstream)> ParseList(string stdout) =>
+        [.. Records(stdout, ListFieldCount).Select(f => (f[0], f[1], NullIfEmpty(f[2]), NullIfEmpty(f[3])))];
 
     /// <summary>Splits NUL-terminated fields into records of <paramref name="fieldCount"/>. Git ends
     /// each record with a newline after its last NUL, which lands at the start of the next

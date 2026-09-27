@@ -214,7 +214,7 @@ public sealed class RefSnapshotProvider
         var tagData = await ReadTagObjectsAsync([.. tagObjects.Where(o => !Broken(o))]).ConfigureAwait(false);
 
         var refs = new List<RefEntry>(list.Count - dropped.Count);
-        foreach (var (name, objectName, symref) in list)
+        foreach (var (name, objectName, symref, upstream) in list)
         {
             if (Broken(objectName))
                 continue;
@@ -233,7 +233,10 @@ public sealed class RefSnapshotProvider
                 SymrefTarget: symref,
                 TaggerName: annotated ? tag.TaggerName : null,
                 TaggerWhen: annotated ? tag.TaggerWhen : null,
-                Message: annotated ? tag.Message ?? "" : null));
+                Message: annotated ? tag.Message ?? "" : null)
+            {
+                Upstream = upstream,
+            });
         }
         refs.Sort((a, b) => StringComparer.Ordinal.Compare(a.CanonicalName, b.CanonicalName));
 
