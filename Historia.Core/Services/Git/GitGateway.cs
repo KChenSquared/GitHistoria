@@ -539,9 +539,11 @@ public sealed class GitGateway(
         }
 
         // Every transport failed. Offer the Local-config fallback when a profile (not
-        // *Local config*) is the active selection — never for a background auto-fetch,
-        // whose caller has no user to prompt.
-        if (context.ActiveProfile is not null && !background)
+        // *Local config*) is the active selection and the failure could be a credential or
+        // reachability problem — never for a background auto-fetch, whose caller has no user
+        // to prompt, and never for errors a different profile can't fix (missing ref, rejected
+        // push, dirty tree…), which keep their own handling.
+        if (context.ActiveProfile is not null && !background && IsProfileFixable(lastError!.Kind))
         {
             throw new HistoriaGitException(lastError!.Kind, lastError.Message, lastError.Details)
             {
@@ -551,6 +553,10 @@ public sealed class GitGateway(
 
         throw lastError!;
     }
+
+    internal static bool IsProfileFixable(GitErrorKind kind) => kind is
+        GitErrorKind.AuthenticationFailed or GitErrorKind.NetworkUnreachable
+        or GitErrorKind.TimedOut or GitErrorKind.Unknown;
 
     private IReadOnlyDictionary<string, string> SshEnv()
     {
