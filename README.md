@@ -6,13 +6,26 @@ A high-performance, open-source Windows Git client built with **C# (.NET 10)** a
 
 ---
 
+## 💡 Why Historia?
+
+I love GitKraken. The way it presents the commit graph is extremely useful for keeping up
+with my repos. Over time, though, it became extremely sluggish on the repos I work in day
+to day. Each one has 200k–350k commits, and switching between them had become a very poor
+experience. Then my annual GitKraken renewal came around and the price was going up again.
+
+So I set out to build a free, better-performing alternative to the commit graph and the core Git features I
+rely on. The graph keeps the same easy-to-read orthogonal edge routing, but it can render
+repos with hundreds of thousands of commits and scroll through them quickly and smoothly.
+
+---
+
 ## 🚀 Vision & Mission
 
 Our goal is to create the premier Windows Git GUI that unites:
 1. **Raw Speed and Responsiveness** — instant launch, lightweight memory usage, zero UI lag, and smooth handling of massive repositories (100k+ commits).
-2. **Feature Completeness & Simplicity** — advanced power tools (interactive rebase, line/hunk staging, cherry-pick, submodules, stash management) paired with an intuitive, clean workflow for everyday commits, branching, and conflict resolution.
+2. **Feature Completeness & Simplicity** — advanced power tools (interactive rebase\*, line/hunk staging, cherry-pick, submodules, stash management) paired with an intuitive, clean workflow for everyday commits, branching, and conflict resolution.
 3. **Visual Elegance** — vivid, color-coded branch lanes, round commit nodes, branch/tag labels, merge arcs, and visual drag-and-drop actions — engineered for high-performance rendering.
-4. **Progressive Disclosure** — essential, everyday workflows (inspecting history, staging, committing, branch switching) remain immediate and distraction-free, while deep Git power tools (interactive rebase, conflict resolver, hunk staging, submodules, worktrees, terminal, error diagnostics) disclose on demand through context menus, collapsible drawers, and dedicated inspection panels without overwhelming the user.
+4. **Progressive Disclosure** — essential, everyday workflows (inspecting history, staging, committing, branch switching) remain immediate and distraction-free, while deep Git power tools (interactive rebase\*, conflict resolver, hunk staging, submodules, worktrees, terminal, error diagnostics) disclose on demand through context menus, collapsible drawers, and dedicated inspection panels without overwhelming the user.
 
 ---
 
@@ -24,12 +37,14 @@ Our goal is to create the premier Windows Git GUI that unites:
   (red warning icon, exact effect named) whose **Cancel** button is the highlighted default.
 - **Performance-First Architecture:** Powered by native .NET and Avalonia UI; minimal memory footprint, non-blocking Git operations, and fast cold starts (< 800ms).
 - **Progressive Disclosure UI:** A layered interface philosophy ensuring zero visual clutter. Common daily operations take center stage with high ergonomic polish; advanced Git machinery and deep technical metadata remain readily accessible but stay tucked behind collapsible sections, contextual actions, and detail drawers until needed.
-- **Next-Gen Commit Graph:** Virtualized rendering (60+ FPS) designed to scroll smoothly across repositories with hundreds of thousands of commits. Features vibrant multi-color branch lanes and smooth bezier connections.
-- **Power-User Feature Parity:** 100% core Git autonomy, visual interactive rebase, granular staging, 3-way conflict resolver, and full repository management (submodules, worktrees, LFS).
+- **Next-Gen Commit Graph:** Virtualized rendering (60+ FPS) designed to scroll smoothly across repositories with hundreds of thousands of commits. Features vibrant multi-color branch lanes and orthogonal edge routing with rounded corners.
+- **Power-User Feature Parity:** 100% core Git autonomy, visual interactive rebase\*, granular staging, 3-way conflict resolver, and full repository management (submodules, worktrees, LFS).
 - **Tri-State Network Policy:**
   - **Quiet Network (Local/SSH):** Zero background API polling, telemetry, or avatar leaks.
   - **Hybrid (Default):** Seamlessly supports SSH and HTTPS.
   - **OAuth Only:** Manages all credentials via browser OAuth with rich integrations.
+
+<sub>\* On the [roadmap](docs/roadmap.md).</sub>
 
 ---
 
@@ -38,6 +53,7 @@ Our goal is to create the premier Windows Git GUI that unites:
 - 📐 [**Comprehensive Design Documentation**](Historia-DevDocs/ComprehensiveDesign/README.md) — Technical architecture, Git data access strategy, and DAG graph layout engine.
 - 📜 [**Historia Constitution**](docs/constitution.md) — Architectural invariants, security policies, and performance ceilings.
 - 🗺️ [**Version Plans**](Historia-DevDocs/versionPlans/) — The active milestone's plan. Older version plans are moved into an offline archive to keep the working set small and prevent context drift; `ComprehensiveDesign/` is the living spec.
+- 🛣️ [**Roadmap**](docs/roadmap.md) — Planned features for upcoming releases.
 - 🤝 [**Contributing Guide**](docs/contributing.md) — Environment setup, coding standards, PR guidelines, and core tenets.
 
 ---
