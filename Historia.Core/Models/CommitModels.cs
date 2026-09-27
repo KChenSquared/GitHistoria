@@ -6,7 +6,7 @@ namespace Historia.Models;
 /// </summary>
 public sealed record CommitSummary
 {
-    public required ObjectId Id { get; init; }
+    public required GitObjectId Id { get; init; }
     public required string MessageShort { get; init; }
     public required string AuthorName { get; init; }
     public required string AuthorEmail { get; init; }
@@ -18,7 +18,7 @@ public sealed record CommitSummary
 /// <summary>Full detail for a single selected commit.</summary>
 public sealed record CommitDetail
 {
-    public required ObjectId Id { get; init; }
+    public required GitObjectId Id { get; init; }
     /// <summary>The full message exactly as committed (subject, blank line, body), trailing newline trimmed.</summary>
     public string Message { get; init; } = "";
     public required string MessageShort { get; init; }
@@ -30,7 +30,7 @@ public sealed record CommitDetail
     public required string CommitterName { get; init; }
     public required string CommitterEmail { get; init; }
     public required DateTimeOffset CommitWhen { get; init; }
-    public required IReadOnlyList<ObjectId> ParentIds { get; init; }
+    public required IReadOnlyList<GitObjectId> ParentIds { get; init; }
     /// <summary>Decorations for the commit; not populated on the single-commit detail path for performance.</summary>
     public IReadOnlyList<CommitDecoration> Decorations { get; init; } = [];
 }

@@ -14,13 +14,13 @@ public static class CatFileParser
     /// <c>&lt;input&gt; missing</c> — returned as a null sha and type. Throws
     /// <see cref="FormatException"/> when the line count doesn't match the input count, so a
     /// short read can never shift every later answer onto the wrong object.</summary>
-    public static List<(ObjectId? Id, string? Type)> ParseBatchCheck(string stdout, int inputCount)
+    public static List<(GitObjectId? Id, string? Type)> ParseBatchCheck(string stdout, int inputCount)
     {
         var lines = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         if (lines.Length != inputCount)
             throw new FormatException($"cat-file --batch-check answered {lines.Length} of {inputCount} objects.");
 
-        var result = new List<(ObjectId?, string?)>(lines.Length);
+        var result = new List<(GitObjectId?, string?)>(lines.Length);
         foreach (var line in lines)
         {
             var space = line.LastIndexOf(' ');
@@ -44,9 +44,9 @@ public static class CatFileParser
     /// record is <c>&lt;sha&gt; &lt;type&gt; &lt;size&gt;\n&lt;size bytes&gt;\n</c>; a
     /// <c>&lt;input&gt; missing</c> record is skipped. Throws <see cref="FormatException"/> on a
     /// record that runs past the end of the output.</summary>
-    public static Dictionary<ObjectId, TagData> ParseTagObjects(ReadOnlySpan<byte> stdout)
+    public static Dictionary<GitObjectId, TagData> ParseTagObjects(ReadOnlySpan<byte> stdout)
     {
-        var result = new Dictionary<ObjectId, TagData>();
+        var result = new Dictionary<GitObjectId, TagData>();
         var pos = 0;
         while (pos < stdout.Length)
         {

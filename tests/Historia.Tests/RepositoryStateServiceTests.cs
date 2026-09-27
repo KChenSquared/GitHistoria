@@ -56,7 +56,7 @@ public class RepositoryStateServiceTests : IAsyncDisposable
         RevealCommitEventArgs? seen = null;
         state.RevealCommitRequested += (_, e) => seen = e;
 
-        var id = new LibGit2Sharp.ObjectId("0123456789012345678901234567890123456789");
+        var id = new GitObjectId("0123456789012345678901234567890123456789");
         state.RequestRevealCommit(id);
 
         Assert.NotNull(seen);
@@ -72,7 +72,7 @@ public class RepositoryStateServiceTests : IAsyncDisposable
         OpenDiffChangedEventArgs? seen = null;
         state.OpenDiffChanged += (_, e) => seen = e;
 
-        state.SetSelectedCommit(new LibGit2Sharp.ObjectId("0123456789abcdef0123456789abcdef01234567"));
+        state.SetSelectedCommit(new GitObjectId("0123456789abcdef0123456789abcdef01234567"));
 
         Assert.Null(state.OpenDiff);
         Assert.NotNull(seen);
@@ -86,7 +86,7 @@ public class RepositoryStateServiceTests : IAsyncDisposable
         var raises = 0;
         state.OpenDiffChanged += (_, _) => raises++;
 
-        state.SetSelectedCommit(new LibGit2Sharp.ObjectId("0123456789abcdef0123456789abcdef01234567"));
+        state.SetSelectedCommit(new GitObjectId("0123456789abcdef0123456789abcdef01234567"));
 
         Assert.Equal(0, raises);
     }
@@ -349,12 +349,12 @@ public class RepositoryStateServiceTests : IAsyncDisposable
         var gateway = new FakeGateway();
         var state = new RepositoryStateService(ctx, ui: null, repoCache: null, gateway: gateway);
 
-        var commitId = new LibGit2Sharp.ObjectId("1234567890123456789012345678901234567890");
+        var commitId = new GitObjectId("1234567890123456789012345678901234567890");
         state.SetSelectedCommit(commitId);
         Assert.Equal(commitId, state.SelectedCommitId);
 
         int commitChangedRaises = 0;
-        ObjectId? finalSelectedCommit = commitId;
+        GitObjectId? finalSelectedCommit = commitId;
         state.SelectedCommitChanged += (_, e) =>
         {
             commitChangedRaises++;
@@ -406,7 +406,7 @@ public class RepositoryStateServiceTests : IAsyncDisposable
             Assert.Null(state.SelectedCommitId);
 
             // User selects a commit to browse during the active conflict session
-            var browseCommitId = new LibGit2Sharp.ObjectId("abcdefabcdefabcdefabcdefabcdefabcdefabcd");
+            var browseCommitId = new GitObjectId("abcdefabcdefabcdefabcdefabcdefabcdefabcd");
             state.SetSelectedCommit(browseCommitId);
             Assert.Equal(browseCommitId, state.SelectedCommitId);
 
@@ -451,8 +451,8 @@ public class RepositoryStateServiceTests : IAsyncDisposable
 
         public Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default) => Task.FromResult<AheadBehind?>(null);
         public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default) => Task.FromResult<AheadBehind?>(null);
-        public Task<CommitDetail> GetCommitDetailAsync(ObjectId id, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(ObjectId id, int parentIndex, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default) => Task.FromResult<(string?, string?)>((null, null));
         public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => throw new NotImplementedException();
@@ -462,7 +462,7 @@ public class RepositoryStateServiceTests : IAsyncDisposable
         public Task StageAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => throw new NotImplementedException();
         public Task UnstageAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => throw new NotImplementedException();
         public Task DiscardAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<ObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<GitObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default) => throw new NotImplementedException();
         public Task MergeAsync(string refish, bool noFastForward, CancellationToken ct = default) => throw new NotImplementedException();
         public Task ResetAsync(string target, GitResetMode mode, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<int> CountCommitsLeavingAsync(string target, CancellationToken ct = default) => throw new NotImplementedException();

@@ -42,6 +42,27 @@ public readonly struct GitObjectId : IEquatable<GitObjectId>, IComparable<GitObj
         AsSpan().CopyTo(destination);
     }
 
+    public GitObjectId(ReadOnlySpan<byte> bytes)
+    {
+        this = FromBytes(bytes);
+    }
+
+    public GitObjectId(byte[] bytes)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+        this = FromBytes(bytes.AsSpan());
+    }
+
+    public GitObjectId(string sha)
+    {
+        this = Parse(sha);
+    }
+
+    public GitObjectId(ReadOnlySpan<char> chars)
+    {
+        this = Parse(chars);
+    }
+
     public static GitObjectId FromBytes(ReadOnlySpan<byte> bytes)
     {
         if (bytes.Length != 20 && bytes.Length != 32)
@@ -111,6 +132,8 @@ public readonly struct GitObjectId : IEquatable<GitObjectId>, IComparable<GitObj
 
         return TryParse(s.AsSpan(), out result);
     }
+
+    public string Sha => ToString();
 
     public override string ToString()
     {

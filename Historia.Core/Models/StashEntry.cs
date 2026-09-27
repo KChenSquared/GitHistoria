@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>
 /// One stash entry. <see cref="CommitId"/> is the stable identity — every operation
@@ -11,7 +11,7 @@ public sealed record StashEntry
     public required int Index { get; init; }
 
     /// <summary>The stash commit's own id — the stable identity.</summary>
-    public required ObjectId CommitId { get; init; }
+    public required GitObjectId CommitId { get; init; }
 
     public required string Message { get; init; }
     public required string AuthorName { get; init; }

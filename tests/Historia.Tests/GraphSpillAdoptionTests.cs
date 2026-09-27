@@ -48,7 +48,7 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
         {
             var meta = new CommitMetadata
             {
-                Id = c.Id,
+                Id = c.Id.ToGitObjectId(),
                 MessageShort = c.MessageShort,
                 AuthorName = c.Author.Name,
                 AuthorEmail = c.Author.Email,
@@ -56,7 +56,7 @@ public sealed class GraphSpillAdoptionTests : IAsyncDisposable
                 CommitWhen = c.Committer.When,
                 ParentCount = c.Parents.Count(),
             };
-            return new RawCommit(c.Id, c.Parents.Select(p => p.Id).ToArray(), meta);
+            return new RawCommit(c.Id.ToGitObjectId(), c.Parents.Select(p => p.Id.ToGitObjectId()).ToArray(), meta);
         }).ToList();
     }
 

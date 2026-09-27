@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Graph;
+namespace Historia.Services.Graph;
 
 /// <summary>
 /// Opaque allocator state carried between layout calls so incremental extension produces the
@@ -23,16 +23,7 @@ public sealed class GraphLayoutState
     internal readonly SortedSet<int> FreeLanes = [];
 
     /// <summary>parent id → the child reservations expecting it.</summary>
-    internal readonly Dictionary<ObjectId, List<Reservation>> Reservations = [];
-
-    /// <summary>Canonicalizes <see cref="ObjectId"/>
-    /// instances across <see cref="Reservations"/> and <see cref="RowByCommitId"/> — a commit is
-    /// first seen as a reservation key (via its child's own, separately-parsed
-    /// <c>ParentIds</c> entry) rows before it is ever seen as a row itself (in a topo walk, a
-    /// parent's row always comes after its children's), so without this, <c>RowByCommitId</c>
-    /// would key on yet another freshly-parsed instance of the same SHA instead of reusing the one
-    /// already resident. See <c>DagLayoutEngine.Intern</c>.</summary>
-    internal readonly Dictionary<ObjectId, ObjectId> InternedIds = [];
+    internal readonly Dictionary<GitObjectId, List<Reservation>> Reservations = [];
 
     /// <summary>
     /// raw lane → how many pending reservations name it as their parent lane (i.e. entries with
@@ -50,7 +41,7 @@ public sealed class GraphLayoutState
     /// whichever tip the time-ordered walk emitted onto row 0. Populated once by
     /// <see cref="DagLayoutEngine.Compute"/> (empty for a single-tip window) and carried forward
     /// unchanged by <see cref="DagLayoutEngine.Extend"/>.</summary>
-    internal readonly Dictionary<ObjectId, int> TipTargetLane = [];
+    internal readonly Dictionary<GitObjectId, int> TipTargetLane = [];
 
     /// <summary>compacted lane → color index, seeded once from the lane's topmost commit.</summary>
     internal readonly Dictionary<int, int> LaneColor = [];
@@ -69,7 +60,7 @@ public sealed class GraphLayoutState
     internal readonly List<CommitMetadata> Commits = [];
     internal readonly List<GraphEdge> RealEdges = [];
     internal readonly List<GraphDecoration> Decorations = [];
-    internal readonly Dictionary<ObjectId, int> RowByCommitId = [];
+    internal readonly Dictionary<GitObjectId, int> RowByCommitId = [];
 
     /// <summary>2 crossing index: boundary rows are multiples of this stride. Sized so a
     /// window's checkpoint lookup costs about (concurrent lanes) work, not (total rows) — linux

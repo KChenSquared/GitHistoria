@@ -19,8 +19,8 @@ public interface IGitGateway
     /// underlying <c>LibGit2Service.ProjectCommits</c> is still covered by tests.
     /// </summary>
     Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default);
-    Task<CommitDetail> GetCommitDetailAsync(ObjectId id, CancellationToken ct = default);
-    Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(ObjectId id, int parentIndex, CancellationToken ct = default);
+    Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default);
+    Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default);
     Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default);
@@ -51,7 +51,7 @@ public interface IGitGateway
     Task StageAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
     Task UnstageAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
     Task DiscardAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
-    Task<ObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default);
+    Task<GitObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default);
 
     /// <summary>Merges <paramref name="refish"/> into the current branch (CLI-routed). Conflicts surface as <see cref="Models.GitErrorKind.MergeConflict"/>.</summary>
     Task MergeAsync(string refish, bool noFastForward, CancellationToken ct = default);

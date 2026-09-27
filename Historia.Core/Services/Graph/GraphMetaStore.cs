@@ -236,7 +236,7 @@ internal sealed class GraphMetaStore
     /// file is missing (a store that has never had its order committed with a known tip set — a
     /// never-reordered store) or unreadable; <see
     /// cref="GraphMetaSplice.Evaluate"/>'s guard 1 treats that as "tips don't match" (reject).</summary>
-    public static IReadOnlyList<ObjectId>? ReadTips(string repoPath)
+    public static IReadOnlyList<GitObjectId>? ReadTips(string repoPath)
     {
         try
         {
@@ -246,9 +246,9 @@ internal sealed class GraphMetaStore
             var bytes = ReadAllBytesShared(path);
             if (bytes.Length % 20 != 0)
                 return null;
-            var tips = new ObjectId[bytes.Length / 20];
+            var tips = new GitObjectId[bytes.Length / 20];
             for (var i = 0; i < tips.Length; i++)
-                tips[i] = new ObjectId(bytes.AsSpan(i * 20, 20).ToArray());
+                tips[i] = new GitObjectId(bytes.AsSpan(i * 20, 20));
             return tips;
         }
         catch
@@ -532,7 +532,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     public void Append(IReadOnlyList<RawCommit> rows, int start, int count)
         => Append(i => rows[i].Metadata, i => rows[i].ParentIds, start, count);
 
-    private void Append(Func<int, CommitMetadata> get, Func<int, IReadOnlyList<ObjectId>?> getParents, int start, int count)
+    private void Append(Func<int, CommitMetadata> get, Func<int, IReadOnlyList<GitObjectId>?> getParents, int start, int count)
     {
         if (count <= 0)
             return;
@@ -563,7 +563,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 for (var p = 0; p < m.ParentCount; p++)
                 {
                     if (parents is not null && p < parents.Count)
-                        bw.Write(parents[p].RawId);
+                        bw.Write(parents[p].AsSpan());
                     else
                         bw.Write(zeroSha); // no real parent SHA available for this record
                 }
@@ -681,14 +681,14 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// by a future reorder/splice to decide whether it can trust the existing order as a
     /// starting point. Not versioned; always describes whatever order the header currently
     /// points at.</summary>
-    public void WriteTips(IReadOnlyList<ObjectId> sortedTips)
+    public void WriteTips(IReadOnlyList<GitObjectId> sortedTips)
     {
         try
         {
             Directory.CreateDirectory(AppPaths.CacheDirectory);
             var bytes = new byte[sortedTips.Count * 20];
             for (var i = 0; i < sortedTips.Count; i++)
-                sortedTips[i].RawId.CopyTo(bytes.AsSpan(i * 20, 20));
+                sortedTips[i].AsSpan().CopyTo(bytes.AsSpan(i * 20, 20));
             var tmp = $"{_tips}.{Guid.NewGuid():N}.tmp";
             File.WriteAllBytes(tmp, bytes);
             File.Move(tmp, _tips, overwrite: true);
@@ -696,7 +696,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         catch { }
     }
 
-    private static void WriteSha(BinaryWriter bw, ObjectId id) => bw.Write(id.RawId);
+    private static void WriteSha(BinaryWriter bw, GitObjectId id) => bw.Write(id.AsSpan());
 
     private static void WriteWhen(BinaryWriter bw, DateTimeOffset when)
     {
@@ -727,7 +727,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// </summary>
     public (SpillOutcome Outcome, int RowCount) AppendSpillBatch(
         IReadOnlyList<RawCommit> rows, int from, int to, bool exhausted,
-        TimeSpan? fullWalkElapsed = null, IReadOnlyList<ObjectId>? sortedTips = null)
+        TimeSpan? fullWalkElapsed = null, IReadOnlyList<GitObjectId>? sortedTips = null)
     {
         lock (GraphCacheLocks.For(repoPath))
         {
@@ -801,7 +801,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// happened.</summary>
     public bool TryCommitReorder(
         long expectedOldWalkKey, bool expectedOldExhausted, int expectedOldOrderVersion, int expectedOldRecordCount,
-        int newRecordCount, int[] order, IReadOnlyList<ObjectId> sortedTips)
+        int newRecordCount, int[] order, IReadOnlyList<GitObjectId> sortedTips)
     {
         lock (GraphCacheLocks.For(repoPath))
         {
@@ -879,7 +879,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 
     private static readonly CommitMetadata ClosedStoreStub = new()
     {
-        Id = ObjectId.Zero,
+        Id = GitObjectId.Zero,
         MessageShort = "",
         AuthorName = "",
         AuthorEmail = "",
@@ -1000,7 +1000,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
             {
                 if (RandomAccess.Read(_dat, shaBuf, _offsets[rec]) != 20)
                     continue;
-                index.Add(new ObjectId(shaBuf.ToArray()), rec);
+                index.Add(new GitObjectId(shaBuf), rec);
             }
         }
         return index;
@@ -1315,7 +1315,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     /// <see cref="RecordOf"/> (identity unless an order file is loaded). A record's byte length
     /// is always bounded by the NEXT RECORD's offset regardless of row order, since
     /// <c>.meta.idx</c>/<c>.dat</c> are append-ordered by record, never by row.</summary>
-    private (CommitMetadata Meta, ObjectId[] Parents) Decode(int row)
+    private (CommitMetadata Meta, GitObjectId[] Parents) Decode(int row)
     {
         if (row < 0 || row >= _count)
             throw new ArgumentOutOfRangeException(nameof(row));
@@ -1337,21 +1337,21 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     /// <summary>Parses one <c>.dat</c> record. Records written before <see cref="GraphMetaStore.Version"/>
     /// 2 have no parent-SHA bytes; that format is rejected wholesale by the header version check
     /// before any record is ever read, so a mismatch here would only mean real corruption.</summary>
-    private static (CommitMetadata Meta, ObjectId[] Parents) DecodeFrom(ReadOnlySpan<byte> record)
+    private static (CommitMetadata Meta, GitObjectId[] Parents) DecodeFrom(ReadOnlySpan<byte> record)
     {
         using var ms = new MemoryStream(record.ToArray(), writable: false);
         using var br = new BinaryReader(ms, new UTF8Encoding(false));
         var sha = br.ReadBytes(20);
-        var id = new ObjectId(sha);
+        var id = new GitObjectId(sha);
         var msg = br.ReadString();
         var author = br.ReadString();
         var email = br.ReadString();
         var authorWhen = ReadWhen(br);
         var commitWhen = ReadWhen(br);
         var parentCount = br.ReadInt32();
-        var parents = new ObjectId[parentCount];
+        var parents = new GitObjectId[parentCount];
         for (var i = 0; i < parentCount; i++)
-            parents[i] = new ObjectId(br.ReadBytes(20));
+            parents[i] = new GitObjectId(br.ReadBytes(20));
         var meta = new CommitMetadata
         {
             Id = id,
@@ -1434,14 +1434,14 @@ internal static class GraphMetaReorder
 /// </summary>
 internal sealed class CompactShaIndex(int capacity = 0)
 {
-    private readonly Dictionary<long, (ObjectId Id, int Record)> _byPrefix = new(capacity);
-    private List<(ObjectId Id, int Record)>? _collisions;
+    private readonly Dictionary<long, (GitObjectId Id, int Record)> _byPrefix = new(capacity);
+    private List<(GitObjectId Id, int Record)>? _collisions;
 
     public int Count { get; private set; }
 
-    private static long Prefix(ObjectId id) => BitConverter.ToInt64(id.RawId, 0);
+    private static long Prefix(GitObjectId id) => BitConverter.ToInt64(id.AsSpan());
 
-    public void Add(ObjectId id, int record)
+    public void Add(GitObjectId id, int record)
     {
         Count++;
         var prefix = Prefix(id);
@@ -1450,7 +1450,7 @@ internal sealed class CompactShaIndex(int capacity = 0)
         (_collisions ??= []).Add((id, record));
     }
 
-    public bool TryGetValue(ObjectId id, out int record)
+    public bool TryGetValue(GitObjectId id, out int record)
     {
         var prefix = Prefix(id);
         if (_byPrefix.TryGetValue(prefix, out var primary) && primary.Id.Equals(id))

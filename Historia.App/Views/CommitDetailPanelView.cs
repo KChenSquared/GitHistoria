@@ -7,7 +7,7 @@ namespace Historia.Views;
 public sealed class CommitDetailPanelView : UserControl, IDisposable
 {
     private readonly RepositoryContext _ctx;
-    private ObjectId _id;
+    private GitObjectId _id;
     private readonly INotificationService _notifications;
     private readonly ISettingsService _settings;
     private readonly Historia.Services.UI.IExternalLauncher _launcher;
@@ -52,7 +52,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     internal Border AuthorRuleForTesting => _authorRule;
     internal TextBlock FilesLabelForTesting => _filesLabel;
 
-    public CommitDetailPanelView(IServiceProvider sp, RepositoryContext ctx, ObjectId id)
+    public CommitDetailPanelView(IServiceProvider sp, RepositoryContext ctx, GitObjectId id)
     {
         _ctx = ctx;
         _id = id;
@@ -154,7 +154,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         QueueLoad();
     }
 
-    public void SetCommit(ObjectId id)
+    public void SetCommit(GitObjectId id)
     {
         if (_id == id)
             return;

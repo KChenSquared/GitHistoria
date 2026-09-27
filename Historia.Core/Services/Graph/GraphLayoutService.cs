@@ -154,7 +154,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         public required GraphQuery Query { get; init; }
         public bool IncludeRemotes => Query.IncludeRemoteBranches;
         public List<RawCommit> Commits { get; } = [];
-        public Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Decorations { get; set; } = [];
+        public Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> Decorations { get; set; } = [];
         public bool Exhausted { get; set; }
 
         /// <summary>The walk could not run or continue — git.exe missing, the process failed to
@@ -264,7 +264,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// Survives <see cref="Forget"/> (which the RefsChanged path calls) so an unchanged
     /// ref set never re-pays the multi-second <see cref="BuildDecorations"/> scan.
     /// </summary>
-    private sealed record DecoCache(long Fingerprint, Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Decos);
+    private sealed record DecoCache(long Fingerprint, Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> Decos);
 
     private readonly DagLayoutEngine _engine = new();
     private readonly GraphWalkCache _walkCache = new();
@@ -388,7 +388,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         return _engine.Compute(loaded.Commits, loaded.Decorations, maxRows, query.MaxLanes, CancellationToken.None, retainCommits: true);
     }
 
-    private static readonly Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> EmptyDecorations = [];
+    private static readonly Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> EmptyDecorations = [];
 
     public async Task<GraphLayoutResult> ExtendLayoutAsync(
         RepositoryContext context, GraphLayoutResult existing, int additionalRows, CancellationToken ct = default,
@@ -552,7 +552,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// </summary>
     private static SpillOutcome SpillRange(
         RepoCache cache, string repoPath, bool includeRemotes, int from, int to, bool exhausted,
-        TimeSpan? fullWalkElapsed = null, IReadOnlyList<ObjectId>? sortedTips = null)
+        TimeSpan? fullWalkElapsed = null, IReadOnlyList<GitObjectId>? sortedTips = null)
     {
         if (to <= from)
             return SpillOutcome.Appended;
@@ -1067,7 +1067,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
             var removedRecords = new HashSet<int>();
             foreach (var sha in removedShas)
-                if (shaIndex.TryGetValue(new ObjectId(sha), out var rec))
+                if (shaIndex.TryGetValue(GitObjectId.Parse(sha), out var rec))
                     removedRecords.Add(rec);
 
             // Guard 5 only ever cares about an added commit's OLD parent sitting within the top
@@ -1075,12 +1075,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // Guard 6 tracks the max CommitWhen over these same top rows.
             var maxOldParentRow = TestSpliceMaxOldParentRowOverride ?? GraphMetaSplice.MaxOldParentRow;
             var capRows = Math.Min(oldProbe.RowCount, maxOldParentRow);
-            var existingRecordRow = new Dictionary<string, int>(capRows);
+            var existingRecordRow = new Dictionary<GitObjectId, int>(capRows);
             var newestOldTopCommitWhen = DateTimeOffset.MinValue;
             for (var row = 0; row < capRows; row++)
             {
                 var record = oldStore[row];
-                existingRecordRow[record.Id.Sha] = row;
+                existingRecordRow[record.Id] = row;
                 if (record.CommitWhen > newestOldTopCommitWhen)
                     newestOldTopCommitWhen = record.CommitWhen;
             }
@@ -1113,7 +1113,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
             if (!writer.TryCommitReorder(
                     oldProbe.WalkKey, oldProbe.Exhausted, oldProbe.OrderVersion, oldProbe.RecordCount,
-                    plan.NewRecords.Count, plan.Order, [.. newSortedTips.Select(sha => new ObjectId(sha))]))
+                    plan.NewRecords.Count, plan.Order, [.. newSortedTips.Select(sha => GitObjectId.Parse(sha))]))
                 return -1;
 
             Diagnostics.PerfLog.Mark(
@@ -1196,7 +1196,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     lock (cache) { from = cache.SpilledRows; to = cache.SpilledRows + cache.Commits.Count; }
                     fullWalkFromZero ??= from == 0;
                     var fullWalkElapsed = walkDone && fullWalkFromZero == true ? walkStopwatch.Elapsed : (TimeSpan?)null;
-                    var tipsForCommit = walkDone ? sortedTips.Select(sha => new ObjectId(sha)).ToArray() : null;
+                    var tipsForCommit = walkDone ? sortedTips.Select(sha => GitObjectId.Parse(sha)).ToArray() : null;
                     if (to > from)
                     {
                         var outcome = SpillRange(cache, context.RepositoryPath, cache.IncludeRemotes, from, to, exhausted: walkDone, fullWalkElapsed, tipsForCommit);
@@ -1312,7 +1312,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // batches above, all of which ran off this lock.
             if (!writer.TryCommitReorder(
                     oldProbe.WalkKey, oldProbe.Exhausted, oldProbe.OrderVersion, oldProbe.RecordCount,
-                    builder.NewRecordCount, builder.Order, [.. sortedTips.Select(sha => new ObjectId(sha))]))
+                    builder.NewRecordCount, builder.Order, [.. sortedTips.Select(sha => GitObjectId.Parse(sha))]))
                 return; // best-effort — the old order stays authoritative on any mismatch or write failure
 
             Diagnostics.PerfLog.Memory($"reorder committed ({repoPath})");
@@ -1627,7 +1627,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             && GraphWalkCache.Supports(query))
         {
             List<RawCommit> commits;
-            Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decos;
+            Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> decos;
             bool exhausted;
             long walkKeyToSave;
             var save = false;
@@ -1672,7 +1672,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         int Have,
         int WantCount,
         string[]? Tips,
-        Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Decorations,
+        Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> Decorations,
         bool DecosFresh,
         long SnapshotToken)
     {
@@ -1681,12 +1681,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         public static GatePrep ForResumeCli(
             long fp, long walkKey, int have, int want,
-            Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations, long snapshotToken) =>
+            Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> decorations, long snapshotToken) =>
             new(GatePrepKind.ResumeCli, default, fp, walkKey, have, want, null, decorations, false, snapshotToken);
 
         public static GatePrep ForPrimeCli(
             long fp, long walkKey, int have, int want, string[] tips,
-            Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations, bool decosFresh, long snapshotToken) =>
+            Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> decorations, bool decosFresh, long snapshotToken) =>
             new(GatePrepKind.PrimeCli, default, fp, walkKey, have, want, tips, decorations, decosFresh, snapshotToken);
     }
 
@@ -2097,7 +2097,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
     private readonly record struct WalkResult(
         List<RawCommit> Commits,
-        Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Decorations,
+        Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> Decorations,
         bool Exhausted,
         long Fingerprint,
         bool DecosFresh,
@@ -2196,13 +2196,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
     /// <summary>Reuses the per-path decoration cache while the ref fingerprint is unchanged;
     /// otherwise rebuilds it with <see cref="BuildDecorations"/>.</summary>
-    private static (Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Decorations, bool Fresh) ResolveDecorations(
+    private static (Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> Decorations, bool Fresh) ResolveDecorations(
         Repository repo, GraphQuery query, RefSnapshot snapshot, DecoCache? decoCache, long fingerprint)
     {
         if (decoCache is not null && fingerprint != 0 && decoCache.Fingerprint == fingerprint)
             return (decoCache.Decos, false);
 
-        Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations;
+        Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> decorations;
         using (Diagnostics.PerfLog.Scope("BuildDecorations"))
             decorations = BuildDecorations(repo, query, snapshot);
         return (decorations, true);
@@ -2229,13 +2229,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// configured remote names (longest first), falling back to the first path segment only for
     /// an orphan remote-tracking ref whose remote no longer exists.
     /// </summary>
-    private static Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> BuildDecorations(
+    private static Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> BuildDecorations(
         Repository repo, GraphQuery query, RefSnapshot snapshot)
     {
         // commit id → ((family, shortName) → builder)
-        var map = new Dictionary<ObjectId, Dictionary<(Family, string), BadgeBuilder>>();
+        var map = new Dictionary<GitObjectId, Dictionary<(Family, string), BadgeBuilder>>();
 
-        BadgeBuilder Get(ObjectId id, Family family, string label)
+        BadgeBuilder Get(GitObjectId id, Family family, string label)
         {
             if (!map.TryGetValue(id, out var byKey))
                 map[id] = byKey = [];
@@ -2299,9 +2299,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
             var i = 0;
             foreach (var stash in repo.Stashes)
             {
-                var id = stash.WorkTree?.Id;
-                if (id is not null)
-                    Get(id, Family.Stash, $"stash@{{{i}}}");
+                var id = stash.WorkTree?.Id.ToGitObjectId();
+                if (id is { } tip)
+                    Get(tip, Family.Stash, $"stash@{{{i}}}");
                 i++;
             }
         }

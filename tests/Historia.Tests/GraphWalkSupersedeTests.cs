@@ -46,11 +46,11 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
 
     /// <summary>A commit no earlier walk saw, on a new branch — it sorts first by date, so a
     /// walk over the new tips starts with it.</summary>
-    private static ObjectId AddSideTip(TestRepositoryBuilder repo, string branch)
+    private static GitObjectId AddSideTip(TestRepositoryBuilder repo, string branch)
     {
         var side = repo.Git("commit-tree", "HEAD~5^{tree}", "-p", "HEAD~5", "-m", branch).Trim();
         repo.Git("update-ref", $"refs/heads/{branch}", side);
-        return new ObjectId(side);
+        return new GitObjectId(side);
     }
 
     private static object GetCache(GraphLayoutService svc, RepositoryContext ctx)
@@ -67,7 +67,7 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
     private static int TotalWalked(object cache) =>
         Get<int>(cache, "SpilledRows") + ((System.Collections.ICollection)cache.GetType().GetProperty("Commits")!.GetValue(cache)!).Count;
 
-    private static List<ObjectId> Ids(GraphLayoutResult r) =>
+    private static List<GitObjectId> Ids(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
     private static async Task<long> CurrentWalkKeyAsync(RepositoryContext ctx, GraphQuery query)

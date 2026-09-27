@@ -254,7 +254,7 @@ public class RepositoryTopBarTests : IDisposable
     private sealed class TestRepoFixture : IDisposable
     {
         public string Path { get; }
-        public LibGit2Sharp.ObjectId HeadCommitId => new(RunGitOutput(Path, "rev-parse", "HEAD"));
+        public GitObjectId HeadCommitId => GitObjectId.Parse(RunGitOutput(Path, "rev-parse", "HEAD"));
 
         public TestRepoFixture()
         {

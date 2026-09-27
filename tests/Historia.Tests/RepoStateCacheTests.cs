@@ -17,12 +17,12 @@ public sealed class RepoStateCacheTests : IDisposable
         var cache = new RepoStateCache(settings);
         const string repoPath = "C:/test-repo";
 
-        var oid1 = new ObjectId("1111111111111111111111111111111111111111");
-        var oid2 = new ObjectId("2222222222222222222222222222222222222222");
-        var oid3 = new ObjectId("3333333333333333333333333333333333333333");
-        var oid4 = new ObjectId("4444444444444444444444444444444444444444");
-        var oid5 = new ObjectId("5555555555555555555555555555555555555555");
-        var oid6 = new ObjectId("6666666666666666666666666666666666666666");
+        var oid1 = new GitObjectId("1111111111111111111111111111111111111111");
+        var oid2 = new GitObjectId("2222222222222222222222222222222222222222");
+        var oid3 = new GitObjectId("3333333333333333333333333333333333333333");
+        var oid4 = new GitObjectId("4444444444444444444444444444444444444444");
+        var oid5 = new GitObjectId("5555555555555555555555555555555555555555");
+        var oid6 = new GitObjectId("6666666666666666666666666666666666666666");
 
         var tagTime = DateTimeOffset.UtcNow;
         var stashTime = DateTimeOffset.UtcNow.AddMinutes(-5);
@@ -180,7 +180,7 @@ public sealed class RepoStateCacheTests : IDisposable
             CanonicalName = "refs/heads/feature",
             IsRemote = false,
             IsCurrent = false,
-            TipCommitId = new ObjectId("1111111111111111111111111111111111111111"),
+            TipCommitId = new GitObjectId("1111111111111111111111111111111111111111"),
             AheadBy = 7,
             BehindBy = 3,
         };
@@ -215,14 +215,14 @@ public sealed class RepoStateCacheTests : IDisposable
         var tag = new TagInfo
         {
             Name = "zero-tag",
-            TargetCommitId = ObjectId.Zero,
+            TargetCommitId = GitObjectId.Zero,
             IsAnnotated = false,
         };
 
         var stash = new StashEntry
         {
             Index = 0,
-            CommitId = ObjectId.Zero,
+            CommitId = GitObjectId.Zero,
             Message = "stash0",
             AuthorName = "A",
             AuthorEmail = "a@example.com",
@@ -261,8 +261,8 @@ public sealed class RepoStateCacheTests : IDisposable
         Assert.NotNull(snapshot);
 
         Assert.Null(snapshot.Branches![0].TipCommitId);
-        Assert.Equal(ObjectId.Zero, snapshot.Tags![0].TargetCommitId);
-        Assert.Equal(ObjectId.Zero, snapshot.Stashes![0].CommitId);
+        Assert.Equal(GitObjectId.Zero, snapshot.Tags![0].TargetCommitId);
+        Assert.Equal(GitObjectId.Zero, snapshot.Stashes![0].CommitId);
         Assert.Null(snapshot.Submodules![0].HeadCommitId);
         Assert.Null(snapshot.Submodules![0].RegisteredCommitId);
         Assert.Null(snapshot.Worktrees![0].HeadCommitId);

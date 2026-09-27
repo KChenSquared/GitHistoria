@@ -82,10 +82,10 @@ public sealed record DiffRequest
     public string? Path { get; init; }
 
     /// <summary>Commit id for <see cref="DiffSource.Commit"/>; "left" side for <see cref="DiffSource.Comparison"/>.</summary>
-    public ObjectId? CommitId { get; init; }
+    public GitObjectId? CommitId { get; init; }
 
     /// <summary>"right" side for <see cref="DiffSource.Comparison"/>.</summary>
-    public ObjectId? OtherCommitId { get; init; }
+    public GitObjectId? OtherCommitId { get; init; }
 
     /// <summary>For a merge-commit diff: which parent to diff against (1-based). Default 1.</summary>
     public int ParentIndex { get; init; } = 1;

@@ -1,10 +1,10 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>One row of a rebase todo list. Target of a squash/fixup is expressed by
 /// <b>ordering</b> — meld always goes into the preceding entry — never by a field.</summary>
 public sealed record RebaseEntry
 {
-    public required ObjectId CommitId { get; init; }
+    public required GitObjectId CommitId { get; init; }
     public required string MessageShort { get; init; }
     public required string AuthorName { get; init; }   // projected, never a LibGit2Sharp Signature
     public required string AuthorEmail { get; init; }
@@ -26,7 +26,7 @@ public enum RebaseAction
 
 public sealed record RebaseSession
 {
-    public required ObjectId OntoCommitId { get; init; }
+    public required GitObjectId OntoCommitId { get; init; }
     public required string OntoRefName { get; init; }
     public required string UpstreamRefName { get; init; }
     public required string SourceBranchName { get; init; }

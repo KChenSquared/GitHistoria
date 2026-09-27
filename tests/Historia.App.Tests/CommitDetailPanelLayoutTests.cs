@@ -271,7 +271,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
             Assert.NotNull(parentsList);
             var hash2 = Assert.IsType<TextBlock>(parentsList.Children[2]);
 
-            LibGit2Sharp.ObjectId? revealed = null;
+            GitObjectId? revealed = null;
             _context.State.RevealCommitRequested += (_, e) => revealed = e.CommitId;
 
             // Right click does not navigate or reveal
@@ -466,8 +466,8 @@ public class CommitDetailPanelLayoutTests : IDisposable
     private sealed class TestRepoFixture : IDisposable
     {
         public string Path { get; }
-        public LibGit2Sharp.ObjectId RootCommitId { get; }
-        public LibGit2Sharp.ObjectId HeadCommitId => new(RunGitOutput(Path, "rev-parse", "HEAD"));
+        public GitObjectId RootCommitId { get; }
+        public GitObjectId HeadCommitId => GitObjectId.Parse(RunGitOutput(Path, "rev-parse", "HEAD"));
 
         public TestRepoFixture()
         {
@@ -481,7 +481,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
             File.WriteAllText(file, "init\n");
             RunGit(Path, "add", ".");
             RunGit(Path, "commit", "-m", "initial commit", "--no-gpg-sign");
-            RootCommitId = new LibGit2Sharp.ObjectId(RunGitOutput(Path, "rev-parse", "HEAD"));
+            RootCommitId = GitObjectId.Parse(RunGitOutput(Path, "rev-parse", "HEAD"));
 
             File.WriteAllText(file, "second\n");
             RunGit(Path, "add", ".");
@@ -496,24 +496,24 @@ public class CommitDetailPanelLayoutTests : IDisposable
             RunGit(Path, "commit", "-m", msg, "--no-gpg-sign");
         }
 
-        public (LibGit2Sharp.ObjectId MergeId, LibGit2Sharp.ObjectId Parent1, LibGit2Sharp.ObjectId Parent2) CreateMergeCommit()
+        public (GitObjectId MergeId, GitObjectId Parent1, GitObjectId Parent2) CreateMergeCommit()
         {
             RunGit(Path, "checkout", "-b", "side");
             var sideFile = System.IO.Path.Combine(Path, "side.txt");
             File.WriteAllText(sideFile, "side\n");
             RunGit(Path, "add", ".");
             RunGit(Path, "commit", "-m", "side commit", "--no-gpg-sign");
-            var parent2 = new LibGit2Sharp.ObjectId(RunGitOutput(Path, "rev-parse", "HEAD"));
+            var parent2 = GitObjectId.Parse(RunGitOutput(Path, "rev-parse", "HEAD"));
 
             RunGit(Path, "checkout", "main");
             var mainFile = System.IO.Path.Combine(Path, "main.txt");
             File.WriteAllText(mainFile, "main\n");
             RunGit(Path, "add", ".");
             RunGit(Path, "commit", "-m", "main commit", "--no-gpg-sign");
-            var parent1 = new LibGit2Sharp.ObjectId(RunGitOutput(Path, "rev-parse", "HEAD"));
+            var parent1 = GitObjectId.Parse(RunGitOutput(Path, "rev-parse", "HEAD"));
 
             RunGit(Path, "merge", "side", "--no-ff", "-m", "merge side into main", "--no-gpg-sign");
-            var mergeId = new LibGit2Sharp.ObjectId(RunGitOutput(Path, "rev-parse", "HEAD"));
+            var mergeId = GitObjectId.Parse(RunGitOutput(Path, "rev-parse", "HEAD"));
             return (mergeId, parent1, parent2);
         }
 

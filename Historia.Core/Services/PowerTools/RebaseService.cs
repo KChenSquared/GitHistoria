@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IRebaseService"/>
 public sealed class RebaseService(IGitCliService cli) : IRebaseService
@@ -172,7 +172,7 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
             .Reverse() // oldest first
             .Select(c => new RebaseEntry
             {
-                CommitId = c.Id,
+                CommitId = c.Id.ToGitObjectId(),
                 MessageShort = c.MessageShort,
                 AuthorName = c.Author.Name,
                 AuthorEmail = c.Author.Email,
@@ -181,7 +181,7 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
 
         return new RebaseSession
         {
-            OntoCommitId = upstream.Id,
+            OntoCommitId = upstream.Id.ToGitObjectId(),
             OntoRefName = upstreamRef,
             UpstreamRefName = upstreamRef,
             SourceBranchName = head.FriendlyName,

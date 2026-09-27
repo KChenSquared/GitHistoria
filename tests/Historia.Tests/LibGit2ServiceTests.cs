@@ -168,7 +168,7 @@ public class LibGit2ServiceTests
         {
             Source = DiffSource.Commit,
             Path = "f.txt",
-            CommitId = new ObjectId(sha),
+            CommitId = new GitObjectId(sha),
         });
 
         Assert.False(diff.IsBinary);
@@ -190,7 +190,7 @@ public class LibGit2ServiceTests
         {
             Source = DiffSource.Commit,
             Path = "hello.txt",
-            CommitId = new ObjectId(root),
+            CommitId = new GitObjectId(root),
         });
 
         Assert.Equal(DiffKind.Added, diff.Kind);
@@ -210,8 +210,8 @@ public class LibGit2ServiceTests
         var mergeSha = repo.HeadSha;
 
         using var git = new Repository(repo.Path);
-        var vsParent1 = _svc.ProjectCommitFiles(git, new ObjectId(mergeSha), parentIndex: 1);
-        var vsParent2 = _svc.ProjectCommitFiles(git, new ObjectId(mergeSha), parentIndex: 2);
+        var vsParent1 = _svc.ProjectCommitFiles(git, new GitObjectId(mergeSha), parentIndex: 1);
+        var vsParent2 = _svc.ProjectCommitFiles(git, new GitObjectId(mergeSha), parentIndex: 2);
 
         Assert.Contains(vsParent1, f => f.Path == "feature.txt");
         Assert.Contains(vsParent2, f => f.Path == "main.txt");
@@ -235,7 +235,7 @@ public class LibGit2ServiceTests
             AuthorEmail = "alice@example.com",
         });
 
-        Assert.Equal(id, git.Head.Tip!.Id);
+        Assert.Equal(id, git.Head.Tip!.Id.ToGitObjectId());
         Assert.Equal("Alice", git.Head.Tip.Author.Name);
     }
 

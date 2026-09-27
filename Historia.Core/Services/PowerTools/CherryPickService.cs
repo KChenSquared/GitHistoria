@@ -1,15 +1,15 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="ICherryPickService"/>
 public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
 {
     private readonly ConcurrentDictionary<string, string> _origHeads = new();
 
-    public Task CherryPickAsync(RepositoryContext context, IReadOnlyList<ObjectId> oldestFirst,
+    public Task CherryPickAsync(RepositoryContext context, IReadOnlyList<GitObjectId> oldestFirst,
         bool noCommit = false, int? mainline = null, CancellationToken ct = default)
         => RunSequenceAsync(context, "cherry-pick", oldestFirst, noCommit, mainline, ct);
 
-    public Task RevertAsync(RepositoryContext context, IReadOnlyList<ObjectId> oldestFirst,
+    public Task RevertAsync(RepositoryContext context, IReadOnlyList<GitObjectId> oldestFirst,
         int? mainline = null, CancellationToken ct = default)
         => RunSequenceAsync(context, "revert", oldestFirst, noCommit: false, mainline, ct);
 
@@ -34,7 +34,7 @@ public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
     }
 
-    private async Task RunSequenceAsync(RepositoryContext context, string verb, IReadOnlyList<ObjectId> oldestFirst,
+    private async Task RunSequenceAsync(RepositoryContext context, string verb, IReadOnlyList<GitObjectId> oldestFirst,
         bool noCommit, int? mainline, CancellationToken ct)
     {
         if (oldestFirst.Count == 0)

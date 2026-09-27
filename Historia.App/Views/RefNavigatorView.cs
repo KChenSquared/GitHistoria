@@ -794,11 +794,11 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         row.ContextMenu = menu;
     }
 
-    private void Select(LibGit2Sharp.ObjectId? id)
+    private void Select(GitObjectId? id)
     {
         if (id is null || _repo is null) return;
         _repo.State.SetSelectedCommit(id);
-        _repo.State.RequestRevealCommit(id);
+        _repo.State.RequestRevealCommit(id.Value);
     }
 
     private async Task CheckoutAsync(BranchInfo b, bool isRemote)

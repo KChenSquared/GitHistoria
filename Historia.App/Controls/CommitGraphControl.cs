@@ -75,7 +75,7 @@ public sealed partial class CommitGraphControl : Control
     private bool _graphWidthPinned;
 
     // ── Reveal-toward-an-unrendered-commit ──
-    private ObjectId? _revealTarget;         // commit the pump is walking toward; null = idle
+    private GitObjectId? _revealTarget;         // commit the pump is walking toward; null = idle
     private GraphDecoration? _revealDeco;    // stand-in badge drawn while walking
     private bool _revealUserTookOver;        // user scrolled/zoomed since the click → stop driving
     private bool _revealPumpRunning;
@@ -183,11 +183,11 @@ public sealed partial class CommitGraphControl : Control
     private CancellationTokenSource? _hoverFetchCts;
 
     // LRU cache for commit message bodies, bounded with oldest-25% eviction.
-    private readonly Dictionary<ObjectId, string> _msgBodyCache = new();
-    private readonly LinkedList<ObjectId> _msgBodyLru = new();
+    private readonly Dictionary<GitObjectId, string> _msgBodyCache = new();
+    private readonly LinkedList<GitObjectId> _msgBodyLru = new();
     private const int MsgBodyCacheCapacity = 512;
 
-    private bool TryGetCachedBody(ObjectId id, out string body)
+    private bool TryGetCachedBody(GitObjectId id, out string body)
     {
         if (_msgBodyCache.TryGetValue(id, out body!))
         {
@@ -198,7 +198,7 @@ public sealed partial class CommitGraphControl : Control
         return false;
     }
 
-    private void CacheMessageBody(ObjectId id, string body)
+    private void CacheMessageBody(GitObjectId id, string body)
     {
         if (_msgBodyCache.TryGetValue(id, out _))
         {
@@ -222,8 +222,8 @@ public sealed partial class CommitGraphControl : Control
         _msgBodyLru.AddLast(id);
     }
 
-    private ObjectId? _hoverMsgId;
-    private ObjectId? _msgFetchInFlight;
+    private GitObjectId? _hoverMsgId;
+    private GitObjectId? _msgFetchInFlight;
     private string? _msgTipText;
 
     private readonly Popup _refList = new()
@@ -263,7 +263,7 @@ public sealed partial class CommitGraphControl : Control
         (GraphColumnKind.Graph, 1),
     ];
 
-    private readonly record struct RefCandidate(string Label, string Icon, ObjectId? CommitId);
+    private readonly record struct RefCandidate(string Label, string Icon, GitObjectId? CommitId);
 
     internal Popup RefSearchPopup => _refSearch;
     internal TextBox RefSearchBox => _refSearchBox;
@@ -974,7 +974,7 @@ public sealed partial class CommitGraphControl : Control
     /// points at it (rendered exactly like a real one), else its short SHA. The colour is seeded
     /// from the name the same way the layout engine seeds lane colour, so it matches once the
     /// row loads.</summary>
-    private GraphDecoration BuildRevealDecoration(ObjectId id)
+    private GraphDecoration BuildRevealDecoration(GitObjectId id)
     {
         var branch = _state?.Branches.FirstOrDefault(b => Equals(b.TipCommitId, id));
         var tag = branch is null ? _state?.Tags.FirstOrDefault(t => Equals(t.TargetCommitId, id)) : null;
@@ -1036,10 +1036,10 @@ public sealed partial class CommitGraphControl : Control
         NoteViewportBottom();
     }
 
-    private int ResolveRow(ObjectId? id)
+    private int ResolveRow(GitObjectId? id)
         // 2: RowByCommitId is shared with the layout service's still-growing accumulator
         // (not copied per snapshot), so an older layout must ignore rows beyond its own RowCount.
-        => id is not null && _layout is { } l && l.Layout.RowByCommitId.TryGetValue(id, out var row)
+        => id is { } nonNull && _layout is { } l && l.Layout.RowByCommitId.TryGetValue(nonNull, out var row)
             && row < l.Layout.RowCount ? row : -1;
 
     /// <summary>rows laid out in the first, fast phase before the configured
@@ -2697,7 +2697,7 @@ public sealed partial class CommitGraphControl : Control
     /// <summary>Show the full commit message for a Message-column cell. The body is
     /// fetched lazily via <see cref="IGitGateway.GetCommitDetailAsync"/> and cached;
     /// until it resolves the subject alone is shown.</summary>
-    private void ShowMessageTooltip(ObjectId id, string subject)
+    private void ShowMessageTooltip(GitObjectId id, string subject)
     {
         var text = subject;
         if (TryGetCachedBody(id, out var body))
@@ -2733,7 +2733,7 @@ public sealed partial class CommitGraphControl : Control
         ToolTip.SetIsOpen(this, true);
     }
 
-    private async Task FetchMessageBodyAsync(ObjectId id, string subject, CancellationToken ct)
+    private async Task FetchMessageBodyAsync(GitObjectId id, string subject, CancellationToken ct)
     {
         if (_context is not { } ctx || _msgBodyCache.ContainsKey(id) || id.Equals(_msgFetchInFlight))
             return;

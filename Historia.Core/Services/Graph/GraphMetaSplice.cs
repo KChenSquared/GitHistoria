@@ -84,7 +84,7 @@ internal static class GraphMetaSplice
         TimeSpan removedQueryElapsed,
         TimeSpan lastFullWalkElapsed,
         IReadOnlyList<RawCommit> addedCommits,
-        IReadOnlyDictionary<string, int> existingRecordRow,
+        IReadOnlyDictionary<GitObjectId, int> existingRecordRow,
         DateTimeOffset newestOldTopCommitWhen,
         int? minRowsToConsider = null,
         int? maxOldParentRow = null)
@@ -107,7 +107,7 @@ internal static class GraphMetaSplice
         var oldParentLimit = maxOldParentRow ?? MaxOldParentRow;
         foreach (var commit in addedCommits)
             foreach (var parent in commit.ParentIds)
-                if (existingRecordRow.TryGetValue(parent.Sha, out var oldRow) && oldRow >= oldParentLimit)
+                if (existingRecordRow.TryGetValue(parent, out var oldRow) && oldRow >= oldParentLimit)
                     return GuardResult.Reject($"an added commit's old parent sits at row {oldRow} >= {oldParentLimit}");
 
         foreach (var commit in addedCommits)

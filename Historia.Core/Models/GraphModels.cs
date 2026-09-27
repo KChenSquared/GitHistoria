@@ -7,7 +7,7 @@ namespace Historia.Models;
 /// </summary>
 public sealed record CommitMetadata
 {
-    public required ObjectId Id { get; init; }
+    public required GitObjectId Id { get; init; }
     public required string MessageShort { get; init; }
     public required string AuthorName { get; init; }
     public required string AuthorEmail { get; init; }
@@ -80,7 +80,7 @@ public enum RowFlags
 
 /// <summary>
 /// Visual edge connecting two rows. Rows, not commit ids: the renderer works purely in
-/// row/lane space and never resolves an <see cref="ObjectId"/> during a frame.
+/// row/lane space and never resolves an <see cref="GitObjectId"/> during a frame.
 /// </summary>
 public readonly record struct GraphEdge
 {
@@ -167,7 +167,7 @@ public readonly record struct GraphDecorationInput(
     GraphDecorationInput[]? Siblings = null);
 
 /// <summary>One commit fed to the layout engine, in topological (children-before-parents) order.</summary>
-public readonly record struct RawCommit(ObjectId Id, IReadOnlyList<ObjectId> ParentIds, CommitMetadata Metadata);
+public readonly record struct RawCommit(GitObjectId Id, IReadOnlyList<GitObjectId> ParentIds, CommitMetadata Metadata);
 
 /// <summary>
 /// Row-indexed access to the per-commit metadata for a laid-out window. The default
@@ -232,7 +232,7 @@ public sealed class ArrayCommitStore(CommitMetadata[] items) : ICommitStore
             var m = items[i];
             if (m.MessageShort.Contains(t, StringComparison.OrdinalIgnoreCase)
                 || m.AuthorName.Contains(t, StringComparison.OrdinalIgnoreCase)
-                || m.Id.Sha.StartsWith(t, StringComparison.OrdinalIgnoreCase))
+                || m.Id.ToString().StartsWith(t, StringComparison.OrdinalIgnoreCase))
                 hits.Add(i);
         }
         return hits;
@@ -336,7 +336,7 @@ public sealed class GraphLayout : IDisposable
     public required bool IsComplete { get; init; }
 
     /// <summary>
-    /// Maps <see cref="ObjectId"/> → row index. Built once; used for selection sync only.
+    /// Maps <see cref="GitObjectId"/> → row index. Built once; used for selection sync only.
     /// <see cref="DagLayoutEngine.Build"/> hands this the accumulator's own, still-growing
     /// dictionary rather than a per-snapshot copy (see its comment) — safe for this snapshot's
     /// own <see cref="Consume"/> writer, but not for an unsynchronized reader while a background
@@ -351,22 +351,22 @@ public sealed class GraphLayout : IDisposable
     /// <see cref="RowCount"/> (an older snapshot must not resolve a row a later extend appended).
     /// Existing callers become safe without themselves changing.
     /// </summary>
-    public required IReadOnlyDictionary<ObjectId, int> RowByCommitId
+    public required IReadOnlyDictionary<GitObjectId, int> RowByCommitId
     {
         get => _rowByCommitIdView;
         init { _rawRowByCommitId = value; _rowByCommitIdView = new RowByCommitIdView(this); }
     }
 
-    private IReadOnlyDictionary<ObjectId, int> _rawRowByCommitId = EmptyRowMap;
-    private IReadOnlyDictionary<ObjectId, int> _rowByCommitIdView = EmptyRowMap;
-    private static readonly IReadOnlyDictionary<ObjectId, int> EmptyRowMap = new Dictionary<ObjectId, int>();
+    private IReadOnlyDictionary<GitObjectId, int> _rawRowByCommitId = EmptyRowMap;
+    private IReadOnlyDictionary<GitObjectId, int> _rowByCommitIdView = EmptyRowMap;
+    private static readonly IReadOnlyDictionary<GitObjectId, int> EmptyRowMap = new Dictionary<GitObjectId, int>();
 
     /// <summary>Locked, bounds-checked row lookup. Takes
     /// <c>lock (SourceState)</c> when this snapshot has one (every layout except <see
     /// cref="Empty"/>), so it never races the accumulator's writer; ignores any row at or past
     /// this snapshot's own <see cref="RowCount"/>. Preferred over <see cref="RowByCommitId"/>'s
     /// <c>TryGetValue</c> for new code — that property routes through this same method.</summary>
-    public bool TryGetRow(ObjectId id, out int row)
+    public bool TryGetRow(GitObjectId id, out int row)
     {
         bool found;
         int value;
@@ -396,22 +396,22 @@ public sealed class GraphLayout : IDisposable
     /// call path; <see cref="Count"/>/<see cref="Keys"/>/<see cref="Values"/>/enumeration exist
     /// for interface completeness (exercised by tests, not by App code) and take the same lock
     /// for a single consistent snapshot.</summary>
-    private sealed class RowByCommitIdView(GraphLayout owner) : IReadOnlyDictionary<ObjectId, int>
+    private sealed class RowByCommitIdView(GraphLayout owner) : IReadOnlyDictionary<GitObjectId, int>
     {
-        public int this[ObjectId key] =>
+        public int this[GitObjectId key] =>
             owner.TryGetRow(key, out var row) ? row : throw new KeyNotFoundException();
 
-        public bool ContainsKey(ObjectId key) => owner.TryGetRow(key, out _);
-        public bool TryGetValue(ObjectId key, out int value) => owner.TryGetRow(key, out value);
+        public bool ContainsKey(GitObjectId key) => owner.TryGetRow(key, out _);
+        public bool TryGetValue(GitObjectId key, out int value) => owner.TryGetRow(key, out value);
 
-        public IEnumerable<ObjectId> Keys => Snapshot().Select(kv => kv.Key);
+        public IEnumerable<GitObjectId> Keys => Snapshot().Select(kv => kv.Key);
         public IEnumerable<int> Values => Snapshot().Select(kv => kv.Value);
         public int Count => Snapshot().Count;
 
-        public IEnumerator<KeyValuePair<ObjectId, int>> GetEnumerator() => Snapshot().GetEnumerator();
+        public IEnumerator<KeyValuePair<GitObjectId, int>> GetEnumerator() => Snapshot().GetEnumerator();
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-        private List<KeyValuePair<ObjectId, int>> Snapshot()
+        private List<KeyValuePair<GitObjectId, int>> Snapshot()
         {
             if (owner.SourceState is { } state)
                 lock (state)
@@ -419,10 +419,10 @@ public sealed class GraphLayout : IDisposable
             return Filter();
         }
 
-        private List<KeyValuePair<ObjectId, int>> Filter()
+        private List<KeyValuePair<GitObjectId, int>> Filter()
         {
             var rowCount = owner.RowCount;
-            var list = new List<KeyValuePair<ObjectId, int>>();
+            var list = new List<KeyValuePair<GitObjectId, int>>();
             foreach (var kv in owner._rawRowByCommitId)
                 if (kv.Value < rowCount)
                     list.Add(kv);
@@ -519,7 +519,7 @@ public sealed class GraphLayout : IDisposable
         EdgeCount = 0,
         TotalLaneCount = 0,
         IsComplete = true,
-        RowByCommitId = new Dictionary<ObjectId, int>(),
+        RowByCommitId = new Dictionary<GitObjectId, int>(),
     };
 
     /// <summary>Drops this snapshot's cached derivation window. The shared <see

@@ -39,7 +39,7 @@ public sealed class GitLogStreamPathFilterTests : IAsyncDisposable
         return rows;
     }
 
-    private static ObjectId Id(string sha) => new(sha);
+    private static GitObjectId Id(string sha) => GitObjectId.Parse(sha);
 
     [Fact]
     public void Path_filter_yields_only_commits_touching_the_path()
@@ -104,7 +104,7 @@ public sealed class GitLogStreamPathFilterTests : IAsyncDisposable
         foreach (var row in rows)
             Assert.All(row.ParentIds, parent => Assert.Contains(parent, shown));
         var mergeRow = Assert.Single(rows, r => r.Id == Id(merge));
-        Assert.Equal(new HashSet<ObjectId> { Id(side), Id(trunk) }, mergeRow.ParentIds.ToHashSet());
+        Assert.Equal(new HashSet<GitObjectId> { Id(side), Id(trunk) }, mergeRow.ParentIds.ToHashSet());
     }
 
     [Fact]

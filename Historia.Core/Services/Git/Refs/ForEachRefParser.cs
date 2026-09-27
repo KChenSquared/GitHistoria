@@ -110,8 +110,8 @@ public static class ForEachRefParser
             : null;
     }
 
-    internal static ObjectId? ParseId(string s) =>
-        s.Length is 40 or 64 ? new ObjectId(s) : null;
+    internal static GitObjectId? ParseId(string s) =>
+        s.Length is 40 or 64 && GitObjectId.TryParse(s, out var id) ? id : null;
 
     private static string? NullIfEmpty(string s) => s.Length == 0 ? null : s;
 }

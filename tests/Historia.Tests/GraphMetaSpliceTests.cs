@@ -12,7 +12,7 @@ namespace Historia.Tests;
 [Trait("tier", "unit")]
 public sealed class GraphMetaSpliceTests
 {
-    private static ObjectId Oid(int i) => new(i.ToString("x40"));
+    private static GitObjectId Oid(int i) => GitObjectId.Parse(i.ToString("x40"));
 
     private static RawCommit Commit(int i, params int[] parents) => new(
         Oid(i),
@@ -40,12 +40,12 @@ public sealed class GraphMetaSpliceTests
         TimeSpan? removedElapsed = null,
         TimeSpan? fullWalkElapsed = null,
         IReadOnlyList<RawCommit>? addedCommits = null,
-        IReadOnlyDictionary<string, int>? existingRecordRow = null,
+        IReadOnlyDictionary<GitObjectId, int>? existingRecordRow = null,
         DateTimeOffset? newestOldTopCommitWhen = null) =>
         GraphMetaSplice.Evaluate(
             storeExhausted, oldTipsMatch, repoIsShallow, oldRowCount,
             addedElapsed ?? FastQuery, removedElapsed ?? FastQuery, fullWalkElapsed ?? FullWalkTime,
-            addedCommits ?? [], existingRecordRow ?? new Dictionary<string, int>(),
+            addedCommits ?? [], existingRecordRow ?? new Dictionary<GitObjectId, int>(),
             newestOldTopCommitWhen ?? DateTimeOffset.MinValue);
 
     [Fact]
@@ -130,7 +130,7 @@ public sealed class GraphMetaSpliceTests
         // Commit 100 is an added commit whose parent (commit 5, an OLD commit) sits at old row
         // 250 — beyond MaxOldParentRow (200).
         var added = new List<RawCommit> { Commit(100, 5) };
-        var existingRow = new Dictionary<string, int> { [Oid(5).Sha] = 250 };
+        var existingRow = new Dictionary<GitObjectId, int> { [Oid(5)] = 250 };
 
         var result = EvaluateDefaults(addedCommits: added, existingRecordRow: existingRow);
         Assert.False(result.Allowed);
@@ -140,7 +140,7 @@ public sealed class GraphMetaSpliceTests
     public void Guard5_allows_when_every_added_commits_old_parent_is_within_the_row_cap()
     {
         var added = new List<RawCommit> { Commit(100, 5) };
-        var existingRow = new Dictionary<string, int> { [Oid(5).Sha] = 199 };
+        var existingRow = new Dictionary<GitObjectId, int> { [Oid(5)] = 199 };
 
         var result = EvaluateDefaults(addedCommits: added, existingRecordRow: existingRow);
         Assert.True(result.Allowed);
@@ -152,7 +152,7 @@ public sealed class GraphMetaSpliceTests
         // Commit 101's parent (100) is ALSO newly added — not in existingRecordRow at all — so
         // there's nothing to bound; only OLD parents are checked.
         var added = new List<RawCommit> { Commit(101, 100), Commit(100) };
-        var result = EvaluateDefaults(addedCommits: added, existingRecordRow: new Dictionary<string, int>());
+        var result = EvaluateDefaults(addedCommits: added, existingRecordRow: new Dictionary<GitObjectId, int>());
         Assert.True(result.Allowed);
     }
 
@@ -163,7 +163,7 @@ public sealed class GraphMetaSpliceTests
         // Evaluate's threshold parameters let a fixture drive the wiring at a small scale instead.
         var result = GraphMetaSplice.Evaluate(
             storeExhausted: true, oldTipsMatch: true, repoIsShallow: false, oldRowCount: 20,
-            FastQuery, FastQuery, FullWalkTime, [], new Dictionary<string, int>(),
+            FastQuery, FastQuery, FullWalkTime, [], new Dictionary<GitObjectId, int>(),
             newestOldTopCommitWhen: DateTimeOffset.MinValue,
             minRowsToConsider: 20);
         Assert.True(result.Allowed);
@@ -173,7 +173,7 @@ public sealed class GraphMetaSpliceTests
     public void Guard5_threshold_is_overridable_for_small_scale_fixture_tests()
     {
         var added = new List<RawCommit> { Commit(100, 5) };
-        var existingRow = new Dictionary<string, int> { [Oid(5).Sha] = 3 };
+        var existingRow = new Dictionary<GitObjectId, int> { [Oid(5)] = 3 };
 
         var result = GraphMetaSplice.Evaluate(
             storeExhausted: true, oldTipsMatch: true, repoIsShallow: false, oldRowCount: 300_000,

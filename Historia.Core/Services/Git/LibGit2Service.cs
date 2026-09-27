@@ -151,7 +151,7 @@ public sealed class LibGit2Service
             .Take(query.Take)
             .Select(c => new CommitSummary
             {
-                Id = c.Id,
+                Id = c.Id.ToGitObjectId(),
                 MessageShort = c.MessageShort,
                 AuthorName = c.Author.Name,
                 AuthorEmail = c.Author.Email,
@@ -162,10 +162,10 @@ public sealed class LibGit2Service
             .ToList();
     }
 
-    public CommitDetail ProjectCommitDetail(Repository repo, ObjectId id)
+    public CommitDetail ProjectCommitDetail(Repository repo, GitObjectId id)
     {
-        var commit = repo.Lookup<Commit>(id)
-            ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"Commit {id.Sha} not found.");
+        var commit = repo.Lookup<Commit>(id.ToLibGit2())
+            ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"Commit {id.ToString()} not found.");
 
         // LibGit2Sharp's Commit.Message is the *full* message (subject + body). Consumers want
         // the body alone — they pair it with MessageShort themselves — so strip the first line
@@ -177,7 +177,7 @@ public sealed class LibGit2Service
 
         return new CommitDetail
         {
-            Id = commit.Id,
+            Id = commit.Id.ToGitObjectId(),
             Message = fullMessage.TrimEnd('\n', '\r'),
             MessageShort = commit.MessageShort,
             MessageBody = messageBody,
@@ -187,16 +187,16 @@ public sealed class LibGit2Service
             CommitterName = commit.Committer.Name,
             CommitterEmail = commit.Committer.Email,
             CommitWhen = commit.Committer.When,
-            ParentIds = commit.Parents.Select(p => p.Id).ToList(),
+            ParentIds = commit.Parents.Select(p => p.Id.ToGitObjectId()).ToList(),
             Decorations = [],
         };
     }
 
     /// <summary>Files changed by a commit versus the chosen parent (1-based; root → empty tree).</summary>
-    public IReadOnlyList<FileStatusEntry> ProjectCommitFiles(Repository repo, ObjectId id, int parentIndex)
+    public IReadOnlyList<FileStatusEntry> ProjectCommitFiles(Repository repo, GitObjectId id, int parentIndex)
     {
-        var commit = repo.Lookup<Commit>(id)
-            ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"Commit {id.Sha} not found.");
+        var commit = repo.Lookup<Commit>(id.ToLibGit2())
+            ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"Commit {id.ToString()} not found.");
         var parent = commit.Parents.ElementAtOrDefault(Math.Max(0, parentIndex - 1));
 
         using var changes = repo.Diff.Compare<TreeChanges>(parent?.Tree, commit.Tree);
@@ -236,7 +236,7 @@ public sealed class LibGit2Service
                 IsRemote = branch.IsRemote,
             RemoteName = SafeRemoteName(branch),
                 IsCurrent = branch.IsCurrentRepositoryHead,
-                TipCommitId = branch.Tip?.Id,
+                TipCommitId = branch.Tip?.Id.ToGitObjectId(),
                 UpstreamName = branch.TrackedBranch?.FriendlyName,
                 // Ahead/behind stays null here — computed lazily per visible row.
             });
@@ -256,7 +256,7 @@ public sealed class LibGit2Service
                 result.Add(new TagInfo
                 {
                     Name = tag.FriendlyName,
-                    TargetCommitId = target?.Id ?? tag.Target.Id,
+                    TargetCommitId = (target?.Id ?? tag.Target.Id).ToGitObjectId(),
                     IsAnnotated = tag.IsAnnotated,
                     Message = tag.Annotation?.Message,
                     TaggerName = tag.Annotation?.Tagger?.Name,
@@ -369,7 +369,7 @@ public sealed class LibGit2Service
 
     private static Patch DiffCommit(Repository repo, DiffRequest request, string[] paths, CompareOptions options)
     {
-        var commit = repo.Lookup<Commit>(request.CommitId
+        var commit = repo.Lookup<Commit>(request.CommitId?.ToLibGit2()
             ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, "No commit id supplied."));
         if (commit is null)
             throw new HistoriaGitException(GitErrorKind.RefNotFound, "Commit not found.");
@@ -381,8 +381,8 @@ public sealed class LibGit2Service
 
     private static Patch DiffComparison(Repository repo, DiffRequest request, string[] paths, CompareOptions options)
     {
-        var left = request.CommitId is { } l ? repo.Lookup<Commit>(l) : null;
-        var right = request.OtherCommitId is { } r ? repo.Lookup<Commit>(r) : null;
+        var left = request.CommitId is { } l ? repo.Lookup<Commit>(l.ToLibGit2()) : null;
+        var right = request.OtherCommitId is { } r ? repo.Lookup<Commit>(r.ToLibGit2()) : null;
         return repo.Diff.Compare<Patch>(left?.Tree, right?.Tree, paths, explicitPathsOptions: null, compareOptions: options);
     }
 
@@ -481,7 +481,7 @@ public sealed class LibGit2Service
         }
     }
 
-    public ObjectId Commit(Repository repo, CommitRequest request)
+    public GitObjectId Commit(Repository repo, CommitRequest request)
     {
         var now = DateTimeOffset.Now;
         var author = new Signature(request.AuthorName, request.AuthorEmail, now);
@@ -496,7 +496,7 @@ public sealed class LibGit2Service
             AllowEmptyCommit = request.AllowEmptyCommit,
         };
 
-        return repo.Commit(request.Message, author, committer, options).Id;
+        return repo.Commit(request.Message, author, committer, options).Id.ToGitObjectId();
     }
 
     public BranchInfo CreateBranch(Repository repo, string name, string startPoint, bool checkout)
@@ -512,7 +512,7 @@ public sealed class LibGit2Service
             IsRemote = branch.IsRemote,
             RemoteName = SafeRemoteName(branch),
             IsCurrent = branch.IsCurrentRepositoryHead,
-            TipCommitId = branch.Tip?.Id,
+            TipCommitId = branch.Tip?.Id.ToGitObjectId(),
             UpstreamName = branch.TrackedBranch?.FriendlyName,
         };
     }
@@ -626,7 +626,7 @@ public sealed class LibGit2Service
         return new TagInfo
         {
             Name = tag.FriendlyName,
-            TargetCommitId = peeled?.Id ?? tag.Target.Id,
+            TargetCommitId = (peeled?.Id ?? tag.Target.Id).ToGitObjectId(),
             IsAnnotated = tag.IsAnnotated,
             Message = tag.Annotation?.Message,
             TaggerName = tag.Annotation?.Tagger.Name,

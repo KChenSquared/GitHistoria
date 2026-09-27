@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="ISubmoduleService"/>
 public sealed partial class SubmoduleService(IGitCliService cli) : ISubmoduleService
@@ -28,7 +28,7 @@ public sealed partial class SubmoduleService(IGitCliService cli) : ISubmoduleSer
                 Name = path,
                 Path = path,
                 Url = urls.GetValueOrDefault(path, ""),
-                HeadCommitId = LibGit2Sharp.ObjectId.TryParse(sha, out var id) ? id : null,
+                HeadCommitId = GitObjectId.TryParse(sha, out var id) ? id : null,
                 RegisteredCommitId = null,
                 Status = flag switch
                 {

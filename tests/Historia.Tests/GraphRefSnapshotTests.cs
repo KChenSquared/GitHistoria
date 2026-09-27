@@ -176,7 +176,7 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
         Assert.Equal(2_500, Get<int>(GetCache(svc, ctx), "LiveWalkPos"));
     }
 
-    private static List<ObjectId> Ids(GraphLayoutResult r) =>
+    private static List<GitObjectId> Ids(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
     [Fact]
@@ -202,7 +202,7 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
         // The rows the old walk already produced still extend the old layout, and nothing else.
         var ids = Ids(extended);
         Assert.Equal(ids.Count, ids.Distinct().Count());
-        Assert.DoesNotContain(new ObjectId(side), ids);
+        Assert.DoesNotContain(GitObjectId.Parse(side), ids);
         Assert.Equal(Ids(initial), ids.Take(initial.Layout.RowCount));
     }
 

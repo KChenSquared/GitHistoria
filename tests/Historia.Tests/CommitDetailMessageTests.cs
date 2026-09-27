@@ -18,7 +18,7 @@ public class CommitDetailMessageTests
         const string raw = "feat: x\n\nline one\n\n- bullet\n";
         var commit = git.Commit(raw, sig, sig);
 
-        var detail = _svc.ProjectCommitDetail(git, commit.Id);
+        var detail = _svc.ProjectCommitDetail(git, commit.Id.ToGitObjectId());
 
         Assert.Equal("feat: x\n\nline one\n\n- bullet", detail.Message);
     }
@@ -36,7 +36,7 @@ public class CommitDetailMessageTests
         const string raw = "a\nb\n\nbody";
         var commit = git.Commit(raw, sig, sig);
 
-        var detail = _svc.ProjectCommitDetail(git, commit.Id);
+        var detail = _svc.ProjectCommitDetail(git, commit.Id.ToGitObjectId());
 
         Assert.Equal("a\nb\n\nbody", detail.Message);
         Assert.NotEqual(detail.Message, detail.MessageShort);
@@ -56,7 +56,7 @@ public class CommitDetailMessageTests
         const string raw = "wip";
         var commit = git.Commit(raw, sig, sig);
 
-        var detail = _svc.ProjectCommitDetail(git, commit.Id);
+        var detail = _svc.ProjectCommitDetail(git, commit.Id.ToGitObjectId());
 
         Assert.Equal("wip", detail.Message);
         Assert.Equal("", detail.MessageBody);

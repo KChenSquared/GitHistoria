@@ -32,7 +32,7 @@ public sealed partial class CommitGraphControl
 
     // ── Context menus ──
 
-    private void ShowCommitContextMenu(ObjectId id)
+    private void ShowCommitContextMenu(GitObjectId id)
     {
         if (_context is not { } ctx)
             return;
@@ -159,7 +159,7 @@ public sealed partial class CommitGraphControl
         var items = new List<Control>();
 
         // The pill's own commit — for "Create branch/tag here" on a branch or tag label.
-        ObjectId? pillId = _layout is { } lay && deco.RowIndex >= 0 && deco.RowIndex < lay.Layout.Commits.Count
+        GitObjectId? pillId = _layout is { } lay && deco.RowIndex >= 0 && deco.RowIndex < lay.Layout.Commits.Count
             ? lay.Layout.Commits[deco.RowIndex].Id
             : null;
 
@@ -309,7 +309,7 @@ public sealed partial class CommitGraphControl
     private static string TruncateBranchLabelForMenu(string name) =>
         name.Length <= MenuNameMaxChars ? name : name[..(MenuNameMaxChars - 1)] + "…";
 
-    private void ShowDropIntentMenu(ObjectId commitId, string shortSha, string branchLabel)
+    private void ShowDropIntentMenu(GitObjectId commitId, string shortSha, string branchLabel)
     {
         if (_context is not { } ctx)
             return;
@@ -361,11 +361,11 @@ public sealed partial class CommitGraphControl
         await Guard(() => ctx.Gateway.ResetAsync(sha, mode, ctx.Lifetime), ctx, "Reset");
     }
 
-    private async Task CherryPickAsync(IReadOnlyList<ObjectId> ids)
+    private async Task CherryPickAsync(IReadOnlyList<GitObjectId> ids)
     {
         if (_context is not { } ctx)
             return;
-        var isMerge = ids.Count == 1 && await ctx.WithRepositoryAsync(r => r.Lookup<Commit>(ids[0])?.Parents.Count() > 1, ctx.Lifetime);
+        var isMerge = ids.Count == 1 && await ctx.WithRepositoryAsync(r => r.Lookup<Commit>(ids[0].Sha)?.Parents.Count() > 1, ctx.Lifetime);
         var mainline = isMerge ? 1 : (int?)null;
         if (!await _dialogs.ConfirmAsync("Cherry-pick",
                 $"Cherry-pick {ids.Count} commit(s) onto {_state?.CurrentBranch?.Name ?? "the current branch"}?"
@@ -384,11 +384,11 @@ public sealed partial class CommitGraphControl
         }
     }
 
-    private async Task RevertAsync(IReadOnlyList<ObjectId> ids)
+    private async Task RevertAsync(IReadOnlyList<GitObjectId> ids)
     {
         if (_context is not { } ctx)
             return;
-        var isMerge = ids.Count == 1 && await ctx.WithRepositoryAsync(r => r.Lookup<Commit>(ids[0])?.Parents.Count() > 1, ctx.Lifetime);
+        var isMerge = ids.Count == 1 && await ctx.WithRepositoryAsync(r => r.Lookup<Commit>(ids[0].Sha)?.Parents.Count() > 1, ctx.Lifetime);
         if (!await _dialogs.ConfirmAsync("Revert", $"Revert {ids.Count} commit(s)?" + (isMerge ? " (merge commit — mainline parent 1)" : "")))
             return;
         try
@@ -436,7 +436,7 @@ public sealed partial class CommitGraphControl
 
     /// <summary>Copies the full commit message (subject + body). Uses the message-body cache
     /// when warm, else fetches the detail once.</summary>
-    private void CopyCommitMessage(ObjectId id)
+    private void CopyCommitMessage(GitObjectId id)
     {
         // _msgBodyCache holds the body only; combine with the subject.
         if (TryGetCachedBody(id, out var body))
@@ -464,7 +464,7 @@ public sealed partial class CommitGraphControl
         });
     }
 
-    private string FindSubject(ObjectId id)
+    private string FindSubject(GitObjectId id)
     {
         if (_layout is { } lay && lay.Layout.RowByCommitId.TryGetValue(id, out var row)
             && row >= 0 && row < lay.Layout.Commits.Count)

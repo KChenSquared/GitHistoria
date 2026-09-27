@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IStashService"/>
 public sealed class StashService(IGitCliService cli) : IStashService
@@ -65,16 +65,16 @@ public sealed class StashService(IGitCliService cli) : IStashService
         return true;
     }
 
-    public Task ApplyAndDropAsync(RepositoryContext context, ObjectId commitId, CancellationToken ct = default)
+    public Task ApplyAndDropAsync(RepositoryContext context, GitObjectId commitId, CancellationToken ct = default)
         => MutateAsync(context, commitId, "pop", extra: null, ct);
 
-    public Task ApplyAsync(RepositoryContext context, ObjectId commitId, bool restoreIndex, CancellationToken ct = default)
+    public Task ApplyAsync(RepositoryContext context, GitObjectId commitId, bool restoreIndex, CancellationToken ct = default)
         => MutateAsync(context, commitId, "apply", extra: restoreIndex ? "--index" : null, ct);
 
-    public Task DropAsync(RepositoryContext context, ObjectId commitId, CancellationToken ct = default)
+    public Task DropAsync(RepositoryContext context, GitObjectId commitId, CancellationToken ct = default)
         => MutateAsync(context, commitId, "drop", extra: null, ct);
 
-    public Task BranchFromAsync(RepositoryContext context, ObjectId commitId, string branchName, CancellationToken ct = default)
+    public Task BranchFromAsync(RepositoryContext context, GitObjectId commitId, string branchName, CancellationToken ct = default)
         => MutateAsync(context, commitId, "branch", extra: branchName, ct, branchNameFirst: true);
 
     public async Task ClearAsync(RepositoryContext context, CancellationToken ct = default)
@@ -90,7 +90,7 @@ public sealed class StashService(IGitCliService cli) : IStashService
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
     }
 
-    private async Task MutateAsync(RepositoryContext context, ObjectId commitId, string verb, string? extra,
+    private async Task MutateAsync(RepositoryContext context, GitObjectId commitId, string verb, string? extra,
         CancellationToken ct, bool branchNameFirst = false)
     {
         using var _ = context.BeginSelfOperation();
@@ -135,7 +135,7 @@ public sealed class StashService(IGitCliService cli) : IStashService
             result.Add(new StashEntry
             {
                 Index = i++,
-                CommitId = commit.Id,
+                CommitId = commit.Id.ToGitObjectId(),
                 Message = stash.Message,
                 AuthorName = commit.Author.Name,
                 AuthorEmail = commit.Author.Email,

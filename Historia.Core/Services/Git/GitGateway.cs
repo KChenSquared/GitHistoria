@@ -87,10 +87,10 @@ public sealed class GitGateway(
     public Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default)
         => context.WithRepositoryAsync(r => lib.ProjectCommits(r, query), ct);
 
-    public Task<CommitDetail> GetCommitDetailAsync(ObjectId id, CancellationToken ct = default)
+    public Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default)
         => context.WithRepositoryAsync(r => lib.ProjectCommitDetail(r, id), ct);
 
-    public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(ObjectId id, int parentIndex, CancellationToken ct = default)
+    public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default)
         => context.WithRepositoryAsync(r => lib.ProjectCommitFiles(r, id, parentIndex), ct);
 
     public Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default)
@@ -227,7 +227,7 @@ public sealed class GitGateway(
         await context.WithRepositoryAsync(r => lib.DiscardWorkingTree(r, paths), ct).ConfigureAwait(false);
     }
 
-    public async Task<ObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default)
+    public async Task<GitObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default)
     {
         using var _ = context.BeginSelfOperation();
 
@@ -260,7 +260,7 @@ public sealed class GitGateway(
             if (!result.IsSuccess)
                 throw HistoriaGitException.FromCli(result, "Commit");
 
-            return await context.WithRepositoryAsync(r => r.Head.Tip!.Id, ct).ConfigureAwait(false);
+            return await context.WithRepositoryAsync(r => r.Head.Tip!.Id.ToGitObjectId(), ct).ConfigureAwait(false);
         }
 
         return await context.WithRepositoryAsync(r => lib.Commit(r, request), ct).ConfigureAwait(false);

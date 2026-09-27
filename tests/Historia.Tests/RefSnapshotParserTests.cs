@@ -34,8 +34,8 @@ public sealed class RefSnapshotParserTests
             refs.Select(r => r.CanonicalName));
 
         var main = refs[0];
-        Assert.Equal(new ObjectId(Commit), main.Target);
-        Assert.Equal(new ObjectId(Commit), main.PeeledCommit);
+        Assert.Equal(new GitObjectId(Commit), main.Target);
+        Assert.Equal(new GitObjectId(Commit), main.PeeledCommit);
         Assert.Null(main.SymrefTarget);
         Assert.False(main.IsAnnotatedTag);
 
@@ -48,8 +48,8 @@ public sealed class RefSnapshotParserTests
 
         var annotated = refs[3];
         Assert.True(annotated.IsAnnotatedTag);
-        Assert.Equal(new ObjectId(TagObj), annotated.Target);
-        Assert.Equal(new ObjectId(Commit), annotated.PeeledCommit);
+        Assert.Equal(new GitObjectId(TagObj), annotated.Target);
+        Assert.Equal(new GitObjectId(Commit), annotated.PeeledCommit);
         Assert.Equal("Tëster Ü", annotated.TaggerName);
         Assert.Equal("line one\r\n\r\nline three\r\n", annotated.Message);
         Assert.Equal(new DateTimeOffset(2023, 11, 14, 20, 43, 20, TimeSpan.FromMinutes(-90)), annotated.TaggerWhen);
@@ -118,7 +118,7 @@ public sealed class RefSnapshotParserTests
     public void Batch_check_answers_in_input_order_with_missing_as_null()
     {
         var answers = CatFileParser.ParseBatchCheck($"{Commit} commit\n1111111111111111111111111111111111111111 missing\n{TagObj}^{{}} missing\n", 3);
-        List<(ObjectId? Id, string? Type)> expected = [(new ObjectId(Commit), "commit"), (null, null), (null, null)];
+        List<(GitObjectId? Id, string? Type)> expected = [(new GitObjectId(Commit), "commit"), (null, null), (null, null)];
         Assert.Equal(expected, answers);
     }
 
@@ -150,17 +150,17 @@ public sealed class RefSnapshotParserTests
         var tags = CatFileParser.ParseTagObjects(stdout);
 
         Assert.Equal(3, tags.Count);
-        var crlf = tags[new ObjectId(TagObj)];
+        var crlf = tags[new GitObjectId(TagObj)];
         Assert.Equal("Tëster Ü", crlf.TaggerName);
         Assert.Equal(new DateTimeOffset(2023, 11, 14, 20, 43, 20, TimeSpan.FromMinutes(-90)), crlf.TaggerWhen);
         Assert.Equal("subject\r\n\r\nbody\r\n", crlf.Message);
 
-        var old = tags[new ObjectId(second)];
+        var old = tags[new GitObjectId(second)];
         Assert.Null(old.TaggerName);
         Assert.Null(old.TaggerWhen);
         Assert.Equal("old style\n", old.Message);
 
-        Assert.Equal("", tags[new ObjectId(third)].Message);
+        Assert.Equal("", tags[new GitObjectId(third)].Message);
     }
 
     [Fact]

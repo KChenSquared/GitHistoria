@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>Submodule state. Derived from <c>git submodule status --recursive</c>.</summary>
 public sealed record SubmoduleInfo
@@ -6,8 +6,8 @@ public sealed record SubmoduleInfo
     public required string Name { get; init; }
     public required string Path { get; init; }
     public required string Url { get; init; }
-    public ObjectId? HeadCommitId { get; init; }
-    public ObjectId? RegisteredCommitId { get; init; }
+    public GitObjectId? HeadCommitId { get; init; }
+    public GitObjectId? RegisteredCommitId { get; init; }
     public required SubmoduleStatus Status { get; init; }
     public string? BranchTracking { get; init; }
 }
@@ -25,7 +25,7 @@ public sealed record WorktreeInfo
 {
     public required string Path { get; init; }
     public required string Branch { get; init; }
-    public ObjectId? HeadCommitId { get; init; }
+    public GitObjectId? HeadCommitId { get; init; }
     public required bool IsMainWorktree { get; init; }
     public required bool IsLocked { get; init; }
     public string? LockReason { get; init; }

@@ -24,8 +24,8 @@ public sealed class BranchMenuDivergenceTests
         public Task<RepositoryInfo> GetRepositoryInfoAsync(CancellationToken ct = default) => No<Task<RepositoryInfo>>();
         public Task<Historia.Models.RepositoryStatus> GetStatusAsync(CancellationToken ct = default) => No<Task<Historia.Models.RepositoryStatus>>();
         public Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default) => No<Task<IReadOnlyList<CommitSummary>>>();
-        public Task<CommitDetail> GetCommitDetailAsync(ObjectId id, CancellationToken ct = default) => No<Task<CommitDetail>>();
-        public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(ObjectId id, int parentIndex, CancellationToken ct = default) => No<Task<IReadOnlyList<FileStatusEntry>>>();
+        public Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default) => No<Task<CommitDetail>>();
+        public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default) => No<Task<IReadOnlyList<FileStatusEntry>>>();
         public Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<BranchInfo>>>();
         public Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<TagInfo>>>();
         public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<RemoteInfo>>>();
@@ -37,7 +37,7 @@ public sealed class BranchMenuDivergenceTests
         public Task StageAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => No<Task>();
         public Task UnstageAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => No<Task>();
         public Task DiscardAsync(IReadOnlyList<string> paths, CancellationToken ct = default) => No<Task>();
-        public Task<ObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default) => No<Task<ObjectId>>();
+        public Task<GitObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default) => No<Task<GitObjectId>>();
         public Task MergeAsync(string refish, bool noFastForward, CancellationToken ct = default) => No<Task>();
         public Task ResetAsync(string target, GitResetMode mode, CancellationToken ct = default) => No<Task>();
         public Task<int> CountCommitsLeavingAsync(string target, CancellationToken ct = default) => No<Task<int>>();

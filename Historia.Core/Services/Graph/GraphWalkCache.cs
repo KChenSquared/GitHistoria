@@ -51,7 +51,7 @@ internal sealed class GraphWalkCache
 
     public sealed record Loaded(
         List<RawCommit> Commits,
-        Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Decorations,
+        Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> Decorations,
         bool Exhausted);
 
     public static bool Supports(GraphQuery query) =>
@@ -222,10 +222,10 @@ internal sealed class GraphWalkCache
         var commits = new List<RawCommit>(dto.Commits.Count);
         foreach (var c in dto.Commits)
         {
-            var parents = new ObjectId[c.Parents.Length];
+            var parents = new GitObjectId[c.Parents.Length];
             for (var i = 0; i < parents.Length; i++)
-                parents[i] = new ObjectId(c.Parents[i]);
-            var id = new ObjectId(c.Id);
+                parents[i] = GitObjectId.Parse(c.Parents[i]);
+            var id = GitObjectId.Parse(c.Id);
             commits.Add(new RawCommit(id, parents, metadataOnDisk
                 // keep the timestamps even in the id/parents-only load — DagLayoutEngine's
                 // tip-priority pre-pass sorts by CommitWhen, and the paged store is only consulted
@@ -249,9 +249,9 @@ internal sealed class GraphWalkCache
                 }));
         }
 
-        var decos = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>(dto.Decorations.Count);
+        var decos = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>(dto.Decorations.Count);
         foreach (var (sha, list) in dto.Decorations)
-            decos[new ObjectId(sha)] = list.Select(FromDto).ToArray();
+            decos[GitObjectId.Parse(sha)] = list.Select(FromDto).ToArray();
 
         return new Loaded(commits, decos, dto.Exhausted);
     }
@@ -281,7 +281,7 @@ internal sealed class GraphWalkCache
     public void Save(
         string repoPath, GraphQuery query, long fingerprint, bool exhausted,
         IReadOnlyList<RawCommit> commits,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> decorations)
+        IReadOnlyDictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> decorations)
     {
         if (!Supports(query))
             return;

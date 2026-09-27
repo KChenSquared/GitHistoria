@@ -31,7 +31,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
         _state.Dispose();
     }
 
-    private static ObjectId Oid(int i) => new(i.ToString("x40"));
+    private static GitObjectId Oid(int i) => GitObjectId.Parse(i.ToString("x40"));
 
     private static CommitMetadata Meta(int i) => new()
     {

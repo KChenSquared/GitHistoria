@@ -46,7 +46,7 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
 
     private static GraphQuery Q => new() { RefScope = GraphRefScope.AllRefs };
 
-    private static List<ObjectId> RowIds(GraphLayoutResult r) =>
+    private static List<GitObjectId> RowIds(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
     /// <summary>Ground-truth check independent of the walk: for every row, every real parent of
@@ -54,7 +54,7 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
     /// children-before-parents.</summary>
     private static async Task AssertChildrenBeforeParents(RepositoryContext ctx, GraphLayoutResult result)
     {
-        var rowOf = new Dictionary<ObjectId, int>();
+        var rowOf = new Dictionary<GitObjectId, int>();
         var ids = RowIds(result);
         for (var i = 0; i < ids.Count; i++)
             rowOf[ids[i]] = i;
@@ -63,12 +63,12 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
         {
             for (var i = 0; i < ids.Count; i++)
             {
-                var commit = repo.Lookup<Commit>(ids[i]);
+                var commit = repo.Lookup<Commit>(ids[i].ToLibGit2());
                 if (commit is null)
                     continue;
                 foreach (var parent in commit.Parents)
                 {
-                    if (rowOf.TryGetValue(parent.Id, out var parentRow))
+                    if (rowOf.TryGetValue(parent.Id.ToGitObjectId(), out var parentRow))
                         Assert.True(parentRow > i, $"parent {parent.Id} of {ids[i]} must sort after its child (row {parentRow} vs {i})");
                 }
             }
@@ -79,13 +79,13 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
     /// <summary>Test oracle: every commit reachable from HEAD and every ref, by LibGit2Sharp's
     /// own revwalk (which peels annotated tags itself). Independent of the graph service's tip
     /// resolution.</summary>
-    private static Task<HashSet<ObjectId>> ReachableFromAllRefs(RepositoryContext ctx) =>
+    private static Task<HashSet<GitObjectId>> ReachableFromAllRefs(RepositoryContext ctx) =>
         ctx.WithRepositoryAsync(repo =>
         {
             var tips = new List<object> { repo.Head };
             tips.AddRange(repo.Refs);
             return repo.Commits.QueryBy(new CommitFilter { IncludeReachableFrom = tips })
-                .Select(c => c.Id)
+                .Select(c => c.Id.ToGitObjectId())
                 .ToHashSet();
         });
 
@@ -100,7 +100,7 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
         ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone();
         var result = await new GraphLayoutService(_host.Settings, locator).ComputeLayoutAsync(ctx, Q, maxRows: 1000);
 
-        var ids = new HashSet<ObjectId>(RowIds(result));
+        var ids = new HashSet<GitObjectId>(RowIds(result));
 
         Assert.NotEmpty(ids);
         Assert.Equal(await ReachableFromAllRefs(ctx), ids);
@@ -119,7 +119,7 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
 
         await using var oracle = _host.Open(_repo.Path);
         oracle.MarkFirstGraphPaintDone(); oracle.MarkFirstFullLoadDone();
-        var fullIds = new HashSet<ObjectId>(RowIds(
+        var fullIds = new HashSet<GitObjectId>(RowIds(
             await new GraphLayoutService(_host.Settings, locator).ComputeLayoutAsync(oracle, Q, maxRows: 1000)));
 
         await using var ctx = _host.Open(_repo.Path);
@@ -136,7 +136,7 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
 
         Assert.Equal(fullIds.Count, seen.Count);           // no gaps — every commit eventually surfaced
         Assert.Equal(seen.Count, seen.Distinct().Count());  // no dupes across the resumed pulls
-        Assert.Equal(fullIds, new HashSet<ObjectId>(seen)); // same set as one big walk
+        Assert.Equal(fullIds, new HashSet<GitObjectId>(seen)); // same set as one big walk
     }
 
     /// <summary>An annotated tag's ref target is the TAG OBJECT, not the commit it points at, so
@@ -161,12 +161,12 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
         ctx.MarkFirstGraphPaintDone(); ctx.MarkFirstFullLoadDone();
         var result = await new GraphLayoutService(_host.Settings, locator).ComputeLayoutAsync(ctx, Q, maxRows: 1000);
 
-        var ids = new HashSet<ObjectId>(RowIds(result));
+        var ids = new HashSet<GitObjectId>(RowIds(result));
 
         Assert.Equal(await ReachableFromAllRefs(ctx), ids);
         // The doomed-branch commit must actually be present — the annotated tag is its only
         // remaining path now that the branch itself is deleted.
-        Assert.Contains(new ObjectId(doomedSha), ids);
+        Assert.Contains(GitObjectId.Parse(doomedSha), ids);
     }
 
     [Fact]

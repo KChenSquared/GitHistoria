@@ -16,7 +16,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     private IReadOnlyList<BranchInfo> _branches = [];
     private IReadOnlyList<TagInfo> _tags = [];
     private IReadOnlyList<RemoteInfo> _remotes = [];
-    private ObjectId? _selectedCommitId;
+    private GitObjectId? _selectedCommitId;
     private IReadOnlyList<string> _selectedPaths = [];
     private GitProfile? _activeProfile;
     private OperationState _pendingOperation;
@@ -70,7 +70,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public IReadOnlyList<BranchInfo> Branches { get { lock (_sync) return _branches; } }
     public IReadOnlyList<TagInfo> Tags { get { lock (_sync) return _tags; } }
     public IReadOnlyList<RemoteInfo> Remotes { get { lock (_sync) return _remotes; } }
-    public ObjectId? SelectedCommitId { get { lock (_sync) return _selectedCommitId; } }
+    public GitObjectId? SelectedCommitId { get { lock (_sync) return _selectedCommitId; } }
     public IReadOnlyList<string> SelectedPaths { get { lock (_sync) return _selectedPaths; } }
     public DiffRequest? OpenDiff { get { lock (_sync) return _openDiff; } }
     public GitProfile? ActiveProfile { get { lock (_sync) return _activeProfile; } }
@@ -141,7 +141,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         get { lock (_sync) return _branches.FirstOrDefault(b => b.IsCurrent); }
     }
 
-    public void SetSelectedCommit(ObjectId? id)
+    public void SetSelectedCommit(GitObjectId? id)
     {
         bool diffCleared;
         lock (_sync)
@@ -179,7 +179,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             _selectedPaths = paths;
     }
 
-    public void RequestRevealCommit(ObjectId id) =>
+    public void RequestRevealCommit(GitObjectId id) =>
         Raise(() => RevealCommitRequested?.Invoke(this, new RevealCommitEventArgs(id)));
 
     public void SetActiveProfile(GitProfile? profile)

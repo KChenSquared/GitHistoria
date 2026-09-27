@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 public sealed record StashSaveOptions
 {
@@ -25,10 +25,10 @@ public interface IStashService
     Task<bool> StashStagedAsync(RepositoryContext context, string? message, CancellationToken ct = default);
 
     /// <summary>Applies then drops. On conflict the entry is <b>kept</b> (Git's behaviour) and the resolver opens.</summary>
-    Task ApplyAndDropAsync(RepositoryContext context, ObjectId commitId, CancellationToken ct = default);
+    Task ApplyAndDropAsync(RepositoryContext context, GitObjectId commitId, CancellationToken ct = default);
 
-    Task ApplyAsync(RepositoryContext context, ObjectId commitId, bool restoreIndex, CancellationToken ct = default);
-    Task DropAsync(RepositoryContext context, ObjectId commitId, CancellationToken ct = default);
+    Task ApplyAsync(RepositoryContext context, GitObjectId commitId, bool restoreIndex, CancellationToken ct = default);
+    Task DropAsync(RepositoryContext context, GitObjectId commitId, CancellationToken ct = default);
     Task ClearAsync(RepositoryContext context, CancellationToken ct = default);
-    Task BranchFromAsync(RepositoryContext context, ObjectId commitId, string branchName, CancellationToken ct = default);
+    Task BranchFromAsync(RepositoryContext context, GitObjectId commitId, string branchName, CancellationToken ct = default);
 }

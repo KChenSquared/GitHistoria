@@ -64,7 +64,7 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
             .ToList());
 
         var actual = snapshot.Refs
-            .Select(r => (Name: r.CanonicalName, Target: r.Target!.Sha, Peeled: r.PeeledCommit?.Sha))
+            .Select(r => (Name: r.CanonicalName, Target: r.Target!.Value.Sha, Peeled: r.PeeledCommit?.Sha))
             .ToList();
 
         Assert.Equal(expected, actual);
@@ -81,7 +81,7 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
         var snapshot = await ctx.RefSnapshots.GetAsync();
 
         Assert.Equal("refs/heads/main", snapshot.HeadSymref);
-        Assert.Equal(new ObjectId(_repo.HeadSha), snapshot.HeadTarget);
+        Assert.Equal(new GitObjectId(_repo.HeadSha), snapshot.HeadTarget);
         Assert.False(snapshot.IsHeadDetached);
 
         var annotated = snapshot.Find("refs/tags/annotated")!;
@@ -93,7 +93,7 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
         _repo.Git("checkout", "-q", "--detach", "HEAD~1");
         var detached = await ctx.RefSnapshots.GetAsync();
         Assert.True(detached.IsHeadDetached);
-        Assert.Equal(new ObjectId(_repo.HeadSha), detached.HeadTarget);
+        Assert.Equal(new GitObjectId(_repo.HeadSha), detached.HeadTarget);
     }
 
     [Fact]

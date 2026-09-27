@@ -189,7 +189,7 @@ public sealed class RefSnapshotProvider
 
         var objects = list.Select(r => r.ObjectName).Distinct(StringComparer.Ordinal).ToList();
         var types = await BatchCheckAsync(objects).ConfigureAwait(false);
-        var typeOf = new Dictionary<string, (ObjectId? Id, string? Type)>(StringComparer.Ordinal);
+        var typeOf = new Dictionary<string, (GitObjectId? Id, string? Type)>(StringComparer.Ordinal);
         for (var i = 0; i < objects.Count; i++)
             typeOf[objects[i]] = types[i];
 
@@ -198,7 +198,7 @@ public sealed class RefSnapshotProvider
         // scan just as a missing ref target does, so it counts as broken too.
         var tagObjects = objects.Where(o => typeOf[o].Type == "tag").ToList();
         var peeled = await BatchCheckAsync([.. tagObjects.Select(o => o + "^{}")]).ConfigureAwait(false);
-        var peelOf = new Dictionary<string, (ObjectId? Id, string? Type)>(StringComparer.Ordinal);
+        var peelOf = new Dictionary<string, (GitObjectId? Id, string? Type)>(StringComparer.Ordinal);
         for (var i = 0; i < tagObjects.Count; i++)
             peelOf[tagObjects[i]] = peeled[i];
 
@@ -223,7 +223,7 @@ public sealed class RefSnapshotProvider
                 continue;
             var annotated = type == "tag";
             var peel = annotated ? peelOf[objectName] : default;
-            var tag = annotated && tagData.TryGetValue(id, out var t) ? t : default;
+            var tag = annotated && tagData.TryGetValue(id.Value, out var t) ? t : default;
             refs.Add(new RefEntry(
                 CanonicalName: name,
                 Target: id,
@@ -245,7 +245,7 @@ public sealed class RefSnapshotProvider
 
     /// <summary>One <c>cat-file --batch-check</c> over <paramref name="inputs"/>; answers in
     /// input order, a missing object as a null id and type.</summary>
-    private async Task<List<(ObjectId? Id, string? Type)>> BatchCheckAsync(IReadOnlyList<string> inputs)
+    private async Task<List<(GitObjectId? Id, string? Type)>> BatchCheckAsync(IReadOnlyList<string> inputs)
     {
         if (inputs.Count == 0)
             return [];
@@ -257,7 +257,7 @@ public sealed class RefSnapshotProvider
         return Parse(() => CatFileParser.ParseBatchCheck(result.StandardOutput, inputs.Count));
     }
 
-    private async Task<Dictionary<ObjectId, CatFileParser.TagData>> ReadTagObjectsAsync(IReadOnlyList<string> tagObjects)
+    private async Task<Dictionary<GitObjectId, CatFileParser.TagData>> ReadTagObjectsAsync(IReadOnlyList<string> tagObjects)
     {
         if (tagObjects.Count == 0)
             return [];
@@ -282,7 +282,7 @@ public sealed class RefSnapshotProvider
         if (nested.Count == 0)
             return;
 
-        var peeled = await BatchCheckAsync([.. nested.Select(i => refs[i].Target!.Sha + "^{}")]).ConfigureAwait(false);
+        var peeled = await BatchCheckAsync([.. nested.Select(i => refs[i].Target!.Value.ToString() + "^{}")]).ConfigureAwait(false);
         for (var k = 0; k < nested.Count; k++)
         {
             var i = nested[k];
@@ -299,10 +299,10 @@ public sealed class RefSnapshotProvider
 
     /// <summary>Files backend: <c>HEAD</c> is a plain file — a symbolic <c>ref:</c> line resolved
     /// against the snapshot, or a detached SHA.</summary>
-    private static (string? Symref, ObjectId? Target) ResolveHeadFromFile(RefStateToken.State state, List<RefEntry> refs)
+    private static (string? Symref, GitObjectId? Target) ResolveHeadFromFile(RefStateToken.State state, List<RefEntry> refs)
     {
-        if (state.HeadSha is { } sha)
-            return (null, new ObjectId(sha));
+        if (state.HeadSha is { } sha && GitObjectId.TryParse(sha, out var hid))
+            return (null, hid);
         if (state.HeadSymref is not { } symref)
             return (null, null);
 
@@ -311,7 +311,7 @@ public sealed class RefSnapshotProvider
     }
 
     /// <summary>Reftable backend: the <c>HEAD</c> file is a placeholder, so ask git.</summary>
-    private async Task<(string? Symref, ObjectId? Target)> ResolveHeadWithCliAsync()
+    private async Task<(string? Symref, GitObjectId? Target)> ResolveHeadWithCliAsync()
     {
         var symbolic = await _cli.RunAsync(new GitCliRequest
         {
@@ -328,7 +328,7 @@ public sealed class RefSnapshotProvider
 
         var symref = symbolic.ExitCode == 0 ? NullIfEmpty(symbolic.StandardOutput.Trim()) : null;
         var sha = target.ExitCode == 0 ? target.StandardOutput.Trim() : "";
-        return (symref, sha.Length is 40 or 64 ? new ObjectId(sha) : null);
+        return (symref, (sha.Length is 40 or 64 && GitObjectId.TryParse(sha, out var id)) ? id : null);
     }
 
     private static string? NullIfEmpty(string s) => s.Length == 0 ? null : s;

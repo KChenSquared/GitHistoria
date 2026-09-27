@@ -267,7 +267,7 @@ public class DiffViewStagingTests : IDisposable
     public async Task Commit_diff_exposes_no_staging_actions()
     {
         using var repo = new LibGit2Sharp.Repository(_repoDir);
-        var headId = repo.Head.Tip.Id;
+        var headId = repo.Head.Tip.Id.ToGitObjectId();
         var req = new DiffRequest { Source = DiffSource.Commit, CommitId = headId, Path = "test.txt" };
         var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
         var presenter = await WaitForPresenterAsync(view);
@@ -418,7 +418,7 @@ public class DiffViewStagingTests : IDisposable
     public async Task Commit_diff_has_no_row_buttons_or_menu_items()
     {
         using var repo = new LibGit2Sharp.Repository(_repoDir);
-        var headId = repo.Head.Tip.Id;
+        var headId = repo.Head.Tip.Id.ToGitObjectId();
         var window = new Window { Width = 800, Height = 600 };
         var req = new DiffRequest { Source = DiffSource.Commit, CommitId = headId, Path = "test.txt" };
         var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);

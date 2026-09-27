@@ -19,7 +19,7 @@ public sealed class GraphStaleExtendTests : IAsyncDisposable
         await _host.DisposeAsync();
     }
 
-    private static List<ObjectId> Ids(GraphLayoutResult r) =>
+    private static List<GitObjectId> Ids(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
     [Theory]

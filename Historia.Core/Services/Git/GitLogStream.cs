@@ -218,10 +218,10 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
         if (parts.Length < 7)
             throw new FormatException($"expected 7 fields, got {parts.Length}");
 
-        var id = new ObjectId(parts[0]);
+        var id = GitObjectId.Parse(parts[0]);
         var parentIds = parts[1].Length == 0
-            ? Array.Empty<ObjectId>()
-            : parts[1].Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(s => new ObjectId(s)).ToArray();
+            ? Array.Empty<GitObjectId>()
+            : parts[1].Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(s => GitObjectId.Parse(s)).ToArray();
 
         var authorWhen = DateTimeOffset.Parse(parts[2], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
         var commitWhen = DateTimeOffset.Parse(parts[3], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);

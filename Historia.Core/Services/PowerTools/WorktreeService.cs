@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IWorktreeService"/>
 public sealed class WorktreeService(IGitCliService cli) : IWorktreeService
@@ -11,7 +11,7 @@ public sealed class WorktreeService(IGitCliService cli) : IWorktreeService
 
         var list = new List<WorktreeInfo>();
         string? path = null, branch = null, reason = null;
-        ObjectId? headId = null;
+        GitObjectId? headId = null;
         bool bare = false, detached = false, locked = false, prunable = false, first = true;
 
         void Flush()
@@ -46,7 +46,7 @@ public sealed class WorktreeService(IGitCliService cli) : IWorktreeService
             switch (key)
             {
                 case "worktree": path = val; break;
-                case "HEAD": headId = ObjectId.TryParse(val, out var id) ? id : null; break;
+                case "HEAD": headId = GitObjectId.TryParse(val, out var id) ? id : null; break;
                 case "branch": branch = val; break;
                 case "bare": bare = true; break;
                 case "detached": detached = true; break;

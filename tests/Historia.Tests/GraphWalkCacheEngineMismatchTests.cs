@@ -15,15 +15,15 @@ public sealed class GraphWalkCacheEngineMismatchTests : IDisposable
     private readonly StateDir _state = new();
     private const string Repo = @"C:\repos\walkcache-demo";
     private static readonly GraphQuery Query = new() { RefScope = GraphRefScope.AllRefs };
-    private static readonly Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> NoDecos = [];
+    private static readonly Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> NoDecos = [];
 
     public void Dispose() => _state.Dispose();
 
-    private static ObjectId Oid(int i) => new(i.ToString("x40"));
+    private static GitObjectId Oid(int i) => new(i.ToString("x40"));
 
     private static RawCommit Commit(int i) => new(
         Oid(i),
-        i == 0 ? Array.Empty<ObjectId>() : new[] { Oid(i - 1) },
+        i == 0 ? Array.Empty<GitObjectId>() : new[] { Oid(i - 1) },
         new CommitMetadata
         {
             Id = Oid(i),

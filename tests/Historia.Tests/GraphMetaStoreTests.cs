@@ -11,7 +11,7 @@ public sealed class GraphMetaStoreTests : IDisposable
 
     public void Dispose() => _state.Dispose();
 
-    private static ObjectId Oid(int i) => new(i.ToString("x40"));
+    private static GitObjectId Oid(int i) => GitObjectId.Parse(i.ToString("x40"));
 
     private static CommitMetadata Row(int i) => new()
     {
@@ -31,7 +31,7 @@ public sealed class GraphMetaStoreTests : IDisposable
     private static RawCommit RawRow(int i)
     {
         var m = Row(i);
-        IReadOnlyList<ObjectId> parents = m.ParentCount switch
+        IReadOnlyList<GitObjectId> parents = m.ParentCount switch
         {
             0 => [],
             2 => [Oid(i - 1), Oid(i - 2)],
@@ -242,7 +242,7 @@ public sealed class GraphMetaStoreTests : IDisposable
         AssertRowEqual(Row(5), store[5]);                          // reads keep working
 
         extra!.Dispose();                                          // drop the last — now closed
-        Assert.Equal(ObjectId.Zero, store[5].Id);                  // reads serve the closed stub
+        Assert.Equal(GitObjectId.Zero, store[5].Id);                  // reads serve the closed stub
     }
 
     [Fact]
@@ -253,7 +253,7 @@ public sealed class GraphMetaStoreTests : IDisposable
 
         store.Dispose();                        // last lease gone -> closed
         Assert.Null(store.AddRef());            // a closed store cannot hand out a new lease
-        Assert.Equal(ObjectId.Zero, store[3].Id);
+        Assert.Equal(GitObjectId.Zero, store[3].Id);
 
         store.Dispose();                        // over-release is tolerated (no throw)
         Assert.Null(store.AddRef());            // still refuses — the race can't revive it
@@ -350,7 +350,7 @@ public sealed class GraphMetaStoreTests : IDisposable
         using var store = GraphMetaStore.TryOpen(Repo, Fp, true, 10)!;
         var raw = store.ReadRaw(6); // Row(6).ParentCount == 1 (6 % 7 != 0)
         Assert.Equal(Row(6).ParentCount, raw.ParentIds.Count);
-        Assert.All(raw.ParentIds, p => Assert.Equal(ObjectId.Zero, p));
+        Assert.All(raw.ParentIds, p => Assert.Equal(GitObjectId.Zero, p));
     }
 
     [Fact]
