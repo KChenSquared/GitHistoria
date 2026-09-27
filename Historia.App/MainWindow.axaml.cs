@@ -254,7 +254,7 @@ public partial class MainWindow : Window
     private void OnDividerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
         => _dividerDragging = false;
 
-    // ── Keyboard accelerators — same chord grammar as the WPF shell ──
+    // ── Keyboard accelerators ──
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {

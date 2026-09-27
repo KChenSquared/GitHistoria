@@ -3,8 +3,7 @@ namespace Historia.Controls;
 /// <summary>
 /// The window's app band (Row 0): the branded app-menu button plus the repo tab
 /// strip. Native control, not a WebView — the app menu drops over the sidebar and the graph.
-/// Avalonia port of the WPF <c>NativeControls.AppBandControl</c>. Bound to
-/// <see cref="IWorkspaceService"/>; no new service.
+/// Bound to <see cref="IWorkspaceService"/>.
 /// </summary>
 public sealed class AppBandControl : UserControl, IDisposable
 {

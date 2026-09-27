@@ -39,7 +39,7 @@ public sealed record NotificationsChangedEventArgs(IReadOnlyList<Notification> C
 
 /// <summary>
 /// Central surface for toasts, banners, and error cards. Every unhandled exception
-/// is routed here rather than reaching the WPF dispatcher. Singleton.
+/// is routed here by the App's global handlers instead of crashing the process. Singleton.
 /// </summary>
 public interface INotificationService
 {

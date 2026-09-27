@@ -2,10 +2,9 @@
 namespace Historia.Services.Theming;
 
 /// <summary>
-/// The single source of truth for every colour the native WPF layer paints — the window
-/// chrome, the generated resource dictionary, and the graph renderer. Token names
-/// match the CSS custom properties in <c>wwwroot/app.css</c> one-for-one, minus the
-/// <c>--color-</c> prefix; <c>PaletteParityTests</c> asserts the two agree.
+/// The single source of truth for every colour the app paints — the window
+/// chrome, the generated resource dictionary, and the graph renderer. Every theme
+/// defines exactly the same token set; <c>PaletteParityTests</c> asserts it.
 /// <para>
 /// Dark and Light are Visual Studio Code Dark Modern / Light Modern. Every entry
 /// carries its VS Code key (Table A, verified verbatim from the theme JSON) or its derivation
@@ -271,8 +270,8 @@ public static class HistoriaPalette
     public static Rgb Parse(string hex) => Rgb.Parse(hex);
 
     /// <summary>
-    /// Token → WPF resource key. PascalCase with three legacy spellings preserved so existing
-    /// <c>{DynamicResource}</c> bindings in <c>MainWindow.xaml</c> keep working.
+    /// Token → Avalonia resource key: <c>Color</c> + the PascalCased token (<c>text-muted</c> →
+    /// <c>ColorTextMuted</c>), except <c>primary-h</c>, which maps to <c>ColorPrimaryHover</c>.
     /// </summary>
     public static string ResourceKey(string token) => token switch
     {

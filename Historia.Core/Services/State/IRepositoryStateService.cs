@@ -14,11 +14,11 @@ public sealed record SelectedConflictPathChangedEventArgs(string? Path);
 
 /// <summary>
 /// The contract between every producer (Git services, watcher, profile service) and every
-/// consumer (WPF controls and Blazor components) for a single repository. The
+/// consumer (views and controls) for a single repository. The
 /// graph and power tools plug into this same surface unchanged.
 /// <para>
-/// Threading contract: all mutation happens on a background thread; every event is raised on
-/// the WPF dispatcher captured at construction. Consumers must unsubscribe on dispose.
+/// Threading contract: all mutation happens on a background thread; every event is raised through
+/// the <see cref="IUiDispatcher"/> supplied at construction (inline when there is none, as in tests). Consumers must unsubscribe on dispose.
 /// </para>
 /// </summary>
 public interface IRepositoryStateService

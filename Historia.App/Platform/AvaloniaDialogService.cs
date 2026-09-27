@@ -1,7 +1,7 @@
 namespace Historia.Platform;
 
 /// <summary>
-/// App-side <see cref="IDialogService"/> (replaces the WPF <c>DialogService</c>).
+/// App-side <see cref="IDialogService"/>.
 /// Folder/file pickers go through Avalonia's <see cref="IStorageProvider"/>; confirm / message /
 /// prompt are one small hand-rolled <see cref="Window"/> (Avalonia has no built-in MessageBox,
 /// and pulling in a package for it was rejected). Safe to call from any thread.

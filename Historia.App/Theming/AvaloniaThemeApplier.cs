@@ -1,11 +1,11 @@
 namespace Historia.Theming;
 
 /// <summary>
-/// the App-side half of theming. <see cref="ThemeService"/> (in Core) decides the
+/// The App-side half of theming. <see cref="ThemeService"/> (in Core) decides the
 /// effective theme; this rebuilds the Avalonia resource dictionary from <see cref="HistoriaPalette"/>
-/// on every change and merges it into <see cref="Application"/>.<c>Resources</c> — the exact
-/// shape the old WPF <c>ThemeService.BuildDictionary</c> produced, so <c>{DynamicResource
-/// ColorBorder}</c> and friends keep resolving. It also drives <see cref="Application"/>.<c>
+/// on every change and merges it into <see cref="Application"/>.<c>Resources</c> , keyed by
+/// <see cref="HistoriaPalette.ResourceKey"/>, so <c>{DynamicResource ColorBorder}</c> and
+/// friends resolve. It also drives <see cref="Application"/>.<c>
 /// RequestedThemeVariant</c> so the Fluent controls follow.
 /// </summary>
 public sealed class AvaloniaThemeApplier : IDisposable

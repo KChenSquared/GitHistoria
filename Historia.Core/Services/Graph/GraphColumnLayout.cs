@@ -5,7 +5,7 @@ namespace Historia.Services.Graph;
 public readonly record struct ResolvedColumn(GraphColumnKind Kind, double Left, double Width);
 
 /// <summary>
-/// Pure column-layout resolution for the graph panel. No WPF types — geometry in,
+/// Pure column-layout resolution for the graph panel. No UI-framework types — geometry in,
 /// geometry out — so it is unit-testable like <c>DagLayoutEngine</c>. Computed once per arrange
 /// pass into a caller-owned scratch array.
 /// </summary>

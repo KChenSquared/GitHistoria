@@ -10,8 +10,8 @@ public enum DialogIcon
 }
 
 /// <summary>
-/// Native WPF dialogs invoked from Blazor components (cross-boundary popups must be
-/// WPF, not HTML overlays). Registered as a singleton; safe to call from any thread.
+/// Modal dialogs (confirm, prompt, choose, message, file and folder pickers), implemented
+/// natively by the App. Registered as a singleton; safe to call from any thread.
 /// </summary>
 public interface IDialogService
 {

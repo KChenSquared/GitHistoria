@@ -302,8 +302,8 @@ public static class MarkdownRenderer
         // Inline code
         s = Regex.Replace(s, @"`([^`]+)`", "<code>$1</code>");
 
-        // Links [text](href). Emitted with data-href (not href) so the WebView never navigates
-        // itself — Historia.wireMarkdown hands the URL to the system browser.
+        // Links [text](href). Emitted with data-href (not href) so HTML rendered
+        // from this never navigates by itself; the host decides whether to open the URL.
         s = Regex.Replace(s, @"\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)", m =>
         {
             var href = SafeHref(WebUtility.HtmlDecode(m.Groups[2].Value));

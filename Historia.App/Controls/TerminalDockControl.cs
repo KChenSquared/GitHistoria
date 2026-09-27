@@ -3,7 +3,7 @@ namespace Historia.Controls;
 /// <summary>
 /// The bottom terminal dock: a 6 px splitter, a live-session tab strip, a small
 /// toolbar, and the <see cref="TerminalControl"/> host. Collapses to zero height. Native
-/// control — no WebView airspace work (design doc).
+/// control, so splitters, toasts and flyouts compose over it normally.
 /// </summary>
 public sealed class TerminalDockControl : UserControl, IDisposable
 {

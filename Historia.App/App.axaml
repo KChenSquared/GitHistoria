@@ -4,7 +4,7 @@
              RequestedThemeVariant="Dark">
     <!-- the palette (ColorBg, ColorBorder, …) is generated from HistoriaPalette at runtime
          by AvaloniaThemeApplier and merged into Application.Resources — not authored here, so
-         the one source of truth stays HistoriaPalette.cs (parity with the old WPF dictionary). -->
+         the one source of truth stays HistoriaPalette.cs. -->
     <Application.Styles>
         <FluentTheme />
         <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />

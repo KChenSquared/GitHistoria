@@ -1,8 +1,7 @@
 namespace Historia;
 
 /// <summary>
-/// Composition root and startup sequence — the Avalonia port of the WPF
-/// <c>App</c>. One <see cref="IServiceProvider"/> is built here and handed to the window.
+/// Composition root and startup sequence. One <see cref="IServiceProvider"/> is built here and handed to the window.
 /// </summary>
 public sealed class App : Application
 {

@@ -14,7 +14,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
 
-    <!-- V4: framework-dependent, matching the WPF build. Windows is the parity target;
+    <!-- Framework-dependent. Windows is the parity target;
          macOS / Linux must compile and launch. -->
     <SelfContained>false</SelfContained>
     <RuntimeIdentifiers>win-x64;osx-arm64;osx-x64;linux-x64</RuntimeIdentifiers>
@@ -39,8 +39,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Headless-Avalonia regression suite (debloat audit §4, Path B). Mirrors the
-         Historia.Core → Historia.Tests grant; the extracted Tier 3 helpers are internal. -->
+    <!-- Headless-Avalonia regression suite. Mirrors the Historia.Core → Historia.Tests
+         grant; the helpers it tests are internal. -->
     <InternalsVisibleTo Include="Historia.App.Tests" />
   </ItemGroup>
 

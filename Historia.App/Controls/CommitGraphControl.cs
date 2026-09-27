@@ -1,8 +1,7 @@
 namespace Historia.Controls;
 
 /// <summary>
-/// Native commit graph + history list. Avalonia port of the WPF
-/// <c>NativeControls.CommitGraphControl</c>. Fully virtualized: only the visible row range is
+/// Native commit graph + history list. Fully virtualized: only the visible row range is
 /// drawn each frame. Selection flows through <see cref="IRepositoryStateService"/>.
 /// </summary>
 public sealed partial class CommitGraphControl : Control

@@ -1,8 +1,7 @@
 ﻿namespace Historia.Services.Terminal;
 
 /// <summary>Start-up / runtime failure classes for the terminal subsystem. Mirrors
-/// <see cref="Historia.Services.Git.GitErrorKind"/> in spirit: there is no
-/// <c>WebViewRuntimeMissing</c> — that failure class does not exist in this design.</summary>
+/// <see cref="Historia.Services.Git.GitErrorKind"/> in spirit.</summary>
 public enum TerminalErrorKind
 {
     None,

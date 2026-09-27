@@ -1,18 +1,17 @@
 namespace Historia.Services.UI;
 
 /// <summary>
-/// Cross-WebView navigation channel. Hosts the sidebar and the detail area in
-/// two separate <c>BlazorWebView</c> instances with the native commit graph between them; the
-/// sidebar publishes navigation intents here and the detail root consumes them. Singleton.
+/// Navigation channel for the detail pane. Any view (the app menu, the graph, the shortcut
+/// bars) requests a route here; <c>DetailRouter</c> shows it and reports the route back. Singleton.
 /// </summary>
 public interface INavigationBus
 {
-    /// <summary>Raised (on the detail WebView's dispatcher) when the sidebar requests navigation.</summary>
+    /// <summary>Raised on the caller's thread when a route is requested; <c>DetailRouter</c> marshals to the UI thread.</summary>
     event Action<string>? NavigationRequested;
 
     void RequestNavigate(string relativeUri);
 
-    /// <summary>The detail WebView's current relative route ("" = Home). Reported by Routes.razor.</summary>
+    /// <summary>The detail pane's current route ("" = Home), as reported by <c>DetailRouter</c>.</summary>
     string CurrentRoute { get; }
 
     /// <summary>Raised on the caller's thread when the detail route changes; native subscribers marshal.</summary>
