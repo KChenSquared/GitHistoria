@@ -1,7 +1,7 @@
 ﻿namespace Historia.Services.Storage;
 
 /// <summary>
-/// Atomic, serialized file writes (§9.3). Every write to a given path is funneled through a
+/// Atomic, serialized file writes. Every write to a given path is funneled through a
 /// per-path <see cref="SemaphoreSlim"/>; the payload is written to a temp file and then
 /// atomically renamed over the target so a crash never leaves a half-written file.
 /// Rapid successive writes are coalesced on a 250 ms trailing debounce — only the final
@@ -108,7 +108,7 @@ public sealed class AtomicFileWriter : IAsyncDisposable
         {
             // Only drop the pending payload once it actually reached disk — a failed write
             // (disk full, a locked temp file) must leave it queued rather than disappear, since
-            // nothing else remembers it once this clears (§findings: silent write-loss on failure).
+            // nothing else remembers it once this clears (silent write-loss on failure).
             var wrote = await WriteNowInternalAsync(pending, ct).ConfigureAwait(false);
             if (wrote)
             {
@@ -133,7 +133,7 @@ public sealed class AtomicFileWriter : IAsyncDisposable
         }
 
         // Peek, don't clear yet: a failed write below must leave the payload in place for the
-        // next debounce cycle or FlushAsync to retry (§findings: silent write-loss on failure).
+        // next debounce cycle or FlushAsync to retry (silent write-loss on failure).
         string? content;
         lock (_pendingLock)
         {
@@ -191,7 +191,7 @@ public sealed class AtomicFileWriter : IAsyncDisposable
         }
 
         // File.Move with overwrite is atomic on the same volume on Windows (ReplaceFile semantics).
-        // §V3-9.1: Documents is often OneDrive-backed and the sync client can hold a transient
+        // Documents is often OneDrive-backed and the sync client can hold a transient
         // lock across the replace. Retry three times, 50 ms apart, then give up non-fatally.
         for (var attempt = 0; ; attempt++)
         {

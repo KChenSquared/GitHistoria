@@ -4,7 +4,7 @@ using System.Security.Principal;
 namespace Historia.Platform;
 
 /// <summary>
-/// Single-instance guard (§3). The first process to start holds a named mutex and runs a tiny
+/// Single-instance guard. The first process to start holds a named mutex and runs a tiny
 /// named-pipe listener; a later launch hands its arguments to that listener and exits, so there
 /// is only ever one Historia writing <c>settings.json</c> / <c>profiles.json</c> / <c>session.json</c>.
 /// Windows is the parity target; the mutex and the pipe both work on macOS / Linux as well, and

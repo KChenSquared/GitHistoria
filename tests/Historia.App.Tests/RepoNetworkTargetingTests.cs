@@ -1,6 +1,6 @@
 namespace HistoriaApp.Tests;
 
-/// <summary>M1.6: Pure helpers for network action targeting — refspec construction and upstream checking.</summary>
+/// <summary>Pure helpers for network action targeting — refspec construction and upstream checking.</summary>
 [Trait("tier", "unit")]
 public sealed class RepoNetworkTargetingTests
 {

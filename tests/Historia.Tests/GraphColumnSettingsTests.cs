@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>§V2-11.1 / §V2-15.1: validation of a hand-edited or migrated-forward column list.</summary>
+/// <summary>validation of a hand-edited or migrated-forward column list.</summary>
 [Trait("tier", "unit")]
 public class GraphColumnSettingsTests
 {
@@ -87,7 +87,7 @@ public class GraphColumnSettingsTests
         Assert.Equal(GraphColumnDefaults.All, GraphColumnDefaults.Normalize(twoFlex));
     }
 
-    // ── §V3-8.1 / §V3-9.4 ──
+    // ── ──
 
     [Fact]
     public void DefaultsHideAuthorDateAndSha()

@@ -1,6 +1,6 @@
 ﻿namespace Historia.Platform;
 
-/// <summary>App-side <see cref="IUiDispatcher"/> over <see cref="Dispatcher.UIThread"/> (V4 §split).</summary>
+/// <summary>App-side <see cref="IUiDispatcher"/> over <see cref="Dispatcher.UIThread"/>.</summary>
 public sealed class UiDispatcher : IUiDispatcher
 {
     public bool CheckAccess() => Dispatcher.UIThread.CheckAccess();

@@ -7,7 +7,7 @@ public sealed class NotificationService : INotificationService
     // handler firing in a loop) could otherwise stack cards without bound and bury the UI.
     private const int MaxRetained = 6;
 
-    // v8 M10: an identical (severity, message, details) published again within this window
+    // An identical (severity, message, details) published again within this window
     // does not add a card — it bumps the existing card's timestamp and its occurrence count.
     private static readonly TimeSpan CoalesceWindow = TimeSpan.FromSeconds(4);
 

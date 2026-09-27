@@ -74,7 +74,7 @@ public sealed class GraphLayoutServiceHibernateTests : IAsyncDisposable
         await Task.Delay(1000);
         // Read the "before" row ids BEFORE hibernating: Layout.Commits may be the very
         // DiskCommitStore instance Hibernate disposes, same as a real bound control would need
-        // to AddRef() it (§7.6 leases) to keep reading after the tab's cache is released.
+        // to AddRef it (leases) to keep reading after the tab's cache is released.
         var beforeIds = Enumerable.Range(0, before.Layout.RowCount).Select(i => before.Layout.Commits[i].Id).ToList();
 
         await svc.Hibernate(ctx);

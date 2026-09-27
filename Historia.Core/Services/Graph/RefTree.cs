@@ -2,7 +2,7 @@
 namespace Historia.Services.Graph;
 
 /// <summary>
-/// One node of the sidebar ref tree (§V3-11.2). <see cref="Leaf"/> is non-null iff this node
+/// One node of the sidebar ref tree. <see cref="Leaf"/> is non-null iff this node
 /// is a branch; a node can be both a folder and a branch (Git allows <c>feature</c> and
 /// <c>feature/x</c> to coexist), in which case it is materialised as a folder whose first child
 /// is the branch itself.
@@ -16,7 +16,7 @@ public sealed record RefTreeNode(
     public bool IsFolder => Leaf is null;
 }
 
-/// <summary>Pure, repository-free builder for the sidebar ref tree (§V3-11.2).</summary>
+/// <summary>Pure, repository-free builder for the sidebar ref tree.</summary>
 public static class RefTree
 {
     private sealed class Builder(string segment, string fullPath)
@@ -79,7 +79,7 @@ public static class RefTree
             }
         }
 
-        // §V3-B: one flat alphabetical order — folders are no longer hoisted above leaves.
+        // one flat alphabetical order — folders are no longer hoisted above leaves.
         // Case-insensitive first (the natural "alphabetical"), ordinal as a stable tie-break.
         result.Sort((x, y) =>
         {

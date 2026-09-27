@@ -1,8 +1,8 @@
 namespace Historia.Models;
 
 /// <summary>
-/// Immutable per-commit metadata, projected from LibGit2Sharp inside the repository gate
-/// (§6.3.1, §7.2). One instance per commit; stored once in <see cref="GraphLayout.Commits"/>
+/// Immutable per-commit metadata, projected from LibGit2Sharp inside the repository gate.
+/// One instance per commit; stored once in <see cref="GraphLayout.Commits"/>
 /// and referenced everywhere else by row index.
 /// </summary>
 public sealed record CommitMetadata
@@ -41,7 +41,7 @@ public enum ElbowKind : byte
     /// <summary>Leaves the node (mid-row) in <see cref="RowElbow.FromLane"/>, turns near the
     /// row's bottom edge, exits horizontally toward <see cref="RowElbow.ToLane"/> where a
     /// vertical pass-through segment picks it up on the next row. The bend a merge edge makes at
-    /// the merge commit's own row (§V3-3.2) instead of deferring the jog down to its far
+    /// the merge commit's own row instead of deferring the jog down to its far
     /// parent.</summary>
     LeaveBottom = 1,
 }
@@ -55,7 +55,7 @@ public readonly record struct RowElbow
 }
 
 /// <summary>
-/// The hot layout record: one per visual row (§7.2). Holds layout position and row-local
+/// The hot layout record: one per visual row. Holds layout position and row-local
 /// visual slice indices into flat <see cref="GraphLayout.Segments"/> and <see cref="GraphLayout.Elbows"/>
 /// for instant, zero-allocation rendering with zero GC tracing overhead.
 /// </summary>
@@ -79,7 +79,7 @@ public enum RowFlags
 }
 
 /// <summary>
-/// Visual edge connecting two rows (§7.2). Rows, not commit ids: the renderer works purely in
+/// Visual edge connecting two rows. Rows, not commit ids: the renderer works purely in
 /// row/lane space and never resolves an <see cref="ObjectId"/> during a frame.
 /// </summary>
 public readonly record struct GraphEdge
@@ -92,7 +92,7 @@ public readonly record struct GraphEdge
 
     /// <summary>Colour of the segment/elbow drawn at <see cref="ToRow"/> — the terminal end of
     /// the edge (where it arrives at its parent's node). For a <see cref="EdgeType.MergeIn"/>
-    /// edge this is the merged-in branch's own colour (§V6-G7), which can differ from
+    /// edge this is the merged-in branch's own colour, which can differ from
     /// <see cref="LeadColorIndex"/>.</summary>
     public required int ColorIndex { get; init; }
 
@@ -124,7 +124,7 @@ public enum EdgeType
     OffWindow,
 }
 
-/// <summary>Decoration label attached to a commit row (§7.2). Named to avoid a clash with the
+/// <summary>Decoration label attached to a commit row. Named to avoid a clash with the
 /// <see cref="CommitDecoration"/> used by the plain history list.</summary>
 public readonly record struct GraphDecoration
 {
@@ -133,20 +133,20 @@ public readonly record struct GraphDecoration
     public required string Label { get; init; }
     public required int ColorIndex { get; init; }
 
-    /// <summary>§V3-7.2: the badge has a local branch of this name.</summary>
+    /// <summary>the badge has a local branch of this name.</summary>
     public bool IsLocal { get; init; }
 
-    /// <summary>§V3-7.2: HEAD points at this badge's branch. Per-badge, unlike <see cref="RowFlags.IsHead"/>.</summary>
+    /// <summary>HEAD points at this badge's branch. Per-badge, unlike <see cref="RowFlags.IsHead"/>.</summary>
     public bool IsHead { get; init; }
 
-    /// <summary>§V3-7.2: the remotes carrying this branch, or null when the badge is local-only.</summary>
+    /// <summary>the remotes carrying this branch, or null when the badge is local-only.</summary>
     public string[]? RemotesOrNull { get; init; }
 
     /// <summary>Never null. A struct's default instance bypasses initializers, so a nullable
-    /// backing field with a non-null accessor is the only shape correct for both paths (§V3-7.2 Trap).</summary>
+    /// backing field with a non-null accessor is the only shape correct for both paths (Trap).</summary>
     public ReadOnlySpan<string> Remotes => RemotesOrNull ?? [];
 
-    /// <summary>§V3-B: the other refs sitting on this same commit that folded into this badge —
+    /// <summary>the other refs sitting on this same commit that folded into this badge —
     /// the further branches (default-first, then alphabetical) followed by any tags. Null unless
     /// this badge stands in for a group; shown in the interactive hover list. The <c>+N</c>
     /// counter on the badge is <c>1 + SiblingsOrNull.Length</c>.</summary>
@@ -170,7 +170,7 @@ public readonly record struct GraphDecorationInput(
 public readonly record struct RawCommit(ObjectId Id, IReadOnlyList<ObjectId> ParentIds, CommitMetadata Metadata);
 
 /// <summary>
-/// Row-indexed access to the per-commit metadata for a laid-out window (§7.6). The default
+/// Row-indexed access to the per-commit metadata for a laid-out window. The default
 /// implementation (<see cref="ArrayCommitStore"/>) is a plain in-memory array; when the
 /// "Read commit details from disk" setting is on, <c>DiskCommitStore</c> serves the same
 /// shape by paging a random-access cache file, so a huge history keeps only the fixed-size
@@ -194,7 +194,7 @@ public interface ICommitStore : IReadOnlyList<CommitMetadata>, IDisposable
     /// store fault the block in with one read. A no-op for the in-memory store.</summary>
     void Prefetch(int firstRow, int lastRow);
 
-    /// <summary>§7.5 find: ascending row indices whose message or author contains
+    /// <summary>find: ascending row indices whose message or author contains
     /// <paramref name="term"/> (case-insensitive), or whose SHA starts with it.</summary>
     IReadOnlyList<int> Search(string term);
 
@@ -243,7 +243,7 @@ public sealed class ArrayCommitStore(CommitMetadata[] items) : ICommitStore
 }
 
 /// <summary>
-/// Complete layout for a contiguous row window (§7.2). Arrays are index-aligned:
+/// Complete layout for a contiguous row window. Arrays are index-aligned:
 /// <c>Rows[i]</c> and <c>Commits[i]</c> describe the same commit.
 /// </summary>
 public sealed class GraphLayout : IDisposable
@@ -264,7 +264,7 @@ public sealed class GraphLayout : IDisposable
     /// <summary>How many of <see cref="SourceState"/>'s real edges existed when this snapshot
     /// was built. Later <c>Extend</c> calls on the same state only append — capping reads here
     /// gives an older snapshot the same lines forever, even while the shared accumulator keeps
-    /// growing underneath it (snapshot isolation, §Phase 2).</summary>
+    /// growing underneath it (snapshot isolation 2).</summary>
     internal int RealEdgeCap { get; init; }
 
     /// <summary>This snapshot's own off-window stub edges, regenerated fresh at build time from
@@ -272,10 +272,10 @@ public sealed class GraphLayout : IDisposable
     internal GraphEdge[] OffWindowEdges { get; init; } = [];
 
     /// <summary>Rows pulled either side of a requested row into one cached derivation, so
-    /// scrolling a screenful at a time rarely re-derives (§Phase 2). Only scrolling past the
+    /// scrolling a screenful at a time rarely re-derives (2). Only scrolling past the
     /// window's edge gets this overscan. A jump (scrollbar drag, search, reveal) derives just the
     /// requested rows ± <see cref="JumpOverscan"/>, because a drag leaves the window on every
-    /// frame and a derivation costs window rows × every lane, on screen or not (§7.6).</summary>
+    /// frame and a derivation costs window rows × every lane, on screen or not.</summary>
     private const int WindowOverscan = 1_000;
 
     /// <summary>Rows either side of the requested range in the tight window a jump derives.</summary>
@@ -290,7 +290,7 @@ public sealed class GraphLayout : IDisposable
         RowElbow[] Elbs, int[] ElbStart, int[] ElbCount)? _window;
 
     /// <summary>Per-row commit metadata. Usually an <see cref="ArrayCommitStore"/>; a
-    /// disk-backed store when the graph-from-disk setting is on (§7.6). Settable within Core
+    /// disk-backed store when the graph-from-disk setting is on. Settable within Core
     /// so <c>GraphLayoutService</c> can swap the array for the paged store after the engine
     /// has built the layout — <c>required</c> is dropped only because an internal setter and a
     /// public required member cannot coexist; <see cref="DagLayoutEngine"/> always sets it.</summary>
@@ -341,7 +341,7 @@ public sealed class GraphLayout : IDisposable
     /// dictionary rather than a per-snapshot copy (see its comment) — safe for this snapshot's
     /// own <see cref="Consume"/> writer, but not for an unsynchronized reader while a background
     /// <c>ExtendLayoutAsync</c> is inserting into the very same instance under
-    /// <c>lock (existing.State)</c> (#3, 2026-09-12 memory review: <c>CommitGraphControl
+    /// <c>lock (existing.State)</c> (<c>CommitGraphControl
     /// .ResolveRow</c> / <c>FindSubject</c> read it from the render thread with no lock at all —
     /// an unsynchronized <see cref="Dictionary{TKey,TValue}"/> read concurrent with an insert
     /// that resizes it can return a wrong row or throw). The value stored here is wrapped so
@@ -361,7 +361,7 @@ public sealed class GraphLayout : IDisposable
     private IReadOnlyDictionary<ObjectId, int> _rowByCommitIdView = EmptyRowMap;
     private static readonly IReadOnlyDictionary<ObjectId, int> EmptyRowMap = new Dictionary<ObjectId, int>();
 
-    /// <summary>Locked, bounds-checked row lookup (#3, #13 — 2026-09-12 memory review). Takes
+    /// <summary>Locked, bounds-checked row lookup. Takes
     /// <c>lock (SourceState)</c> when this snapshot has one (every layout except <see
     /// cref="Empty"/>), so it never races the accumulator's writer; ignores any row at or past
     /// this snapshot's own <see cref="RowCount"/>. Preferred over <see cref="RowByCommitId"/>'s
@@ -453,7 +453,7 @@ public sealed class GraphLayout : IDisposable
     /// <summary>
     /// Makes sure rows <paramref name="first"/>..<paramref name="last"/> are inside the cached
     /// derivation window. A renderer calls this once per frame for the rows it will draw, so the
-    /// whole block is derived up front instead of from whichever row is read first (§7.6).
+    /// whole block is derived up front instead of from whichever row is read first.
     /// Scrolling just past the window's edge (within <see cref="JumpDistance"/> rows), or a
     /// layout with no window yet, derives the full ± <see cref="WindowOverscan"/>. A jump further
     /// than that derives only the range ± <see cref="JumpOverscan"/>, so a scrollbar drag that
@@ -577,7 +577,7 @@ public enum GraphRefScope { AllRefs, CurrentBranch, Selected }
 
 public enum InvalidationReason { CommitsAppended, RefsChanged, HistoryRewritten, FetchCompleted }
 
-/// <summary>Which refs the graph should include, and how deep (§7.8).</summary>
+/// <summary>Which refs the graph should include, and how deep.</summary>
 public sealed record GraphQuery
 {
     public GraphRefScope RefScope { get; init; } = GraphRefScope.AllRefs;
@@ -585,7 +585,7 @@ public sealed record GraphQuery
     public bool IncludeStashes { get; init; }
     public bool IncludeRemoteBranches { get; init; } = true;
     public string? PathFilter { get; init; }
-    /// <summary>§V3.1: lanes are uncapped — every lineage gets its own track. The former
+    /// <summary>lanes are uncapped — every lineage gets its own track. The former
     /// 48-lane cap collapsed anything beyond lane 47 onto a single dashed overflow lane; on a
     /// busy history that obscured genuine topology. Far lanes are reached by the in-graph pan or
     /// by stretching the Graph column, not by a cap.</summary>

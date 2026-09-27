@@ -9,7 +9,7 @@ public class RebaseServiceTests : IDisposable
     public RebaseServiceTests()
     {
         // Point GIT_SEQUENCE_EDITOR / GIT_EDITOR at the Historia executable re-invoked with its
-        // rebase-helper switch (§8.1.4). In-process it is the test host, so re-invoke Historia.dll.
+        // rebase-helper switch. In-process it is the test host, so re-invoke Historia.dll.
         var HistoriaExe = Path.Combine(AppContext.BaseDirectory, "Historia.exe").Replace('\\', '/');
         RebaseService.EditorCommandOverride = (mode, dir) => $"\"{HistoriaExe}\" {mode} \"{dir}\"";
     }
@@ -80,10 +80,10 @@ public class RebaseServiceTests : IDisposable
         Assert.Equal(repo.Git("rev-parse", "main").Trim(), mergeBase); // feature is now ahead of main
     }
 
-    // V4 §split: the interactive sequencer re-invokes the Historia executable as
-    // GIT_SEQUENCE_EDITOR (§8.1.4). The test project now references Historia.Core (a library),
+    // the interactive sequencer re-invokes the Historia executable as
+    // GIT_SEQUENCE_EDITOR. The test project now references Historia.Core (a library),
     // so there is no exe in the output. Restored in Milestone 9, pointed at Historia.App.exe.
-    [Fact(Skip = "V4 §split: the rebase-sequencer re-invoke moved to Historia.App (Program.Main); this end-to-end path is covered by manual testing, not the Core-only test project")]
+    [Fact(Skip = "the rebase-sequencer re-invoke moved to Historia.App (Program.Main); this end-to-end path is covered by manual testing, not the Core-only test project")]
     public async Task Interactive_reword_changes_the_message_with_no_editor_window()
     {
         await using var host = new MiniHost();
@@ -101,7 +101,7 @@ public class RebaseServiceTests : IDisposable
         Assert.DoesNotContain("f2\n", "\n" + repo.Git("log", "--format=%s"));
     }
 
-    [Fact(Skip = "V4 §split: the rebase-sequencer re-invoke moved to Historia.App (Program.Main); this end-to-end path is covered by manual testing, not the Core-only test project")]
+    [Fact(Skip = "the rebase-sequencer re-invoke moved to Historia.App (Program.Main); this end-to-end path is covered by manual testing, not the Core-only test project")]
     public async Task Interactive_drop_removes_the_commit()
     {
         await using var host = new MiniHost();

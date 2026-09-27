@@ -5,7 +5,7 @@ using Xunit;
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// F2: the Clone dialog's folder-name box must keep auto-filling from the URL box across
+/// The Clone dialog's folder-name box must keep auto-filling from the URL box across
 /// multiple pastes — the regression was the auto-fill's own programmatic write to
 /// <c>folder.Text</c> being mistaken for a user edit, which silently stopped every later update.
 /// Exercises <see cref="CloneDialog.ShouldAutoFillFolder"/> directly rather than driving the
@@ -35,5 +35,34 @@ public class CloneDialogTests
         var lastAutoFilled = "repo-one";
 
         Assert.False(CloneDialog.ShouldAutoFillFolder("my-custom-folder", lastAutoFilled));
+    }
+
+    private static Historia.Models.GitProfile Profile(string name, bool global = false) => new()
+    {
+        Id = Guid.NewGuid(), DisplayName = name, GitUserName = name, GitUserEmail = $"{name}@example.com", IsGlobal = global,
+    };
+
+    // the clone dialog pre-selects the default profile (picker index = profile index + 1).
+    [AvaloniaFact]
+    public void InitialProfileIndex_selects_a_non_global_default()
+    {
+        var global = Profile("global", global: true);
+        var work = Profile("work");
+        Assert.Equal(2, CloneDialog.InitialProfileIndex([global, work], work.Id));
+    }
+
+    [AvaloniaFact]
+    public void InitialProfileIndex_falls_back_to_the_global_profile_when_unset_or_missing()
+    {
+        var work = Profile("work");
+        var global = Profile("global", global: true);
+        Assert.Equal(2, CloneDialog.InitialProfileIndex([work, global], null));
+        Assert.Equal(2, CloneDialog.InitialProfileIndex([work, global], Guid.NewGuid()));
+    }
+
+    [AvaloniaFact]
+    public void InitialProfileIndex_is_local_config_with_no_profiles()
+    {
+        Assert.Equal(0, CloneDialog.InitialProfileIndex([], null));
     }
 }

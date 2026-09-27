@@ -2,7 +2,7 @@
 
 /// <summary>
 /// Opaque allocator state carried between layout calls so incremental extension produces the
-/// same result as a full recomputation (§7.3, §7.8). Never renumbers lanes already assigned to
+/// same result as a full recomputation. Never renumbers lanes already assigned to
 /// existing rows.
 /// </summary>
 public sealed class GraphLayoutState
@@ -10,7 +10,7 @@ public sealed class GraphLayoutState
     internal int MaxLanes { get; init; } = int.MaxValue;
 
     /// <summary>When false, <see cref="Commits"/> is left empty — the owning service is
-    /// spilling per-row metadata to a disk-backed store instead of keeping it resident (§7.6).</summary>
+    /// spilling per-row metadata to a disk-backed store instead of keeping it resident.</summary>
     internal bool RetainCommits { get; init; } = true;
 
     /// <summary>Next sequential row index to assign.</summary>
@@ -45,7 +45,7 @@ public sealed class GraphLayoutState
     internal readonly Dictionary<int, int> CompactionMap = [];
     internal int NextCompactedLane;
 
-    /// <summary>§V9-G ("older tip wins"): branch-tip commit id → the raw lane the pre-pass pinned
+    /// <summary>("older tip wins"): branch-tip commit id → the raw lane the pre-pass pinned
     /// it to, so the oldest divergent branch stays collinear with the shared mainline instead of
     /// whichever tip the time-ordered walk emitted onto row 0. Populated once by
     /// <see cref="DagLayoutEngine.Compute"/> (empty for a single-tip window) and carried forward
@@ -56,7 +56,7 @@ public sealed class GraphLayoutState
     internal readonly Dictionary<int, int> LaneColor = [];
 
     /// <summary>compacted lane → the stable key its colour was seeded from: the lane's branch
-    /// name if it has one, else the SHA of the commit that first opened the lane. §7.1 — a pure
+    /// name if it has one, else the SHA of the commit that first opened the lane. a pure
     /// function of the walk, so incremental and full layouts colour identically and a repo
     /// reopens in the same shades. Never renumbered.</summary>
     internal readonly Dictionary<int, string> LaneKey = [];
@@ -71,7 +71,7 @@ public sealed class GraphLayoutState
     internal readonly List<GraphDecoration> Decorations = [];
     internal readonly Dictionary<ObjectId, int> RowByCommitId = [];
 
-    /// <summary>§Phase 2 crossing index: boundary rows are multiples of this stride. Sized so a
+    /// <summary>2 crossing index: boundary rows are multiples of this stride. Sized so a
     /// window's checkpoint lookup costs about (concurrent lanes) work, not (total rows) — linux
     /// at 300k rows / 637 lanes gives ~1,172 checkpoints of a few hundred entries each, versus
     /// re-deriving 106M segment entries per <c>Build</c>.</summary>
@@ -93,6 +93,6 @@ public sealed class GraphLayoutState
     /// <param name="RawLane">The raw lane reserved for the PARENT.</param>
     /// <param name="ChildLane">The raw lane the CHILD occupies — equal to <paramref name="RawLane"/>
     /// for a first parent; for a second-or-later parent it is the merge commit's own raw lane, so
-    /// the emitted edge starts at the merge node rather than floating free of it (§V3-3).</param>
+    /// the emitted edge starts at the merge node rather than floating free of it.</param>
     internal readonly record struct Reservation(int RawLane, int ChildLane, int ChildRow, bool IsFirstParent);
 }

@@ -42,7 +42,7 @@ internal static class GraphCacheLocks
 }
 
 /// <summary>
-/// On-disk, random-access store for the graph's per-commit metadata (§7.6). When the
+/// On-disk, random-access store for the graph's per-commit metadata. When the
 /// "Read commit details from disk" setting is on, <see cref="GraphLayoutService"/> spills the
 /// laid-out rows here and points <see cref="GraphLayout.Commits"/> at a
 /// <see cref="DiskCommitStore"/>, so only the fixed-size layout arrays stay resident on a
@@ -301,7 +301,7 @@ internal sealed class GraphMetaStore
     }
 
     /// <summary>
-    /// Reads all bytes from <paramref name="path"/> sharing both ReadWrite and Delete (R7).
+    /// Reads all bytes from <paramref name="path"/> sharing both ReadWrite and Delete.
     /// Every reader of a <c>.meta.*</c> file must share Delete, or <see cref="GraphMetaWriter.Reset"/>
     /// cannot retire open files away before starting a fresh from-row-0 spill.
     /// </summary>
@@ -320,7 +320,7 @@ internal sealed class GraphMetaStore
     }
 
     /// <summary>
-    /// Measures the unreachable dead prefix at the front of <c>.meta.dat</c> (R7, R8).
+    /// Measures the unreachable dead prefix at the front of <c>.meta.dat</c>.
     /// Record 0's offset (the first 8 bytes of <c>.meta.idx</c>) indicates how many dead bytes
     /// precede record 0. Returns <c>(0, 0)</c> on any miss, unreadable file, or empty file.
     /// </summary>
@@ -383,7 +383,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
 
     /// <summary>
     /// Retires every sibling file for this repository so a from-row-0 re-spill starts the store
-    /// over at byte 0 without dead-prefix bloat (R7). Every reader shares
+    /// over at byte 0 without dead-prefix bloat. Every reader shares
     /// <see cref="FileShare.Delete"/>, so renaming each file to a <c>.retired</c> name and then
     /// deleting it frees the original path immediately while active readers (such as the painted
     /// graph) keep reading their open handles until they close.
@@ -527,7 +527,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         => Append(i => rows[i], _ => null, start, count);
 
     /// <summary>Overload that reads metadata + real parent SHAs straight off the walk records
-    /// (no projection copy) — this is what the §7.6 spill uses, and what makes the store usable
+    /// (no projection copy) — this is what the spill uses, and what makes the store usable
     /// as an optimistic-snapshot source (v10.1.2).</summary>
     public void Append(IReadOnlyList<RawCommit> rows, int start, int count)
         => Append(i => rows[i].Metadata, i => rows[i].ParentIds, start, count);
@@ -866,7 +866,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     private readonly Queue<int> _decodedOrder = new(DecodeCacheCap);
     private readonly object _sync = new();
 
-    // Lease count (§7.6): the RepoCache that opened the store holds the first lease; every
+    // Lease count: the RepoCache that opened the store holds the first lease; every
     // consumer that parks a reference to read from later takes another via AddRef(). The file
     // handle closes only when the last lease is released, so a RefsChanged re-walk dropping the
     // cache's lease can't pull the handle out from under an in-flight Render. Reads no-op once
@@ -980,12 +980,11 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     /// by the reorder job to find which commits in a freshly walked history already have a
     /// durable record, so it only appends genuinely new ones. One small read per record; this is
     /// a background, gated, lowest-priority job (never on the render thread), so it trades read
-    /// count for simplicity rather than batching — the plan's own repo-scale numbers (measured on
-    /// linux/vscode) are for the reorder as a whole, not this specific pass.
+    /// count for simplicity rather than batching.
     /// <para>
     /// Keyed by <see cref="CompactShaIndex"/> (an 8-byte prefix per entry, verified
-    /// against the full id on any hit) instead of the 40-char hex string this used to key by — at
-    /// 1.5M records on linux the old table held ~150-180 MB of hex strings; this holds meaningfully
+    /// against the full id on any hit) rather than the 40-char hex string — at
+    /// 1.5M records on linux a hex-string table holds ~150-180 MB; this holds meaningfully
     /// less while staying exactly as correct (every lookup still verifies the full id).
     /// </para>
     /// </summary>
@@ -1184,12 +1183,12 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 
     /// <summary>
-    /// Ctrl+F backing scan (§7.5): streams <c>.meta.search</c>, one line per RECORD (
+    /// Ctrl+F backing scan: streams <c>.meta.search</c>, one line per RECORD (
     /// the file is record-indexed, like <c>.dat</c>/<c>.idx</c>, so it is never rewritten by a
     /// reorder). Matches the in-memory find exactly — substring on message or author, prefix on
     /// the SHA. For an identity-order store a record index IS the row; otherwise the hits are
     /// mapped back to rows via the inverse of the current order, built once per call (no
-    /// persisted reverse map — the plan's own recommendation), and a record no longer referenced
+    /// persisted reverse map), and a record no longer referenced
     /// by the current order (superseded by a reorder, not yet compacted) is dropped.
     /// </summary>
     public IReadOnlyList<int> Search(string term)
@@ -1427,7 +1426,7 @@ internal static class GraphMetaReorder
 /// <summary>
 /// A SHA -&gt; record-index table keyed on the first 8 bytes of the commit id (a
 /// <c>long</c>) rather than its 40-char hex string — at scale the hex-string table was the actual
-/// memory cost the review flagged (~150-180 MB at 1.5M records on linux), not the record indices
+/// dominant memory cost (~150-180 MB at 1.5M records on linux), not the record indices
 /// themselves. Every lookup still verifies the full id, so a prefix collision (two different
 /// commits sharing the same first 8 bytes — astronomically unlikely for real SHA-1s, but not
 /// provably impossible) is always resolved correctly via a small side list rather than silently

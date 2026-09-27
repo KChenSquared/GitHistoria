@@ -1,6 +1,6 @@
 namespace Historia.Services.Storage;
 
-/// <summary>Shared JSON serialization settings for all of Historia's persistent files (§9.3).</summary>
+/// <summary>Shared JSON serialization settings for all of Historia's persistent files.</summary>
 public static class HistoriaJson
 {
     public static JsonSerializerOptions Options { get; } = new()

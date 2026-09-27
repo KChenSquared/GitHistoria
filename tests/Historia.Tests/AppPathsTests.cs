@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>§V3-9.1: the two-location portable resolution, the write probe, the machine
+/// <summary>the two-location portable resolution, the write probe, the machine
 /// directory, and the one-time copy migration from a prior %APPDATA% install.</summary>
 [Trait("tier", "unit")]
 [Collection("serial")]

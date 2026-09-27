@@ -44,7 +44,7 @@ public class MarkdownRendererTests
     {
         var html = MarkdownRenderer.ToHtml("[docs](https://example.com/page)");
         Assert.Contains("data-href=\"https://example.com/page\"", html);
-        Assert.DoesNotContain(" href=", html); // no plain href → WebView won't navigate itself
+        Assert.DoesNotContain(" href=", html); // no plain href → the rendered HTML can't navigate by itself
     }
 
     [Fact]

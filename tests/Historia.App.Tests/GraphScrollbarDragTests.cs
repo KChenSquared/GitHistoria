@@ -3,8 +3,8 @@ namespace HistoriaApp.Tests;
 /// <summary>Thumb drags on the commit graph's vertical scrollbar. Avalonia's <c>Track</c>
 /// measures each drag move against the thumb's last-arranged position, so pointer moves that
 /// queue up before a layout pass (the UI thread starved while rows load) are double-counted
-/// and the thumb races to the bottom (findings F1/F2). Nothing errors when that regresses, so
-/// it is pinned here (Rule 36), along with the opt-in <c>graph-scroll</c> log (F4).</summary>
+/// and the thumb races to the bottom. Nothing errors when that regresses, so
+/// it is pinned here, along with the opt-in <c>graph-scroll</c> log.</summary>
 [Trait("tier", "ui")]
 public sealed class GraphScrollbarDragTests
 {
@@ -145,7 +145,7 @@ public sealed class GraphScrollbarDragTests
         }
     }
 
-    /// <summary>F1: five queued 10 px moves land exactly where five separate ones would, with
+    /// <summary>Five queued 10 px moves land exactly where five separate ones would, with
     /// the thumb still under the pointer.</summary>
     [AvaloniaFact]
     public void Queued_thumb_moves_land_where_separate_moves_do()
@@ -166,7 +166,7 @@ public sealed class GraphScrollbarDragTests
         }
     }
 
-    /// <summary>F2: queued moves while rows keep streaming in (10% more per layout pass) never
+    /// <summary>Queued moves while rows keep streaming in (10% more per layout pass) never
     /// pin the thumb to the bottom or leave it below the pointer.</summary>
     [AvaloniaFact]
     public void Queued_moves_while_rows_grow_never_snap_to_the_bottom()
@@ -217,7 +217,7 @@ public sealed class GraphScrollbarDragTests
         }
     }
 
-    /// <summary>The extra layout pass is for thumb drags only (Rule 22): a track click pages by
+    /// <summary>The extra layout pass is for thumb drags only: a track click pages by
     /// one viewport with no layout pass inside its input event, while a thumb move gets one.</summary>
     [AvaloniaFact]
     public void Track_clicks_do_not_force_a_layout_pass()

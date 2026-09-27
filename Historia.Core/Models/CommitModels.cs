@@ -1,8 +1,8 @@
 namespace Historia.Models;
 
 /// <summary>
-/// Lightweight commit row for the history list (§6.11) and the graph. Projected
-/// from LibGit2Sharp inside the repository gate (§6.3.1) — no live Git object is retained.
+/// Lightweight commit row for the history list and the graph. Projected
+/// from LibGit2Sharp inside the repository gate — no live Git object is retained.
 /// </summary>
 public sealed record CommitSummary
 {
@@ -15,7 +15,7 @@ public sealed record CommitSummary
     public required IReadOnlyList<CommitDecoration> Decorations { get; init; }
 }
 
-/// <summary>Full detail for a single selected commit (§6.4.2).</summary>
+/// <summary>Full detail for a single selected commit.</summary>
 public sealed record CommitDetail
 {
     public required ObjectId Id { get; init; }
@@ -35,7 +35,7 @@ public sealed record CommitDetail
     public IReadOnlyList<CommitDecoration> Decorations { get; init; } = [];
 }
 
-/// <summary>A ref pointer (branch/tag/HEAD/stash) attached to a commit row (§6.11).</summary>
+/// <summary>A ref pointer (branch/tag/HEAD/stash) attached to a commit row.</summary>
 public readonly record struct CommitDecoration
 {
     public required DecorationType Type { get; init; }
@@ -45,7 +45,7 @@ public readonly record struct CommitDecoration
 }
 
 /// <summary>
-/// Paged history query (§6.4.2). History is <b>always</b> paged — no call ever materializes
+/// Paged history query. History is <b>always</b> paged — no call ever materializes
 /// an unbounded commit list.
 /// </summary>
 public sealed record CommitQuery

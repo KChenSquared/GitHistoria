@@ -2,7 +2,7 @@
 namespace Historia.Services.Git;
 
 /// <summary>
-/// Resolves <c>git.exe</c> once at startup and caches the result (§6.2.3). If Git is not
+/// Resolves <c>git.exe</c> once at startup and caches the result. If Git is not
 /// found the app still starts; CLI-routed operations are disabled with an explanatory banner.
 /// Registered as a singleton.
 /// </summary>

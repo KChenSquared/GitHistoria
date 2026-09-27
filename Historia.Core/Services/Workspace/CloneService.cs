@@ -7,7 +7,7 @@ public sealed record CloneStatus(string Url, string TargetDirectory, GitProgress
     public const string CommitGraphPhase = "Writing commit-graph";
     public const string CachingPhase = "Caching history";
 
-    /// <summary>Formats the live clone status for display in the Home landing panel (R6).</summary>
+    /// <summary>Formats the live clone status for display in the Home landing panel.</summary>
     public string Describe()
     {
         if (Progress is null)
@@ -19,7 +19,7 @@ public sealed record CloneStatus(string Url, string TargetDirectory, GitProgress
 }
 
 /// <summary>
-/// Owns the lifetime and progress of an active clone operation (§6.6.1, R6).
+/// Owns the lifetime and progress of an active clone operation.
 /// Singleton in Core so clone progress and completion survive opening and closing the Home panel.
 /// </summary>
 public interface ICloneService
@@ -83,7 +83,7 @@ public sealed class CloneService(
 
         try
         {
-            // §12.1.1: a fresh clone is already current — start the loop with no [InitialFetch].
+            // a fresh clone is already current — start the loop with no [InitialFetch].
             autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.ClonedOrInitialized);
 
             var progress = new SynchronousProgress<GitProgress>(p =>
@@ -139,7 +139,7 @@ public sealed class CloneService(
             nav.RequestNavigate("repo");
     }
 
-    /// <summary>§13.4: binds the clone dialog's chosen checkout identity to the freshly cloned
+    /// <summary>binds the clone dialog's chosen checkout identity to the freshly cloned
     /// repo — a profile, or the <i>Local config</i> marker when none was chosen.</summary>
     private async Task ApplyCheckoutIdentityAsync(RepositoryContext ctx, Guid? profileId)
     {

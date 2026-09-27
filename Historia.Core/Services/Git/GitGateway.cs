@@ -3,7 +3,7 @@ namespace Historia.Services.Git;
 /// <summary>
 /// <inheritdoc cref="IGitGateway"/>
 /// Bound to one <see cref="RepositoryContext"/>; routes each operation to LibGit2Sharp or the
-/// Git CLI per §6.4.1. LibGit2Sharp is <b>never</b> used for a network operation.
+/// Git CLI. LibGit2Sharp is <b>never</b> used for a network operation.
 /// </summary>
 public sealed class GitGateway(
     RepositoryContext context,
@@ -99,7 +99,7 @@ public sealed class GitGateway(
     /// <summary>From the repo's cached ref snapshot — one <c>git for-each-ref</c>, shared with
     /// the commit graph, and never the repo gate (LibGit2Sharp's tag enumeration held it for
     /// 9–13 s at chromium's 39k tags, queueing status behind it). LibGit2Sharp only when git.exe
-    /// is missing (Rule 0.4).</summary>
+    /// is missing.</summary>
     public async Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default)
     {
         if (!cli.IsGitAvailable)
@@ -205,7 +205,7 @@ public sealed class GitGateway(
         var isUnborn = await context.WithRepositoryAsync(r => r.Info.IsHeadUnborn, ct).ConfigureAwait(false);
         if (isUnborn)
         {
-            // No HEAD to reset against — fall back to `git rm --cached` (§6.9.1).
+            // No HEAD to reset against — fall back to `git rm --cached`.
             var args = new List<string> { "rm", "--cached", "--" };
             args.AddRange(paths);
             var result = await cli.RunAsync(new GitCliRequest
@@ -232,7 +232,7 @@ public sealed class GitGateway(
         using var _ = context.BeginSelfOperation();
 
         // Signed commits and repos with pre-commit / commit-msg hooks route through the CLI —
-        // LibGit2Sharp invokes neither the GPG agent nor Git hooks (§6.4.1, §6.9.2).
+        // LibGit2Sharp invokes neither the GPG agent nor Git hooks.
         var hasHooks = await context.WithRepositoryAsync(
             r => LibGit2Service.RepoHasCommitHooks(r.Info.Path), ct).ConfigureAwait(false);
 
@@ -413,7 +413,7 @@ public sealed class GitGateway(
             // RunNetworkAsync can only route an untargeted fetch as RouteTransport.AsIs (no
             // remote name means no remote URL to classify), which silently skips the active
             // profile's PAT/SSH key injection and — critically — makes the SSH-Only setting a
-            // no-op, since the transport plan was decided before it could apply (§findings). One
+            // no-op, since the transport plan was decided before it could apply. One
             // remote failing to route doesn't stop the others; the last failure (if any) is what
             // the caller sees, matching git's own "try every remote, report failures" behaviour.
             var remotes = await context.WithRepositoryAsync(lib.ProjectRemotes, ct).ConfigureAwait(false);
@@ -463,7 +463,7 @@ public sealed class GitGateway(
         if (spec.SetUpstream) args.Add("-u");
         if (spec.ForceWithLease)
         {
-            // Never plain --force (§6.13).
+            // Never plain --force.
             args.Add("--force-with-lease");
             args.Add("--force-if-includes");
         }
@@ -477,7 +477,7 @@ public sealed class GitGateway(
         await RunNetworkAsync(args, "Push", remote, progress, ct).ConfigureAwait(false);
     }
 
-    // §13.1: SSH connect timeout for a routing attempt so an SSH-unreachable host (port 22
+    // SSH connect timeout for a routing attempt so an SSH-unreachable host (port 22
     // blocked) fails fast instead of stalling on the OS TCP timeout before the fallback.
     private const int SshConnectTimeoutSeconds = 10;
 
@@ -509,7 +509,7 @@ public sealed class GitGateway(
                 _ => remoteUrl,
             };
 
-            // Per-invocation only — the stored remote.<name>.url in .git/config is never rewritten (§13.1).
+            // Per-invocation only — the stored remote.<name>.url in .git/config is never rewritten.
             var attemptArgs = remote is not null && effectiveUrl is not null && !string.Equals(effectiveUrl, remoteUrl, StringComparison.Ordinal)
                 ? (IReadOnlyList<string>)new[] { "-c", $"remote.{remote}.url={effectiveUrl}" }.Concat(args).ToList()
                 : args;
@@ -525,7 +525,7 @@ public sealed class GitGateway(
             {
                 Arguments = attemptArgs,
                 WorkingDirectory = context.RepositoryPath,
-                Timeout = Timeout.InfiniteTimeSpan, // Network ops are user-cancellable, not wall-clocked (§6.5.1).
+                Timeout = Timeout.InfiniteTimeSpan, // Network ops are user-cancellable, not wall-clocked.
                 StreamOutput = true,
                 ExtraEnvironment = env,
             }, progress, onStdoutLine: null, ct).ConfigureAwait(false);
@@ -539,8 +539,8 @@ public sealed class GitGateway(
         }
 
         // Every transport failed. Offer the Local-config fallback when a profile (not
-        // *Local config*) is the active selection (§13.1) — never for a background auto-fetch,
-        // whose caller has no user to prompt (§12.1).
+        // *Local config*) is the active selection — never for a background auto-fetch,
+        // whose caller has no user to prompt.
         if (context.ActiveProfile is not null && !background)
         {
             throw new HistoriaGitException(lastError!.Kind, lastError.Message, lastError.Details)

@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// Silent-cancel M1.1: declining the push-rejection modal, dismissing it a second time, and
+/// Declining the push-rejection modal, dismissing it a second time, and
 /// cancelling an in-flight network op must never publish a "…cancelled." card that just restates
 /// the outcome of the click the user just made — the decline is logged under the "declined"
 /// dev-log category (a no-op unless dev logging is on) instead.
@@ -39,7 +39,7 @@ public sealed class NetworkCancelSilenceTests
     }
 
     /// <summary>Scripts <see cref="ChooseAsync"/> to a fixed choice (default -1: Cancel) and
-    /// counts calls; every other member throws since this M1.1 flow never reaches them.</summary>
+    /// counts calls; every other member throws since this flow never reaches them.</summary>
     private sealed class FakeDialogService : IDialogService
     {
         public int ChooseCalls;

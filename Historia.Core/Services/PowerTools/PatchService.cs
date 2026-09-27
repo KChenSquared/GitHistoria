@@ -8,7 +8,7 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
     public string GeneratePatch(FileDiff source, PatchScope scope, IReadOnlySet<DiffLineRef>? selectedLines = null, bool reverse = false)
     {
         if (source.IsBinary)
-            throw new HistoriaGitException(GitErrorKind.Unknown, "Binary files cannot be partially staged (§8.2.3).");
+            throw new HistoriaGitException(GitErrorKind.Unknown, "Binary files cannot be partially staged.");
         if (string.IsNullOrEmpty(source.RawPatch))
             return string.Empty;
 
@@ -214,7 +214,7 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
         return $"@@ -{newOs},{oc} +{newNs},{nc} @@{hunk.Tail}\n";
     }
 
-    /// <summary>Rebuilds one hunk chunk keeping only the selected +/- lines (§8.2.3, requirement 4).</summary>
+    /// <summary>Rebuilds one hunk chunk keeping only the selected +/- lines (requirement 4).</summary>
     private static RebuiltHunk? RebuildChunk(string chunk, int hunkIndex, IReadOnlySet<DiffLineRef> selected, bool reverse)
     {
         var lines = chunk.Split('\n');
@@ -305,7 +305,7 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
         if (added == 0 && removed == 0)
             return null;
 
-        // Refuse a line-joining selection (B16): a line carrying '\ No newline' must be the last line of its side.
+        // Refuse a line-joining selection: a line carrying '\ No newline' must be the last line of its side.
         for (var k = 0; k < keptLines.Count; k++)
         {
             var item = keptLines[k];

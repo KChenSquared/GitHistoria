@@ -33,7 +33,7 @@ public class EdgeRouterTests
     [Fact]
     public void OffWindowWithLaneChangeRoutesAsAnElbow()
     {
-        // §V3-3.4: a pending second-parent stub whose child and parent lanes differ must not
+        // a pending second-parent stub whose child and parent lanes differ must not
         // short-circuit to a straight line.
         var r = EdgeRouter.Route(EdgeType.OffWindow, x1: 20, y1: 10, x2: 80, y2: 200, Lane, Row);
         Assert.False(r.IsDegenerate);
@@ -84,7 +84,7 @@ public class EdgeRouterTests
     [Fact]
     public void CornerFillsTheWholeCellByDefault()
     {
-        // §V3-B: with the default corner radius, a 1-lane / 1-row bend turns across the whole
+        // with the default corner radius, a 1-lane / 1-row bend turns across the whole
         // lane×row square — radius == min(Lane, Row), not min(Lane, Row) / 2.
         var r = EdgeRouter.Route(EdgeType.BranchOut, Lane, 0, 0, Row, Lane, Row);
         Assert.Equal(Math.Min(Lane, Row), r.CornerRadius, 9);

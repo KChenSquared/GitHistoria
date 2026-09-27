@@ -9,7 +9,7 @@ namespace Historia.Services.Graph;
 /// parents are fixed when it is created, so no existing commit can ever have a NEW commit as a
 /// parent. What the guards protect against is quality (lane/line blowup when many branches moved,
 /// not just the trunk, or date inversions) and cost (the delta queries this needs can themselves
-/// be expensive on a repo with many tips) — both measured in the plan, not assumed.
+/// be expensive on a repo with many tips) — both measured on real repositories, not assumed.
 /// <para>
 /// Deliberately has no file or git access, the same design as <see cref="GraphMetaReorder"/>:
 /// the caller resolves added/removed commits (via <c>git rev-list &lt;new tips&gt; --not
@@ -27,7 +27,7 @@ namespace Historia.Services.Graph;
 /// </summary>
 internal static class GraphMetaSplice
 {
-    /// <summary>Guard 3 (the plan's numbering): splicing only pays off on a large history, where
+    /// <summary>Guard 3: splicing only pays off on a large history, where
     /// a full re-walk is itself expensive.</summary>
     internal const int MinRowsToConsider = 200_000;
 

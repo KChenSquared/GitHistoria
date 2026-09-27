@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- V4 §split: tests reference the portable Core only, never the Avalonia exe — so the
+    <!-- Tests reference the portable Core only, never the Avalonia exe — so the
          test build never rebuilds a running app assembly (the locked-apphost failure). -->
     <ProjectReference Include="..\..\Historia.Core\Historia.Core.csproj" />
   </ItemGroup>

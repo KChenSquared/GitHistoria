@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>#21: <c>IGitGateway.CountCommitsLeavingAsync</c> — how many commits would leave the
+/// <summary><c>IGitGateway.CountCommitsLeavingAsync</c> — how many commits would leave the
 /// current branch if it were reset to a given target, via <c>git rev-list --count
 /// &lt;target&gt;..HEAD</c> (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c>).</summary>
 [Trait("tier", "git")]
@@ -54,6 +54,6 @@ public sealed class GitGatewayCountTests : IAsyncDisposable
         Assert.Equal(0, await gw.CountCommitsLeavingAsync(head));
         // "Forward" isn't reachable without further history here, but resetting to an ancestor
         // of an ancestor (i.e. HEAD itself, a same-commit reset) is exactly the zero case the
-        // soft/mixed reset path relies on to skip the Rule 00 dialog.
+        // soft/mixed reset path relies on to skip the destructive confirm.
     }
 }

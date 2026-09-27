@@ -1,9 +1,9 @@
 ﻿namespace Historia.Services.Graph;
 
 /// <summary>
-/// The commit-graph find state (§V2-17.3): the ordered list of matching rows plus the cursor
+/// The commit-graph find state: the ordered list of matching rows plus the cursor
 /// that Enter / Shift+Enter / F3 steps through. Lifted out of <c>CommitGraphControl</c> so the
-/// wrap-at-ends stepping and the "n / m" label are unit-testable (debloat audit T3.2). The
+/// wrap-at-ends stepping and the "n / m" label are unit-testable. The
 /// control keeps the scroll-into-view and selection side effects.
 /// </summary>
 public sealed class GraphMatchCursor

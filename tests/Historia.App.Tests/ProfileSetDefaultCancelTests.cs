@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// Silent-cancel M1.3: cancelling the "Set as default" chooser must leave the default profile
+/// Cancelling the "Set as default" chooser must leave the default profile
 /// untouched and publish nothing — the user declined, they didn't change anything.
 /// </summary>
 [Trait("tier", "ui")]

@@ -2,7 +2,7 @@ namespace Historia.Services.Git;
 
 /// <summary>
 /// <see cref="IGitGateway"/> decorator that records every operation to <see cref="AppLog"/>
-/// (§V9.6) — the method, its key arguments, the outcome or the exception, and how long it took.
+/// — the method, its key arguments, the outcome or the exception, and how long it took.
 /// Wraps the real <see cref="GitGateway"/> in <c>RepositoryContext</c>. A pure pass-through when
 /// logging is disabled (one bool check per call, no allocation).
 /// </summary>

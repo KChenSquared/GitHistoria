@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// #3 (2026-09-12 memory review): <c>DagLayoutEngine.Build</c> hands <see
+/// <c>DagLayoutEngine.Build</c> hands <see
 /// cref="GraphLayout.RowByCommitId"/> the accumulator's own, still-growing dictionary instead of
 /// a per-snapshot copy. <c>CommitGraphControl.ResolveRow</c> / <c>FindSubject</c> read it from
 /// the render thread with no lock at all, while a background <c>ExtendLayoutAsync</c> inserts

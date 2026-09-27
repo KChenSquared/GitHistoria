@@ -2,10 +2,10 @@
 
 /// <summary>
 /// Moves a pseudoterminal's bytes on <b>dedicated background threads</b>, never on the
-/// <see cref="System.Threading.ThreadPool"/> (V5 §3.1).
+/// <see cref="System.Threading.ThreadPool"/>.
 ///
 /// <para>
-/// <b>Deviation D5.</b> <c>Porta.Pty</c> 2.2.1's Windows <c>ReaderStream</c> / <c>WriterStream</c>
+/// <c>Porta.Pty</c> 2.2.1's Windows <c>ReaderStream</c> / <c>WriterStream</c>
 /// are <i>synchronous</i> <see cref="FileStream"/>s — the ConPTY pipes are not opened for
 /// overlapped I/O. Calling <c>ReadAsync</c> on such a stream does not yield: it parks a pool
 /// worker in a blocking <c>ReadFile</c> for the shell's entire idle time (via the runtime's

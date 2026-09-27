@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// M1.5 / F9: Offer submodule init for the repo that was actually cloned, matching
+/// Offer submodule init for the repo that was actually cloned, matching
 /// on targetDirectory regardless of which tab is currently focused.
 /// </summary>
 public sealed class CloneSubmoduleOfferTests

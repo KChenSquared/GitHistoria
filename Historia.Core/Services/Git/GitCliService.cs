@@ -131,7 +131,7 @@ public sealed class GitCliService : IGitCliService
             catch { }
         }
 
-        // Both streams drain concurrently from here on (Rule 10) — in raw mode stdout is copied
+        // Both streams drain concurrently from here on — in raw mode stdout is copied
         // as bytes instead of being read line by line.
         var stdoutDrained = raw ? CopyRawAsync(process.StandardOutput.BaseStream, rawStdout!) : stdoutDone.Task;
         if (!raw)
@@ -170,7 +170,7 @@ public sealed class GitCliService : IGitCliService
             try
             {
                 await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-                // Drain both pipes fully before reading — never before this point (§6.5.1).
+                // Drain both pipes fully before reading — never before this point.
                 await Task.WhenAll(stdoutDrained, stderrDone.Task).ConfigureAwait(false);
             }
             catch (OperationCanceledException)

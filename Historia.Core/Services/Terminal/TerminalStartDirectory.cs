@@ -1,11 +1,11 @@
 ﻿namespace Historia.Services.Terminal;
 
 /// <summary>
-/// Resolves a session's start directory with its fallback ladder (V5 §4.2). Pure and
+/// Resolves a session's start directory with its fallback ladder. Pure and
 /// unit-tested.
 /// <para>
 /// Paths crossing into the pty are <b>native</b> paths. The forward-slash rule (comprehensive
-/// doc §16) governs repo-relative paths in Historia's own models; a <c>chdir</c> target is a
+/// doc) governs repo-relative paths in Historia's own models; a <c>chdir</c> target is a
 /// filesystem boundary, which is exactly where that rule says conversion happens.
 /// </para>
 /// </summary>

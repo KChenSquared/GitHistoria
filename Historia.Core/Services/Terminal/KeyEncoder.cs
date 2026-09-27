@@ -1,6 +1,6 @@
 namespace Historia.Services.Terminal;
 
-/// <summary>Keys that do not arrive as printable text and must be encoded (V5 §6.5).</summary>
+/// <summary>Keys that do not arrive as printable text and must be encoded.</summary>
 public enum TerminalKey
 {
     Enter, Tab, Backspace, Escape, Delete, Insert,
@@ -17,14 +17,14 @@ public enum TerminalModifiers
     Control = 4,
 }
 
-/// <summary>Emulator modes the encoding depends on (V5 §6.5). Sourced live from the emulator.</summary>
+/// <summary>Emulator modes the encoding depends on. Sourced live from the emulator.</summary>
 public readonly record struct TerminalModes(bool ApplicationCursor, bool ApplicationKeypad);
 
 /// <summary>
-/// Encodes a key press to the bytes a terminal application expects (V5 §6.5). Mode-dependent:
+/// Encodes a key press to the bytes a terminal application expects. Mode-dependent:
 /// the same arrow key produces different bytes in normal vs. application-cursor mode. Pure,
-/// Avalonia-free, and fully unit-tested against the byte table in the plan (§4.1) and the M1
-/// spike's captured reference (<c>docs/memory/2026-08-31-v5-m1-spike.md</c> §5).
+/// Avalonia-free, and unit-tested byte-for-byte,
+/// cross-checked against XTerm.NET's own key generator.
 /// </summary>
 public static class KeyEncoder
 {
@@ -76,7 +76,7 @@ public static class KeyEncoder
     /// <summary>
     /// Ctrl+letter and Ctrl+punctuation → the control code. Returns null when
     /// <paramref name="mods"/> lacks <see cref="TerminalModifiers.Control"/> or the character
-    /// has no control mapping. <c>Ctrl+C</c> → <c>0x03</c>, <b>always</b> (V5 §6.5).
+    /// has no control mapping. <c>Ctrl+C</c> → <c>0x03</c>, <b>always</b>.
     /// </summary>
     public static byte? EncodeControlChar(char c, TerminalModifiers mods)
     {
@@ -161,7 +161,7 @@ public static class KeyEncoder
             ? Ascii($"\x1b[1;{ModParam(mods)}{final}")
             : Ascii($"\x1bO{final}");
 
-    /// <summary>A single control byte, ESC-prefixed when Alt is held (V5 §6.5).</summary>
+    /// <summary>A single control byte, ESC-prefixed when Alt is held.</summary>
     private static ReadOnlySpan<byte> Prefixed(TerminalModifiers mods, byte b)
         => mods.HasFlag(TerminalModifiers.Alt) ? new[] { Esc, b } : new[] { b };
 

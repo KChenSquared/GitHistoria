@@ -4,7 +4,7 @@ namespace Historia.Tests;
 
 /// <summary>
 /// Once rows are confirmed durable in the
-/// §7.6 disk store, they are trimmed out of the resident pending buffer
+/// disk store, they are trimmed out of the resident pending buffer
 /// (<c>RepoCache.Commits</c>) instead of staying resident for the rest of the session. These
 /// tests drive the real <see cref="GraphLayoutService"/> code path, using reflection only to
 /// peek at the private <c>RepoCache</c>'s bookkeeping fields (<c>SpilledRows</c>, <c>Commits</c>)

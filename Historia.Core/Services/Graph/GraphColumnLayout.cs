@@ -5,32 +5,32 @@ namespace Historia.Services.Graph;
 public readonly record struct ResolvedColumn(GraphColumnKind Kind, double Left, double Width);
 
 /// <summary>
-/// Pure column-layout resolution for the graph panel (§V2-6.2). No WPF types — geometry in,
+/// Pure column-layout resolution for the graph panel. No UI-framework types — geometry in,
 /// geometry out — so it is unit-testable like <c>DagLayoutEngine</c>. Computed once per arrange
 /// pass into a caller-owned scratch array.
 /// </summary>
 public static class GraphColumnLayout
 {
-    /// <summary>§V3-B: auto lane-sizing (and Graph's share of the co-grow) stops here. The user
+    /// <summary>auto lane-sizing (and Graph's share of the co-grow) stops here. The user
     /// asked for a tighter cap than the Message ceiling, so this is no longer == CoGrowCeiling.</summary>
     public const double GraphAutoMax = 250;
 
-    /// <summary>§V3-8.4: Message co-grows with Graph to this ceiling, then Message alone absorbs
+    /// <summary>Message co-grows with Graph to this ceiling, then Message alone absorbs
     /// the remainder. Graph's own share of the co-grow is capped at <see cref="GraphAutoMax"/>.
-    /// Only consulted on the legacy equal-rate path (when the §V6-G4 sequence opts out).</summary>
+    /// Only consulted on the legacy equal-rate path (when the sequence opts out).</summary>
     public const double CoGrowCeiling = 320;
 
-    /// <summary>§V6-G4: when neither Graph nor Message is user-sized, growing width fills
+    /// <summary>when neither Graph nor Message is user-sized, growing width fills
     /// Message to here first, then Graph to <see cref="GraphCoGrowTarget"/>, then Message again.
     /// Shrinking mirrors it: Graph → 220, then Message → 250, then Graph → 150, then Message → 150.</summary>
     public const double MessageFirstStop = 250;
 
-    /// <summary>§V6-G4: Graph's co-grow target and its first shrink stop. On a busy repo the
+    /// <summary>Graph's co-grow target and its first shrink stop. On a busy repo the
     /// lane-count auto-size may hold Graph above this (up to <see cref="GraphAutoMax"/>) — that
     /// excess is the first thing the mirrored shrink gives back.</summary>
     public const double GraphCoGrowTarget = 220;
 
-    /// <summary>Shrink priority (§V3-8.4 step 4): the first column to lose width is last here.</summary>
+    /// <summary>Shrink priority (step 4): the first column to lose width is last here.</summary>
     private static readonly GraphColumnKind[] ShrinkOrder =
     [
         GraphColumnKind.Message, GraphColumnKind.Graph, GraphColumnKind.Date,
@@ -44,10 +44,10 @@ public static class GraphColumnLayout
     /// <param name="laneWidth">Current lane width (scales with Ctrl+Scroll zoom).</param>
     /// <param name="totalLaneCount">Lanes the current layout uses.</param>
     /// <param name="graphWidthPinned">True once the user has dragged the Graph divider.</param>
-    /// <param name="refsBaseWidth">Measured Refs base width (§V3-8.3); the static floor is fine
+    /// <param name="refsBaseWidth">Measured Refs base width; the static floor is fine
     /// before a control exists.</param>
     /// <param name="manuallySized">Column kinds the user has resized this session — excluded
-    /// from the shrink pass (§V3-8.5).</param>
+    /// from the shrink pass.</param>
     public static Result Resolve(
         IReadOnlyList<GraphColumn> columns,
         double viewportWidth,
@@ -72,7 +72,7 @@ public static class GraphColumnLayout
         if (msgIdx < 0)
             msgIdx = visible.Count - 1;
 
-        // §V6-G5: the Message→Graph→Message staged sequence only runs when the flex column is
+        // the Message→Graph→Message staged sequence only runs when the flex column is
         // Message and NEITHER Graph nor Message carries a user-set width (not pinned, not
         // manually sized). Computed before the width pass because it caps Graph's base.
         var newSequenceApplies =
@@ -99,14 +99,14 @@ public static class GraphColumnLayout
                 var graphFloor = GraphColumnDefaults.MinWidthFor(GraphColumnKind.Graph);
                 if (newSequenceApplies)
                 {
-                    // §V6-G4: the staged sequence owns Graph's width — it grows from its floor
+                    // the staged sequence owns Graph's width — it grows from its floor
                     // to exactly GraphCoGrowTarget (220) and no further; the lane-count
                     // auto-size does not apply.
                     w = graphFloor;
                 }
                 else if (graphWidthPinned)
                 {
-                    // §V3.1: a pinned Graph width is never wider than the lanes actually in use,
+                    // a pinned Graph width is never wider than the lanes actually in use,
                     // so a width pinned while a busy repo was open does not show as empty space
                     // after a refs change shrinks the layout. Before the first layout lands
                     // (totalLaneCount == 0) leave the pinned width alone so it isn't crushed to
@@ -123,8 +123,8 @@ public static class GraphColumnLayout
             }
             else if (i == msgIdx)
             {
-                // The flex column's stored width only counts once the user has dragged it
-                // (§V3-8.5); otherwise it grows from its minimum so Graph can co-grow with it.
+                // The flex column's stored width only counts once the user has dragged it;
+                // otherwise it grows from its minimum so Graph can co-grow with it.
                 w = manuallySized.Contains(col.Kind)
                     ? Math.Max(col.Width, GraphColumnDefaults.MinWidthFor(col.Kind))
                     : GraphColumnDefaults.MinWidthFor(col.Kind);
@@ -141,7 +141,7 @@ public static class GraphColumnLayout
 
         if (slack > 0 && newSequenceApplies)
         {
-            // ── 3. Grow (§V6-G4): Message → 250, then Graph → 220, then Message absorbs the
+            // ── 3. Grow: Message → 250, then Graph → 220, then Message absorbs the
             //        rest. (Graph keeps any lane-count auto-size above 220 — stage B is then a
             //        no-op and that excess is the first thing shrink gives back.) ──
             var a = Math.Min(slack, Math.Max(0, MessageFirstStop - widths[msgIdx]));
@@ -165,9 +165,9 @@ public static class GraphColumnLayout
         else if (slack > 0)
         {
             // ── 3. Grow (legacy): Graph and Message at an equal rate until Graph reaches
-            //        GraphAutoMax (§V3-B), then Message alone absorbs the remainder. Once the
+            //        GraphAutoMax, then Message alone absorbs the remainder. Once the
             //        Graph divider is pinned it is excluded from the co-grow, so a manual shrink
-            //        to MinWidthFor(Graph) actually sticks (§V3-B). ──
+            //        to MinWidthFor(Graph) actually sticks. ──
             if (graphIdx >= 0 && graphIdx != msgIdx && !graphWidthPinned)
             {
                 var needG = Math.Max(0, GraphAutoMax - widths[graphIdx]);
@@ -199,7 +199,7 @@ public static class GraphColumnLayout
         return new Result(resolved, left);
     }
 
-    /// <summary>§V3-8.4 step 4: draw <paramref name="deficit"/> off non-manually-sized columns
+    /// <summary>step 4: draw <paramref name="deficit"/> off non-manually-sized columns
     /// in <see cref="ShrinkOrder"/>, each down to its minimum. Leftover stays as band overflow.</summary>
     private static void ShrinkByPriority(
         ref double deficit,

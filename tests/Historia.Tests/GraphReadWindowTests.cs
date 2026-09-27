@@ -103,7 +103,7 @@ public sealed class GraphReadWindowTests : IDisposable
         // Still spans the (now-dead) disk range [5, 20) plus the resident tail.
         var (rows, complete) = ReadWindow(cache, start: 5, count: 20);
         Assert.False(complete);
-        // The closed store's ReadRawRange returns nothing, and — the whole point of #7 — the
+        // The closed store's ReadRawRange returns nothing, and — the whole point of this guard — the
         // resident tail must NOT be appended after a short disk read (that would serve it at the
         // wrong absolute row).
         Assert.Empty(rows);
@@ -126,7 +126,7 @@ public sealed class GraphReadWindowTests : IDisposable
     public void Requesting_more_than_everything_walked_so_far_is_still_complete()
     {
         // Not enough has been walked yet — a normal, expected shortfall (e.g. a small repo), NOT
-        // the disk-read fault #7 guards against: Complete stays true, the caller just gets fewer
+        // the disk-read fault this guards against: Complete stays true, the caller just gets fewer
         // rows than it asked for.
         var resident = RawRange(0, 3);
         var cache = NewCache(spilledRows: 0, resident, store: null);

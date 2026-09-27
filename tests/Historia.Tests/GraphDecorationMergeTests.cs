@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §V3-7.3: a branch that exists locally and on one or more remotes folds into a single badge;
+/// a branch that exists locally and on one or more remotes folds into a single badge;
 /// the remote prefix is stripped with <c>Branch.RemoteName</c> even when the remote name itself
 /// contains a slash; a tag and a branch of the same name stay separate; HEAD folds into its
 /// branch and only stands alone when detached.
@@ -59,7 +59,7 @@ public class GraphDecorationMergeTests : IAsyncDisposable
     [Fact]
     public async Task A_tag_on_a_branch_stack_folds_into_the_group()
     {
-        // §V3-B: two branches collapse, and a tag on that same commit folds in too — one badge,
+        // two branches collapse, and a tag on that same commit folds in too — one badge,
         // no separate Tag decoration, the tag counted in the badge's +N, branches before tags.
         _repo.Git("branch", "dup", "HEAD");
         _repo.Git("tag", "v1", "HEAD");
@@ -78,7 +78,7 @@ public class GraphDecorationMergeTests : IAsyncDisposable
     [Fact]
     public async Task A_tag_folds_into_a_lone_branch_on_the_commit()
     {
-        // §V3-B: one branch is enough — the tag folds into main's badge, no separate Tag badge.
+        // one branch is enough — the tag folds into main's badge, no separate Tag badge.
         _repo.Git("tag", "v1", "HEAD");
 
         var decos = await DecorationsForTipAsync();
@@ -164,7 +164,7 @@ public class GraphDecorationMergeTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Checked_out_local_plus_same_name_remote_plus_another_branch_keeps_the_cloud(/* v8 M2 */)
+    public async Task Checked_out_local_plus_same_name_remote_plus_another_branch_keeps_the_cloud()
     {
         // Repro from the todo: HEAD on a local branch, its origin tracking ref at the same
         // commit, and a second local branch there. The primary (checked-out) badge must still

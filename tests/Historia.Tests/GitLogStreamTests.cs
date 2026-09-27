@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §3 linux cold-prime plan: <see cref="GitLogStream"/>'s NUL-record framing and per-field
+/// linux cold-prime plan: <see cref="GitLogStream"/>'s NUL-record framing and per-field
 /// parsing, exercised directly with fixture bytes — no real git process involved. See
 /// <see cref="GitLogStreamWalkEquivalenceTests"/> for the end-to-end CLI-vs-libgit2 comparison
 /// against a real repo.

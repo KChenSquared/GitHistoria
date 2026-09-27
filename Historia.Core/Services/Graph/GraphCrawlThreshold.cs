@@ -1,7 +1,7 @@
 namespace Historia.Services.Graph;
 
 /// <summary>
-/// The graph's threshold-stepped silent crawl state (R3, R4): bounds the background crawler
+/// The graph's threshold-stepped silent crawl state: bounds the background crawler
 /// to discrete steps as the user scrolls, rather than pre-loading an arbitrarily deep layout
 /// all at once. Pure state, unit-tested, bound and ticked by <c>CommitGraphControl</c> on the
 /// UI thread only.
@@ -16,7 +16,7 @@ public sealed class GraphCrawlThreshold(int step, int ceiling)
 
     /// <summary>
     /// Advance the target when the viewport's last visible row <paramref name="lastVisibleRow"/>
-    /// reaches or passes <see cref="Target"/> (the Decisions R4 rule). Returns <c>true</c> only
+    /// reaches or passes <see cref="Target"/>. Returns <c>true</c> only
     /// when <see cref="Target"/> moved; always <c>false</c> when uncapped (<paramref name="step"/> ≤ 0)
     /// or when already at <paramref name="ceiling"/>.
     /// </summary>

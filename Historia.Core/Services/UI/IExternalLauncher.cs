@@ -1,8 +1,8 @@
 ﻿namespace Historia.Services.UI;
 
 /// <summary>
-/// Opens a URL in the system default browser (§I-5.4) and reveals paths in the OS file
-/// manager (§15 / v8 M6). User-initiated only; every method is best-effort and never throws.
+/// Opens a URL in the system default browser and reveals paths in the OS file
+/// manager. User-initiated only; every method is best-effort and never throws.
 /// </summary>
 public interface IExternalLauncher
 {

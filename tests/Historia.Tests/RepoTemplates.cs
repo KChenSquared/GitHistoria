@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// Pre-packaged repository template shapes for fast fixture generation across tests (F1).
+/// Pre-packaged repository template shapes for fast fixture generation across tests.
 /// </summary>
 public static class RepoTemplates
 {

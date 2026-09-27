@@ -265,9 +265,18 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     intent; the working tree is what exists.
 34. **Every change lands with acceptance criteria** that state what "done" means in terms
     someone else can check.
-35. **Record corrections, don't silently revert them.** A passage marked *Correction* or
-    *Trap* is there because the obvious approach was tried and was wrong. Superseding one is
-    fine; overwriting it without a note is not.
+35. **Never keep correction notes — except traps and pitfalls.** Never keep a *Correction*
+    note, a "superseded" marker, or any account of what the code or a document used to say:
+    when something changes, rewrite the text to describe the new state and put the history in
+    the commit message.
+    - **Exception — traps and pitfalls.** When an obvious approach was tried and proved wrong,
+      record it as a *Trap* (or pitfall) in the comment or document that owns the behaviour.
+      A trap may describe the failed approach — including what the code used to do and what
+      went wrong ("re-priming with `skip = have` used to mix two walks after a fetch") —
+      because that history *is* the lesson: it stops the next person from reintroducing it.
+      Keep it to what failed and why; the current rule goes alongside it.
+    - A trap is removed only when the behaviour it guards is removed. Don't revert what one
+      warns against without re-reading it.
 36. **A guarantee that can regress silently gets a test — over the whole codebase.** Offline
     assets, palette parity, incremental-layout equivalence, per-frame allocation, graph edge
     endpoints — anything where breakage produces no error. Two corollaries, both learned from
@@ -284,13 +293,9 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     to the relevant project's `GlobalUsings.cs`. When globalizing two namespaces makes a type
     name ambiguous (`CS0104`), resolve it with a `global using` alias pinned to the intended
     type (e.g. `global using Version = System.Version;`), or fully-qualify at the one-off call
-    site if only a single file wants the other type.
-
-    *Correction (supersedes the original rule 37).* The original rule reserved `GlobalUsings.cs`
-    for "namespaces most files need" and kept per-file `using`s for everything else, on the
-    argument that globalizing a minority-use namespace hides what a file depends on. That
-    tradeoff was reversed deliberately: the project now standardizes on global usings
-    everywhere, and the per-file-`using` exception is gone.
+    site if only a single file wants the other type. This holds even for a namespace only one
+    or two files use: the project deliberately prefers one uniform place for imports over
+    making each file's dependencies visible in its own header.
 38. **One logger: `AppLog`. Do not add a second logging system.** `Historia.Core/Diagnostics/AppLog.cs`
     is the single application logger. Reach it by constructor-injecting `IAppLog` in a
     DI-constructed service, or via `AppLog.Current` / the static `AppLog` methods from a
@@ -306,18 +311,28 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     `AppLog.Write` / `AppLog.Operation` call at a new seam only when it is not already covered by
     one of those. `PerfLog` stays a **separate** tool, scoped to startup/latency timing
     only — it is not part of this system and is not a model for adding another one.
-39. **Source files document the present, never their own edit history.**
+39. **Source files document the present, never their own edit history or other documents.**
     - **39.1 — No transition comments.** Never leave comments explaining what you changed, why
       you changed it, or what the previous code looked like (e.g., `// Updated to fix X`,
       `// Iteration 3`, `// OLD CODE:`).
     - **39.2 — No inline changelogs.** Source files are not a git log. Do not add modification
       history to file headers, function blocks, or inline comments.
-    - **39.3 — State-based documentation only.** Comments must only explain the business logic
-      and "why" of the current state for future developers. A comment that would not make sense
-      to someone reading the file for the first time — because it references a previous version
-      of the code — does not belong.
+    - **39.3 — State-based documentation only.** A comment describes what the code does at the
+      time the comment is written or updated, and why — nothing else. A comment that would not
+      make sense to someone reading the file for the first time — because it references a
+      previous version of the code — does not belong, **except** a trap or pitfall (rule 35),
+      which may describe a failed earlier approach because that is the lesson. When you change
+      code, update its comments to match in the same edit.
     - **39.4 — Explain in chat only.** If you need to summarize changes or explain your
       reasoning, do so entirely in the chat window or commit message. Never put change
       explanations in the source files.
     - **39.5 — Clean up stale history.** If you encounter old transition comments from previous
       AI iterations while editing a file, delete them silently.
+    - **39.6 — Never reference documents.** Comments (and user-visible strings) must not cite
+      any document: no design-spec sections (`§7.6`, `§V3-B/19.24`), version or build plans,
+      review findings or item ids (`F9`, `R6`, `finding #17`), milestones, file paths into
+      `Historia-DevDocs`, and no rule numbers from this constitution (`Rule 00`, `rule 24`) —
+      say what the code must do instead (e.g. "destructive: confirm first"). Documents are renumbered, rotated and archived; a pointer into them rots
+      silently and misleads. If the reason behind the code matters, state it in the comment
+      itself. The dependency runs one way: design documents may point at code, code never
+      points at documents.

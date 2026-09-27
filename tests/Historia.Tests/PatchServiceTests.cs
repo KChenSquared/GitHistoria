@@ -277,7 +277,7 @@ public class PatchServiceTests
         var plusB = Enumerable.Range(0, hunk.Lines.Count)
             .First(i => hunk.Lines[i].Type == DiffLineType.Addition && hunk.Lines[i].Content == "b");
 
-        // Selecting only +b must throw the B16 error
+        // Selecting only +b must throw the EOF-newline split error
         var ex = Assert.Throws<HistoriaGitException>(() =>
             svc.GeneratePatch(diff, PatchScope.SelectedLines, new HashSet<DiffLineRef> { new(0, plusB) }, reverse: false));
         Assert.Contains("This selection splits an end-of-file newline change. Include the file's last line, or stage the whole hunk.", ex.Message);

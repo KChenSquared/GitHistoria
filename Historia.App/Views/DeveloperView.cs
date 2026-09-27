@@ -1,7 +1,7 @@
 ﻿namespace Historia.Views;
 
 /// <summary>
-/// Developer-only tools panel (V4). Only routed to when <see cref="Historia.Platform.DevMode"/>
+/// Developer-only tools panel. Only routed to when <see cref="Historia.Platform.DevMode"/>
 /// is enabled.
 /// </summary>
 public sealed class DeveloperView : UserControl
@@ -64,7 +64,7 @@ public sealed class DeveloperView : UserControl
         root.Children.Add(afViz);
         root.Children.Add(Text(
             "Draws a 4 px bar on the left of each app-band tab: red = auto-fetch loop not started, "
-            + "yellow = started but this repo not fetched this cycle, green = fetched this cycle (§12.1).",
+            + "yellow = started but this repo not fetched this cycle, green = fetched this cycle.",
             "ColorTextMuted", 12));
 
         var wipe = TextButton("Wipe persisted graph cache", () =>

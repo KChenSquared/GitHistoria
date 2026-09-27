@@ -40,7 +40,7 @@ public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
         if (oldestFirst.Count == 0)
             return;
 
-        // Record HEAD for the session undo (§8.9.2).
+        // Record HEAD for the session undo.
         var head = await context.WithRepositoryAsync(r => r.Head.Tip?.Sha, ct).ConfigureAwait(false);
         if (head is not null)
             _origHeads[context.Id] = head;
@@ -51,7 +51,7 @@ public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
         if (noCommit) args.Add("-n");
         if (mainline is { } m) { args.Add("-m"); args.Add(m.ToString()); }
 
-        // Explicit oldest-first list — never the exclusive A..B range form (§8.5 corrections).
+        // Explicit oldest-first list — never the exclusive A..B range form.
         foreach (var id in oldestFirst)
             args.Add(id.Sha);
 

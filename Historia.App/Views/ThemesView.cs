@@ -1,7 +1,7 @@
 namespace Historia.Views;
 
 /// <summary>
-/// §V6-G9: the manage-themes panel — a peer of <see cref="SettingsView"/>. Lists the user's
+/// the manage-themes panel — a peer of <see cref="SettingsView"/>. Lists the user's
 /// custom themes (one file each under <c>themes/</c>), and edits one in place: name, Dark/Light
 /// base, every <see cref="HistoriaPalette"/> token, and the nine lane colours. A hex that fails to
 /// parse shows inline and blocks Save. Saving is the apply — if the edited theme is active the

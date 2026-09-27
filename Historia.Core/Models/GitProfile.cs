@@ -1,7 +1,7 @@
 ﻿namespace Historia.Models;
 
 /// <summary>
-/// Immutable, user-editable Git identity profile (§9.2). All mutations produce a new instance
+/// Immutable, user-editable Git identity profile. All mutations produce a new instance
 /// via a <c>with</c> expression. Secrets are never stored inline — OAuth PATs live in Windows
 /// Credential Manager and are referenced here only by key.
 /// </summary>
@@ -19,7 +19,7 @@ public sealed record GitProfile
     public required string GitUserEmail { get; init; }
 
     /// <summary>
-    /// True for the single reserved global profile (§14.1). Its identity mirrors
+    /// True for the single reserved global profile. Its identity mirrors
     /// <c>~/.gitconfig</c> and re-syncs each launch; it cannot be deleted, sorts first in every
     /// picker, and carries no SSH key / PAT of its own.
     /// </summary>
@@ -41,7 +41,7 @@ public sealed record GitProfile
 
 /// <summary>
 /// Mutable usage state tracked separately from the immutable profile config so record
-/// semantics are preserved while timestamps update (§9.2). Updated by
+/// semantics are preserved while timestamps update. Updated by
 /// <c>IProfileService.TouchProfileAsync</c> when a profile becomes the active resolved
 /// profile for any repository.
 /// </summary>
@@ -53,7 +53,7 @@ public sealed class ProfileUsageState
 }
 
 /// <summary>
-/// Repository → profile binding entry (§9.3.1). Keyed in <c>repo-profiles.json</c> by
+/// Repository → profile binding entry. Keyed in <c>repo-profiles.json</c> by
 /// <c>RepoIdentityKey</c> (root-commit derived), never by path. The last-known path is stored
 /// only for display and stale-binding detection.
 /// </summary>

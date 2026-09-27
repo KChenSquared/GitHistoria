@@ -1,7 +1,7 @@
 namespace Historia.Diagnostics;
 
 /// <summary>
-/// The application log (§V9.6). One opt-in, structured logger for the whole app: every unhandled
+/// The application log. One opt-in, structured logger for the whole app: every unhandled
 /// exception, every <c>Warning</c>/<c>Error</c> notification and classified git failure, every git
 /// operation (through <c>LoggingGitGateway</c>) and every git CLI invocation, plus repository
 /// open/close. Terminal session I/O is deliberately not logged.

@@ -1,12 +1,12 @@
 ﻿namespace Historia.Rendering;
 
 /// <summary>
-/// A bounded LRU cache of render resources with <b>miss and hit counters</b> (constitution
-/// rule 24). Control-agnostic on purpose: it knows about keys, values, capacity, and
+/// A bounded LRU cache of render resources with <b>miss and hit counters</b>, so
+/// "no per-frame allocation" is measurable. Control-agnostic on purpose: it knows about keys, values, capacity, and
 /// bookkeeping, and nothing about terminals or graphs. The App layer instantiates it with an
 /// Avalonia factory (<c>RenderResourceCache&lt;Rgb, IBrush&gt;</c>, <c>&lt;PenKey, IPen&gt;</c>,
 /// <c>&lt;int, GlyphInfo&gt;</c>); <see cref="Historia.Core"/> owns the counters so a test can
-/// assert on them without referencing the App assembly (V5 §5.3).
+/// assert on them without referencing the App assembly.
 /// </summary>
 public sealed class RenderResourceCache<TKey, TValue>
     where TKey : notnull

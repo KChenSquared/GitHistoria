@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §V2-17.3: the graph query controls. Path filter restricts the walk (a coherent, valid
+/// the graph query controls. Path filter restricts the walk (a coherent, valid
 /// topology); ref scope narrows the tips. Search is find-not-filter and lives in the control,
 /// so it is not exercised here — this covers the layout-service side.
 /// </summary>
@@ -74,7 +74,7 @@ public class GraphQueryTests : IAsyncDisposable
     public async Task Quick_first_batch_then_extend_matches_a_single_full_layout()
     {
         // The control opens a repo with a tiny phase-1 batch, then ExtendLayoutAsync's to the
-        // configured "Initial rows loaded" (§7.3). The result must equal one full layout.
+        // configured "Initial rows loaded". The result must equal one full layout.
         using var repo = RepoTemplates.Linear(30);
         await using var ctx = _host.Open(repo.Path);
         var svc = new GraphLayoutService(_host.Settings, _host.Locator);

@@ -1,12 +1,12 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// Rule 0 guard (constitution §0.6, §V2-10.4, §V3-18.2 Q8): Historia must start and render from
+/// Offline-first guard: Historia must start and render from
 /// what ships in the package, so no UI asset may reference an <c>http(s)</c> URL. This scans
 /// every text file under <c>wwwroot/</c> plus every <c>.razor</c>, <c>.css</c> <b>and .cs</b>
 /// in the tree and fails on any outbound URL outside a comment. Allowed matches are
 /// non-dereferenced XML namespace identifiers (XAML and SVG) and an explicit allowlist of
-/// consented URLs — the WebView2 bootstrapper fwlink approved in §V2-10.3.
+/// consented URLs — the WebView2 bootstrapper fwlink.
 /// </summary>
 [Trait("tier", "unit")]
 public class OfflineAssetTests
@@ -19,13 +19,13 @@ public class OfflineAssetTests
         "http://schemas.openxmlformats.org/",
     };
 
-    /// <summary>Consented URLs (§V3-18.2 Q8) — a real allowlist, not a blind spot.</summary>
+    /// <summary>Consented URLs — a real allowlist, not a blind spot.</summary>
     private static readonly string[] ConsentedUrls =
     {
-        "https://go.microsoft.com/fwlink/p/?LinkId=2124703",       // WebView2 bootstrapper (§V2-10.3)
+        "https://go.microsoft.com/fwlink/p/?LinkId=2124703",       // WebView2 bootstrapper
         "https://developer.microsoft.com/microsoft-edge/webview2/", // its manual-install fallback
         "https://github.com/owner/repo.git",                        // clone-dialog input watermark (not fetched)
-        "https://github.com/settings/tokens/new?scopes=repo&description=Historia", // v8 M11 "Sign in with GitHub" — user-initiated browser open
+        "https://github.com/settings/tokens/new?scopes=repo&description=Historia", // "Sign in with GitHub" — user-initiated browser open
     };
 
     private static readonly string[] BinaryExtensions =
@@ -61,7 +61,7 @@ public class OfflineAssetTests
         }
 
         Assert.True(offenders.Count == 0,
-            "Outbound http(s) URL(s) in shipped assets — Rule 0 violation:\n  " +
+            "Outbound http(s) URL(s) in shipped assets — offline-first violation:\n  " +
             string.Join("\n  ", offenders));
     }
 

@@ -1,7 +1,7 @@
 ﻿namespace Historia.Services.PowerTools;
 
 /// <summary>
-/// Interactive rebase, executed by Git core (§8.1.4). Historia writes the todo plan and drives
+/// Interactive rebase, executed by Git core. Historia writes the todo plan and drives
 /// the sequencer through re-invoked-self helpers pointed at by <c>GIT_SEQUENCE_EDITOR</c> and
 /// <c>GIT_EDITOR</c>. Continue / skip / abort route through <c>IConflictService</c>. Singleton.
 /// </summary>
@@ -10,7 +10,7 @@ public interface IRebaseService
     /// <summary>Builds an all-<c>Pick</c> session for <c>upstream..HEAD</c>, oldest first.</summary>
     Task<RebaseSession> BuildSessionAsync(RepositoryContext context, string upstreamRef, CancellationToken ct = default);
 
-    /// <summary>Client-side validation of the plan before anything is written (§8.1.2).</summary>
+    /// <summary>Client-side validation of the plan before anything is written.</summary>
     IReadOnlyList<RebaseValidationIssue> Validate(RebaseSession session);
 
     /// <summary>

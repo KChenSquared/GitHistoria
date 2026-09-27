@@ -18,9 +18,9 @@ public class SettingsReachabilityTests
     /// </summary>
     private static readonly HashSet<string> Allowlist =
     [
-        // §13.5: Gates hosting-service API polling when a token-bearing profile is active.
+        // Gates hosting-service API polling when a token-bearing profile is active.
         // Its original reader in NetworkPolicyService was removed when per-repo routing replaced
-        // global network modes (v9), and the hosting-service layer (PRs, issue metadata, §23)
+        // global network modes (v9), and the hosting-service layer (PRs, issue metadata)
         // is not yet implemented.
         nameof(AppSettings.EnableBackgroundPolling),
     ];

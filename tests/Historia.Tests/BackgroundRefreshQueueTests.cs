@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// M3.1: Background-tab refresh queue (§F4, §F5).
+/// Background-tab refresh queue.
 /// Verifies that background refreshes drain in app-band tab order,
 /// tab reordering updates drain order, interrupted tabs retain front priority,
 /// background refreshes wait for the focused tab's initial load, and focused tab

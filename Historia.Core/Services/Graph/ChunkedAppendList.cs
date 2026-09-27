@@ -8,7 +8,7 @@ namespace Historia.Services.Graph;
 /// <see cref="List{T}"/>'s doubling strategy eventually pays. This is what lets
 /// <c>GraphLayoutState.Rows</c> grow to millions of entries across many small Extend calls
 /// without <c>DagLayoutEngine.Build</c> having to copy the WHOLE accumulator into a fresh array on
-/// every single call — the actual #9 bug (quadratic allocation in the number of extends; ~100 MB
+/// every single call (quadratic allocation in the number of extends; ~100 MB
 /// per extend at 2M rows, worse at the 10M <c>ResidentRowCap</c> maximum).
 /// <para>
 /// <b>Concurrency contract:</b> <see cref="Add"/> is single-writer — every caller already holds
@@ -84,7 +84,7 @@ internal sealed class ChunkedAppendList<T>
     }
 
     /// <summary>Copies every element into a fresh array. Never called by
-    /// <c>DagLayoutEngine.Build</c> (that copy is the #9 bug this type replaces) — for tests and
+    /// <c>DagLayoutEngine.Build</c> (that copy would make extends quadratic) — for tests and
     /// diagnostics only.</summary>
     public T[] ToArray()
     {

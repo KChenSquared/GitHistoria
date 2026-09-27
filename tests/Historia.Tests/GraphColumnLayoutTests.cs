@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>§V3-8.4: the grow/shrink sizing model.</summary>
+/// <summary>the grow/shrink sizing model.</summary>
 [Trait("tier", "unit")]
 public class GraphColumnLayoutTests
 {
@@ -18,7 +18,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void Grow_fills_Message_to_250_before_Graph_moves()
     {
-        // §V6-G4: Base Refs 140 + Graph 150 + Message 150 = 440. A small slack goes entirely
+        // Base Refs 140 + Graph 150 + Message 150 = 440. A small slack goes entirely
         // to Message until it reaches MessageFirstStop (250); Graph stays at its base.
         var r = Resolve(Defaults(), viewport: 520, lanes: 4); // slack 80
         Assert.Equal(230, W(r, GraphColumnKind.Message), 1);
@@ -28,7 +28,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void Grow_then_fills_Graph_to_220()
     {
-        // §V6-G4: enough slack for Message→250 (100) then Graph→220 (70), nothing left over.
+        // enough slack for Message→250 (100) then Graph→220 (70), nothing left over.
         var r = Resolve(Defaults(), viewport: 610, lanes: 4); // slack 170
         Assert.Equal(GraphColumnLayout.MessageFirstStop, W(r, GraphColumnKind.Message), 1);
         Assert.Equal(GraphColumnLayout.GraphCoGrowTarget, W(r, GraphColumnKind.Graph), 1);
@@ -37,7 +37,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void Grow_past_both_targets_gives_the_rest_to_Message()
     {
-        // §V6-G4: Message→250 (100) + Graph→220 (70) = 170 consumed; the remaining slack is
+        // Message→250 (100) + Graph→220 (70) = 170 consumed; the remaining slack is
         // all Message's.
         var r = Resolve(Defaults(), viewport: 900, lanes: 4); // slack 460
         Assert.Equal(GraphColumnLayout.GraphCoGrowTarget, W(r, GraphColumnKind.Graph), 1);
@@ -47,7 +47,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void PinnedGraphKeepsItsWidthAndDoesNotCoGrow()
     {
-        // §V3-B: once pinned, a hand-set Graph width sticks even with plenty of slack — the
+        // once pinned, a hand-set Graph width sticks even with plenty of slack — the
         // whole surplus goes to Message instead of dragging Graph back toward the ceiling.
         var cols = Defaults();
         cols[1] = cols[1] with { Width = GraphColumnDefaults.MinWidthFor(GraphColumnKind.Graph) }; // 150
@@ -60,7 +60,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void UnpinnedGraphCoGrowsToItsTargetThenStops()
     {
-        // §V6-G4: with ample slack Graph settles at GraphCoGrowTarget (220), not GraphAutoMax.
+        // with ample slack Graph settles at GraphCoGrowTarget (220), not GraphAutoMax.
         var r = Resolve(Defaults(), viewport: 900, pinned: false, lanes: 4);
         Assert.Equal(GraphColumnLayout.GraphCoGrowTarget, W(r, GraphColumnKind.Graph), 1);
     }
@@ -76,7 +76,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void Under_the_sequence_Graph_is_hard_capped_at_220_even_with_many_lanes()
     {
-        // §V6-G4: the lane-count auto-size would want 250+ here, but the staged sequence caps
+        // the lane-count auto-size would want 250+ here, but the staged sequence caps
         // Graph at GraphCoGrowTarget (220); the surplus is Message's.
         var r = Resolve(Defaults(), viewport: 900, lanes: 40, lane: 22);
         Assert.Equal(GraphColumnLayout.GraphCoGrowTarget, W(r, GraphColumnKind.Graph), 1);
@@ -86,7 +86,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void Under_the_sequence_a_deficit_leaves_Graph_and_Message_at_their_floor()
     {
-        // §V6-G4: the sequence starts Graph AND Message at 150. Once the viewport can't even
+        // the sequence starts Graph AND Message at 150. Once the viewport can't even
         // fit the base row, both stay floored and the deficit comes off the trailing columns
         // (Date/Author/Sha) via the priority pass — never off Graph or Message.
         var cols = Defaults().Select(c => c with { Visible = true }).ToList();
@@ -109,7 +109,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void Pinned_Graph_width_is_clamped_to_the_lanes_in_use()
     {
-        // §V3.1: a width pinned while a busy repo was open must not show as empty space after a
+        // a width pinned while a busy repo was open must not show as empty space after a
         // refs change shrinks the layout. lanes 8 × lane 22 → natural max (8 + 1) × 22 = 198.
         var cols = Defaults();
         cols[1] = cols[1] with { Width = 900 };
@@ -130,7 +130,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void Custom_Graph_width_opts_out_of_the_sequence()
     {
-        // §V6-G5: a pinned Graph width means the pre-v6 equal-rate co-grow runs instead — Graph
+        // a pinned Graph width means the pre-v6 equal-rate co-grow runs instead — Graph
         // holds its hand-set width and Message takes the whole surplus.
         var cols = Defaults();
         cols[1] = cols[1] with { Width = 180 };
@@ -143,7 +143,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void Custom_Message_width_opts_out_of_the_sequence()
     {
-        // §V6-G5: once Message is manually sized the staged sequence is off. With no slack
+        // once Message is manually sized the staged sequence is off. With no slack
         // (viewport == base sum) the hand-set Message width stands exactly and Graph keeps its
         // lane-count autosize — neither is pulled toward a v6 target.
         var cols = Defaults();
@@ -181,7 +181,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void DraggedMessageIsHeldWhileGraphShrinksToItsFloor()
     {
-        // §V3-AC 21: drag Message wide, then narrow — Graph shrinks, Message keeps its width.
+        // 21: drag Message wide, then narrow — Graph shrinks, Message keeps its width.
         var cols = Defaults();
         cols[2] = cols[2] with { Width = 420 };
         var manual = ImmutableHashSet.Create(GraphColumnKind.Message);
@@ -213,7 +213,7 @@ public class GraphColumnLayoutTests
     [Fact]
     public void GraphAutoSizesToLaneCountOnTheLegacyPath()
     {
-        // §V6-G4: the staged sequence hard-caps Graph at 220, so the lane-count auto-size only
+        // the staged sequence hard-caps Graph at 220, so the lane-count auto-size only
         // shows on the legacy path — here, Graph manually sized so the sequence opts out
         // (this lever doesn't inflate the Message base the way a Message opt-out would).
         var manual = ImmutableHashSet.Create(GraphColumnKind.Graph);

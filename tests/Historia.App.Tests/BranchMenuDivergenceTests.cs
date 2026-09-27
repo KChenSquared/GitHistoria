@@ -2,7 +2,7 @@ using LibGit2Sharp;
 
 namespace HistoriaApp.Tests;
 
-/// <summary>M4.1: <c>BranchMenu.BuildDivergenceItemsAsync</c> — the push/pull/fast-forward menu
+/// <summary><c>BranchMenu.BuildDivergenceItemsAsync</c> — the push/pull/fast-forward menu
 /// item(s) for each (row kind, ahead, behind) combination, driven through a stub
 /// <see cref="IGitGateway"/> rather than a real repository.</summary>
 [Trait("tier", "unit")]

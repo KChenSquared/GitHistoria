@@ -4,8 +4,8 @@ namespace Historia.Services.Settings;
 public sealed record SettingsChangedEventArgs(AppSettings OldSettings, AppSettings NewSettings);
 
 /// <summary>
-/// App-wide settings store (§10). Loaded once synchronously at startup (§6.2.2), cached, and
-/// persisted on change with debounced atomic writes (§9.3). Registered as a singleton.
+/// App-wide settings store. Loaded once synchronously at startup, cached, and
+/// persisted on change with debounced atomic writes. Registered as a singleton.
 /// </summary>
 public interface ISettingsService
 {

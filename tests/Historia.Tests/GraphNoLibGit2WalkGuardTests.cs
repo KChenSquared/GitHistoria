@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// Rule 36 guard: the commit graph is walked only by <c>git log</c>, and reads refs only from
+/// Regression guard: the commit graph is walked only by <c>git log</c>, and reads refs only from
 /// the <c>for-each-ref</c> ref snapshot. A libgit2 revwalk is hundreds of times slower to its
 /// first row and gigabytes heavier on a large repo; a libgit2 ref enumeration holds the repo gate
 /// ~6 s at chromium's 39k refs, on every walk step. Either would regress without any error — so

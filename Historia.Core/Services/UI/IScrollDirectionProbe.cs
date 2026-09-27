@@ -2,7 +2,7 @@
 namespace Historia.Services.UI;
 
 /// <summary>
-/// v8 M9: reports whether the OS is set to "natural / inverted" scrolling. Windows is always
+/// Reports whether the OS is set to "natural / inverted" scrolling. Windows is always
 /// standard; on macOS / Linux this reflects the system preference. The value is cached and
 /// re-probed on demand (window focus).
 /// </summary>

@@ -33,7 +33,7 @@ public sealed partial class GitExecutableLocator : IGitExecutableLocator
 
     private static string? Discover(string? userOverridePath)
     {
-        // 1. Explicit user override (§6.2.3).
+        // 1. Explicit user override.
         if (!string.IsNullOrWhiteSpace(userOverridePath) && File.Exists(userOverridePath))
             return userOverridePath;
 

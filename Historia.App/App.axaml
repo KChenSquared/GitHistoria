@@ -2,14 +2,14 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Historia.App"
              RequestedThemeVariant="Dark">
-    <!-- V4: the palette (ColorBg, ColorBorder, …) is generated from HistoriaPalette at runtime
+    <!-- the palette (ColorBg, ColorBorder, …) is generated from HistoriaPalette at runtime
          by AvaloniaThemeApplier and merged into Application.Resources — not authored here, so
-         the one source of truth stays HistoriaPalette.cs (parity with the old WPF dictionary). -->
+         the one source of truth stays HistoriaPalette.cs. -->
     <Application.Styles>
         <FluentTheme />
         <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
 
-        <!-- V9: a classless Button never shows Fluent's grey fill. It reads like the Clone
+        <!-- a classless Button never shows Fluent's grey fill. It reads like the Clone
              dialog's buttons — transparent ground, 1 px outline, plain text — and only paints a
              subtle fill on hover / press. Anything that opts into .primary / .flat / .danger /
              .success / .secondary keeps its own chrome (class selectors outrank this one).
@@ -30,7 +30,7 @@
             <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
         </Style>
 
-        <!-- Flat button family (V3 parity): understated chrome, quiet disabled state.
+        <!-- Flat button family: understated chrome, quiet disabled state.
              At rest the fill matches the panel background (transparent) with a grey outline;
              only hover paints a fill. -->
         <Style Selector="Button.secondary">

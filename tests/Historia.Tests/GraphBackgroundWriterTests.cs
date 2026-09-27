@@ -389,7 +389,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     }
 
     /// <summary>Local fake — not <see cref="RecordingGitCliService"/> in <c>Fakes.cs</c> — because
-    /// this milestone doesn't own that shared file: it also records the <see cref="CancellationToken"/>
+    /// it also records the <see cref="CancellationToken"/>
     /// each call receives, and can optionally block mid-call to simulate a long-running write.</summary>
     private sealed class TokenRecordingGitCliService(TaskCompletionSource? blockUntil = null) : IGitCliService
     {

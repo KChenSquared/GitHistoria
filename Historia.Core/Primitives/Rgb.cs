@@ -1,12 +1,12 @@
 ﻿namespace Historia;
 
 /// <summary>
-/// An 8-bit-per-channel ARGB colour. V4 §split: <see cref="Historia.Core"/> owns no UI framework,
+/// An 8-bit-per-channel ARGB colour. <see cref="Historia.Core"/> owns no UI framework,
 /// so <see cref="Services.Theming.HistoriaPalette"/> and <see cref="Services.Graph.LanePalette"/>
-/// produce these instead of <c>System.Windows.Media.Color</c> / <c>Avalonia.Media.Color</c>.
+/// produce these instead of <c>Avalonia.Media.Color</c>.
 /// The App layer converts to its framework's colour type at the boundary. Channel order and
-/// the <c>FromArgb</c> / <c>FromRgb</c> factory names mirror the WPF/Avalonia API so call sites
-/// were a one-word change.
+/// the <c>FromArgb</c> / <c>FromRgb</c> factory names mirror Avalonia's <c>Color</c> API, so converting at the
+/// boundary is mechanical.
 /// </summary>
 public readonly record struct Rgb(byte A, byte R, byte G, byte B)
 {

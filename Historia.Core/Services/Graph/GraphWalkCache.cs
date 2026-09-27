@@ -59,7 +59,7 @@ internal sealed class GraphWalkCache
         && string.IsNullOrEmpty(query.PathFilter)
         && !query.IncludeStashes;
 
-    /// <param name="metadataOnDisk">§7.6: when true the per-commit strings are served from the
+    /// <param name="metadataOnDisk">when true the per-commit strings are served from the
     /// paged <c>DiskCommitStore</c>, so a warm load only needs id + parent count here — skip
     /// materialising the message/author/email text for a whole huge history.</param>
     public Loaded? TryLoad(string repoPath, GraphQuery query, int wantCount, long fingerprint, bool metadataOnDisk = false)
@@ -227,7 +227,7 @@ internal sealed class GraphWalkCache
                 parents[i] = new ObjectId(c.Parents[i]);
             var id = new ObjectId(c.Id);
             commits.Add(new RawCommit(id, parents, metadataOnDisk
-                // §V10.1: keep the timestamps even in the id/parents-only load — DagLayoutEngine's
+                // keep the timestamps even in the id/parents-only load — DagLayoutEngine's
                 // tip-priority pre-pass sorts by CommitWhen, and the paged store is only consulted
                 // for the heavy strings. Zeroing the dates here pinned the trunk to SHA order.
                 ? new CommitMetadata
@@ -257,7 +257,7 @@ internal sealed class GraphWalkCache
     }
 
     /// <summary>Deletes every persisted walk file (and any leftover temp files), plus the
-    /// disk-backed metadata store (§7.6). Returns the count.</summary>
+    /// disk-backed metadata store. Returns the count.</summary>
     public int WipeAll()
     {
         lock (_readCacheSync)

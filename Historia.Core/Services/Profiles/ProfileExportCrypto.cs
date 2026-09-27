@@ -1,8 +1,8 @@
 ﻿namespace Historia.Services.Profiles;
 
 /// <summary>
-/// Password-based AES-256-GCM encryption for profile export bundles that include tokens
-/// (§12). Exports without tokens are plain JSON and never touch this.
+/// Password-based AES-256-GCM encryption for profile export bundles that include tokens.
+/// Exports without tokens are plain JSON and never touch this.
 /// </summary>
 public static class ProfileExportCrypto
 {

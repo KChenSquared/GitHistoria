@@ -1,7 +1,7 @@
 ﻿namespace Historia.Models;
 
 /// <summary>
-/// One stash entry (§8.3.2). <see cref="CommitId"/> is the stable identity — every operation
+/// One stash entry. <see cref="CommitId"/> is the stable identity — every operation
 /// is keyed on it, never on <see cref="Index"/>, which is a stack position that shifts on
 /// every drop/pop.
 /// </summary>
