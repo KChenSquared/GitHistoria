@@ -64,7 +64,7 @@ public sealed class AvaloniaDialogService : IDialogService
         OnUi(async () => (await SimpleDialog.ShowAsync(
             Owner, title, message, prompt: false, confirmLabel, "Cancel", defaultToCancel: defaultToCancel, icon: icon)).Confirmed);
 
-    // Constitution Rule 00: the destructive-confirm contract is hard-wired here — the red
+    // The destructive-confirm contract is hard-wired here — the red
     // warning, Cancel as the primary + Enter button (still rightmost), the confirm
     // button left plain. A call site cannot opt out of any of it.
     public Task<bool> ConfirmDestructiveAsync(string title, string effect, string confirmLabel) =>
@@ -120,7 +120,7 @@ internal static class SimpleDialog
 
     /// <summary>The confirm / cancel button row for <see cref="ShowAsync"/>. Cancel is always
     /// the rightmost button (Windows <c>[Action] [Cancel]</c> order); <paramref name="defaultToCancel"/>
-    /// (constitution Rule 00) additionally makes Cancel the primary (blue) + Enter button and
+    /// Additionally makes Cancel the primary (blue) + Enter button and
     /// leaves the confirm button plain. Factored out so <c>DestructiveConfirmationTests</c> can
     /// assert the contract without showing a window.</summary>
     internal static (StackPanel row, Button confirm, Button? cancel) ConfirmButtonRow(
@@ -155,7 +155,7 @@ internal static class SimpleDialog
     }
 
     /// <summary>The message line, optionally led by the large red <c>warning</c>
-    /// (<see cref="DialogIcon.Warning"/> — constitution Rule 00). Shared by every hand-rolled
+    /// (<see cref="DialogIcon.Warning"/>). Shared by every hand-rolled
     /// dialog so the warning treatment is identical everywhere.</summary>
     internal static Control MessageBlock(string message, double maxWidth, DialogIcon icon)
     {
@@ -213,7 +213,7 @@ internal static class SimpleDialog
     /// <summary>One button per option plus a Cancel; returns the option index, or -1.
     /// Labels stay on one line (the window widens to fit rather than trimming);
     /// <paramref name="destructiveIndex"/> gets the red outlined "danger" styling.
-    /// <para>Constitution Rule 00: when <paramref name="icon"/> is
+    /// <para>When <paramref name="icon"/> is
     /// <see cref="DialogIcon.Warning"/> the red <c>warning</c> leads the message,
     /// <c>Cancel</c> becomes the primary / Enter button, and the <paramref name="defaultIndex"/>
     /// option is left plain (a destructive chooser has no blue "go" button).</para></summary>
@@ -262,7 +262,7 @@ internal static class SimpleDialog
                     TextWrapping = Avalonia.Media.TextWrapping.NoWrap,
                 },
                 MinWidth = 80,
-                // Rule 00: in a warning chooser the safe choice (Cancel) is the Enter default,
+                // In a warning chooser the safe choice (Cancel) is the Enter default,
                 // never one of the options.
                 IsDefault = !warn && i == defaultIndex,
             };
@@ -275,7 +275,7 @@ internal static class SimpleDialog
         }
 
         var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80 };
-        // Rule 00: Cancel is the primary (blue) + Enter button in a warning chooser; still rightmost.
+        // Cancel is the primary (blue) + Enter button in a warning chooser; still rightmost.
         if (warn)
         {
             cancel.IsDefault = true;
@@ -330,7 +330,7 @@ public sealed record CloneDialogResult(
 /// </summary>
 internal static class CloneDialog
 {
-    /// <summary>F2: whether the folder box's current text is still "owned" by the auto-fill —
+    /// <summary>Whether the folder box's current text is still "owned" by the auto-fill —
     /// i.e. it should be overwritten by the next URL-derived guess. True both when the box is
     /// empty and when its text is exactly what the auto-fill itself last wrote there (so the
     /// auto-fill's own programmatic write is never mistaken for a user edit); false the moment
@@ -379,7 +379,7 @@ internal static class CloneDialog
         confirm.Classes.Add("primary");
         var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80 };
 
-        // Folder box auto-fills from the URL until the user types into it (F2: the auto-fill's
+        // Folder box auto-fills from the URL until the user types into it (the auto-fill's
         // own write to folder.Text must never be mistaken for a user edit).
         string? lastAutoFilled = null;
         url.TextChanged += (_, _) =>
@@ -472,7 +472,7 @@ internal static class CloneDialog
         var tcs = new TaskCompletionSource<CloneDialogResult?>();
         confirm.Click += async (_, _) =>
         {
-            // F1/F4a: validated once more here (not just via Revalidate/IsEnabled) because this
+            // Validated once more here (not just via Revalidate/IsEnabled) because this
             // is the only check that touches disk — it runs on click, not on every keystroke.
             var destProblem = CloneValidation.DescribeDestinationProblem(root.Text ?? "", folder.Text ?? "");
             if (destProblem is not null)

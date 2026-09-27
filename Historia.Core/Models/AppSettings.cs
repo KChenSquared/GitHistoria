@@ -8,10 +8,10 @@ namespace Historia.Models;
 public sealed record AppSettings
 {
     /// <summary>Schema version for the migration pipeline. v2: graph columns;
-    /// v3: issue autolinks; v4: hidden Author/Date/SHA, session restore on, recents 30
-    ///; v5: multi-line tab strip; v6: persistent graph cache toggle; v7: graph
-    /// row hard cap; v8: local repo-state cache toggle; v9: terminal (V5); v10: tab-width mode
-    /// (V5.5); v11: custom-theme id; v12: splash-screen toggle.</summary>
+    /// v3: issue autolinks; v4: hidden Author/Date/SHA, session restore on, recents 30;
+    /// v5: multi-line tab strip; v6: persistent graph cache toggle; v7: graph
+    /// row hard cap; v8: local repo-state cache toggle; v9: terminal; v10: tab-width mode;
+    /// v11: custom-theme id; v12: splash-screen toggle.</summary>
     public int SchemaVersion { get; init; } = 18;
 
     // ── Profile &amp; Identity ──
@@ -29,7 +29,7 @@ public sealed record AppSettings
     /// loop, which periodically <c>git fetch</c>es every open repository. Unlike
     /// <see cref="EnableBackgroundPolling"/> it is <b>not</b> gated to a token-bearing profile —
     /// it fetches SSH and <i>Local config</i> repos too — so this toggle is the single opt-out
-    /// that keeps constitution Rule 0.2 satisfiable. Default on.</summary>
+    /// that lets a user guarantee no unsolicited network traffic. Default on.</summary>
     public bool AutoFetchEnabled { get; init; } = true;
 
     // ── UI preferences ──
@@ -53,7 +53,7 @@ public sealed record AppSettings
     /// </summary>
     public bool ShowAuthorDate { get; init; }
 
-    /// <summary>v8 M9: how the graph and the tab strip interpret mouse-wheel / trackpad scroll.
+    /// <summary>How the graph and the tab strip interpret mouse-wheel / trackpad scroll.
     /// <c>Auto</c> matches the OS "natural / inverted" setting (macOS &amp; Linux; Windows is
     /// always standard); <c>Standard</c> / <c>Inverted</c> force it.</summary>
     public WheelScrollDirection WheelScrollDirection { get; init; } = WheelScrollDirection.Auto;
@@ -101,7 +101,7 @@ public sealed record AppSettings
     /// <summary>Overrides discovery.</summary>
     public string? GitExecutablePath { get; init; }
 
-    /// <summary>On by default (Correction against Q4). Restore opens only the
+    /// <summary>On by default. Restore opens only the
     /// focused repository; every other tab is a placeholder until first focused.</summary>
     public bool RestoreSessionTabs { get; init; } = true;
     public bool PruneOnFetch { get; init; } = true;
@@ -149,8 +149,8 @@ public sealed record AppSettings
     /// <summary>
     /// How many rows the graph's silent background crawler pre-loads into the
     /// resident layout after first paint, before stopping until the viewport scrolls past the
-    /// loaded threshold (R3/R4), advancing another this many rows each step. Deeper history
-    /// reaches disk in full via the background spill regardless of this cap (R2).
+    /// loaded threshold, advancing another this many rows each step. Deeper history
+    /// reaches disk in full via the background spill regardless of this cap.
     /// <c>0</c> means uncapped — the crawler runs all the way to the resident-row ceiling
     /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 100,000.
     /// </summary>
@@ -159,9 +159,8 @@ public sealed record AppSettings
     public const int MinSilentCrawlRowCap = 0;
 
     /// <summary>
-    /// #25: was pinned to <see cref="GraphLimits.MaxResidentRowsDisk"/> (2,000,000), which left no
-    /// way to set the crawl cap between that and <see cref="MaxResidentRowCap"/> (10,000,000)
-    /// except through <c>0</c> (uncapped). Matches the resident-cap maximum instead.
+    /// The same ceiling as <see cref="MaxResidentRowCap"/> (10,000,000), so any crawl cap up to
+    /// the resident-cap maximum can be set directly, not only through <c>0</c> (uncapped).
     /// </summary>
     public const int MaxSilentCrawlRowCap = MaxResidentRowCap;
 

@@ -100,7 +100,7 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
             ObjectDisposedException.ThrowIf(_disposed, this);
 
         // Deliberately bypasses the reuse / in-flight checks — an explicit user request for a
-        // second shell (review). StartAsync focuses it and raises ActivationRequested.
+        // second shell. StartAsync focuses it and raises ActivationRequested.
         return StartAsync(origin, ct);
     }
 

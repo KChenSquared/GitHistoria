@@ -11,7 +11,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     // Tall enough for the two vertically-stacked header buttons (✕ / ＋).
     private const double HeaderHeight = 40;
     private const double MinDock = 120;
-    // Keep at least this much of the centre panel visible above the dock (review).
+    // Keep at least this much of the centre panel visible above the dock.
     private const double MinCentreReserve = 80;
 
     private ITerminalSessionService _sessions = default!;
@@ -44,7 +44,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     private double _dockHeight = 260;
     private DispatcherTimer? _persistDebounce;
 
-    // On its first reveal this run the dock takes 35 % of the centre panel (review follow-up),
+    // On its first reveal this run the dock takes 35 % of the centre panel,
     // regardless of the persisted height; the user's drags then take over.
     private const double FirstOpenFraction = 0.35;
 
@@ -52,7 +52,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     {
         _tabStrip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
 
-        // Buttons stacked vertically on the right (review): close on top, new-terminal below.
+        // Buttons stacked vertically on the right: close on top, new-terminal below.
         // The clear and maximize/restore buttons are gone; "+" opens another Home terminal,
         // exactly as the Historia-menu entry does.
         var toolbar = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
@@ -70,9 +70,9 @@ public sealed class TerminalDockControl : UserControl, IDisposable
             Content = _tabStrip,
             VerticalAlignment = VerticalAlignment.Top,
         };
-        // Same single-row scroll model as the app-band strip (review): plain < > with no
+        // Same single-row scroll model as the app-band strip: plain < > with no
         // borders, shown only on overflow, plus wheel-to-pan. No multi-line support. The pair
-        // sits together on the right, next to the ✕ stack (review follow-up).
+        // sits together on the right, next to the ✕ stack.
         _tabLeft = ToolButton("<", "Scroll tabs left", () => ScrollTabs(-1));
         _tabRight = ToolButton(">", "Scroll tabs right", () => ScrollTabs(+1));
         // Share the app-band arrow chrome: disabled fades the glyph but keeps the ground flush
@@ -320,7 +320,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     /// <summary>Height of the centre column (graph area + this dock). The nearest <see cref="Grid"/>
     /// ancestor is the centre wrapper grid from <c>MainWindow.axaml</c>; the immediate visual
     /// parent is just a content presenter sized to the dock itself, so clamping against it would
-    /// pin the dock to its current height and block growing it (review follow-up: "resizable").</summary>
+    /// pin the dock to its current height and block growing it ("resizable").</summary>
     private double CentrePanelHeight()
         => this.FindAncestorOfType<Grid>()?.Bounds.Height
            ?? TopLevel.GetTopLevel(this)?.Bounds.Height
@@ -368,7 +368,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
                 SetOpen(false);
         });
 
-    // Closing the dock (✕) only hides it; an entry point reopens it (review).
+    // Closing the dock (✕) only hides it; an entry point reopens it.
     private void OnActivationRequested(object? sender, EventArgs e)
         => Dispatcher.UIThread.Post(() =>
         {
@@ -514,7 +514,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
             _tabScroller.Offset = new Vector(Math.Min(TabScrollable, right - _tabScroller.Viewport.Width), 0);
     }
 
-    // ── tab-strip scrolling (review) ─────────────────────────────────────────────────────
+    // ── tab-strip scrolling ─────────────────────────────────────────────────────
 
     private double TabScrollable => Math.Max(0, _tabScroller.Extent.Width - _tabScroller.Viewport.Width);
 

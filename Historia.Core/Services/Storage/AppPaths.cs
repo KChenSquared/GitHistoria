@@ -67,10 +67,10 @@ public static class AppPaths
         _override.Value ?? _processOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Historia");
 
     /// <summary>True when neither portable candidate was writable, so persistence is disabled for
-    /// the session (rule 0.4). The last <see cref="ResolveFor"/> call sets this.</summary>
+    /// the session. The last <see cref="ResolveFor"/> call sets this.</summary>
     public static bool PortableResolutionFailed { get; private set; }
 
-    /// <summary>The two paths the resolution tried, for the rule 0.4 warning.</summary>
+    /// <summary>The two paths the resolution tried, for the startup warning.</summary>
     public static (string Documents, string Configs) AttemptedPortablePaths { get; private set; }
 
     /// <summary>
@@ -96,7 +96,7 @@ public static class AppPaths
             return configs;
         }
 
-        // Rule 0.4: both failed — do not silently redirect into MachineDirectory. Report and
+        // Both failed — do not silently redirect into MachineDirectory. Report and
         // run without persistence. Return the configs path as an in-memory placeholder so
         // callers have a non-null path; writes there will simply fail.
         PortableResolutionFailed = true;
@@ -136,7 +136,7 @@ public static class AppPaths
     /// <summary>one JSON file per user-authored theme lives here.</summary>
     public static string ThemesDirectory => Path.Combine(DataDirectory, "themes");
 
-    /// <summary>v8 M11: SSH keys Historia generates for a profile live under a per-profile
+    /// <summary>SSH keys Historia generates for a profile live under a per-profile
     /// subfolder here (<c>keys/&lt;profileId&gt;/id_ed25519</c>).</summary>
     public static string KeysDirectory => Path.Combine(DataDirectory, "keys");
 
@@ -157,11 +157,11 @@ public static class AppPaths
 
     public static void EnsureCreated()
     {
-        try { Directory.CreateDirectory(DataDirectory); } catch { /* rule 0.4 */ }
+        try { Directory.CreateDirectory(DataDirectory); } catch { /* best effort: a missing directory must not stop startup */ }
         Directory.CreateDirectory(MachineDirectory);
         Directory.CreateDirectory(LogsDirectory);
         try { Directory.CreateDirectory(CacheDirectory); } catch { /* regenerable */ }
-        try { Directory.CreateDirectory(ThemesDirectory); } catch { /* rule 0.4 */ }
+        try { Directory.CreateDirectory(ThemesDirectory); } catch { /* best effort: a missing directory must not stop startup */ }
         MigratePortableFilesFromAppData();
     }
 

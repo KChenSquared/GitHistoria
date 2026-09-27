@@ -1,8 +1,8 @@
 namespace Historia.Models;
 
 /// <summary>
-/// Immutable per-commit metadata, projected from LibGit2Sharp inside the repository gate
-///. One instance per commit; stored once in <see cref="GraphLayout.Commits"/>
+/// Immutable per-commit metadata, projected from LibGit2Sharp inside the repository gate.
+/// One instance per commit; stored once in <see cref="GraphLayout.Commits"/>
 /// and referenced everywhere else by row index.
 /// </summary>
 public sealed record CommitMetadata
@@ -341,7 +341,7 @@ public sealed class GraphLayout : IDisposable
     /// dictionary rather than a per-snapshot copy (see its comment) — safe for this snapshot's
     /// own <see cref="Consume"/> writer, but not for an unsynchronized reader while a background
     /// <c>ExtendLayoutAsync</c> is inserting into the very same instance under
-    /// <c>lock (existing.State)</c> (#3, 2026-09-12 memory review: <c>CommitGraphControl
+    /// <c>lock (existing.State)</c> (<c>CommitGraphControl
     /// .ResolveRow</c> / <c>FindSubject</c> read it from the render thread with no lock at all —
     /// an unsynchronized <see cref="Dictionary{TKey,TValue}"/> read concurrent with an insert
     /// that resizes it can return a wrong row or throw). The value stored here is wrapped so
@@ -361,7 +361,7 @@ public sealed class GraphLayout : IDisposable
     private IReadOnlyDictionary<ObjectId, int> _rowByCommitIdView = EmptyRowMap;
     private static readonly IReadOnlyDictionary<ObjectId, int> EmptyRowMap = new Dictionary<ObjectId, int>();
 
-    /// <summary>Locked, bounds-checked row lookup (#3, #13 — 2026-09-12 memory review). Takes
+    /// <summary>Locked, bounds-checked row lookup. Takes
     /// <c>lock (SourceState)</c> when this snapshot has one (every layout except <see
     /// cref="Empty"/>), so it never races the accumulator's writer; ignores any row at or past
     /// this snapshot's own <see cref="RowCount"/>. Preferred over <see cref="RowByCommitId"/>'s

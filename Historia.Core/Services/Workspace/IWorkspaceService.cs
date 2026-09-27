@@ -78,7 +78,7 @@ public interface IWorkspaceService
     /// </summary>
     void Move(RepositoryContext context, int newIndex);
 
-    /// <summary>Reopens the repositories that were open when the app last closed (Q4; opt-in).</summary>
+    /// <summary>Reopens the repositories that were open when the app last closed (opt-in).</summary>
     Task RestoreSessionAsync(CancellationToken ct = default);
 
     event EventHandler<FocusedRepositoryChangedEventArgs>? FocusedRepositoryChanged;

@@ -9,7 +9,7 @@ namespace Historia.Views;
 /// </summary>
 public sealed class StagingPanelView : UserControl, IDisposable
 {
-    // Per-repo commit-message draft, kept for the session (V3 DraftByRepo).
+    // Per-repo commit-message draft, kept for the session.
     private static readonly Dictionary<string, string> DraftByRepo = new(StringComparer.Ordinal);
 
     private readonly RepositoryContext _ctx;
@@ -635,7 +635,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         if (checkedPaths.Count == 0) return;
         (stage ? _checkedChanges : _checkedStaged).Clear();
 
-        // R8: a checked rename must move both halves together — staging (or unstaging) only the
+        // A checked rename must move both halves together — staging (or unstaging) only the
         // new path leaves the old path's deletion behind as a separate, unstaged entry instead of
         // one Renamed entry. Expand at send time only: the checked sets themselves stay keyed on
         // visible-row paths (see RefreshSelectionState's tri-state maths).
@@ -688,7 +688,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private async Task BulkAsync(IReadOnlyList<FileStatusEntry> files, bool staged)
     {
         if (files.Count == 0) return;
-        // R8: same expansion as MoveCheckedAsync — a bulk stage/unstage must move both halves of
+        // Same expansion as MoveCheckedAsync — a bulk stage/unstage must move both halves of
         // any rename in the list, not just the new path.
         var paths = StagePathExpansion.ForStaging(files, files.Select(f => f.Path));
         await Run(() => staged ? _ctx.Gateway.UnstageAsync(paths, _ctx.Lifetime) : _ctx.Gateway.StageAsync(paths, _ctx.Lifetime));
@@ -700,7 +700,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails()); }
     }
 
-    // v8 M15: stash only the staged set; unstaged working-tree edits are left in place.
+    // Stash only the staged set; unstaged working-tree edits are left in place.
     private async Task StashStagedAsync()
     {
         if (_stashing || _status.Staged.Count == 0)
@@ -733,7 +733,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             _notifications.Publish(NotificationSeverity.Warning, "Stage changes and enter a message before committing.");
             return;
         }
-        // #22 (Rule 00): amending a commit that's already on its upstream (as of the last
+        // Amending a commit that's already on its upstream (as of the last
         // fetch) rewrites published history — pushing it afterwards needs a force push. An
         // unpushed commit's amend doesn't touch anything else and needs no prompt.
         if (_amend.IsChecked == true)

@@ -1,8 +1,8 @@
 namespace Historia.Views;
 
 /// <summary>
-/// Shared helpers for the hand-built Avalonia views that replace the V3 Blazor components
-///. Pure-C# construction, matching the native-control style, so there is no XAML
+/// Shared helpers for the hand-built Avalonia views.
+/// Pure-C# construction, matching the native-control style, so there is no XAML
 /// compiler in the loop for the ported panels.
 /// </summary>
 internal static class ViewKit
@@ -88,7 +88,7 @@ internal static class ViewKit
         return img;
     }
 
-    /// <summary>An icon glyph in <c>currentColor</c> (the V3 &lt;Icon&gt;). Material Symbols render
+    /// <summary>An icon glyph in <c>currentColor</c>. Material Symbols render
     /// filled on a 960-unit grid, scaled to <paramref name="size"/>.</summary>
     public static Control Icon(string name, double size = 16, string fgKey = "ColorText")
         => IconGlyphPath(name, size, fgKey);
@@ -170,7 +170,7 @@ internal static class ViewKit
     }
 
     /// <summary>
-    /// A text block with issue-key runs turned into links (V4 port of Autolinked.razor).
+    /// A text block with issue-key runs turned into links.
     /// URL runs open through <paramref name="launcher"/>; the rest is plain selectable text.
     /// </summary>
     public static SelectableTextBlock Autolinked(
@@ -238,7 +238,7 @@ internal static class ViewKit
         return grid;
     }
 
-    /// <summary>v8 M6: attach a "Reveal in file manager" + "Copy path" context menu to a row.
+    /// <summary>Attach a "Reveal in file manager" + "Copy path" context menu to a row.
     /// <paramref name="absolutePath"/> is resolved lazily on click (the entry may point at a
     /// file that no longer exists — the launcher then reveals its parent folder).</summary>
     public static T WithRevealMenu<T>(this T target, Historia.Services.UI.IExternalLauncher launcher,

@@ -2,8 +2,8 @@ namespace Historia.Services.Git;
 
 /// <summary>
 /// LibGit2Sharp projection adapter. Every method here is <b>synchronous</b> and is
-/// meant to be invoked <i>inside</i> a <c>RepositoryContext.WithRepositoryAsync</c> callback
-///; it projects LibGit2Sharp objects into Historia's own records and returns only
+/// meant to be invoked <i>inside</i> a <c>RepositoryContext.WithRepositoryAsync</c> callback;
+/// it projects LibGit2Sharp objects into Historia's own records and returns only
 /// those. Stateless — registered as a singleton.
 /// </summary>
 public sealed class LibGit2Service

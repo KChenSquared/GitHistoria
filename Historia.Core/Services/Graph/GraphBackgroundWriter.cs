@@ -18,7 +18,7 @@ namespace Historia.Services.Graph;
 /// <see cref="Process.Kill()"/>/<c>TerminateProcess</c>) and runs at
 /// <see cref="ProcessPriorityClass.BelowNormal"/> for the git process itself
 /// (<see cref="GitCliRequest.LowerPriority"/>). Never calls <c>git maintenance start</c>/
-/// <c>register</c> or changes git config — see the plan's "documentation checked" table.
+/// <c>register</c> or changes git config.
 /// <para>
 /// Once a commit-graph write has actually started it is never cancelled: git only removes <c>objects/info/commit-graph.lock</c> /
 /// <c>commit-graphs/commit-graph-chain.lock</c> from its own exit/signal handlers, never when the
@@ -303,7 +303,7 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
     }
 
     /// <summary>
-    /// Writes a commit-graph for a newly cloned repository ahead of the background gate (R5).
+    /// Writes a commit-graph for a newly cloned repository ahead of the background gate.
     /// Skips the 30k-commit threshold. If cancelled before acquiring the serial lock, the write is
     /// skipped. Once the git process starts, it runs with <see cref="CancellationToken.None"/> to avoid leaving
     /// stale lock files. Adds gitdir to <see cref="_attemptedFresh"/> and does NOT touch <see cref="_lastWrite"/>.

@@ -694,7 +694,7 @@ public class DagLayoutEngineTests
         Assert.Equal(full.Layout.Decorations, extended.Layout.Decorations);
     }
 
-    // ── (v8 M7): lane colours are a pure function of the walk ──
+    // ── lane colours are a pure function of the walk ──
 
     /// <summary>Decorates the chain so several lanes carry branch refs and one commit carries
     /// two — the case that used to let ref-enumeration order flip a lane's seed.</summary>

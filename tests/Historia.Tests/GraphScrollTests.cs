@@ -6,7 +6,7 @@ public class GraphScrollTests
     [Fact]
     public void ContentShorterThanViewportReturnsNull()
     {
-        // 10 rows * 22 = 220 px in a 600 px viewport -> null (R12: no scrollbar, no move)
+        // 10 rows * 22 = 220 px in a 600 px viewport -> null (no scrollbar, no move)
         var offset = GraphScroll.CenterOffset(row: 5, rowHeight: 22, viewportHeight: 600, contentHeight: 220);
         Assert.Null(offset);
     }

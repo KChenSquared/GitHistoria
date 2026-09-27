@@ -278,7 +278,7 @@ public class SettingsServiceTests : IDisposable
         Assert.Equal(200, AppSettings.ClampFixedTabWidth(200));
     }
 
-    // ── #25: silent-crawl cap ceiling matches the resident-cap ceiling ──
+    // ── silent-crawl cap ceiling matches the resident-cap ceiling ──
 
     [Fact]
     public void ClampSilentCrawlRowCap_accepts_values_above_the_old_2M_ceiling()

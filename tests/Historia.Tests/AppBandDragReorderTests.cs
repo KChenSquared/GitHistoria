@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>T3.6 of the debloat audit: the app-band tab drag geometry lifted out of
+/// <summary>The app-band tab drag geometry lifted out of
 /// <c>AppBandControl</c>.</summary>
 [Trait("tier", "unit")]
 public class AppBandDragReorderTests

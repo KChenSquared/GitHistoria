@@ -1,7 +1,7 @@
 ﻿namespace Historia.Views;
 
 /// <summary>
-/// Interactive-rebase todo editor — V4 port of RebaseEditorPage.razor. Reached via the
+/// Interactive-rebase todo editor. Reached via the
 /// <c>rebase?onto=&lt;ref&gt;</c> route. Reorder + set an action per commit, then Start.
 /// </summary>
 public sealed class RebaseEditorView : UserControl
@@ -119,7 +119,7 @@ public sealed class RebaseEditorView : UserControl
         return cb;
     }
 
-    /// <summary>#20: the only rebase that doesn't rewrite anything is every entry left as Pick,
+    /// <summary>The only rebase that doesn't rewrite anything is every entry left as Pick,
     /// in the exact order the session was built in — <see cref="RebaseService.StartAsync"/>'s
     /// non-interactive fast path. A reorder of pick-only entries still gets new commit SHAs even
     /// though the fast path's own check (all-Pick) would take it, so this checks order too.</summary>
@@ -143,9 +143,9 @@ public sealed class RebaseEditorView : UserControl
             return;
         }
 
-        // #20 (Rule 00): the pick-only, unchanged-order fast path doesn't rewrite anything;
+        // The pick-only, unchanged-order fast path doesn't rewrite anything;
         // everything else (a reorder, a reword/edit, a squash/fixup, a drop) gives commits new
-        // SHAs and needs the Rule 00 dialog, naming what changes.
+        // SHAs and needs the destructive confirm, naming what changes.
         if (!IsPickOnlyUnchangedOrder(session))
         {
             var rewritten = _entries.Count(e => e.Action is RebaseAction.Reword or RebaseAction.Edit);

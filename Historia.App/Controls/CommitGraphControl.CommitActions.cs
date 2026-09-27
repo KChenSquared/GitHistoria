@@ -1,6 +1,6 @@
 namespace Historia.Controls;
 
-// Tier 3.4 of the debloat audit: the commit-row / branch-pill / drop-intent context
+// The commit-row / branch-pill / drop-intent context
 // menus and the git operations they invoke (checkout, create branch/tag, reset, cherry-pick,
 // revert, merge, delete) split out of the CommitGraphControl god-file. Pure file split —
 // same private members on the same partial class, no behaviour change. The Avalonia Pen/Brush
@@ -75,12 +75,12 @@ public sealed partial class CommitGraphControl
         OpenMenu(new ContextMenu { ItemsSource = items });
     }
 
-    /// <summary>v8 M3: prompt for a new branch at <paramref name="sha"/> and create it.
+    /// <summary>Prompt for a new branch at <paramref name="sha"/> and create it.
     /// Shared by the commit-row menu and the branch/tag pill menu.</summary>
     private Task PromptCreateBranch(RepositoryContext ctx, string sha, string shortSha)
         => BranchMenu.PromptCreateBranch(ctx, _dialogs, _notifications, _stashes, sha, shortSha);
 
-    /// <summary>v8 M3: prompt for a new lightweight tag at <paramref name="sha"/>.</summary>
+    /// <summary>Prompt for a new lightweight tag at <paramref name="sha"/>.</summary>
     private Task PromptCreateTag(RepositoryContext ctx, string sha, string shortSha)
         => BranchMenu.PromptCreateTag(ctx, _dialogs, _notifications, sha, shortSha);
 
@@ -107,7 +107,7 @@ public sealed partial class CommitGraphControl
             () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout");
     }
 
-    /// <summary>R6: double-clicking a remote badge whose local counterpart exists switches to
+    /// <summary>Double-clicking a remote badge whose local counterpart exists switches to
     /// the local branch, then — only when the badge that was actually clicked was the remote one
     /// (a local-badge double-click stays a plain, silent checkout) — measures divergence against
     /// that remote and either fast-forwards silently (a guaranteed no-loss fast-forward) or asks
@@ -158,7 +158,7 @@ public sealed partial class CommitGraphControl
         var remotes = deco.RemotesOrNull ?? [];
         var items = new List<Control>();
 
-        // v8 M3: the pill's own commit — for "Create branch/tag here" on a branch or tag label.
+        // The pill's own commit — for "Create branch/tag here" on a branch or tag label.
         ObjectId? pillId = _layout is { } lay && deco.RowIndex >= 0 && deco.RowIndex < lay.Layout.Commits.Count
             ? lay.Layout.Commits[deco.RowIndex].Id
             : null;
@@ -207,7 +207,7 @@ public sealed partial class CommitGraphControl
             }));
         }
 
-        // v8 M3: "Create branch/tag here" act on the pill's own commit — present on the branch
+        // "Create branch/tag here" act on the pill's own commit — present on the branch
         // label and tag menus, same as on the graph row menu.
         if (pillId is { } bid &&
             deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch or DecorationType.Tag)
@@ -218,7 +218,7 @@ public sealed partial class CommitGraphControl
             items.Add(MenuLeaf("Create tag here…", () => PromptCreateTag(ctx, bid.Sha, shortSha)));
         }
 
-        // v8 M4: "Copy branch name" — the one common-denominator item the pill menu still lacked.
+        // "Copy branch name" — the one common-denominator item the pill menu still lacked.
         if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
         {
             var copyName = deco.IsLocal ? name : (remotes.Length > 0 ? $"{remotes[0]}/{name}" : name);
@@ -230,7 +230,7 @@ public sealed partial class CommitGraphControl
         {
             var menu = new ContextMenu { ItemsSource = items };
 
-            // R11: mirror the sidebar's divergence-aware push/pull/fast-forward items, resolved
+            // Mirror the sidebar's divergence-aware push/pull/fast-forward items, resolved
             // lazily on Opening (git process) rather than at menu-build time.
             if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
             {
@@ -336,11 +336,11 @@ public sealed partial class CommitGraphControl
         }
         else
         {
-            // #21 (Rule 00): soft/mixed only rewrites the branch pointer, but when the target
+            // soft/mixed only rewrites the branch pointer, but when the target
             // isn't an ancestor of HEAD the commits between them leave the branch — reflog-
             // recoverable, but no longer reachable from any branch. Count with `rev-list --count`
-            // (not libgit2's CalculateHistoryDivergence — #15 measured ~22 s on far-apart
-            // commits) and only escalate to the Rule 00 dialog when commits actually leave. If
+            // (not libgit2's CalculateHistoryDivergence, which takes ~22 s on far-apart
+            // commits) and only escalate to the destructive confirm when commits actually leave. If
             // the count itself fails, fall back to the ordinary confirm rather than block reset.
             int leaving;
             try { leaving = await ctx.Gateway.CountCommitsLeavingAsync(sha, ctx.Lifetime); }
@@ -434,11 +434,11 @@ public sealed partial class CommitGraphControl
     private void CopyText(string s)
         => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(s);
 
-    /// <summary>v8 M4: copy the full commit message (subject + body). Uses the M16 body cache
+    /// <summary>Copies the full commit message (subject + body). Uses the message-body cache
     /// when warm, else fetches the detail once.</summary>
     private void CopyCommitMessage(ObjectId id)
     {
-        // _msgBodyCache (M16) holds the body only; combine with the subject.
+        // _msgBodyCache holds the body only; combine with the subject.
         if (TryGetCachedBody(id, out var body))
         {
             var subject = FindSubject(id);

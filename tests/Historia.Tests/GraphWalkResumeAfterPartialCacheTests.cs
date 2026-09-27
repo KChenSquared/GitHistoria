@@ -92,7 +92,7 @@ public sealed class GraphWalkResumeAfterPartialCacheTests : IAsyncDisposable
 
         // Extending forces EnsureWalkedAsync to want more than the 5 resident rows. With no live
         // walk to resume, this takes the "prime a fresh CLI walk" branch — the exact path the fix
-        // is in — and (per the plan's cross-cutting rule) it must re-skip the 5 rows already in
+        // is in — and it must re-skip the 5 rows already in
         // cache.Commits rather than re-emit the whole history from row 0.
         var extended = await svc.ExtendLayoutAsync(ctx, initial, additionalRows: 5);
 

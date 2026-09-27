@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// M1.1: libgit2 checkout conflicts — classification to UncommittedChanges, path list capping,
+/// libgit2 checkout conflicts — classification to UncommittedChanges, path list capping,
 /// and atomic create-and-checkout rollback (F1–F4).
 /// </summary>
 [Trait("tier", "git")]

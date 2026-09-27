@@ -1,7 +1,7 @@
 namespace Historia.Views;
 
 /// <summary>
-/// The repository detail pane (V4 port of Repository.razor). A toolbar with the current branch
+/// The repository detail pane. A toolbar with the current branch
 /// and Fetch / Pull / Push, then either the selected-commit detail or the working-copy staging
 /// panel. The commit graph itself is the native <see cref="Controls.CommitGraphControl"/> in
 /// the centre column.

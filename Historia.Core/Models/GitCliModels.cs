@@ -56,8 +56,8 @@ public sealed record GitCliRequest
     /// <see cref="System.Diagnostics.ProcessPriorityClass.BelowNormal"/> — for background,
     /// self-contained git operations (a commit-graph write) that should never contend with a
     /// user-driven git invocation for CPU. Never killed once started regardless of this flag
-    /// (see the plan's documentation check on git's lockfile cleanup and
-    /// <see cref="System.Diagnostics.Process.Kill()"/>/<c>TerminateProcess</c>).</summary>
+    /// (git clears its lock files only from its own exit and signal handlers, which
+    /// <see cref="System.Diagnostics.Process.Kill()"/>/<c>TerminateProcess</c> bypass).</summary>
     public bool LowerPriority { get; init; }
 }
 

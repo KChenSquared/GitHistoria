@@ -7,15 +7,15 @@ public enum TerminalSessionState { Starting, Running, Exited, Failed }
 /// <para>
 /// The emulator's screen buffer is guarded by a single-slot lock — the same discipline
 /// <c>RepositoryContext</c> applies to its LibGit2Sharp handle. The pty read loop mutates on a
-/// background thread; events are raised on the UI dispatcher (constitution rule 18).
+/// background thread; events are raised on the UI dispatcher.
 /// <c>BufferChanged</c> is coalesced on a ~16 ms trailing window so a flood renders once per
 /// frame, not once per chunk — the parser still sees every byte in order.
 /// </para>
 /// <para>
-/// Deviation D1 (see the M1 spike doc): <c>XTerm.Terminal.Write</c> takes a <c>string</c>, so
+/// <c>XTerm.Terminal.Write</c> takes a <c>string</c>, so
 /// this class owns one stateful <see cref="Decoder"/> that carries partial-UTF-8 state across
-/// pty chunks — preserving the "no mangling at chunk boundaries" intent of design doc.
-/// Deviation D2: XTerm.NET 1.2.0 exposes no damage event, so a row-hash diff here synthesises
+/// pty chunks — so a character split across two chunks is never mangled.
+/// XTerm.NET 1.2.0 exposes no damage event, so a row-hash diff here synthesises
 /// the dirty-row set for the control.
 /// </para>
 /// </summary>

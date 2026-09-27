@@ -4,7 +4,7 @@ namespace Historia.Controls;
 /// The custom-drawn embedded terminal. A monospace grid of coloured cells — a simpler
 /// drawing problem than <see cref="CommitGraphControl"/>: no lane assignment, no DAG layout, no
 /// bezier routing. Windowed render, pooled brushes/pens, a per-codepoint glyph cache, all
-/// miss-counted through the Core <see cref="RenderResourceCache{TKey,TValue}"/> (rule 24).
+/// miss-counted through the Core <see cref="RenderResourceCache{TKey,TValue}"/>.
 /// </summary>
 public sealed class TerminalControl : Control
 {
@@ -285,7 +285,7 @@ public sealed class TerminalControl : Control
             var total = view.TotalLines;
             // The emulator's own viewport top (YDisp) is the authoritative bottom-anchor:
             // XTerm.NET pre-grows the buffer toward its scrollback capacity, so `total - rows`
-            // points at blank pre-allocated lines far below the content (review).
+            // points at blank pre-allocated lines far below the content.
             var bottomTop = Math.Clamp(view.ViewportTop, 0, Math.Max(0, total - 1));
             var top = Math.Clamp(bottomTop - (int)Math.Round(_scrollOffsetLines), 0, bottomTop);
             (metMax, metValue) = (bottomTop, top);

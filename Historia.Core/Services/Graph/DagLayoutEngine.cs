@@ -814,7 +814,7 @@ public sealed class DagLayoutEngine
             return existing;
 
         // 1. Seed from a STABLE per-lane key.
-        // Correction (v8 M7, supersedes the "v4.5 review C" note): the key is the lane's
+        // The key is the lane's
         // branch name when it has one — the lexicographically smallest, so several refs on the
         // birth commit cannot flip the choice between runs — otherwise the SHA of the commit
         // that first opened the lane. It never depends on the compacted-lane ordinal or on how

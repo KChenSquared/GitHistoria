@@ -235,7 +235,7 @@ public sealed class App : Application
         services.AddSingleton<IUnsavedWorkRegistry, UnsavedWorkRegistry>();
         services.AddSingleton<ConflictResolverHost>();
 
-        // ── Terminal. Singletons — never AddScoped (rule 20). ──
+        // ── Terminal. Singletons — never AddScoped. ──
         services.AddSingleton<Historia.Services.Terminal.ITerminalBackend, Historia.Services.Terminal.PortaPtyBackend>();
         services.AddSingleton<Historia.Services.Terminal.ITerminalSessionService, Historia.Services.Terminal.TerminalSessionService>();
 

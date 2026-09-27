@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// #13 (2026-09-12 memory review): <c>AppSettings.ResidentRowCap</c> used to be read raw at every
+/// <c>AppSettings.ResidentRowCap</c> used to be read raw at every
 /// call site (<c>GraphLayoutService</c>, <c>CommitGraphControl.ResidentRowCap</c>) — a
 /// hand-edited or otherwise out-of-range value (<c>0</c>, or something far above the intended
 /// ceiling) would silently stop the background spill and the graph from ever extending.

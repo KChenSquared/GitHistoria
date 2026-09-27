@@ -18,14 +18,14 @@ namespace Historia.Services.Git;
 /// object and each tag's peel instead. In a partial clone, an object git would otherwise fetch
 /// from the promisor remote counts as missing: the scan never goes to the network. Any other
 /// failure is a
-/// <see cref="HistoriaGitException"/> (Rule 11).</para>
+/// <see cref="HistoriaGitException"/>.</para>
 /// </summary>
 public sealed class RefSnapshotProvider
 {
     private static readonly TimeSpan ScanTimeout = TimeSpan.FromSeconds(60);
 
     /// <summary>In a partial clone git would fetch a ref's missing object from the promisor
-    /// remote on demand (Rule 0: reading refs never touches the network). With lazy fetching off,
+    /// remote on demand (reading refs never touches the network). With lazy fetching off,
     /// such a ref fails the scan like any other missing object and is left out. Only these
     /// reads set it — every object a clone or fetch hands a ref is local, so the normal scan's
     /// output is the same either way. git before 2.45 ignores the variable.</summary>
@@ -175,7 +175,7 @@ public sealed class RefSnapshotProvider
     /// object an annotated tag peels to — rebuild the same entries without them: list refs
     /// without reading objects, type every object and peel every tag with
     /// <c>cat-file --batch-check</c>, and read tag data with one <c>cat-file --batch</c>. When
-    /// nothing is missing, the original failure is unexplained and is thrown as is (Rule 11).
+    /// nothing is missing, the original failure is unexplained and is thrown as is.
     /// </summary>
     private async Task<List<RefEntry>> ScanPastMissingObjectsAsync(GitCliResult failed)
     {

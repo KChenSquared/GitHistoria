@@ -1,10 +1,10 @@
 namespace Historia.Services.Workspace;
 
 /// <summary>
-/// Non-throwing, offline-only checks for the Clone dialog (F1, F3, F4a) — shared by the dialog
+/// Non-throwing, offline-only checks for the Clone dialog — shared by the dialog
 /// (live feedback as the user types) and <see cref="WorkspaceService.CloneAsync"/> (the
 /// authoritative gate before <c>git clone</c> runs), so the two never disagree. This is a UX
-/// nicety, not a security boundary: it never makes a network call (Rule 0.2), and the
+/// nicety, not a security boundary: it never makes a network call, and the
 /// leading-'-'/remote-helper/scheme checks it reuses from <see cref="WorkspaceService"/> remain
 /// the real defence against option injection and arbitrary remote helpers.
 /// </summary>
@@ -66,8 +66,7 @@ public static class CloneValidation
     /// include '"' — only C0 control characters — but <see cref="Path.GetInvalidFileNameChars"/>
     /// does, and a live <c>Directory.CreateDirectory</c> call throws <see cref="IOException"/>
     /// for a '"' segment, confirming <see cref="HasInvalidSegmentChar"/> below is the check that
-    /// actually matches what Windows rejects; this supersedes the plan's original
-    /// <c>GetInvalidPathChars</c> assumption), or a destination that already exists and is not
+    /// actually matches what Windows rejects), or a destination that already exists and is not
     /// empty. Returns <c>null</c> when the pair is acceptable, otherwise a short human-readable
     /// reason.</summary>
     public static string? DescribeDestinationProblem(string root, string folder)

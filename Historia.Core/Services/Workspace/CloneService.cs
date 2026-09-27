@@ -7,7 +7,7 @@ public sealed record CloneStatus(string Url, string TargetDirectory, GitProgress
     public const string CommitGraphPhase = "Writing commit-graph";
     public const string CachingPhase = "Caching history";
 
-    /// <summary>Formats the live clone status for display in the Home landing panel (R6).</summary>
+    /// <summary>Formats the live clone status for display in the Home landing panel.</summary>
     public string Describe()
     {
         if (Progress is null)
@@ -19,7 +19,7 @@ public sealed record CloneStatus(string Url, string TargetDirectory, GitProgress
 }
 
 /// <summary>
-/// Owns the lifetime and progress of an active clone operation (R6).
+/// Owns the lifetime and progress of an active clone operation.
 /// Singleton in Core so clone progress and completion survive opening and closing the Home panel.
 /// </summary>
 public interface ICloneService

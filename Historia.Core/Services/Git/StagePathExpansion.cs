@@ -1,11 +1,11 @@
 namespace Historia.Services.Git;
 
 /// <summary>
-/// R8: staging (or unstaging) a renamed/copied file must move both halves of the rename
+/// Staging (or unstaging) a renamed/copied file must move both halves of the rename
 /// together — otherwise a single "add renamed path" + "leave old path unstaged" produces a
 /// staged <c>Added</c> entry and an unstaged <c>Deleted</c> entry instead of one staged
-/// <c>Renamed</c> entry. Pure, no git, no Avalonia — see the plan's Decisions for why this lives
-/// in Core.
+/// <c>Renamed</c> entry. Pure, no git, no Avalonia, so it
+/// lives in Core and is unit-tested there.
 /// </summary>
 public static class StagePathExpansion
 {

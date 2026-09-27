@@ -7,7 +7,7 @@ namespace HistoriaApp.Tests;
 
 /// <summary>
 /// Characterization tripwire for the Tier 3 extractions from <see cref="CommitGraphControl"/>
-/// and <see cref="AppBandControl"/> (debloat audit). These do not exercise the
+/// and <see cref="AppBandControl"/>. These do not exercise the
 /// data-bound render pass — they pin the invariant that the controls still <em>construct</em>
 /// (their field initializers + ctor build a large child-control tree) and survive a
 /// service-less measure/arrange without throwing. A botched rewire of an extracted helper that

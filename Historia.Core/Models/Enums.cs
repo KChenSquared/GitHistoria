@@ -32,11 +32,10 @@ public enum DiffViewMode
 }
 
 /// <summary>
-/// How wide each repository tab in the app band is (V5.5).
+/// How wide each repository tab in the app band is.
 /// <see cref="Dynamic"/> — the default — sizes every tab to its own label, so a short repo
 /// name gets a short tab; a long name grows the tab only up to a character cap, then
-/// ellipsises. <see cref="Fixed"/> gives every tab the same <c>FixedTabWidth</c> pixels, the
-/// pre-V5.5 behaviour.
+/// ellipsises. <see cref="Fixed"/> gives every tab the same <c>FixedTabWidth</c> pixels.
 /// </summary>
 public enum TabWidthMode
 {
@@ -51,7 +50,7 @@ public enum WhitespaceMode
     IgnoreAll,
 }
 
-/// <summary>v8 M13: how the selected-commit detail panel lists changed files.</summary>
+/// <summary>How the selected-commit detail panel lists changed files.</summary>
 public enum CommitFilesView
 {
     /// <summary>Flat list of full paths (the original behaviour).</summary>
@@ -61,7 +60,7 @@ public enum CommitFilesView
     Tree,
 }
 
-/// <summary>v8 M9: how the custom wheel handlers (graph body, tab strip) read scroll input.
+/// <summary>How the custom wheel handlers (graph body, tab strip) read scroll input.
 /// <see cref="Auto"/> follows the OS "natural / inverted" setting via
 /// <c>IScrollDirectionProbe</c> (macOS &amp; Linux; Windows is always standard).</summary>
 public enum WheelScrollDirection

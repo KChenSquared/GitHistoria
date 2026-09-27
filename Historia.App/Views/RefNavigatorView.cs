@@ -1,8 +1,7 @@
 namespace Historia.Views;
 
 /// <summary>
-/// The sidebar ref navigator (V4 port of Sidebar.razor + RefNavigator.razor +
-/// RefTreeNodeView.razor). Local / remote / tag trees + stash / submodule / worktree sections.
+/// The sidebar ref navigator. Local / remote / tag trees + stash / submodule / worktree sections.
 /// Single click selects + reveals a tip commit; double click checks out. Folders (remote roots
 /// and path segments) are collapsible. Every leaf across every category shares one left indent.
 /// </summary>
@@ -89,7 +88,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private bool _submodulesFetched;
     private bool _worktreesFetched;
 
-    // F7: submodule paths (or AllSubmodulesBusyKey for "Update all") with an in-flight
+    // Submodule paths (or AllSubmodulesBusyKey for "Update all") with an in-flight
     // "Init & update" — the row renders a busy label instead of its menu while present.
     private readonly HashSet<string> _submodulesBusy = new(StringComparer.Ordinal);
     private const string AllSubmodulesBusyKey = "*";
@@ -670,10 +669,10 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         return b;
     }
 
-    /// <summary>R12: renames a remote's alias from the sidebar. Rejects an empty/unchanged name
+    /// <summary>Renames a remote's alias from the sidebar. Rejects an empty/unchanged name
     /// or a collision with an existing remote before calling git — a caller-side check is
     /// friendlier than letting libgit2 throw for the common mistakes. Surfaces any fetch
-    /// refspecs the rename could not rewrite automatically as a warning, per M2.1's
+    /// refspecs the rename could not rewrite automatically as a warning, per the
     /// <c>RenameRemoteAsync</c> contract.</summary>
     private async Task RenameRemoteAsync(string oldName)
     {
@@ -736,7 +735,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         return b;
     }
 
-    /// <summary>v8 M4: the shared branch context menu on a sidebar branch row.</summary>
+    /// <summary>The shared branch context menu on a sidebar branch row.</summary>
     private void AttachBranchMenu(Control row, BranchInfo b, bool isRemote)
     {
         if (_repo is not { } ctx)
@@ -746,7 +745,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             ? b.Name[(r.Length + 1)..]
             : b.Name;
 
-        // R11: the counterpart to measure divergence against, and the remote alias that owns
+        // The counterpart to measure divergence against, and the remote alias that owns
         // it — resolved via BranchInfo.RemoteName (reliable even when the alias itself contains
         // a slash), never by splitting Name/UpstreamName on '/'.
         string? counterpartRef = null, remoteAlias = null;
@@ -777,7 +776,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             s => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(s));
 
         var menu = new ContextMenu { ItemsSource = baseItems };
-        // R11: the divergence lookup shells out to git — resolve it lazily on Opening so the
+        // The divergence lookup shells out to git — resolve it lazily on Opening so the
         // popup never blocks on a git process, and show the base menu immediately.
         menu.Opening += async (_, _) =>
         {
@@ -872,7 +871,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, $"Operation failed: {ex.Message}", ex.NotificationDetails()); }
     }
 
-    /// <summary>F7: wraps a submodule "Init & update" (per-row, or <c>null</c> path for "Update
+    /// <summary>Wraps a submodule "Init & update" (per-row, or <c>null</c> path for "Update
     /// all") with a busy state so the row shows feedback instead of looking hung.</summary>
     private async Task SubmoduleInitAndUpdateAsync(string? path)
     {
@@ -890,7 +889,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         }
     }
 
-    /// <summary>F6: a fresh <see cref="MenuItem"/> list per call — an <see cref="ItemsControl"/>
+    /// <summary>A fresh <see cref="MenuItem"/> list per call — an <see cref="ItemsControl"/>
     /// item can only have one visual parent, so the "⋯" flyout and the row's right-click
     /// <see cref="ContextMenu"/> each need their own instances.</summary>
     private List<Control> BuildSubmoduleMenuItems(SubmoduleInfo sm)
@@ -908,7 +907,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         return list;
     }
 
-    /// <summary>F7: the submodule row's label, busy or not — extracted so it can be unit tested
+    /// <summary>The submodule row's label, busy or not — extracted so it can be unit tested
     /// without constructing the view. Shows the leaf folder name only; the full path is
     /// surfaced via the row's tooltip instead, since nested submodule paths get too long
     /// to read comfortably in the panel.</summary>
@@ -927,7 +926,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         return i >= 0 ? trimmed[(i + 1)..] : trimmed;
     }
 
-    /// <summary>F9: double-clicking a submodule row opens (or focuses) its linked tab.</summary>
+    /// <summary>Double-clicking a submodule row opens (or focuses) its linked tab.</summary>
     private async Task OpenSubmoduleTabAsync(SubmoduleInfo sm)
     {
         if (_repo is null) return;
@@ -950,7 +949,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         await PowerOp(r => _worktrees.RemoveAsync(r, wt.Path, force: false, r.Lifetime));
     }
 
-    /// <summary>#19 (Rule 00): removing a submodule deinitialises it, removes it from the index
+    /// <summary>Removing a submodule deinitialises it, removes it from the index
     /// and deletes .git/modules/&lt;name&gt; — the submodule's own repository — so its
     /// uncommitted changes and unpushed commits are gone for good.</summary>
     private async Task SubmoduleRemoveAsync(SubmoduleInfo sm)

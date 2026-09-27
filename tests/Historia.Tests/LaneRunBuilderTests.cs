@@ -1,8 +1,8 @@
 namespace Historia.Tests;
 
-/// <summary>The render pass merges per-row lane pieces into maximal runs (F1). The merge must
-/// show the same colour per lane per half-row as drawing the pieces in list order (F2), and
-/// must not allocate once warm (Rule 24).</summary>
+/// <summary>The render pass merges per-row lane pieces into maximal runs. The merge must
+/// show the same colour per lane per half-row as drawing the pieces in list order, and
+/// must not allocate once warm.</summary>
 [Trait("tier", "unit")]
 public class LaneRunBuilderTests
 {

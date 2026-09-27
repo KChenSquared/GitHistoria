@@ -16,8 +16,7 @@ public static class GraphLimits
     /// using <paramref name="residentRowCapDisk"/> (AppSettings.ResidentRowCap) as the
     /// disk-mode ceiling. Clamped through <see cref="AppSettings.ClampResidentRowCap"/> here —
     /// centrally, not at each call site — so a hand-edited or otherwise out-of-range settings
-    /// value (e.g. <c>0</c>) can never stop the background spill or the graph from extending
-    /// (#13, 2026-09-12 memory review).</summary>
+    /// value (e.g. <c>0</c>) can never stop the background spill or the graph from extending.</summary>
     public static int GetMaxResidentRows(bool metaFromDisk, int residentRowCapDisk) =>
         metaFromDisk ? AppSettings.ClampResidentRowCap(residentRowCapDisk) : MaxResidentRowsMemory;
 }

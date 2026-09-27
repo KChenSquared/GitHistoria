@@ -164,7 +164,7 @@ public class GraphDecorationMergeTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Checked_out_local_plus_same_name_remote_plus_another_branch_keeps_the_cloud(/* v8 M2 */)
+    public async Task Checked_out_local_plus_same_name_remote_plus_another_branch_keeps_the_cloud()
     {
         // Repro from the todo: HEAD on a local branch, its origin tracking ref at the same
         // commit, and a second local branch there. The primary (checked-out) badge must still

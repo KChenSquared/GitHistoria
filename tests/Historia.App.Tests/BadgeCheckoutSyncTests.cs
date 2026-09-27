@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// M1.3 / F1: double-clicking a remote badge switches to the local branch, then syncs only
+/// Double-clicking a remote badge switches to the local branch, then syncs only
 /// after the checkout succeeded. If checkout fails, sync is never attempted.
 /// </summary>
 [Trait("tier", "ui")]

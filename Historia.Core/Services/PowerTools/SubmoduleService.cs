@@ -50,7 +50,7 @@ public sealed partial class SubmoduleService(IGitCliService cli) : ISubmoduleSer
     public Task InitAndUpdateAsync(RepositoryContext context, string? path, bool recursive, CancellationToken ct = default)
     {
         // `--init` on every update path: plain `--recursive` silently does nothing for
-        // never-checked-out submodules (correction).
+        // never-checked-out submodules.
         var args = new List<string> { "submodule", "update", "--init" };
         if (recursive) args.Add("--recursive");
         if (path is not null) { args.Add("--"); args.Add(path); }

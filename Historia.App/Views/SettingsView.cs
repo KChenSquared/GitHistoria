@@ -1,6 +1,6 @@
 namespace Historia.Views;
 
-/// <summary>Application settings (V4 port of Settings.razor).</summary>
+/// <summary>Application settings.</summary>
 public sealed class SettingsView : UserControl, IDisposable
 {
     private readonly ISettingsService _cfg;
@@ -41,7 +41,7 @@ public sealed class SettingsView : UserControl, IDisposable
         Rebuild();
     }
 
-    /// <summary>R10: every settings textbox commits on <c>LostFocus</c>, but clicking a
+    /// <summary>Every settings textbox commits on <c>LostFocus</c>, but clicking a
     /// non-focusable label or blank space never moves focus, so an edit sits uncommitted until
     /// the user happens to click another input. Clearing focus here on any press that does not
     /// land on a real input lets the previously focused textbox's own LostFocus commit handler
@@ -155,7 +155,7 @@ public sealed class SettingsView : UserControl, IDisposable
         _root.Children.Add(Muted("Graph-panel columns are configured per repository — the wrench on a repo tab."));
         _root.Children.Add(WithCaption(Check("Show author date instead of commit date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })), "The graph is always sorted by commit date. This only changes which date the Date column and commit details show."));
 
-        // v8 M9: mouse-wheel / trackpad scroll direction for the graph and the tab strip.
+        // Mouse-wheel / trackpad scroll direction for the graph and the tab strip.
         var wheelDir = new ComboBox { Width = 220 };
         wheelDir.Items.Add(new ComboBoxItem { Content = "Match system (natural / inverted)", Tag = WheelScrollDirection.Auto });
         wheelDir.Items.Add(new ComboBoxItem { Content = "Standard", Tag = WheelScrollDirection.Standard });
@@ -424,7 +424,7 @@ public sealed class SettingsView : UserControl, IDisposable
     /// Commits a <see cref="NumericUpDown"/>'s value through <paramref name="clamp"/> to
     /// <paramref name="commit"/> on <c>LostFocus</c> and on Enter, only when the clamped value
     /// changed. Enter is caught with <c>AddHandler(KeyDownEvent, …, handledEventsToo: true)</c> so
-    /// an inner <c>TextBox</c> can't swallow it first (#14).
+    /// an inner <c>TextBox</c> can't swallow it first.
     ///
     /// Verified against Avalonia 11.3.20's <c>NumericUpDown.OnKeyDown</c> source: its own
     /// <c>Key.Enter</c> case calls <c>CommitInput()</c> → <c>SyncTextAndValueProperties</c>, which
@@ -564,7 +564,7 @@ public sealed class SettingsView : UserControl, IDisposable
     }
 }
 
-/// <summary>Per-repository settings (V4 port of RepoSettings.razor + GraphColumnSettings.razor).</summary>
+/// <summary>Per-repository settings.</summary>
 public sealed class RepoSettingsView : UserControl, IDisposable
 {
     private readonly IServiceProvider _sp;

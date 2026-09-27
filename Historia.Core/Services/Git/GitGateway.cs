@@ -99,7 +99,7 @@ public sealed class GitGateway(
     /// <summary>From the repo's cached ref snapshot — one <c>git for-each-ref</c>, shared with
     /// the commit graph, and never the repo gate (LibGit2Sharp's tag enumeration held it for
     /// 9–13 s at chromium's 39k tags, queueing status behind it). LibGit2Sharp only when git.exe
-    /// is missing (Rule 0.4).</summary>
+    /// is missing.</summary>
     public async Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default)
     {
         if (!cli.IsGitAvailable)

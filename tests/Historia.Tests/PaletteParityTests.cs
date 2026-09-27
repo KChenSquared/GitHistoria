@@ -88,7 +88,7 @@ public class PaletteParityTests
         }
     }
 
-    // / M1.2: a 2 DIP line of each light-theme lane must clear ~3:1 on white; each
+    // a 2 DIP line of each light-theme lane must clear ~3:1 on white; each
     // high-contrast lane must clear WCAG AA (4.5:1) on black.
     [Fact]
     public void Light_and_hc_lane_lines_meet_contrast()

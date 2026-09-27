@@ -9,7 +9,7 @@ using Path = Avalonia.Controls.Shapes.Path;
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// Constitution Rule 00, half 2: the hand-rolled dialog builder must give <b>Cancel</b> the
+/// Destructive-confirm guard, half 2: the hand-rolled dialog builder must give <b>Cancel</b> the
 /// primary (blue) class and the Enter default while keeping it the rightmost button, and a
 /// <see cref="DialogIcon.Warning"/> dialog must actually carry the red <c>warning</c>.
 /// The call-site half (every destructive action routes through the one entry point) is guarded

@@ -1,7 +1,7 @@
 ﻿namespace Historia.Views;
 
 /// <summary>
-/// Developer-only tools panel (V4). Only routed to when <see cref="Historia.Platform.DevMode"/>
+/// Developer-only tools panel. Only routed to when <see cref="Historia.Platform.DevMode"/>
 /// is enabled.
 /// </summary>
 public sealed class DeveloperView : UserControl

@@ -1,7 +1,7 @@
 ﻿namespace Historia.Platform;
 
 /// <summary>
-/// App-side <see cref="IScrollDirectionProbe"/> (v8 M9). Windows is always standard. macOS reads
+/// App-side <see cref="IScrollDirectionProbe"/>. Windows is always standard. macOS reads
 /// <c>com.apple.swipescrolldirection</c>; Linux best-effort via <c>gsettings</c> (GNOME). The
 /// result is cached; <see cref="Refresh"/> re-probes (wired to window focus).
 /// </summary>

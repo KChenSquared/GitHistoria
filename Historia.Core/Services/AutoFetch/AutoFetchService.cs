@@ -275,8 +275,8 @@ public sealed class AutoFetchService : IAutoFetchService
             try { _graphLayoutService?.RefreshCommitGraphAfterFetch(context); }
             catch { /* commit-graph maintenance must never take the loop down */ }
 
-            // Bring an inactive tab's on-disk graph cache up to date headlessly (/ R1).
-            // Never queued for the focused tab (R2: its own RefsChanged re-spill covers it).
+            // Bring an inactive tab's on-disk graph cache up to date headlessly.
+            // Never queued for the focused tab (its own RefsChanged re-spill covers it).
             if (context != _workspace.Focused)
             {
                 try

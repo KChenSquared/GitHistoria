@@ -2,7 +2,7 @@ namespace Historia.Views;
 
 /// <summary>
 /// Renders the <see cref="MarkdownRenderer.ToBlocks"/> model to native Avalonia controls
-/// (V4 port of MarkdownView.razor — no HTML, no WebView). Links open via
+/// (no HTML, no WebView). Links open via
 /// <see cref="IExternalLauncher"/>.
 /// </summary>
 public sealed class MarkdownView : UserControl

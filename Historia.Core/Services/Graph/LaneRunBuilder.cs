@@ -22,7 +22,7 @@ public readonly record struct LaneRun(int Lane, int ColorIndex, int StartHalf, i
 /// merged into a run.
 /// </para>
 /// <para>
-/// One instance is reused across frames (Rule 24). Its lane-indexed arrays and run buffer grow
+/// One instance is reused across frames. Its lane-indexed arrays and run buffer grow
 /// on demand by doubling and never shrink; every growth is counted in <see cref="Growths"/>, so
 /// a frame after the first must record zero.
 /// </para>
@@ -63,7 +63,7 @@ public sealed class LaneRunBuilder
     }
 
     /// <summary>How many times an internal array had to grow since the last
-    /// <see cref="ResetCounters"/> (Rule 24's miss counter).</summary>
+    /// <see cref="ResetCounters"/> (the growth counter).</summary>
     public int Growths { get; private set; }
 
     public void ResetCounters() => Growths = 0;

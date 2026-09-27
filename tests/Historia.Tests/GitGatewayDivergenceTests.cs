@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>M2.1: <c>IGitGateway.GetDivergenceAsync</c> — ahead/behind between two arbitrary refs
+/// <summary><c>IGitGateway.GetDivergenceAsync</c> — ahead/behind between two arbitrary refs
 /// via <c>git rev-list --left-right --count &lt;local&gt;...&lt;remote&gt;</c> (CLI-routed, not
 /// libgit2's <c>CalculateHistoryDivergence</c>).</summary>
 [Trait("tier", "git")]

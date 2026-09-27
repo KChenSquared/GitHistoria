@@ -54,7 +54,7 @@ public sealed class CustomThemeService : ICustomThemeService
                     }
                 }
             }
-            catch { /* rule 0.4: a broken themes dir just yields no custom themes */ }
+            catch { /* a broken themes dir just yields no custom themes */ }
 
             list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
             _cache = list;
@@ -67,7 +67,7 @@ public sealed class CustomThemeService : ICustomThemeService
 
     public async Task<CustomTheme> SaveAsync(CustomTheme theme, CancellationToken ct = default)
     {
-        try { Directory.CreateDirectory(AppPaths.ThemesDirectory); } catch { /* rule 0.4 */ }
+        try { Directory.CreateDirectory(AppPaths.ThemesDirectory); } catch { /* best effort: a missing directory must not stop startup */ }
 
         var path = AppPaths.CustomThemeFile(theme.Id);
         var json = JsonSerializer.Serialize(theme, HistoriaJson.Options);

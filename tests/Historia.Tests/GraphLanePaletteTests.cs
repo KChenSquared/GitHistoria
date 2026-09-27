@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>T3.1 of the debloat audit: the lane-colour maths lifted out of
+/// <summary>The lane-colour maths lifted out of
 /// <c>CommitGraphControl.LaneRgb</c> / <c>BadgeInk</c>.</summary>
 [Trait("tier", "unit")]
 public class GraphLanePaletteTests

@@ -30,7 +30,7 @@ public sealed record Notification
     public required DateTimeOffset CreatedAt { get; init; }
 
     /// <summary>How many times this same (severity, message, details) has been published inside
-    /// the coalescing window (/ v8 M10). 1 for a normal single toast; the UI shows
+    /// the coalescing window. 1 for a normal single toast; the UI shows
     /// <c>×N</c> when it is greater.</summary>
     public int Count { get; init; } = 1;
 }
@@ -39,7 +39,7 @@ public sealed record NotificationsChangedEventArgs(IReadOnlyList<Notification> C
 
 /// <summary>
 /// Central surface for toasts, banners, and error cards. Every unhandled exception
-/// is routed here rather than reaching the WPF dispatcher (criterion 17). Singleton.
+/// is routed here rather than reaching the WPF dispatcher. Singleton.
 /// </summary>
 public interface INotificationService
 {

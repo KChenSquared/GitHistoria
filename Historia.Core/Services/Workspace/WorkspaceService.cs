@@ -34,7 +34,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         }
     }
 
-    // / M3.1: serial background-init/refresh pump. Drains in app-band tab order,
+    // Serial background-init/refresh pump. Drains in app-band tab order,
     // one repo at a time, behind the focused tab's FirstFullLoad.
     private readonly List<BackgroundQueueItem> _bgQueue = [];
     private bool _bgInitPumpIdle = true;
@@ -72,7 +72,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     private static readonly TimeSpan GraphFirstPaintCeiling = TimeSpan.FromSeconds(120);
 
     /// <summary>
-    /// Default query for repository tabs (R5). Must match <c>CommitGraphControl._query</c>'s default.
+    /// Default query for repository tabs. Must match <c>CommitGraphControl._query</c>'s default.
     /// Used by clone precache and inactive-tab background caching so the store matches the tab's first walk.
     /// </summary>
     internal static readonly GraphQuery TabGraphQuery = new()
@@ -134,7 +134,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         }
         if (existing is not null)
         {
-            // / rule 18: never raise an event while holding _sync. FocusInternal fires
+            // Never raise an event while holding _sync. FocusInternal fires
             // FocusedRepositoryChanged, whose handlers marshal to the UI thread — doing that
             // under the lock deadlocks against any UI-thread reader of OpenRepositories/Focused.
             FocusInternal(existing);
@@ -441,7 +441,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                // Cancellation during pre-cache keeps the clone and opens the tab (R5).
+                // Cancellation during pre-cache keeps the clone and opens the tab.
             }
             catch (Exception ex)
             {
@@ -635,7 +635,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         if (!moved)
             return;
 
-        // / rule 18: raise outside the lock. RaiseOpenChanged re-persists the session, so
+        // Raise outside the lock. RaiseOpenChanged re-persists the session, so
         // the dragged order is what a later RestoreSessionAsync replays.
         RaiseOpenChanged();
     }
@@ -929,7 +929,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
         // Start the focused tab's refresh outside the lock — RefreshAllAsync/RefreshStatusAsync
         // run synchronously up to their first await, and _sync must be held only across queue
-        // mutation (Rule 18).
+        // mutation.
         if (isFocused)
             return full ? context.State.RefreshAllAsync(ct) : context.State.RefreshStatusAsync(ct);
 
@@ -1092,7 +1092,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             }
         }
 
-        // / rule 18: never run cancellation callbacks while holding _sync.
+        // Never run cancellation callbacks while holding _sync.
         toCancel?.Cancel();
         if (startPump)
             _ = Task.Run(DrainBackgroundInitQueueAsync);

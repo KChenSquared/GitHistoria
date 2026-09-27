@@ -3,7 +3,7 @@ namespace Historia.Services.Terminal;
 
 /// <summary>
 /// Owns every live terminal session, keyed by <see cref="TerminalOrigin.Key"/>.
-/// Registered as a <b>singleton</b> — never <c>AddScoped</c> (constitution rule 20). The only
+/// Registered as a <b>singleton</b> — never <c>AddScoped</c>. The only
 /// terminal surface the views talk to.
 /// </summary>
 public interface ITerminalSessionService
@@ -20,13 +20,13 @@ public interface ITerminalSessionService
 
     /// <summary>
     /// Always starts a fresh session for this origin, even when one is already live — the
-    /// "New Terminal" / <c>+</c> path (review). The new session becomes the focused one.
+    /// "New Terminal" / <c>+</c> path. The new session becomes the focused one.
     /// </summary>
     Task<TerminalSession> OpenNewAsync(TerminalOrigin origin, CancellationToken ct = default);
 
     /// <summary>
     /// Asks the dock to show itself without touching the session set or focus — the
-    /// "Open Terminal just reveals the dock" path (review). No-op if nothing is listening.
+    /// "Open Terminal just reveals the dock" path. No-op if nothing is listening.
     /// </summary>
     void RequestActivation();
 
@@ -44,6 +44,6 @@ public interface ITerminalSessionService
     event EventHandler? FocusedSessionChanged;
     event EventHandler<TerminalSession>? SessionExited;
 
-    /// <summary>Raised when an entry point wants the dock brought into view (review).</summary>
+    /// <summary>Raised when an entry point wants the dock brought into view.</summary>
     event EventHandler? ActivationRequested;
 }

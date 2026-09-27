@@ -5,7 +5,7 @@ using Xunit;
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// F2: the Clone dialog's folder-name box must keep auto-filling from the URL box across
+/// The Clone dialog's folder-name box must keep auto-filling from the URL box across
 /// multiple pastes — the regression was the auto-fill's own programmatic write to
 /// <c>folder.Text</c> being mistaken for a user edit, which silently stopped every later update.
 /// Exercises <see cref="CloneDialog.ShouldAutoFillFolder"/> directly rather than driving the

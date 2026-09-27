@@ -3,9 +3,9 @@ namespace Historia.Services.Graph;
 
 /// <summary>
 /// The polyline for one graph edge: a run of way-points joined by straight segments, with
-/// rounded 90° corners of radius <see cref="CornerRadius"/> at every interior way-point
-///. Way-point 0 is the start, the last is the end; interior points are the sharp
-/// corners the renderer rounds. correction: the corner may fill a whole lane×row cell
+/// rounded 90° corners of radius <see cref="CornerRadius"/> at every interior way-point.
+/// Way-point 0 is the start, the last is the end; interior points are the sharp
+/// corners the renderer rounds. The corner may fill a whole lane×row cell
 /// (radius up to the full segment length), so a bend "takes up a whole square" instead of
 /// clipping a 6&#160;DIU nub.
 /// </summary>

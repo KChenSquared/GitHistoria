@@ -1,9 +1,9 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>The Graph column draws each lane's vertical pieces as merged runs, one line per
-/// run rather than one per row per lane (F1). Drawing per row again produces no error, only
-/// slower frames, so the draw count is asserted here (Rule 36), along with the builder's
-/// zero-growth second frame (Rule 24).</summary>
+/// run rather than one per row per lane. Drawing per row again produces no error, only
+/// slower frames, so the draw count is asserted here, along with the builder's
+/// zero-growth second frame.</summary>
 [Trait("tier", "ui")]
 public sealed class GraphLaneRunDrawTests
 {

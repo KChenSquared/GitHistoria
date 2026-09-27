@@ -6,8 +6,7 @@ namespace Historia.Services.Graph;
 /// this maps an index to a concrete <see cref="Rgb"/>.
 /// </summary>
 /// <remarks>
-/// correction (recorded per Rule 35, not silently reverted): the Material Design 500
-/// swatch set — one table for every theme — is replaced by a nine-colour rainbow
+/// One table per theme: a nine-colour rainbow
 /// (<c>docs/9-color-rainbow-palette.png</c>) for the dark/System-dark theme, plus a
 /// hand-picked darker, still mutually-distinct nine-colour set for the light theme and a
 /// lifted set for high contrast. No two lanes share a colour <i>within</i> a theme
@@ -92,9 +91,8 @@ public static class LanePalette
     }
 
     /// <summary>
-    /// The stroke/border variant of a lane colour. The dark/HC white-lift is withdrawn
-    /// (correction): the user asked for the palette hues as the <b>solid</b> line and pill
-    /// border colour, so this is now the identity in every theme. Kept as a named seam so the
+    /// The stroke/border variant of a lane colour: the identity in every theme, since the
+    /// palette hues are drawn as the <b>solid</b> line and pill border colour. Kept as a named seam so the
     /// call sites (lane pens, emphasis pens, pill borders, the tick) do not have to change.
     /// </summary>
     public static Rgb EdgeColorFor(int colorIndex, EffectiveTheme theme) => ColorFor(colorIndex, theme);

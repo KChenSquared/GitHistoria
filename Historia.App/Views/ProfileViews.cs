@@ -96,7 +96,7 @@ public sealed class ProfilesView : UserControl, IDisposable
             _root.Children.Add(TextButton("+ Add profile", () => { _editing = Guid.Empty; Rebuild(); }, primary: true));
     }
 
-    // ── v8 M11: create / edit wizard (inline form) ──
+    // ── create / edit wizard (inline form) ──
 
     private static Control Field(string label, Control control)
     {
@@ -289,7 +289,7 @@ public sealed class ProfilesView : UserControl, IDisposable
     {
         // Device-flow OAuth needs a registered GitHub client id, which Historia does not ship;
         // until then this opens GitHub's token page and stores a pasted PAT in the vault (the
-        // same fallback GitHub Desktop offers). All network is user-initiated (Rule 0.2).
+        // same fallback GitHub Desktop offers). All network is user-initiated.
         _launcher.OpenUrl("https://github.com/settings/tokens/new?scopes=repo&description=Historia");
         var pat = await _dialogs.PromptAsync("Sign in with GitHub",
             "Paste a GitHub personal access token (it is stored in the OS credential vault, never in profiles.json):");

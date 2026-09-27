@@ -1,7 +1,7 @@
 namespace Historia.Views;
 
 /// <summary>
-/// v8 M4: the branch context-menu items common to GitKraken · Fork · GitComet · GitHub Desktop,
+/// The branch context-menu items common to GitKraken · Fork · GitComet · GitHub Desktop,
 /// shared by the graph branch-label pill menu and the sidebar branch rows. Each item does its
 /// own guard + <c>RefreshAllAsync</c> + toast so callers only supply the collaborators.
 /// </summary>
@@ -14,7 +14,7 @@ internal static class BranchMenu
         bool IsLocal,
         string? TipSha,         // for "Create branch/tag here"; null → omit those
         string? CurrentBranch,
-        // R11: the counterpart ref to measure divergence against — a local row's upstream
+        // The counterpart ref to measure divergence against — a local row's upstream
         // (e.g. "origin/main"), or a remote row's local branch of the same short name. Null
         // when there is no counterpart (no upstream / no local branch), in which case the menu
         // gets no divergence items.
@@ -23,7 +23,7 @@ internal static class BranchMenu
         // than string-splitting Name/UpstreamName, which may itself contain a slash.
         string? RemoteAlias = null);
 
-    /// <summary>R11: resolves (ahead, behind) for <paramref name="t"/> against its counterpart
+    /// <summary>Resolves (ahead, behind) for <paramref name="t"/> against its counterpart
     /// and returns the matching push/pull/fast-forward menu item(s), or empty when there is no
     /// counterpart, the lookup fails, or the refs are identical. <c>git pull</c> always merges
     /// into whatever is currently checked out, so a Pull/Fast-forward item is only offered when
@@ -150,7 +150,7 @@ internal static class BranchMenu
         return items;
     }
 
-    /// <summary>Deferred (v8 M3) so the prompt parents cleanly after the menu tears down.</summary>
+    /// <summary>Deferred so the prompt parents cleanly after the menu tears down.</summary>
     public static Task PromptCreateBranch(RepositoryContext ctx, IDialogService dialogs, INotificationService notify,
         IStashService stash, string sha, string shortSha)
     {

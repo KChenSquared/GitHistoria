@@ -2,7 +2,7 @@
 
 /// <summary>
 /// Opens a URL in the system default browser and reveals paths in the OS file
-/// manager (/ v8 M6). User-initiated only; every method is best-effort and never throws.
+/// manager. User-initiated only; every method is best-effort and never throws.
 /// </summary>
 public interface IExternalLauncher
 {

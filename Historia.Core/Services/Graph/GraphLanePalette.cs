@@ -3,8 +3,8 @@
 /// <summary>
 /// pure lane-colour resolution for the commit-graph render pass. The Avalonia
 /// <c>Pen</c> / <c>SolidColorBrush</c> pools stay in <c>CommitGraphControl</c> (they cache
-/// framework types); only the colour maths lives here so it is unit-testable
-/// (debloat audit / T3.1). Mirrors <see cref="LanePalette.ColorFor"/>'s past-one-cycle
+/// framework types); only the colour maths lives here so it is unit-testable.
+/// Mirrors <see cref="LanePalette.ColorFor"/>'s past-one-cycle
 /// luminance shift, applied over the theme service's resolved lane list.
 /// </summary>
 public static class GraphLanePalette

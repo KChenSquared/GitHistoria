@@ -23,8 +23,8 @@ public readonly record struct TerminalModes(bool ApplicationCursor, bool Applica
 /// <summary>
 /// Encodes a key press to the bytes a terminal application expects. Mode-dependent:
 /// the same arrow key produces different bytes in normal vs. application-cursor mode. Pure,
-/// Avalonia-free, and fully unit-tested against the byte table in the plan and the M1
-/// spike's captured reference (<c>docs/memory/2026-08-31-v5-m1-spike.md</c>).
+/// Avalonia-free, and unit-tested byte-for-byte,
+/// cross-checked against XTerm.NET's own key generator.
 /// </summary>
 public static class KeyEncoder
 {

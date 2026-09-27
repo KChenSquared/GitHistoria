@@ -109,7 +109,7 @@ public interface IGraphLayoutService
 
     /// <summary>
     /// Pre-caches a newly cloned repository's commit-graph and layout cache before its tab is
-    /// opened (R5). Runs ahead of the background-work gate. Writes the commit-graph first,
+    /// opened. Runs ahead of the background-work gate. Writes the commit-graph first,
     /// then spools the full history walk to disk. Progress reports the commit-graph phase and then
     /// each spilled batch. Cancellation stops caching while keeping whatever was already durably
     /// written.

@@ -30,7 +30,7 @@ public interface IGitGateway
     Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default);
 
     /// <summary>Ahead/behind between any two refs via <c>git rev-list --left-right --count</c>
-    /// (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c> — see the plan's Decisions).
+    /// (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c>).
     /// Returns <see langword="null"/> when either ref cannot be resolved, e.g. a branch with no
     /// upstream — that is an ordinary case for a caller asking "is this ahead?", not an error.</summary>
     Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default);
@@ -78,8 +78,8 @@ public interface IGitGateway
     Task RemoveRemoteAsync(string name, CancellationToken ct = default);
     Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default);
 
-    /// <summary>Renames a remote's alias. A config + refspec edit, never a network call
-    /// (Rule 8). Returns the non-default fetch refspecs libgit2 could not rewrite automatically,
+    /// <summary>Renames a remote's alias. A config + refspec edit, never a network call.
+    /// Returns the non-default fetch refspecs libgit2 could not rewrite automatically,
     /// if any — the caller should surface those to the user rather than drop them silently.</summary>
     Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default);
 

@@ -1,6 +1,6 @@
 namespace Historia.Services.UI;
 
-/// <summary>Network actions the v8 M5 shortcuts bar can request against the focused repository.</summary>
+/// <summary>Network actions the shortcuts bar can request against the focused repository.</summary>
 public enum RepoNetworkAction
 {
     Fetch,
@@ -21,7 +21,7 @@ public readonly record struct RepoNetworkRequest(
     string? RemoteBranch = null);
 
 /// <summary>
-/// v8 M5: a thin app-wide bus so the shortcuts bar (owned by the window shell) can drive the
+/// A thin app-wide bus so the shortcuts bar (owned by the window shell) can drive the
 /// Fetch / Pull / Push flow that still lives in <c>RepositoryView</c> (which owns the inline
 /// progress box and push-rejection remedies). Singleton.
 /// </summary>

@@ -51,7 +51,7 @@ public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
         if (noCommit) args.Add("-n");
         if (mainline is { } m) { args.Add("-m"); args.Add(m.ToString()); }
 
-        // Explicit oldest-first list — never the exclusive A..B range form (corrections).
+        // Explicit oldest-first list — never the exclusive A..B range form.
         foreach (var id in oldestFirst)
             args.Add(id.Sha);
 

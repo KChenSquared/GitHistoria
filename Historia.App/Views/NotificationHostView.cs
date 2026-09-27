@@ -1,6 +1,6 @@
 ﻿namespace Historia.Views;
 
-/// <summary>Toast stack for <see cref="INotificationService"/> (V4 port of NotificationHost.razor).</summary>
+/// <summary>Toast stack for <see cref="INotificationService"/>.</summary>
 public sealed class NotificationHostView : UserControl, IDisposable
 {
     /// <summary>Success toasts (commit / push / pull / fetch) clear themselves after this long.</summary>

@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// / R5, R7: tests that <see cref="GraphMetaWriter.Reset"/> retires existing cache files
+/// Tests that <see cref="GraphMetaWriter.Reset"/> retires existing cache files
 /// instead of appending after them, leaving no dead prefix in <c>.meta.dat</c> and reporting
 /// <see cref="SpillOutcome.Conflict"/> if retirement is blocked by an unshared foreign handle.
 /// </summary>

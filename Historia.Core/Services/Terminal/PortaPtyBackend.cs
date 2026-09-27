@@ -53,7 +53,7 @@ public sealed class PortaPtyBackend : ITerminalBackend
 
             // Dedicated background threads, never the ThreadPool: Porta.Pty's ReaderStream is a
             // synchronous FileStream, so an async read loop would block a pool worker in an
-            // uninterruptible ReadFile and never give it back (deviation D5).
+            // uninterruptible ReadFile and never give it back.
             _pump = new PtyIoPump(
                 output: _inner.ReaderStream,
                 input: _inner.WriterStream,

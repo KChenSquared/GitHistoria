@@ -2,7 +2,7 @@ namespace Historia.Tests;
 
 /// <summary>
 /// Generates fixture repositories programmatically with the real <c>git</c> CLI
-/// or high-speed template copying and fast-import streams (F1). Each instance owns a
+/// or high-speed template copying and fast-import streams. Each instance owns a
 /// temp directory that is deleted on <see cref="Dispose"/>.
 /// </summary>
 public sealed class TestRepositoryBuilder : IDisposable
@@ -61,7 +61,7 @@ public sealed class TestRepositoryBuilder : IDisposable
     }
 
     /// <summary>
-    /// Obtains an independent, freshly copied repository initialized from a process-cached template (F1).
+    /// Obtains an independent, freshly copied repository initialized from a process-cached template.
     /// The template is built once via <paramref name="build"/>; subsequent calls copy the template directory.
     /// </summary>
     public static TestRepositoryBuilder FromTemplate(string key, Action<TestRepositoryBuilder> build)

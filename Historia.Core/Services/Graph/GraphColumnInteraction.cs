@@ -4,7 +4,7 @@ namespace Historia.Services.Graph;
 /// Pure geometry for the commit-graph column header's pointer interactions: which
 /// boundary a resize drag grabs, where a reorder drag would insert, which column sits under
 /// the pointer, and the reorder itself. Lifted out of <c>CommitGraphControl</c> so the
-/// arithmetic is unit-testable (debloat audit T3.3). The control keeps the drag state,
+/// arithmetic is unit-testable. The control keeps the drag state,
 /// pointer capture, persistence and <c>ContextMenu</c> building. All <c>x</c> values are
 /// viewport pixels; <paramref name="hScrollOffset"/> is subtracted here so callers pass the
 /// raw pointer x.

@@ -54,8 +54,8 @@ public interface IRepositoryStateService
     void SetSelectedPaths(IReadOnlyList<string> paths);
 
     /// <summary>
-    /// Asks the graph to bring <paramref name="id"/> into view and centre it vertically
-    ///. Selection is a separate concern — call <see cref="SetSelectedCommit"/> too.
+    /// Asks the graph to bring <paramref name="id"/> into view and centre it vertically.
+    /// Selection is a separate concern — call <see cref="SetSelectedCommit"/> too.
     /// A no-op consumer is fine; the graph is the only listener.
     /// </summary>
     void RequestRevealCommit(ObjectId id);

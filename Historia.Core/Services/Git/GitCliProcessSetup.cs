@@ -21,12 +21,11 @@ internal static class GitCliProcessSetup
         "--no-optional-locks",
     ];
 
-    // The Historia executable re-invoked with a private switch acts as the askpass helper
-    //. No separate binary is installed. Computed once — it never varies per invocation.
+    // The Historia executable re-invoked with a private switch acts as the askpass helper.
+    // No separate binary is installed. Computed once — it never varies per invocation.
     private static readonly string AskPassHelperPath = Environment.ProcessPath ?? string.Empty;
 
-    /// <summary>Built per invocation; the Historia process's own environment is never mutated
-    ///.</summary>
+    /// <summary>Built per invocation; the Historia process's own environment is never mutated.</summary>
     public static void ComposeEnvironment(
         ProcessStartInfo psi, GitProfile? profile, IReadOnlyDictionary<string, string>? extraEnvironment)
     {

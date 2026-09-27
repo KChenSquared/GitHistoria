@@ -40,7 +40,7 @@ public static class HistoriaPalette
         // code editor selection
         "code-selection",
         // graph ref badge label — white in dark/HC, near-black in light. The web
-        // layer never consumes it, but parity keeps the two copies honest (rule 26).
+        // layer never consumes it, but parity keeps the two copies honest.
         "ref-label",
         // terminal
         "term-bg", "term-fg", "term-cursor", "term-selection",
@@ -237,7 +237,7 @@ public static class HistoriaPalette
         ("ref-label",     "#ffffff"),
         // terminal. HC has no VS Code counterpart. term-bg/fg come from the HC
         // structure tokens; the ANSI set is the dark_vs hues lifted toward #ffffff until each
-        // clears 4.5:1 on #000000 (Table B). TerminalContrastTests (M6) verifies every entry.
+        // clears 4.5:1 on #000000 (Table B). TerminalContrastTests verifies every entry.
         ("term-bg",         "#000000"), // = bg
         ("term-fg",         "#ffffff"), // = text
         ("term-cursor",     "#00ffff"), // = accent

@@ -27,7 +27,7 @@ public sealed class TerminalStartException(TerminalErrorKind kind, string detail
 /// <summary>
 /// Maps a start-up failure to an actionable message. Mirrors
 /// <c>GitErrorClassifier</c>: <see cref="TerminalErrorKind.Unknown"/> surfaces the underlying
-/// text behind a Details expander — never a silent fallback (constitution rule 11).
+/// text behind a Details expander — never a silent fallback.
 /// </summary>
 public static class TerminalErrorClassifier
 {
@@ -55,7 +55,7 @@ public static class TerminalErrorClassifier
                     "The shell could not be found. Set a shell path in Settings → Terminal.",
                     ex.ToString());
 
-            // ConPTY needs Windows 10 1809+ — the "supported but not baseline" case (rule 0.5).
+            // ConPTY needs Windows 10 1809+ — the "supported but not baseline" case.
             case Win32Exception w32:
                 return (TerminalErrorKind.PtyUnavailable,
                     "This system cannot host an embedded terminal (a pseudoterminal could not be created).",

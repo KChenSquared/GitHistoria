@@ -8,7 +8,7 @@ public sealed class RepoLayoutService : IRepoLayoutService, IAsyncDisposable
         public int SchemaVersion { get; set; } = 2;
 
         /// <summary>column order + visibility + flex are application-wide. Only visibility
-        /// (and the flex column) survive a launch; the order resets to canonical (/ D2).</summary>
+        /// (and the flex column) survive a launch; the order resets to canonical.</summary>
         public GlobalDto? Global { get; set; }
 
         public Dictionary<string, RepoLayoutDto> Repos { get; set; } = new(StringComparer.Ordinal);
@@ -190,7 +190,7 @@ public sealed class RepoLayoutService : IRepoLayoutService, IAsyncDisposable
             if (file is null)
                 return;
 
-            // / D2: the order resets to canonical every launch; only visibility (and the
+            // The order resets to canonical every launch; only visibility (and the
             // flex column) persist. A v1 file (no `global`) migrates to the defaults here.
             if (file.Global?.Columns is { Count: > 0 } gc)
             {

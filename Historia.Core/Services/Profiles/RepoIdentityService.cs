@@ -19,7 +19,7 @@ public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityServi
             return key;
         }
 
-        // 2. Lexicographically smallest reachable root-commit SHA (Q10).
+        // 2. Lexicographically smallest reachable root-commit SHA.
         var smallestRoot = await FindSmallestRootShaAsync(context, ct).ConfigureAwait(false);
         if (smallestRoot is not null)
         {
@@ -37,7 +37,7 @@ public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityServi
     }
 
     /// <summary>
-    /// Resolves the lexicographically smallest reachable root-commit SHA (Q10).
+    /// Resolves the lexicographically smallest reachable root-commit SHA.
     /// Primary path shells out to <c>git rev-list --max-parents=0</c> — a separate process that
     /// never takes the repo's foreground gate, so it can never queue behind (or block) the
     /// graph's own cold-open walk. Only when git is unavailable, or the invocation fails, does

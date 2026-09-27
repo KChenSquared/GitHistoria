@@ -40,7 +40,7 @@ public static class GraphColumnDefaults
     ];
 
     /// <summary>
-    /// / D2. Keeps its one-argument signature so <c>Normalize</c>, the auto-fit gesture
+    /// Per-column minimum width. Keeps its one-argument signature so <c>Normalize</c>, the auto-fit gesture
     /// and the resize gesture all keep compiling. "Minimum 150 for each other column", with SHA
     /// held at 80 — a seven-character hash in a 150 DIU column is dead space.
     /// </summary>

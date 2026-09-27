@@ -14,7 +14,7 @@ public static class UnsavedWorkPrompt
         string saveLabel,
         string discardLabel = "Discard changes")
     {
-        // Constitution Rule 00 multi-remedy chooser: save (default), discard (destructive), "Cancel" (implicit, rightmost)
+        // Multi-remedy chooser under the destructive-confirm contract: save (default), discard (destructive), "Cancel" (implicit, rightmost)
         var choice = await dialogs.ChooseAsync(
             title: title,
             message: message,

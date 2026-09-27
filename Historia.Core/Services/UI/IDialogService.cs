@@ -27,7 +27,7 @@ public interface IDialogService
     Task<bool> ConfirmAsync(string title, string message, bool destructive = false,
         string confirmLabel = "OK", bool defaultToCancel = false, DialogIcon icon = DialogIcon.None);
 
-    /// <summary>Constitution Rule 00 — the one entry point for a destructive-action
+    /// <summary>The one entry point for a destructive-action
     /// confirmation. Always shows the large red <c>warning</c>, makes <c>Cancel</c> the
     /// primary (blue) button and the Enter default while keeping it rightmost, and styles the
     /// confirm button plain/danger — never primary. <paramref name="effect"/> must name the
@@ -44,7 +44,7 @@ public interface IDialogService
     /// to fit rather than trimming. Returns the 0-based index of the chosen option, or -1 if
     /// cancelled / closed.
     /// <para>When <paramref name="destructiveIndex"/> is set, pass
-    /// <paramref name="icon"/> = <see cref="DialogIcon.Warning"/> (constitution Rule 00): the
+    /// <paramref name="icon"/> = <see cref="DialogIcon.Warning"/>: the
     /// dialog then shows the red <c>warning</c>, <c>Cancel</c> becomes the primary /
     /// Enter button, and no option carries the primary styling. <b>Exemption:</b> when the
     /// destructive option itself opens <see cref="ConfirmDestructiveAsync"/> before acting (the

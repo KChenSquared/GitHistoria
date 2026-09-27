@@ -12,7 +12,7 @@ public readonly record struct RepoIdentityKey(string Value)
     /// <summary>
     /// Computes the key from a root-commit SHA. When a repository has several root commits,
     /// pass the lexicographically smallest so the result is deterministic and identical across
-    /// clones (Q10).
+    /// clones.
     /// </summary>
     public static RepoIdentityKey FromRootCommit(string rootCommitSha)
     {

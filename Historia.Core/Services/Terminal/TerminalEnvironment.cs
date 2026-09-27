@@ -5,7 +5,7 @@ namespace Historia.Services.Terminal;
 /// <para>
 /// Historia never sets its internal variables process-globally — <c>GitCliService</c> composes
 /// them on each child <c>ProcessStartInfo</c> per invocation, and there is no
-/// <c>Environment.SetEnvironmentVariable</c> anywhere in the codebase (constitution rule 32).
+/// <c>Environment.SetEnvironmentVariable</c> anywhere in the codebase.
 /// So anything found here under a Git-owned name came from <b>the user's own shell</b>, and a
 /// blanket name-based scrub would silently break the user's configuration inside their own
 /// terminal. This type is therefore <b>defence in depth</b> with value-aware rules, not a patch
@@ -17,7 +17,7 @@ public static class TerminalEnvironment
     /// <summary>
     /// Removed unconditionally: Historia-internal, meaningless to a user shell, and in two cases a
     /// secret or a capability token. Public so the test asserts the list by literal name — the
-    /// list itself is the guarantee (constitution rule 36).
+    /// list itself is the guarantee.
     /// </summary>
     public static readonly IReadOnlyList<string> AlwaysRemoved =
     [

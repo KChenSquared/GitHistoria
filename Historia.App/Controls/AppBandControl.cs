@@ -180,7 +180,7 @@ public sealed class AppBandControl : UserControl, IDisposable
             var d = e.Delta.Y != 0 ? e.Delta.Y : e.Delta.X;
             if (d == 0)
                 return;
-            // v8 M9: honour the OS natural/inverted-scroll preference (Windows probes false).
+            // Honour the OS natural/inverted-scroll preference (Windows probes false).
             d *= Historia.Services.UI.WheelInput.Sign(
                 _settings.Current.WheelScrollDirection, _scrollProbe.NaturalScrolling);
 
@@ -210,7 +210,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         _dock.Children.Add(_left);
 
         _add = MakeGlyphButton("＋", "Open or clone a repository");
-        // v8 M8: the + button opens a small Open / Clone / Initialize menu rather than just
+        // The + button opens a small Open / Clone / Initialize menu rather than just
         // landing on Home. Each item routes to Home with an intent the panel acts on.
         _addMenu = new ContextMenu { Placement = PlacementMode.BottomEdgeAlignedLeft };
         _addMenu.ItemsSource = new Control[]
@@ -332,7 +332,7 @@ public sealed class AppBandControl : UserControl, IDisposable
             _cloneService.Changed -= _onCloneChanged;
     }
 
-    /// <summary>M4.2: <see cref="ICloneService.Changed"/> fires on every progress tick — a full
+    /// <summary><see cref="ICloneService.Changed"/> fires on every progress tick — a full
     /// <see cref="RebuildTabs"/> per tick would rebuild every real tab dozens of times a second.
     /// Only rebuild the strip when a clone starts or ends (<c>Current</c> transitioning to or
     /// from <see langword="null"/>); otherwise update the pending tab's status text and its
@@ -480,7 +480,7 @@ public sealed class AppBandControl : UserControl, IDisposable
                 focusedView = view;
         }
 
-        // M4.2: a pending tab for a clone in progress — not backed by a RepositoryContext, so it
+        // A pending tab for a clone in progress — not backed by a RepositoryContext, so it
         // gets its own builder. Added to _tabViews (not just _tabPanel) so UpdateOverflow's width
         // sum, the overflow arrows and the "+" button placement all still account for it; its
         // untagged Border is excluded from drag-reorder automatically (OnTabPressed / ReorderTo
@@ -648,7 +648,7 @@ public sealed class AppBandControl : UserControl, IDisposable
 
         body.Child = grid;
 
-        // v8 M6: tab context menu — reveal the repo folder, copy its path, close the tab.
+        // Tab context menu — reveal the repo folder, copy its path, close the tab.
         if (!ctx.IsBare || ctx.RepositoryPath is { Length: > 0 })
         {
             var tabMenu = new ContextMenu();
@@ -695,7 +695,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         return shell;
     }
 
-    /// <summary>M4.2: the tab shown for the duration of a clone (R13) — not backed by a
+    /// <summary>The tab shown for the duration of a clone — not backed by a
     /// <see cref="RepositoryContext"/>, so it is not focusable, carries no terminal glyph or
     /// context menu, and its <c>Tag</c> is left unset so the drag-reorder path (which keys off
     /// <c>Tag is RepositoryContext</c>) ignores it entirely. Its close button cancels the clone.</summary>
@@ -1135,7 +1135,7 @@ public sealed class AppBandControl : UserControl, IDisposable
 
     // Avalonia has no "Hidden": keep the layout slot but stay inert when not overflowing.
     // When shown, clear the local Opacity so the `.flat` / `.flat:disabled` styles decide it
-    // (a disabled arrow reads as a faint ghost, matching V3).
+    // (a disabled arrow reads as a faint ghost).
     private static void SetArrowVisible(RepeatButton b, bool shown)
     {
         b.IsHitTestVisible = shown;

@@ -123,8 +123,8 @@ public static class GraphColumnLayout
             }
             else if (i == msgIdx)
             {
-                // The flex column's stored width only counts once the user has dragged it
-                //; otherwise it grows from its minimum so Graph can co-grow with it.
+                // The flex column's stored width only counts once the user has dragged it;
+                // otherwise it grows from its minimum so Graph can co-grow with it.
                 w = manuallySized.Contains(col.Kind)
                     ? Math.Max(col.Width, GraphColumnDefaults.MinWidthFor(col.Kind))
                     : GraphColumnDefaults.MinWidthFor(col.Kind);

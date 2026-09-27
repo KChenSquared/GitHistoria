@@ -4,8 +4,8 @@ namespace Historia.Tests;
 /// <see cref="GraphMetaSplice"/> is the pure
 /// planning half (no file/git access — see its own doc comment) of "splice instead of re-walk
 /// after a ref change". These tests exercise the guards individually (each one rejects its own
-/// case, matching the plan's own guard table) and the splice construction itself, using small
-/// synthetic histories — the plan's own real-repo numbers (linux/vscode/openclaw/workerd) aren't
+/// case, matching the splice's guard table) and the splice construction itself, using small
+/// synthetic histories — real-repo numbers (linux/vscode/openclaw/workerd) aren't
 /// reproducible from this environment, so the guard THRESHOLDS are exercised with explicit
 /// parameters rather than an actual 200k-row fixture.
 /// </summary>
@@ -261,7 +261,7 @@ public sealed class GraphMetaSpliceTests
     [Fact]
     public void A_splice_the_guards_accept_is_always_a_valid_topological_order()
     {
-        // Validity check mirroring the plan's own measurement: every added commit's parents are
+        // Validity check mirroring the real-repo measurement: every added commit's parents are
         // either other added commits (ordered correctly among themselves, since we feed them in
         // topo order) or old commits — which, since an existing commit's parents never change,
         // can never be one of the removed/added commits appearing AFTER it in the spliced order.

@@ -78,7 +78,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    /// <summary>F3: ValidateCloneUrl now delegates to CloneValidation.DescribeUrlProblem, which
+    /// <summary>ValidateCloneUrl delegates to CloneValidation.DescribeUrlProblem, which
     /// also rejects a URL with no repo-address shape at all (not just the security-motivated
     /// cases above) — confirms that delegation reaches the new shape check too.</summary>
     [Fact]
@@ -661,7 +661,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await Task.Delay(200); // give FocusInternal's Cancel() a moment to run
 
         Assert.False(profiles.ReceivedToken.IsCancellationRequested,
-            "finding #12: the git-config write's own token must never be cancelled by a focus-loss interrupt");
+            "the git-config write's own token must never be cancelled by a focus-loss interrupt");
         Assert.False(profiles.WriteCompleted, "the write should still be blocked on Release at this point");
 
         profiles.Release.TrySetResult();

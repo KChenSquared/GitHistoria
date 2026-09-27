@@ -305,7 +305,7 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
         if (added == 0 && removed == 0)
             return null;
 
-        // Refuse a line-joining selection (B16): a line carrying '\ No newline' must be the last line of its side.
+        // Refuse a line-joining selection: a line carrying '\ No newline' must be the last line of its side.
         for (var k = 0; k < keptLines.Count; k++)
         {
             var item = keptLines[k];

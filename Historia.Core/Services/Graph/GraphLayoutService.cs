@@ -158,7 +158,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         public bool Exhausted { get; set; }
 
         /// <summary>The walk could not run or continue — git.exe missing, the process failed to
-        /// start, or it failed before exhausting (Rule 11: no fallback). The graph keeps whatever
+        /// start, or it failed before exhausting (no fallback). The graph keeps whatever
         /// rows were already walked (none, for a failure before the first row) and nothing more
         /// is attempted for this cache: no respawn from the crawler or the spill, no disk write.
         /// <see cref="Forget"/> or a forced reset drops the cache, so a ref change or a reopen
@@ -957,7 +957,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // unreachable dead prefix is >= 25% of .meta.dat, is compacted by a from-row-0 re-spill
         // instead of yet another reorder — RunHeadlessSpoolAsync resets the store to identity order
         // (RecordCount == RowCount) under the new key, which RunHeadlessReorderAsync's incremental
-        // append-only shape can never do on its own (R8).
+        // append-only shape can never do on its own.
         var deadRecordsTooHigh = probe.Existing is { Ok: true } existing
             && (long)existing.RecordCount * 3 > (long)existing.RowCount * 4;
         var prefix = GraphMetaStore.ProbeDeadPrefix(repoPath);
@@ -1156,8 +1156,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // reaches exhaustion having started at row 0 (a genuine full walk, not a resumed partial
         // one — the ONLY case that stamp is meaningful for) can record GraphMetaSplice's guard-4
         // baseline. Only the headless spool times itself this way (not the active tab's own
-        // foreground background spill or the extend-spill fallback) — a deliberate scope narrowing
-        // for M5.1: the splice trigger itself only ever runs from this headless pipeline (step 5),
+        // foreground background spill or the extend-spill fallback) — a deliberate scope narrowing:
+        // the splice trigger itself only ever runs from this headless pipeline (step 5),
         // so only this path's timing is ever read back.
         var walkStopwatch = Stopwatch.StartNew();
         bool? fullWalkFromZero = null;
@@ -1379,7 +1379,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         try { cache.Cts.Cancel(); } catch (ObjectDisposedException) { }
 
-        // R3a: let the background spill observe the cancellation and finish its own turn before
+        // Let the background spill observe the cancellation and finish its own turn before
         // this touches LiveWalk — disposing it while a chunk may still be mid-MoveNext is exactly
         // the race DropLiveWalk exists to avoid. A stuck spill (repo gate never freed) falls back
         // to the same off-gate drop Forget already uses, rather than hanging tab-switch forever.
@@ -1417,7 +1417,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
         try { cache.Cts.Dispose(); } catch { /* best effort */ }
 
-        // R4: drop this repo's .gz read-cache entry too — kept resident it would outlive the tab
+        // Drop this repo's .gz read-cache entry too — kept resident it would outlive the tab
         // switch for the rest of the session.
         _walkCache.Evict(context.RepositoryPath);
     }
@@ -1509,7 +1509,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             if (snapshot is null)
             {
                 // Nothing can walk without the refs — the same outcome as `git log` failing to
-                // start (Rule 11: no fallback): the graph keeps what it has and this cache stops
+                // start (no fallback): the graph keeps what it has and this cache stops
                 // trying.
                 await cache.WalkLock.WaitAsync(ct).ConfigureAwait(false);
                 try { MarkWalkFailed(context, cache, $"reading refs failed: {failure}"); }
@@ -1647,7 +1647,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             if (save)
                 // Background-write gate: queued until the gate opens rather than fired
                 // immediately — during first paint this used to run inside the gate-closed
-                // window (R7b).
+                // window.
                 _ = Task.Run(async () =>
                 {
                     await WaitForGateAsync(CancellationToken.None).ConfigureAwait(false);

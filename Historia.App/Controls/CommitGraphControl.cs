@@ -55,8 +55,8 @@ public sealed partial class CommitGraphControl : Control
 
     // the silent background crawler pre-loads only this many rows into the
     // resident layout after first paint, advancing in discrete threshold steps as the user
-    // scrolls (R3/R4). Deeper history reaches disk in full via the background spill
-    // regardless of this cap (R2). Crawling all the way to ResidentRowCap (2,000,000 on a big
+    // scrolls. Deeper history reaches disk in full via the background spill
+    // regardless of this cap. Crawling all the way to ResidentRowCap (2,000,000 on a big
     // repo) built a multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
     // Configurable (AppSettings.SilentCrawlRowCap, default 100,000); 0 means uncapped, i.e. the
     // crawler runs to ResidentRowCap same as an explicit scroll would. Snapshotted at
@@ -186,7 +186,7 @@ public sealed partial class CommitGraphControl : Control
     private readonly DispatcherTimer _hoverDwellTimer;
     private CancellationTokenSource? _hoverFetchCts;
 
-    // v8 M16: LRU cache for commit message bodies, bounded with oldest-25% eviction.
+    // LRU cache for commit message bodies, bounded with oldest-25% eviction.
     private readonly Dictionary<ObjectId, string> _msgBodyCache = new();
     private readonly LinkedList<ObjectId> _msgBodyLru = new();
     private const int MsgBodyCacheCapacity = 512;
@@ -371,7 +371,7 @@ public sealed partial class CommitGraphControl : Control
     private readonly Dictionary<int, SolidColorBrush> _laneFills = [];
     private readonly Dictionary<int, SolidColorBrush> _laneTicks = [];
     private readonly Dictionary<(int Tag, int Size, int WidthKey, string Text), FormattedText> _textCache = [];
-    // Reused every frame to merge vertical lane pieces into runs (Rule 24: counts its growths).
+    // Reused every frame to merge vertical lane pieces into runs (counts its growths).
     private readonly LaneRunBuilder _laneRuns = new();
     private int _lanePiecesSeen;
     private int _laneRunsDrawn;
@@ -1684,7 +1684,7 @@ public sealed partial class CommitGraphControl : Control
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
-        // v8 M9: honour the OS natural/inverted-scroll preference (macOS & Linux) or the
+        // Honour the OS natural/inverted-scroll preference (macOS & Linux) or the
         // explicit override. Windows probes false, so the sign is 1 and behaviour is unchanged.
         var delta = e.Delta.Y * Historia.Services.UI.WheelInput.Sign(
             _settings.Current.WheelScrollDirection, _scrollProbe.NaturalScrolling);
@@ -1896,7 +1896,7 @@ public sealed partial class CommitGraphControl : Control
     private (GraphColumnKind Kind, int Slot)? HeaderIconAt(double x, double y)
         => GraphColumnInteraction.HeaderIconAt(_resolvedColumns, x, y, _hScrollOffset, HeaderHeight, HeaderIconSize, HeaderIconInset, HeaderIconCandidates);
 
-    /// <summary>R9: returns the graph to the left-most horizontal position — both the whole
+    /// <summary>Returns the graph to the left-most horizontal position — both the whole
     /// column band (<see cref="_hScrollOffset"/>) and the lane pan inside the Graph column
     /// (<see cref="_graphPanOffset"/>). Vertical scroll, column widths and column order are
     /// untouched. A no-op when already left-most.</summary>
@@ -2483,7 +2483,7 @@ public sealed partial class CommitGraphControl : Control
 
         var target = ResolveHoverTarget(pos);
 
-        // The sibling-ref badge opens a popup, not a tooltip — R7 intent is to see the rest of
+        // The sibling-ref badge opens a popup, not a tooltip — the intent is to see the rest of
         // the refs on this commit as soon as the badge is under the pointer, so it stays
         // immediate rather than joining the 1s tooltip dwell below.
         if (target is { Kind: HoverTargetKind.RefListBadge })
@@ -2676,7 +2676,7 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
-    /// <summary>v8 M16: show the full commit message for a Message-column cell. The body is
+    /// <summary>Show the full commit message for a Message-column cell. The body is
     /// fetched lazily via <see cref="IGitGateway.GetCommitDetailAsync"/> and cached;
     /// until it resolves the subject alone is shown.</summary>
     private void ShowMessageTooltip(ObjectId id, string subject)
@@ -3722,7 +3722,7 @@ public sealed partial class CommitGraphControl : Control
             dc.DrawText(pf, new Point(x + w - BadgePadX - plusW, CenteredTextY(pf, top, h, BadgeLabelSize)));
         }
 
-        // / v8 M2: the icon cluster and the +N counter are always laid out from the badge's
+        // The icon cluster and the +N counter are always laid out from the badge's
         // right edge with a fixed order and a guaranteed gap, so the cloud glyph can never be
         // clipped or hidden behind +N. If the badge is pathologically narrow, the label is what
         // yields (its budget already floors low), never the right-edge cluster.

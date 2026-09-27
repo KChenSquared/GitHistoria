@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>M7.3: with no custom theme selected the resolution seam
+/// <summary>With no custom theme selected the resolution seam
 /// (<see cref="IThemeService.Palette"/> / <see cref="IThemeService.LaneColors"/>) is
 /// byte-identical to the built-in tables; selecting one overlays it and refreshes even when
 /// the effective base is unchanged.</summary>
