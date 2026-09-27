@@ -265,13 +265,18 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     intent; the working tree is what exists.
 34. **Every change lands with acceptance criteria** that state what "done" means in terms
     someone else can check.
-35. **Keep traps; never keep correction notes.** When the obvious approach was tried and proved
-    wrong, record the lesson as a *Trap* — in present tense, stating the current rule and why
-    the obvious alternative fails — in the comment or document that owns the behaviour. Never
-    keep a *Correction* note, a "superseded" marker, or any account of what the code or a
-    document used to say: when something changes, rewrite the text to describe the new state
-    and put the history in the commit message. A *Trap* is removed only when the behaviour it
-    guards is removed; don't revert what one warns against without re-reading it.
+35. **Never keep correction notes — except traps and pitfalls.** Never keep a *Correction*
+    note, a "superseded" marker, or any account of what the code or a document used to say:
+    when something changes, rewrite the text to describe the new state and put the history in
+    the commit message.
+    - **Exception — traps and pitfalls.** When an obvious approach was tried and proved wrong,
+      record it as a *Trap* (or pitfall) in the comment or document that owns the behaviour.
+      A trap may describe the failed approach — including what the code used to do and what
+      went wrong ("re-priming with `skip = have` used to mix two walks after a fetch") —
+      because that history *is* the lesson: it stops the next person from reintroducing it.
+      Keep it to what failed and why; the current rule goes alongside it.
+    - A trap is removed only when the behaviour it guards is removed. Don't revert what one
+      warns against without re-reading it.
 36. **A guarantee that can regress silently gets a test — over the whole codebase.** Offline
     assets, palette parity, incremental-layout equivalence, per-frame allocation, graph edge
     endpoints — anything where breakage produces no error. Two corollaries, both learned from
@@ -315,8 +320,9 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     - **39.3 — State-based documentation only.** A comment describes what the code does at the
       time the comment is written or updated, and why — nothing else. A comment that would not
       make sense to someone reading the file for the first time — because it references a
-      previous version of the code — does not belong. When you change code, update its comments
-      to match in the same edit.
+      previous version of the code — does not belong, **except** a trap or pitfall (rule 35),
+      which may describe a failed earlier approach because that is the lesson. When you change
+      code, update its comments to match in the same edit.
     - **39.4 — Explain in chat only.** If you need to summarize changes or explain your
       reasoning, do so entirely in the chat window or commit message. Never put change
       explanations in the source files.
