@@ -111,6 +111,8 @@ public sealed partial class CommitGraphControl : Control
     // that queued up while the UI thread was busy.
     private long _lastThumbTrackTimestamp;
     private bool _arrangedSinceThumbTrack;
+    // Last pointer position over the vertical bar, in the bar's own coordinates (drag log only).
+    private Point? _scrollBarPointer;
 
     private RepositoryContext? _context;
     private IRepositoryStateService? _state;
@@ -406,6 +408,23 @@ public sealed partial class CommitGraphControl : Control
 
     private double RowsTop => HeaderHeight + (_queryBar.IsVisible ? QueryBarHeight : 0);
 
+    // Avalonia's Track.ApplyThumbDrag divides the drag vector by the value change; a drag move
+    // with no motion along the track (a sideways wiggle) divides by zero and leaves a NaN drag
+    // record. If the Track re-arranges before the next move — rows streaming in change Maximum —
+    // that NaN is folded into the Thumb's grab point, every later move computes NaN, Track.Value
+    // goes NaN and the thumb sticks at the bottom until something rewrites Value. Such a move
+    // changes nothing, so it is marked handled here; class handlers run before the Track's own
+    // DragDelta handler on the Thumb. Registered once for every Track in the app.
+    static CommitGraphControl()
+    {
+        Thumb.DragDeltaEvent.AddClassHandler<Thumb>((thumb, e) =>
+        {
+            if (thumb.Parent is Track track
+                && (track.Orientation == Orientation.Vertical ? e.Vector.Y : e.Vector.X) == 0)
+                e.Handled = true;
+        });
+    }
+
     public CommitGraphControl()
     {
         UseLayoutRounding = true;
@@ -450,6 +469,7 @@ public sealed partial class CommitGraphControl : Control
         // Belt-and-braces: any of these unlatch too, and can never leave it stuck.
         _scrollBar.AddHandler(PointerReleasedEvent, (_, _) => _scrollBarUserActive = false, RoutingStrategies.Tunnel);
         _scrollBar.PointerCaptureLost += (_, _) => _scrollBarUserActive = false;
+        _scrollBar.AddHandler(PointerMovedEvent, (_, e) => { if (ScrollLogOn) _scrollBarPointer = e.GetPosition(_scrollBar); }, RoutingStrategies.Tunnel, handledEventsToo: true);
         _hScrollBar = new ScrollBar { Orientation = Orientation.Horizontal, Height = 12, IsVisible = false };
         _hScrollBar.Scroll += (_, _) => { _hScrollOffset = _hScrollBar.Value; InvalidateVisual(); };
 
@@ -1753,6 +1773,22 @@ public sealed partial class CommitGraphControl : Control
     /// <summary>One <c>graph-scroll</c> line per vertical thumb move and one at drag end.
     /// <c>arranged=False</c> on a track line means no arrange pass ran since the previous move:
     /// the two moves queued up behind other UI-thread work.</summary>
+    /// <summary>Pointer, thumb and track positions for the drag log, all translated into the
+    /// vertical bar's own coordinates: <c>ptr</c> pointer Y, <c>thumb</c> thumb top..bottom,
+    /// <c>trackArea</c> track top..bottom.</summary>
+    private string ScrollBarGeometry()
+    {
+        var thumb = _scrollBar.GetVisualDescendants().OfType<Thumb>().FirstOrDefault();
+        var track = _scrollBar.GetVisualDescendants().OfType<Track>().FirstOrDefault();
+        if (thumb is null || track is null)
+            return "geometry=none";
+        var thumbTop = thumb.TranslatePoint(default, _scrollBar)?.Y ?? double.NaN;
+        var trackTop = track.TranslatePoint(default, _scrollBar)?.Y ?? double.NaN;
+        var ptr = _scrollBarPointer?.Y ?? double.NaN;
+        return string.Create(CultureInfo.InvariantCulture,
+            $"ptr={ptr:F1} thumb={thumbTop:F1}..{thumbTop + thumb.Bounds.Height:F1} trackArea={trackTop:F1}..{trackTop + track.Bounds.Height:F1} trackValue={track.Value:F1} trackMin={track.Minimum:F1} trackMax={track.Maximum:F1} trackViewport={track.ViewportSize:F1} deferDrag={track.DeferThumbDrag} ignoreDrag={track.IgnoreThumbDrag}");
+    }
+
     private void LogScrollEvent(ScrollEventType type)
     {
         if (type == ScrollEventType.ThumbTrack)
@@ -1762,7 +1798,7 @@ public sealed partial class CommitGraphControl : Control
                 ? "-"
                 : Stopwatch.GetElapsedTime(_lastThumbTrackTimestamp, now).TotalMilliseconds.ToString("F1", CultureInfo.InvariantCulture);
             LogScroll(string.Create(CultureInfo.InvariantCulture,
-                $"track value={_scrollBar.Value:F1} max={_scrollBar.Maximum:F1} viewport={_scrollBar.ViewportSize:F1} offset={_scrollOffset:F1} rows={_layout?.Layout.RowCount ?? 0} sincePrevMs={sincePrev} arranged={_arrangedSinceThumbTrack}"));
+                $"track value={_scrollBar.Value:F1} max={_scrollBar.Maximum:F1} viewport={_scrollBar.ViewportSize:F1} offset={_scrollOffset:F1} rows={_layout?.Layout.RowCount ?? 0} sincePrevMs={sincePrev} arranged={_arrangedSinceThumbTrack} {ScrollBarGeometry()}"));
             _lastThumbTrackTimestamp = now;
             _arrangedSinceThumbTrack = false;
         }

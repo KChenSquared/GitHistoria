@@ -251,6 +251,37 @@ public sealed class GraphScrollbarDragTests
         }
     }
 
+    /// <summary>A sideways-only drag move gives Avalonia's Track a zero value change, and its
+    /// drag math divides by it. If rows then arrive (Maximum changes, the Track re-arranges)
+    /// before the next move, the NaN reaches the Thumb's grab point: Track.Value goes NaN and the
+    /// thumb sticks at the bottom. The graph drops such moves before the Track sees them.</summary>
+    [AvaloniaFact]
+    public void Sideways_move_then_rows_arriving_leaves_the_thumb_on_the_pointer()
+    {
+        var h = Host(60000);
+        try
+        {
+            var start = ThumbCentreIn(h.Window, h.Thumb);
+            Avalonia.Headless.HeadlessWindowExtensions.MouseDown(h.Window, start, MouseButton.Left);
+            QueuedMove(h.Window, start + new Point(0, 20));
+            Dispatcher.UIThread.RunJobs();
+            QueuedMove(h.Window, start + new Point(2, 20));
+            h.Graph.ContentRowCountOverrideForTesting += 5000;
+            Dispatcher.UIThread.RunJobs();
+            QueuedMove(h.Window, start + new Point(2, 30));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.False(double.IsNaN(h.Track.Value));
+            Assert.Equal(h.Bar.Value, h.Track.Value, 0.5);
+            Assert.Equal(start.Y + 30, ThumbCentreIn(h.Window, h.Thumb).Y, 2.0);
+            Avalonia.Headless.HeadlessWindowExtensions.MouseUp(h.Window, start + new Point(2, 30), MouseButton.Left);
+        }
+        finally
+        {
+            h.Window.Close();
+        }
+    }
+
     /// <summary>Press on the thumb at <paramref name="start"/>, then five queued 10 px moves
     /// and one layout pass. Returns the pointer's final position; the button stays down.</summary>
     private static Point QueuedDrag(Hosted h, Point start)
