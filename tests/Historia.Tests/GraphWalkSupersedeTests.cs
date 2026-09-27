@@ -200,11 +200,10 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
         // The compute reads those refs, then waits on the gate; the tips move meanwhile.
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = ctx.WithRepositoryAsync(_ =>
+        _ = GraphLayoutService.GetGateFor(ctx).ExecuteAsync(async () =>
         {
             entered.SetResult();
-            release.Task.Wait();
-            return 0;
+            await release.Task;
         });
         await entered.Task;
         Task<GraphLayoutResult> compute;
@@ -236,16 +235,15 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
     private static SemaphoreSlim WalkLock(object cache) =>
         (SemaphoreSlim)cache.GetType().GetField("WalkLock")!.GetValue(cache)!;
 
-    /// <summary>Holds the repo gate until <see cref="IAsyncDisposable.DisposeAsync"/>.</summary>
+    /// <summary>Holds the graph prepare gate until <see cref="IAsyncDisposable.DisposeAsync"/>.</summary>
     private static async Task<IAsyncDisposable> HoldGateAsync(RepositoryContext ctx)
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var held = ctx.WithRepositoryAsync(_ =>
+        var held = GraphLayoutService.GetGateFor(ctx).ExecuteAsync(async () =>
         {
             entered.SetResult();
-            release.Task.Wait();
-            return 0;
+            await release.Task;
         });
         await entered.Task;
         return new GateHold(release, held);
