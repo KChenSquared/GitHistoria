@@ -208,10 +208,11 @@ public readonly struct GitObjectId : IEquatable<GitObjectId>, IComparable<GitObj
 
     public override int GetHashCode()
     {
-        if (_length < 4)
-            return 0;
-
-        return Unsafe.ReadUnaligned<int>(ref Unsafe.AsRef(in _buffer[0]));
+        // Hash every byte, not a prefix: synthetic ids (zero-padded counters in tests, and any
+        // id family sharing a prefix) would otherwise collide and degrade dictionaries to O(n).
+        var hash = new HashCode();
+        hash.AddBytes(AsSpan());
+        return hash.ToHashCode();
     }
 
     public static bool operator ==(GitObjectId left, GitObjectId right) => left.Equals(right);
