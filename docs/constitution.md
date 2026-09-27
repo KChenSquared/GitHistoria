@@ -265,9 +265,13 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     intent; the working tree is what exists.
 34. **Every change lands with acceptance criteria** that state what "done" means in terms
     someone else can check.
-35. **Record corrections, don't silently revert them.** A passage marked *Correction* or
-    *Trap* is there because the obvious approach was tried and was wrong. Superseding one is
-    fine; overwriting it without a note is not.
+35. **Keep traps; never keep correction notes.** When the obvious approach was tried and proved
+    wrong, record the lesson as a *Trap* — in present tense, stating the current rule and why
+    the obvious alternative fails — in the comment or document that owns the behaviour. Never
+    keep a *Correction* note, a "superseded" marker, or any account of what the code or a
+    document used to say: when something changes, rewrite the text to describe the new state
+    and put the history in the commit message. A *Trap* is removed only when the behaviour it
+    guards is removed; don't revert what one warns against without re-reading it.
 36. **A guarantee that can regress silently gets a test — over the whole codebase.** Offline
     assets, palette parity, incremental-layout equivalence, per-frame allocation, graph edge
     endpoints — anything where breakage produces no error. Two corollaries, both learned from
@@ -284,13 +288,9 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     to the relevant project's `GlobalUsings.cs`. When globalizing two namespaces makes a type
     name ambiguous (`CS0104`), resolve it with a `global using` alias pinned to the intended
     type (e.g. `global using Version = System.Version;`), or fully-qualify at the one-off call
-    site if only a single file wants the other type.
-
-    *Correction (supersedes the original rule 37).* The original rule reserved `GlobalUsings.cs`
-    for "namespaces most files need" and kept per-file `using`s for everything else, on the
-    argument that globalizing a minority-use namespace hides what a file depends on. That
-    tradeoff was reversed deliberately: the project now standardizes on global usings
-    everywhere, and the per-file-`using` exception is gone.
+    site if only a single file wants the other type. This holds even for a namespace only one
+    or two files use: the project deliberately prefers one uniform place for imports over
+    making each file's dependencies visible in its own header.
 38. **One logger: `AppLog`. Do not add a second logging system.** `Historia.Core/Diagnostics/AppLog.cs`
     is the single application logger. Reach it by constructor-injecting `IAppLog` in a
     DI-constructed service, or via `AppLog.Current` / the static `AppLog` methods from a
@@ -324,8 +324,9 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
       AI iterations while editing a file, delete them silently.
     - **39.6 — Never reference documents.** Comments (and user-visible strings) must not cite
       any document: no design-spec sections (`§7.6`, `§V3-B/19.24`), version or build plans,
-      review findings or item ids (`F9`, `R6`, `finding #17`), milestones, or file paths into
-      `Historia-DevDocs`. Documents are renumbered, rotated and archived; a pointer into them rots
+      review findings or item ids (`F9`, `R6`, `finding #17`), milestones, file paths into
+      `Historia-DevDocs`, and no rule numbers from this constitution (`Rule 00`, `rule 24`) —
+      say what the code must do instead (e.g. "destructive: confirm first"). Documents are renumbered, rotated and archived; a pointer into them rots
       silently and misleads. If the reason behind the code matters, state it in the comment
       itself. The dependency runs one way: design documents may point at code, code never
       points at documents.
