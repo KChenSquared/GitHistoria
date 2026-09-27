@@ -4,13 +4,13 @@ namespace Historia.Services.Settings;
 public sealed record RepoLayoutChangedEventArgs(string RepoPath, RepoLayout Layout);
 
 /// <summary>
-/// Per-repository graph-panel layout store (§V3-B). Keyed by normalised repository path, backed
+/// Per-repository graph-panel layout store. Keyed by normalised repository path, backed
 /// by <c>repo-columns.json</c>. Column order/widths and the width pin reset to defaults on every
 /// launch. Singleton.
 /// </summary>
 public interface IRepoLayoutService
 {
-    /// <summary>§V3.1: <see cref="RepoLayoutChangedEventArgs.RepoPath"/> value for a change to the
+    /// <summary><see cref="RepoLayoutChangedEventArgs.RepoPath"/> value for a change to the
     /// application-wide column order / visibility rather than to one repo's widths.</summary>
     const string GlobalKey = "\0global";
 
@@ -18,7 +18,7 @@ public interface IRepoLayoutService
     /// merged with that repo's per-session widths and pin. Never null — defaults when unseen.</summary>
     RepoLayout Get(string repoPath);
 
-    /// <summary>§V3.1: the application-wide column order + visibility + flex column. Order resets
+    /// <summary>the application-wide column order + visibility + flex column. Order resets
     /// to canonical at launch; visibility persists.</summary>
     IReadOnlyList<GraphColumn> GlobalColumns { get; }
 

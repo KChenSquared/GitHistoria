@@ -1,7 +1,7 @@
 ﻿namespace Historia;
 
 /// <summary>
-/// Borderless splash shown on launch while the shell loads out of sight (§6.2.2): a complete
+/// Borderless splash shown on launch while the shell loads out of sight: a complete
 /// pre-composited image — the Historia emblem and wordmark on a solid background.
 ///
 /// Built-in themes get <c>splash-dark.png</c> when the effective theme is Dark (explicit Dark,

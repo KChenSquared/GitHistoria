@@ -1,6 +1,6 @@
 namespace Historia.Models;
 
-/// <summary>Local or remote branch (§6.12). Ahead/behind are computed lazily per visible row.</summary>
+/// <summary>Local or remote branch. Ahead/behind are computed lazily per visible row.</summary>
 public sealed record BranchInfo
 {
     /// <summary>Friendly name, e.g. "main" or "origin/main".</summary>
@@ -12,12 +12,12 @@ public sealed record BranchInfo
 
     /// <summary>The owning remote's name for a remote-tracking branch (e.g. "origin", or
     /// "team/infra" — a remote name may itself contain a slash). Null for a local branch.
-    /// The one reliable way to strip the remote prefix from <see cref="Name"/> (§V3-7.3, §V3-11.1).</summary>
+    /// The one reliable way to strip the remote prefix from <see cref="Name"/>.</summary>
     public string? RemoteName { get; init; }
 
     public string? UpstreamName { get; init; }
 
-    /// <summary>Null until computed lazily for a visible row (§6.12).</summary>
+    /// <summary>Null until computed lazily for a visible row.</summary>
     [JsonIgnore]
     public int? AheadBy { get; init; }
 
@@ -42,7 +42,7 @@ public sealed record RemoteInfo
     public string? PushUrl { get; init; }
 }
 
-/// <summary>Detached-HEAD is a first-class state (§6.12).</summary>
+/// <summary>Detached-HEAD is a first-class state.</summary>
 public sealed record RepositoryInfo
 {
     public required string WorkingDirectory { get; init; }
@@ -55,7 +55,7 @@ public sealed record RepositoryInfo
 
     /// <summary>
     /// True when an executable <c>pre-commit</c> or <c>commit-msg</c> hook is present, so the
-    /// commit must route through the CLI (§6.9.2). Checked per status refresh and cached.
+    /// commit must route through the CLI. Checked per status refresh and cached.
     /// </summary>
     public bool HasCommitHooks { get; init; }
 }

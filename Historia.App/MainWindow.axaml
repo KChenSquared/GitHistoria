@@ -8,9 +8,9 @@
         Title="Historia" Icon="/Assets/Historia.ico" Width="1280" Height="760"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource ColorBg}">
-    <!-- Shell composition (§6.2.1, §7.4): native chrome + status bar; body is
+    <!-- Shell composition: native chrome + status bar; body is
          [sidebar] | [native commit graph] | [detail], as three regions filled by later
-         milestones. Column widths are driven from code-behind (InitBodyLayout) — §V3-B/19.24. -->
+         milestones. Column widths are driven from code-behind (InitBodyLayout). -->
     <!-- 3-row grid: app band, body, status bar. -->
     <Grid RowDefinitions="Auto,*,Auto">
 

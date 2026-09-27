@@ -86,7 +86,7 @@ public sealed class RecordingUiDispatcher : IUiDispatcher
 }
 
 /// <summary>A scripted <see cref="IPtyConnection"/>: records writes/resizes, replays bytes on
-/// demand, and exits with a chosen code. Drives every terminal test (V5 §3.1).</summary>
+/// demand, and exits with a chosen code. Drives every terminal test.</summary>
 public sealed class FakePtyConnection : IPtyConnection
 {
     public readonly List<byte[]> Writes = [];

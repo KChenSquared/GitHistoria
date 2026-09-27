@@ -1,7 +1,7 @@
 ﻿
 namespace Historia.Theming;
 
-/// <summary>V4 §split: Core hands the App <see cref="Rgb"/>; the framework wants
+/// <summary>Core hands the App <see cref="Rgb"/>; the framework wants
 /// <see cref="Color"/>. One conversion so call sites don't spell out the channel order.</summary>
 public static class RgbInterop
 {

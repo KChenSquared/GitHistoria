@@ -3,7 +3,7 @@
 /// <summary>
 /// Standalone "Profiles &amp; Accounts" panel, reached from the app menu's
 /// <c>Profile ▸ Manage profiles…</c> entry (route <c>profiles</c>). Lists the configured Git
-/// identity profiles (the reserved global profile first, §14.1) with edit / set-as-default /
+/// identity profiles (the reserved global profile first) with edit / set-as-default /
 /// delete / add actions. Editing the global profile writes <c>~/.gitconfig</c> behind two
 /// warnings; it can never be deleted.
 /// </summary>
@@ -180,7 +180,7 @@ public sealed class ProfilesView : UserControl, IDisposable
         return box;
     }
 
-    /// <summary>§14.1: editing the global profile changes the machine-wide identity in
+    /// <summary>editing the global profile changes the machine-wide identity in
     /// <c>~/.gitconfig</c>, so it is gated by a warning before the editor even opens.</summary>
     private async Task BeginEditAsync(GitProfile p)
     {
@@ -317,7 +317,7 @@ public sealed class ProfilesView : UserControl, IDisposable
             return;
         }
 
-        // §14.2: choosing a non-global default asks whether row-less repos follow it.
+        // choosing a non-global default asks whether row-less repos follow it.
         var choice = await _dialogs.ChooseAsync(
             "Set as default",
             $"Make repositories that don't have their own profile use '{p.DisplayName}'?",
@@ -337,7 +337,7 @@ public sealed class ProfilesView : UserControl, IDisposable
         _notifications.Publish(NotificationSeverity.Info, $"'{p.DisplayName}' is now the default profile.");
     }
 
-    /// <summary>§14.2 "Only new repositories": pin every known (recent) repo that has no explicit
+    /// <summary>"Only new repositories": pin every known (recent) repo that has no explicit
     /// selection row to its current resolution, so it keeps that identity when the default moves.</summary>
     private async Task PinExistingRowlessReposAsync()
     {

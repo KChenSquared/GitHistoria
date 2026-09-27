@@ -15,7 +15,7 @@ public enum NotificationSeverity
     Error,
 }
 
-/// <summary>An optional remedy the user can invoke from an error card or banner (§6.15.1).</summary>
+/// <summary>An optional remedy the user can invoke from an error card or banner.</summary>
 public sealed record NotificationAction(string Label, Func<Task> Invoke);
 
 public sealed record Notification
@@ -30,7 +30,7 @@ public sealed record Notification
     public required DateTimeOffset CreatedAt { get; init; }
 
     /// <summary>How many times this same (severity, message, details) has been published inside
-    /// the coalescing window (§18 / v8 M10). 1 for a normal single toast; the UI shows
+    /// the coalescing window (/ v8 M10). 1 for a normal single toast; the UI shows
     /// <c>×N</c> when it is greater.</summary>
     public int Count { get; init; } = 1;
 }
@@ -38,8 +38,8 @@ public sealed record Notification
 public sealed record NotificationsChangedEventArgs(IReadOnlyList<Notification> Current);
 
 /// <summary>
-/// Central surface for toasts, banners, and error cards (§6.15.1). Every unhandled exception
-/// is routed here rather than reaching the WPF dispatcher (§6.16 criterion 17). Singleton.
+/// Central surface for toasts, banners, and error cards. Every unhandled exception
+/// is routed here rather than reaching the WPF dispatcher (criterion 17). Singleton.
 /// </summary>
 public interface INotificationService
 {

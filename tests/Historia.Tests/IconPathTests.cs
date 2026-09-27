@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §V2-15.1: every name referenced in native .cs resolves in <see cref="IconPaths"/>,
+/// every name referenced in native .cs resolves in <see cref="IconPaths"/>,
 /// and no <see cref="IconPaths"/> entry is dead. Glyphs are Google Material Symbols on a 960-unit grid.
 /// </summary>
 [Trait("tier", "unit")]

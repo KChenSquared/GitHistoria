@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 [Trait("tier", "ui")]
 
-/// <summary>§F9 UI half: a submodule-linked tab renders shorter and without its own leading
+/// <summary>UI half: a submodule-linked tab renders shorter and without its own leading
 /// separator, so a group reads as one continuous visual unit — the owner keeps the full
 /// treatment. Built against a real <see cref="WorkspaceService"/> (mirroring
 /// <c>ShortcutBarLayoutTests</c>'s full-service DI setup) with one owner tab and one submodule

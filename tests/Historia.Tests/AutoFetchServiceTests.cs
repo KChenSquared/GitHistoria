@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>§12.1 AF6 — the auto-fetch schedule, over a real <see cref="WorkspaceService"/> with
+/// <summary>AF6 — the auto-fetch schedule, over a real <see cref="WorkspaceService"/> with
 /// tiny temp repos, a manual delay pump, and a fake host (no real git fetch or graph paint).</summary>
 [Trait("tier", "git")]
 [Collection("serial")]
@@ -42,7 +42,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         throw new Xunit.Sdk.XunitException($"Timed out waiting for: {what}");
     }
 
-    // ── §12.1.2: positional cursor ──
+    // ── positional cursor ──
 
     [Fact(Timeout = 60000)]
     public async Task Loop_fetches_the_repo_at_each_slot_after_an_initial_fetch_on_the_focused_repo()
@@ -118,7 +118,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         Assert.DoesNotContain(r3, thisCycle); // r3 slid into slot 1, already passed
     }
 
-    // ── §12.1.2: add / close restart ──
+    // ── add / close restart ──
 
     [Fact(Timeout = 60000)]
     public async Task Opening_a_tab_restarts_the_in_progress_cycle()
@@ -344,7 +344,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         Assert.Equal(count, host.Snapshot().Count); // no fetches after disable
     }
 
-    // ── §12.1.1: start conditions with no open repo ──
+    // ── start conditions with no open repo ──
 
     [Fact(Timeout = 60000)]
     public async Task Cold_start_then_open_runs_an_initial_fetch()
@@ -407,7 +407,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         await delay.WaitForPending("loop idle");
     }
 
-    // ── §21 dev visuals: per-tab state ──
+    // ── dev visuals: per-tab state ──
 
     [Fact(Timeout = 60000)]
     public async Task Tab_state_goes_not_started_then_pending_then_fetched_then_resets_on_restart()

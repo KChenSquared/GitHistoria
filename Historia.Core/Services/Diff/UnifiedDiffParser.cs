@@ -2,7 +2,7 @@
 
 /// <summary>
 /// Parses the unified-diff text of a single file's patch into the shared
-/// <see cref="DiffHunk"/>/<see cref="DiffLine"/> model (§6.10.1, §8.2.2).
+/// <see cref="DiffHunk"/>/<see cref="DiffLine"/> model.
 /// </summary>
 public static partial class UnifiedDiffParser
 {

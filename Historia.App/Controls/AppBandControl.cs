@@ -1,7 +1,7 @@
 namespace Historia.Controls;
 
 /// <summary>
-/// The window's app band (Row 0, §V2-9.3): the branded app-menu button plus the repo tab
+/// The window's app band (Row 0): the branded app-menu button plus the repo tab
 /// strip. Native control, not a WebView — the app menu drops over the sidebar and the graph.
 /// Avalonia port of the WPF <c>NativeControls.AppBandControl</c>. Bound to
 /// <see cref="IWorkspaceService"/>; no new service.
@@ -42,7 +42,7 @@ public sealed class AppBandControl : UserControl, IDisposable
     private Button? _pendingCloneCloseButton;
     private bool _disposed;
 
-    // §21 dev visuals: per-open-repo left-edge colour bar + its last-applied token (skip re-binds).
+    // dev visuals: per-open-repo left-edge colour bar + its last-applied token (skip re-binds).
     private readonly Dictionary<RepositoryContext, (Border Bar, string Token)> _autoFetchBars = [];
 
     private readonly DockPanel _dock;
@@ -72,7 +72,7 @@ public sealed class AppBandControl : UserControl, IDisposable
     private AppBandDragGhost? _dragGhost;
     // Reused across the per-pointer-move ReorderTo calls so the hot drag path stays allocation-free.
     private readonly List<double> _reorderWidths = new();
-    // §F9: the dragged tab's group span in _tabViews index terms, captured on press. For an
+    // the dragged tab's group span in _tabViews index terms, captured on press. For an
     // owner/standalone drag this is its own group (itself plus its linked children, if any); for
     // a linked-child drag this is its OWNER's group, since ReorderTo clamps the child's live
     // target into that span. -1/0 when the pressed tab isn't a group member (no clamping needed).
@@ -353,7 +353,7 @@ public sealed class AppBandControl : UserControl, IDisposable
             _pendingCloneCloseButton.IsEnabled = !status.CancelRequested;
     }
 
-    // ── §21 dev visuals: per-tab auto-fetch colour bar ──
+    // ── dev visuals: per-tab auto-fetch colour bar ──
 
     private static string AutoFetchBarToken(AutoFetchTabState state) => state switch
     {
@@ -384,7 +384,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         }
     }
 
-    // ── Terminal entry points (V5 §1) ──
+    // ── Terminal entry points ──
 
     // The Historia menu's sole terminal item, labelled "Open Terminal" — always adds another Home
     // shell and focuses it (the label is cosmetic; behaviour is unchanged "new" semantics).
@@ -500,7 +500,7 @@ public sealed class AppBandControl : UserControl, IDisposable
 
         // Tabs are variable-width, so the estimate above ran before any tab was measured.
         // Re-check once the strip has laid out (this also keeps the focused tab on screen —
-        // e.g. a repo opened by a forwarded second launch (§3) lands at the far right).
+        // e.g. a repo opened by a forwarded second launch lands at the far right).
         Dispatcher.UIThread.Post(() =>
         {
             UpdateOverflow();
@@ -514,7 +514,7 @@ public sealed class AppBandControl : UserControl, IDisposable
 
     private Border MakeTab(RepositoryContext ctx, bool active, bool first)
     {
-        // §F9: a submodule-linked tab renders 3px shorter, flush with the strip's bottom edge,
+        // a submodule-linked tab renders 3px shorter, flush with the strip's bottom edge,
         // and suppresses its own leading separator so the group reads as one continuous unit
         // with only the owner's separator showing. Avalonia's Layoutable.Arrange applies
         // Height/VerticalAlignment generically for any element within whatever rect its parent
@@ -575,7 +575,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         Grid.SetColumn(name, 0);
         grid.Children.Add(name);
 
-        // V5 §1: terminal glyph and close — Path glyphs on identical 18×18 buttons so they match
+        // terminal glyph and close — Path glyphs on identical 18×18 buttons so they match
         // in size and sit on one centre line (the old "✕" was a small font glyph that rendered
         // half-height and off-centre). The close button shows on every tab, not just the
         // active / hovered one.
@@ -674,8 +674,8 @@ public sealed class AppBandControl : UserControl, IDisposable
             }
         };
 
-        // §21 dev visuals: a 4 px colour bar down the tab's left edge (styled like the graph
-        // column's right-edge lane tick), showing this repo's auto-fetch state (§12.1). Hidden
+        // dev visuals: a 4 px colour bar down the tab's left edge (styled like the graph
+        // column's right-edge lane tick), showing this repo's auto-fetch state. Hidden
         // unless AutoFetchDebug.Enabled; recoloured in place on IAutoFetchService.TabStatesChanged.
         var afBarToken = AutoFetchBarToken(_autoFetch.GetTabState(ctx));
         var afBar = new Border { Width = 4, IsVisible = AutoFetchDebug.Enabled };
@@ -762,7 +762,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         return shell;
     }
 
-    // ── Tab drag-and-drop (§V3-B/19.21) ──
+    // ── Tab drag-and-drop ──
     // The gesture is captured to _tabPanel, so ReorderTo can re-parent shells live without
     // dropping the pointer. The move / release / capture-lost handlers live on _tabPanel.
 
@@ -777,13 +777,13 @@ public sealed class AppBandControl : UserControl, IDisposable
         _grabOffset = e.GetPosition(_dragView);
         _dragFromIndex = _tabViews.IndexOf(_dragView);
 
-        // §F9: record the pressed tab's group span up front — a linked-child drag clamps its
+        // record the pressed tab's group span up front — a linked-child drag clamps its
         // live target into this span (its owner's group); an owner/standalone drag moves this
         // span as one block.
         (_dragGroupStart, _dragGroupCount) = ComputeGroupSpan(_dragView.Tag as RepositoryContext);
     }
 
-    /// <summary>§F9: the contiguous <c>_tabViews</c> index range occupied by <paramref name="member"/>'s
+    /// <summary>the contiguous <c>_tabViews</c> index range occupied by <paramref name="member"/>'s
     /// group (the owner itself, or <paramref name="member"/> when it has no
     /// <see cref="RepositoryContext.LinkOwner"/>, plus every tab whose <c>LinkOwner</c> is that
     /// owner) — the App-layer mirror of <c>WorkspaceService.GroupSpan</c>, computed from
@@ -872,7 +872,7 @@ public sealed class AppBandControl : UserControl, IDisposable
     }
 
     /// <summary>Live shuffle: moves the dragged shell (or, for a group, the dragged shell's
-    /// whole contiguous group — §F9) so its slot matches the cursor's X (panel space). This is
+    /// whole contiguous group) so its slot matches the cursor's X (panel space). This is
     /// only the live preview; <c>WorkspaceService.Move</c> (called from
     /// <see cref="OnStripPointerReleased"/>) is the authority on the final order, and a
     /// subsequent <see cref="RebuildTabs"/> repaints it.</summary>
@@ -1032,7 +1032,7 @@ public sealed class AppBandControl : UserControl, IDisposable
             _nav.RequestNavigate("");
     }
 
-    // ── §V3-B: multi-line tab strip ──
+    // ── multi-line tab strip ──
 
     private bool MultiLine => _settings?.Current.EnableMultiLineTabs ?? false;
     private int MaxRows => Math.Clamp(_settings?.Current.MaxTabRows ?? 3, 2, 5);

@@ -1,6 +1,6 @@
 ﻿namespace Historia.Models;
 
-/// <summary>Submodule state (§8.6.1). Derived from <c>git submodule status --recursive</c>.</summary>
+/// <summary>Submodule state. Derived from <c>git submodule status --recursive</c>.</summary>
 public sealed record SubmoduleInfo
 {
     public required string Name { get; init; }
@@ -20,7 +20,7 @@ public enum SubmoduleStatus
     OutOfSync,      // URL/branch changed in .gitmodules, or conflicted
 }
 
-/// <summary>Worktree state (§8.7.1). Parsed from <c>git worktree list --porcelain</c>.</summary>
+/// <summary>Worktree state. Parsed from <c>git worktree list --porcelain</c>.</summary>
 public sealed record WorktreeInfo
 {
     public required string Path { get; init; }

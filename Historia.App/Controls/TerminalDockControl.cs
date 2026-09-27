@@ -1,9 +1,9 @@
 namespace Historia.Controls;
 
 /// <summary>
-/// The bottom terminal dock (V5 §7): a 6 px splitter, a live-session tab strip, a small
+/// The bottom terminal dock: a 6 px splitter, a live-session tab strip, a small
 /// toolbar, and the <see cref="TerminalControl"/> host. Collapses to zero height. Native
-/// control — no WebView airspace work (design doc §7.1).
+/// control — no WebView airspace work (design doc).
 /// </summary>
 public sealed class TerminalDockControl : UserControl, IDisposable
 {
@@ -11,7 +11,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     // Tall enough for the two vertically-stacked header buttons (✕ / ＋).
     private const double HeaderHeight = 40;
     private const double MinDock = 120;
-    // Keep at least this much of the centre panel visible above the dock (review §1).
+    // Keep at least this much of the centre panel visible above the dock (review).
     private const double MinCentreReserve = 80;
 
     private ITerminalSessionService _sessions = default!;
@@ -52,7 +52,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     {
         _tabStrip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
 
-        // Buttons stacked vertically on the right (review §3): close on top, new-terminal below.
+        // Buttons stacked vertically on the right (review): close on top, new-terminal below.
         // The clear and maximize/restore buttons are gone; "+" opens another Home terminal,
         // exactly as the Historia-menu entry does.
         var toolbar = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
@@ -70,7 +70,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
             Content = _tabStrip,
             VerticalAlignment = VerticalAlignment.Top,
         };
-        // Same single-row scroll model as the app-band strip (review §7): plain < > with no
+        // Same single-row scroll model as the app-band strip (review): plain < > with no
         // borders, shown only on overflow, plus wheel-to-pan. No multi-line support. The pair
         // sits together on the right, next to the ✕ stack (review follow-up).
         _tabLeft = ToolButton("<", "Scroll tabs left", () => ScrollTabs(-1));
@@ -368,7 +368,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
                 SetOpen(false);
         });
 
-    // Closing the dock (✕) only hides it; an entry point reopens it (review §2).
+    // Closing the dock (✕) only hides it; an entry point reopens it (review).
     private void OnActivationRequested(object? sender, EventArgs e)
         => Dispatcher.UIThread.Post(() =>
         {
@@ -514,7 +514,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
             _tabScroller.Offset = new Vector(Math.Min(TabScrollable, right - _tabScroller.Viewport.Width), 0);
     }
 
-    // ── tab-strip scrolling (review §7) ─────────────────────────────────────────────────────
+    // ── tab-strip scrolling (review) ─────────────────────────────────────────────────────
 
     private double TabScrollable => Math.Max(0, _tabScroller.Extent.Width - _tabScroller.Viewport.Width);
 

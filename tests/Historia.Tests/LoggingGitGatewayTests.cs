@@ -19,7 +19,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     }
 
     /// <summary>Disables logging first — the session writer now holds the file open for the
-    /// whole session (§findings: no more open/close per line), so the handle must be closed
+    /// whole session (no more open/close per line), so the handle must be closed
     /// before a second reader can open the same file.</summary>
     private string SessionText()
     {

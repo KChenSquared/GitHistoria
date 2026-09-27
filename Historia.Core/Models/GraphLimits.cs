@@ -1,7 +1,7 @@
 ﻿namespace Historia.Models;
 
 /// <summary>
-/// Architectural safety ceilings on resident graph layout (§7.3, §7.6).
+/// Architectural safety ceilings on resident graph layout.
 /// Prevents runaway memory allocation when background walks traverse massive histories.
 /// </summary>
 public static class GraphLimits

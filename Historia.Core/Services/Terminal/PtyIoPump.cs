@@ -2,7 +2,7 @@
 
 /// <summary>
 /// Moves a pseudoterminal's bytes on <b>dedicated background threads</b>, never on the
-/// <see cref="System.Threading.ThreadPool"/> (V5 §3.1).
+/// <see cref="System.Threading.ThreadPool"/>.
 ///
 /// <para>
 /// <b>Deviation D5.</b> <c>Porta.Pty</c> 2.2.1's Windows <c>ReaderStream</c> / <c>WriterStream</c>

@@ -1,7 +1,7 @@
 namespace Historia.Services.Graph;
 
 /// <summary>
-/// Pure C# DAG layout algorithm (§7.3). Converts a topologically ordered commit stream
+/// Pure C# DAG layout algorithm. Converts a topologically ordered commit stream
 /// (children before parents) into visual rows, lanes, and edges in three conceptual passes:
 /// ordered walk → greedy lane assignment + edge emission → stable compaction + color.
 /// No LibGit2Sharp object is retained; input is <see cref="RawCommit"/> records.
@@ -11,9 +11,9 @@ public sealed class DagLayoutEngine
     /// <summary>Computes a fresh layout for up to <paramref name="maxRows"/> commits.</summary>
     /// <param name="retainCommits">When false, the per-row <see cref="CommitMetadata"/> is not
     /// accumulated in the layout state — the caller is spilling it to a disk-backed store and
-    /// will swap that in (§7.6). The built <see cref="GraphLayout.Commits"/> is then an empty
+    /// will swap that in. The built <see cref="GraphLayout.Commits"/> is then an empty
     /// <see cref="ArrayCommitStore"/> until the swap.</param>
-    /// <param name="isAncestor">§V10.1 checked-out-branch exception: a full-history ancestry
+    /// <param name="isAncestor"> checked-out-branch exception: a full-history ancestry
     /// oracle — <c>isAncestor(a, b)</c> is true when commit <paramref name="a"/> is an ancestor of
     /// (or equal to) commit <c>b</c>. Supplied by <see cref="GraphLayoutService"/> from the live
     /// repo; null on the optimistic stale first paint, where the exception is skipped and the
@@ -37,7 +37,7 @@ public sealed class DagLayoutEngine
     /// Resumes the walk from where <paramref name="previous"/> left off, appending up to
     /// <paramref name="additionalRows"/> more rows. Lane indices already assigned are never
     /// renumbered — extension is byte-identical to a full recomputation over the same range
-    /// (§7.9.2, criterion 4).
+    /// (criterion 4).
     /// </summary>
     public GraphLayoutResult Extend(
         GraphLayoutResult previous,
@@ -72,7 +72,7 @@ public sealed class DagLayoutEngine
             List<Res>? incoming = null;
             if (s.Reservations.TryGetValue(commit.Id, out incoming) && incoming.Count > 0)
             {
-                // A deferred merge-parent reservation carries RawLane -1 (§V3-B: its column is
+                // A deferred merge-parent reservation carries RawLane -1 (its column is
                 // not claimed until the parent is actually placed here). Take the lowest real
                 // lane; if every incoming reservation is deferred, allocate now.
                 var known = int.MaxValue;
@@ -84,7 +84,7 @@ public sealed class DagLayoutEngine
             }
             else if (s.TipTargetLane.TryGetValue(commit.Id, out var pinnedLane))
             {
-                // §V9-G: this branch tip was pinned by the older-tip-wins pre-pass. The lane is
+                // this branch tip was pinned by the older-tip-wins pre-pass. The lane is
                 // below LaneCeiling and was never handed to FreeLanes, so it is ours to take
                 // directly; ReleaseLane recycles it normally once the branch ends or merges.
                 rawLane = pinnedLane;
@@ -117,7 +117,7 @@ public sealed class DagLayoutEngine
                     if (seenChildRows is not null && !seenChildRows.Add(res.ChildRow))
                         continue;
 
-                    // The edge always leaves the CHILD's own lane (§V3-3.4). For a first parent
+                    // The edge always leaves the CHILD's own lane. For a first parent
                     // that lane equals this commit's lane and the line is straight; when the child
                     // sat in a different lane it is a branch-out. A second-or-later parent is a
                     // merge edge into this (merge) commit, and it too starts at the child.
@@ -125,7 +125,7 @@ public sealed class DagLayoutEngine
                     var type = res.IsFirstParent
                         ? (fromLane == compacted ? EdgeType.Straight : EdgeType.BranchOut)
                         : EdgeType.MergeIn;
-                    // §V6-G7: a first-parent edge keeps the child's lane colour, as before. A
+                    // a first-parent edge keeps the child's lane colour, as before. A
                     // MergeIn edge is drawn in the SOURCE (merged-in) branch's colour — this
                     // commit's own lane colour — not the destination (merge commit's) lane.
                     var fromColor = s.LaneColor.GetValueOrDefault(fromLane, color);
@@ -137,7 +137,7 @@ public sealed class DagLayoutEngine
                         ToLane = compacted,
                         Type = type,
                         ColorIndex = type == EdgeType.MergeIn ? color : fromColor,
-                        // §V6-G7 fix: the lead-in (NodeToBottom/Full, before the elbow) always
+                        // fix: the lead-in (NodeToBottom/Full, before the elbow) always
                         // matches fromColor — for MergeIn that's the merge commit's OWN lane
                         // colour, which is what's genuinely still drawn there for this row span
                         // (the first-parent edge continues straight through the same lane).
@@ -156,7 +156,7 @@ public sealed class DagLayoutEngine
             if (deco is { Count: > 0 })
             {
                 flags |= RowFlags.HasDecorations;
-                // §V3-7.2: HEAD is per-badge now (IsHead), but a standalone detached-HEAD badge
+                // HEAD is per-badge now (IsHead), but a standalone detached-HEAD badge
                 // still uses DecorationType.Head. Either marks the row.
                 if (deco.Any(x => x.Type == DecorationType.Head || x.IsHead)) flags |= RowFlags.IsHead;
             }
@@ -186,7 +186,7 @@ public sealed class DagLayoutEngine
                         ColorIndex = color,
                         IsLocal = x.IsLocal,
                         IsHead = x.IsHead,
-                        RemotesOrNull = x.Remotes, // §V3-7.2: copied through, no merging here
+                        RemotesOrNull = x.Remotes, // copied through, no merging here
                         SiblingsOrNull = x.Siblings,
                     });
 
@@ -216,7 +216,7 @@ public sealed class DagLayoutEngine
                 }
                 else
                 {
-                    // §V3-B: do NOT allocate a column for a merge parent now. A parent that is far
+                    // do NOT allocate a column for a merge parent now. A parent that is far
                     // down the walk — or that turns out to sit on an existing spine — should not
                     // hold a lane in the meantime. -1 = "allocate when the parent is placed".
                     AddReservation(s, parent, new Res(-1, rawLane, row, IsFirstParent: false));
@@ -236,7 +236,7 @@ public sealed class DagLayoutEngine
         // actually reads it). EdgeCount is just the sum of what those two arrays' lengths would
         // have been.
         //
-        // §Phase 2: Rows no longer carry Segment/Elbow slice indices — GraphLayout derives lines
+        // 2: Rows no longer carry Segment/Elbow slice indices — GraphLayout derives lines
         // for a row window on demand from the shared crossing index (DeriveWindow), instead of
         // DeriveVisuals materialising flat Segments/Elbows arrays sized to every resident row on
         // every Build/Extend call.
@@ -251,7 +251,7 @@ public sealed class DagLayoutEngine
             EdgeCount = s.RealEdges.Count + offWindow.Length,
             TotalLaneCount = s.NextCompactedLane,
             IsComplete = complete && s.Reservations.Count == 0,
-            // §Phase 2 / S4: share the accumulator's dictionary instead of copying it wholesale
+            // 2 / S4: share the accumulator's dictionary instead of copying it wholesale
             // on every Build — it only ever grows, and a lookup against an older snapshot is
             // bounds-checked by the caller against that snapshot's own RowCount.
             RowByCommitId = s.RowByCommitId,
@@ -260,7 +260,7 @@ public sealed class DagLayoutEngine
         return new GraphLayoutResult(layout, s);
     }
 
-    /// <summary>§Phase 2: indexes a newly created real edge into the crossing checkpoints it
+    /// <summary>2: indexes a newly created real edge into the crossing checkpoints it
     /// will span and the from-row block it starts in, so a later window derivation can find it
     /// without scanning every edge ever created.</summary>
     private static void IndexNewRealEdge(GraphLayoutState s, int index, GraphEdge edge)
@@ -283,7 +283,7 @@ public sealed class DagLayoutEngine
     }
 
     /// <summary>
-    /// §Phase 2: derives <see cref="RowLaneSegment"/>/<see cref="RowElbow"/> data for rows
+    /// 2: derives <see cref="RowLaneSegment"/>/<see cref="RowElbow"/> data for rows
     /// <paramref name="a"/>..<paramref name="b"/> only, using <paramref name="state"/>'s crossing
     /// index to gather just the edges that can touch that range instead of every edge ever laid
     /// out. Produces byte-identical per-row content to a full <see cref="DeriveVisuals"/> over
@@ -305,7 +305,7 @@ public sealed class DagLayoutEngine
         const int stride = GraphLayoutState.CheckpointStride;
         var checkpoint = a / stride;
 
-        // §Bugfix: GraphLayoutService.ExtendLayoutAsync mutates this same state object (appending
+        // GraphLayoutService.ExtendLayoutAsync mutates this same state object (appending
         // to CheckpointCrossing/EdgesByFromBlock/RealEdges via IndexNewRealEdge) under
         // `lock (existing.State)` while a background walk streams in more commits. This method
         // runs on the render thread against that same live state, so it must take the same lock
@@ -502,7 +502,7 @@ public sealed class DagLayoutEngine
     }
 
     /// <summary>
-    /// Test oracle only (§Phase 2 acceptance: "derived lines are identical to the legacy
+    /// Test oracle only (2 acceptance: "derived lines are identical to the legacy
     /// DeriveVisuals for every row"). Delegates to the same <see cref="ComputeWindowVisuals"/>
     /// used by the real, windowed path (<see cref="DeriveWindow"/>), just called for the whole
     /// row range at once, so there is exactly one implementation of the per-edge line rules to
@@ -522,7 +522,7 @@ public sealed class DagLayoutEngine
     // ── Lane allocation ──
 
     /// <summary>
-    /// §V10.1 "newest tip wins the trunk, with a checked-out-branch exception". When the walk
+    /// "newest tip wins the trunk, with a checked-out-branch exception". When the walk
     /// window holds two or more branch tips that are leaves (nothing in the window builds on
     /// them), rank them and pin each to a raw lane in that order; lane 0 is the trunk. Row order
     /// is untouched — the newest commit is still row 0, a tip just moves to a higher lane.
@@ -547,7 +547,7 @@ public sealed class DagLayoutEngine
     /// It ranks only tips within the first <see cref="TipPriorityScanHorizon"/> commits of the
     /// list the engine is handed, and is a pure function of that prefix (plus the oracle) — never
     /// of <c>maxRows</c>. So a partial <see cref="Compute"/> + <see cref="Extend"/> seeds the same
-    /// pins as a full compute over the same list and criterion 4 (§7.9.2) still holds. A
+    /// pins as a full compute over the same list and criterion 4 still holds. A
     /// checked-out branch whose tip is beyond the horizon is not a candidate, so the exception
     /// does not fire for it.
     ///
@@ -599,7 +599,7 @@ public sealed class DagLayoutEngine
         if (tips.Count < 2)
             return;
 
-        // §V10.1: newest tip first, by committer date; the SHA breaks an exact timestamp tie so
+        // newest tip first, by committer date; the SHA breaks an exact timestamp tie so
         // the order is stable per run.
         static int ByNewest(RawCommit a, RawCommit b)
         {
@@ -608,7 +608,7 @@ public sealed class DagLayoutEngine
         }
         tips.Sort(ByNewest);
 
-        // §V10.1 checked-out-branch exception. Locate the checked-out local branch's tip anywhere
+        // checked-out-branch exception. Locate the checked-out local branch's tip anywhere
         // in the scan window — it need NOT be a leaf: the whole point is that newer work has been
         // built on it. A detached HEAD carries no such badge, so nothing fires.
         RawCommit? head = null;
@@ -742,7 +742,7 @@ public sealed class DagLayoutEngine
         if (s.LaneCeiling < s.MaxLanes - 1)
             return s.LaneCeiling++;
 
-        // §V3.1: with MaxLanes == int.MaxValue this branch is unreachable — kept only as an
+        // with MaxLanes == int.MaxValue this branch is unreachable — kept only as an
         // overflow-safe guard. It no longer describes a rendered lane; nothing collapses here.
         return s.MaxLanes - 1;
     }
@@ -805,7 +805,7 @@ public sealed class DagLayoutEngine
         s.Reservations.Remove(id);
     }
 
-    // ── Color assignment (§7.5) ──
+    // ── Color assignment ──
 
     private static int ResolveColor(GraphLayoutState s, int compactedLane,
         IReadOnlyList<GraphDecorationInput>? deco, ObjectId birthCommit)
@@ -814,7 +814,7 @@ public sealed class DagLayoutEngine
             return existing;
 
         // 1. Seed from a STABLE per-lane key.
-        // §7.1 Correction (v8 M7, supersedes the "v4.5 review C" note): the key is the lane's
+        // Correction (v8 M7, supersedes the "v4.5 review C" note): the key is the lane's
         // branch name when it has one — the lexicographically smallest, so several refs on the
         // birth commit cannot flip the choice between runs — otherwise the SHA of the commit
         // that first opened the lane. It never depends on the compacted-lane ordinal or on how
@@ -834,7 +834,7 @@ public sealed class DagLayoutEngine
         // lanes already coloured. Lane birth order is a pure function of the (stable) walk, and
         // a lane born later that lands on the same colour steps when it is itself coloured — so
         // the outcome does not depend on which side of a pair is processed first.
-        // §V3.1: with up to hundreds of lanes and 9 palette colours the old ±2 window let
+        // with up to hundreds of lanes and 9 palette colours the old ±2 window let
         // identical colours sit only 3 lanes apart everywhere. ±4 is the widest window that
         // still guarantees a free colour exists — its 8 neighbours can hold at most 8 of the 9.
         var taken = new HashSet<int>();

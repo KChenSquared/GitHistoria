@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// Scratch root for test runs (§16.1, F7). Honours <c>HISTORIA_TEST_TMP</c> so the scratch
+/// Scratch root for test runs (F7). Honours <c>HISTORIA_TEST_TMP</c> so the scratch
 /// directory can be pinned to a fixed path and excluded from real-time virus scans.
 /// </summary>
 public static class TestScratch

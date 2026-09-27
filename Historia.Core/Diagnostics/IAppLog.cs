@@ -5,7 +5,7 @@ namespace Historia.Diagnostics;
 public enum AppLogLevel { Trace, Debug, Info, Warn, Error }
 
 /// <summary>
-/// The injectable face of <see cref="AppLog"/> (§V9.6). Registered as a singleton so any
+/// The injectable face of <see cref="AppLog"/>. Registered as a singleton so any
 /// DI-constructed service can take an <c>IAppLog</c> in its constructor; classes the framework
 /// builds (Avalonia views/controls) and static helpers use <see cref="AppLog.Current"/> or the
 /// static <see cref="AppLog"/> methods directly. Every call is a cheap no-op unless logging is

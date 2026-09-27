@@ -1,7 +1,7 @@
 ﻿
 namespace Historia.Services.Workspace;
 
-/// <summary>Persistent recent-repositories list (§6.6.1). Singleton.</summary>
+/// <summary>Persistent recent-repositories list. Singleton.</summary>
 public interface IRecentRepositoryService
 {
     /// <summary>Most-recent first, with <see cref="RecentRepository.IsStale"/> resolved against the filesystem.</summary>

@@ -1,13 +1,13 @@
 ﻿namespace Historia.Models;
 
-/// <summary>What the user chose in Settings &gt; Appearance (§11.6).</summary>
+/// <summary>What the user chose in Settings &gt; Appearance.</summary>
 public enum ThemeMode
 {
     Dark,
     Light,
     System,
 
-    /// <summary>§V6-G9: a user-authored theme selected from the Themes panel. The active
+    /// <summary>a user-authored theme selected from the Themes panel. The active
     /// theme's id is <c>AppSettings.CustomThemeId</c>; it overlays a Dark or Light base.</summary>
     Custom,
 }
@@ -15,7 +15,7 @@ public enum ThemeMode
 /// <summary>
 /// What is actually rendered, after resolving <see cref="ThemeMode.System"/> against the OS
 /// and applying the High Contrast override. Deliberately a different type from
-/// <see cref="ThemeMode"/> (§11.6). Resolution order: HighContrast &gt; System-resolved OS
+/// <see cref="ThemeMode"/>. Resolution order: HighContrast &gt; System-resolved OS
 /// theme &gt; explicit Dark/Light.
 /// </summary>
 public enum EffectiveTheme
@@ -71,7 +71,7 @@ public enum WheelScrollDirection
     Inverted,
 }
 
-/// <summary>Scope for writing git configuration values (§9.8).</summary>
+/// <summary>Scope for writing git configuration values.</summary>
 public enum GitConfigScope
 {
     /// <summary>Writes to the repository's local <c>.git/config</c>.</summary>
@@ -84,7 +84,7 @@ public enum GitConfigScope
     System,
 }
 
-/// <summary>Result of a profile deletion operation (§14.5).</summary>
+/// <summary>Result of a profile deletion operation.</summary>
 public enum ProfileDeleteResult
 {
     /// <summary>A non-global profile was removed; the default profile was unaffected.</summary>
@@ -101,7 +101,7 @@ public enum ProfileDeleteResult
 }
 
 /// <summary>
-/// Closed set of Git CLI failure classifications (§6.5.3). Raw stderr is never surfaced
+/// Closed set of Git CLI failure classifications. Raw stderr is never surfaced
 /// unmodified; every kind maps to a user-facing message and, where applicable, a remedy.
 /// <see cref="Unknown"/> is deliberately part of the set — implementing code must not invent
 /// silent fallbacks for unrecognized failures.
@@ -134,7 +134,7 @@ public enum GitErrorKind
     Unknown,
 }
 
-/// <summary>Kind of change for a working-tree file entry (§6.8.1).</summary>
+/// <summary>Kind of change for a working-tree file entry.</summary>
 public enum FileChangeKind
 {
     Added,
@@ -150,7 +150,7 @@ public enum FileChangeKind
 
 /// <summary>
 /// In-progress multi-step Git operation, derived from on-disk markers on every status
-/// refresh (§6.7, §8.9.2).
+/// refresh.
 /// </summary>
 public enum OperationState
 {
@@ -162,7 +162,7 @@ public enum OperationState
     Bisecting,
 }
 
-/// <summary>Kind of change for a diffed file (§6.10.1).</summary>
+/// <summary>Kind of change for a diffed file.</summary>
 public enum DiffKind
 {
     Added,
@@ -173,7 +173,7 @@ public enum DiffKind
     TypeChanged,
 }
 
-/// <summary>Kind of decoration (ref pointer) attached to a commit (§6.11, §7.2).</summary>
+/// <summary>Kind of decoration (ref pointer) attached to a commit.</summary>
 public enum DecorationType
 {
     LocalBranch,
@@ -183,14 +183,14 @@ public enum DecorationType
     Stash,
 }
 
-/// <summary>Which refs a history/graph query includes (§6.4.2).</summary>
+/// <summary>Which refs a history/graph query includes.</summary>
 public enum CommitRefScope
 {
     AllRefs,
     CurrentBranch,
 }
 
-/// <summary><c>git reset</c> mode (§7.6 context menu). <see cref="Hard"/> discards working-tree changes.</summary>
+/// <summary><c>git reset</c> mode (context menu). <see cref="Hard"/> discards working-tree changes.</summary>
 public enum GitResetMode
 {
     Soft,

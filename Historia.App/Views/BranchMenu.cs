@@ -183,7 +183,7 @@ internal static class BranchMenu
         return Task.CompletedTask;
     }
 
-    /// <summary>Shared by the sidebar branch-row menu and the graph pill menu (§V4). A plain
+    /// <summary>Shared by the sidebar branch-row menu and the graph pill menu. A plain
     /// delete mirrors <c>git branch -d</c>'s safety check — refuses an unmerged branch with no
     /// upstream; on exactly that failure, offers a "Force delete" recovery action (its own
     /// destructive confirm) instead of just dumping the exception.</summary>

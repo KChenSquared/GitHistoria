@@ -1,7 +1,7 @@
 ﻿namespace Historia.Models;
 
 /// <summary>
-/// Working-directory status snapshot (§6.8.1). Paths are always repo-relative with forward
+/// Working-directory status snapshot. Paths are always repo-relative with forward
 /// slashes, matching Git's own representation; conversion to Windows paths happens only at the
 /// filesystem boundary.
 /// </summary>
@@ -29,7 +29,7 @@ public sealed record RepositoryStatus
     };
 }
 
-/// <summary>A single working-tree change entry (§6.8.1).</summary>
+/// <summary>A single working-tree change entry.</summary>
 public sealed record FileStatusEntry
 {
     /// <summary>Repo-relative, forward slashes.</summary>

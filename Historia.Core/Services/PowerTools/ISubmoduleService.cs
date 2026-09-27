@@ -1,6 +1,6 @@
 ﻿namespace Historia.Services.PowerTools;
 
-/// <summary>Submodule add / init / update / sync / remove (§8.6.2). Singleton.</summary>
+/// <summary>Submodule add / init / update / sync / remove. Singleton.</summary>
 public interface ISubmoduleService
 {
     Task<IReadOnlyList<SubmoduleInfo>> ListAsync(RepositoryContext context, CancellationToken ct = default);

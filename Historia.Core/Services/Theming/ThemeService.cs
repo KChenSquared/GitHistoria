@@ -2,12 +2,12 @@
 
 /// <inheritdoc cref="IThemeService"/>
 /// <remarks>
-/// V4 §split: this type is now UI-framework-free. It resolves the effective theme and raises
+/// this type is now UI-framework-free. It resolves the effective theme and raises
 /// <see cref="ThemeChanged"/>; applying it to a concrete resource dictionary is the App layer's
 /// job (<c>AvaloniaThemeApplier</c> subscribes to <see cref="ThemeChanged"/>). Subscribers are
 /// responsible for marshalling to their UI thread.
 /// <para>
-/// §V6-G9: it also exposes the <em>resolved</em> <see cref="Palette"/> and
+/// it also exposes the <em>resolved</em> <see cref="Palette"/> and
 /// <see cref="LaneColors"/> — the built-in tables, or a custom theme's overlay when
 /// <see cref="ThemeMode.Custom"/> is active — so consumers no longer read <c>HistoriaPalette</c> /
 /// <c>LanePalette</c> directly.
@@ -128,7 +128,7 @@ public sealed class ThemeService : IThemeService, IDisposable
     }
 
     /// <summary>Re-raise <see cref="ThemeChanged"/> with an unchanged effective theme so
-    /// consumers re-read <see cref="Palette"/> / <see cref="LaneColors"/> (§V6-G9).</summary>
+    /// consumers re-read <see cref="Palette"/> / <see cref="LaneColors"/>.</summary>
     private void ForceRefresh()
     {
         var e = Effective;
@@ -137,7 +137,7 @@ public sealed class ThemeService : IThemeService, IDisposable
 
     private EffectiveTheme Resolve(ThemeMode mode, bool highContrastOverride)
     {
-        // §V6-G9: Custom resolves through its chosen base (Dark/Light) so the Fluent variant and
+        // Custom resolves through its chosen base (Dark/Light) so the Fluent variant and
         // every EffectiveTheme switch still work. HC override still wins over everything.
         if (mode == ThemeMode.Custom && !highContrastOverride && !_probe.IsHighContrast)
         {

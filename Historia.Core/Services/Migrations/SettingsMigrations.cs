@@ -1,7 +1,7 @@
 namespace Historia.Services.Migrations;
 
 /// <summary>
-/// v0 → v1 migration for <c>settings.json</c> (§9.3, §14 <c>Migrations/V0ToV1.cs</c>).
+/// v0 → v1 migration for <c>settings.json</c> (<c>Migrations/V0ToV1.cs</c>).
 /// v0 is the legacy / first-run shape with no <c>schemaVersion</c> field. There are no field
 /// renames yet, so this only stamps the version.
 /// </summary>
@@ -17,7 +17,7 @@ public sealed class SettingsV0ToV1 : IJsonMigration
 }
 
 /// <summary>
-/// v1 → v2: adds the graph-panel column layout (§V2-11.1). Additive — an absent
+/// v1 → v2: adds the graph-panel column layout. Additive — an absent
 /// <c>graphColumns</c> is left absent so the record default (<c>GraphColumnDefaults.All</c>)
 /// applies on deserialize. Structural validation of a hand-edited list happens in
 /// <c>SettingsService</c> after deserialize (M5).
@@ -33,7 +33,7 @@ public sealed class SettingsV1ToV2 : IJsonMigration
     }
 }
 
-/// <summary>v2 → v3: adds issue autolinks and the diff word-wrap flag (§V2-17). Additive —
+/// <summary>v2 → v3: adds issue autolinks and the diff word-wrap flag. Additive —
 /// absent keys fall through to the record defaults on deserialize.</summary>
 public sealed class SettingsV2ToV3 : IJsonMigration
 {
@@ -47,7 +47,7 @@ public sealed class SettingsV2ToV3 : IJsonMigration
 }
 
 /// <summary>
-/// v3 → v4 (§V3-13.3). Unlike its predecessors this rewrites three things:
+/// v3 → v4. Unlike its predecessors this rewrites three things:
 /// <list type="number">
 ///   <item>sets <c>restoreSessionTabs</c> to <c>true</c> only when the key is absent — a user
 ///   who deliberately turned it off keeps their choice;</item>
@@ -91,7 +91,7 @@ public sealed class SettingsV3ToV4 : IJsonMigration
     }
 }
 
-/// <summary>v4 → v5: adds the multi-line tab-strip flag and its row cap (§V3-B). Additive —
+/// <summary>v4 → v5: adds the multi-line tab-strip flag and its row cap. Additive —
 /// absent keys fall through to the record defaults on deserialize, so this only stamps the
 /// version.</summary>
 public sealed class SettingsV4ToV5 : IJsonMigration
@@ -119,7 +119,7 @@ public sealed class SettingsV5ToV6 : IJsonMigration
     }
 }
 
-/// <summary>v6 → v7: adds <c>graphRowHardCap</c> (§7.3). Additive — an absent key falls through
+/// <summary>v6 → v7: adds <c>graphRowHardCap</c>. Additive — an absent key falls through
 /// to the record default (200,000) on deserialize, so this only stamps the version.</summary>
 public sealed class SettingsV6ToV7 : IJsonMigration
 {
@@ -145,7 +145,7 @@ public sealed class SettingsV7ToV8 : IJsonMigration
     }
 }
 
-/// <summary>v8 → v9: adds the terminal settings block (V5 §13). Additive — every new key has a
+/// <summary>v8 → v9: adds the terminal settings block. Additive — every new key has a
 /// working record default, so this only stamps the version.</summary>
 public sealed class SettingsV8ToV9 : IJsonMigration
 {
@@ -172,7 +172,7 @@ public sealed class SettingsV9ToV10 : IJsonMigration
     }
 }
 
-/// <summary>v10 → v11: adds <c>customThemeId</c> (§V6-G9). Additive — an absent key falls
+/// <summary>v10 → v11: adds <c>customThemeId</c>. Additive — an absent key falls
 /// through to the record default (<c>null</c>) on deserialize, so this only stamps the
 /// version.</summary>
 public sealed class SettingsV10ToV11 : IJsonMigration
@@ -223,7 +223,7 @@ public sealed class SettingsV13ToV14() : StampOnlyMigration(13, 14);
 
 /// <summary>v14 → v15: v9 profile/network rework — drops <c>networkMode</c> and
 /// <c>enablePerRepoProfiles</c>, renames <c>primaryProfileId</c> → <c>defaultProfileId</c>.
-/// v9 ships with a data wipe (§23), so no field-level migration is attempted; this only
+/// v9 ships with a data wipe, so no field-level migration is attempted; this only
 /// stamps the version for any settings file that survives.</summary>
 public sealed class SettingsV14ToV15 : IJsonMigration
 {
@@ -241,7 +241,7 @@ public sealed class SettingsV14ToV15 : IJsonMigration
     }
 }
 
-/// <summary>v15 → v16: adds <c>autoFetchEnabled</c> (§12.1). Additive — an absent key falls
+/// <summary>v15 → v16: adds <c>autoFetchEnabled</c>. Additive — an absent key falls
 /// through to the record default (<c>true</c>) on deserialize, so this only stamps the
 /// version.</summary>
 public sealed class SettingsV15ToV16() : StampOnlyMigration(15, 16);

@@ -47,7 +47,7 @@ public class AppBandDragReorderTests
         Assert.Equal(expected, AppBandDragReorder.EdgeDirection(viewportX, viewportWidth: 800, zone: 28));
     }
 
-    // §F9: a linked child's live drag target is clamped into its own group's span
+    // a linked child's live drag target is clamped into its own group's span
     // [groupStart + 1, groupStart + groupCount - 1] — group index 2, three-member group (owner
     // at 2, two children at 3 and 4) unless stated otherwise.
     [Theory]

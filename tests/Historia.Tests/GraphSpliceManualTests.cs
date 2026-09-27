@@ -27,7 +27,7 @@ public sealed class ManualFactAttribute : FactAttribute
 /// <list type="number">
 /// <item>Point <c>HISTORIA_SPLICE_REPO</c> at a real ≥ 200,000-row clone (e.g. linux). Turn on
 /// "Splice new commits into the graph cache instead of re-walking" in Settings ▸ Advanced. Open the
-/// repo once so its full history is on disk and exhausted (§7.6's background spill), then close it
+/// repo once so its full history is on disk and exhausted ('s background spill), then close it
 /// (or switch to another tab) so it becomes an inactive tab.</item>
 /// <item>Advance the checked-out branch's remote by a real <c>git fetch</c> — a normal fast-forward
 /// fetch of a handful of new commits, no other branch touched. Wait for the inactive-tab headless

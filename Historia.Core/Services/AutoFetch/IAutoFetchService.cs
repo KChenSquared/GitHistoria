@@ -1,7 +1,7 @@
 namespace Historia.Services.AutoFetch;
 
 /// <summary>How a repository came to be open, for the "app start with no open repo" branch of
-/// <see cref="IAutoFetchService"/>'s start conditions (§12.1.1). A freshly cloned / initialized
+/// <see cref="IAutoFetchService"/>'s start conditions. A freshly cloned / initialized
 /// repo is already current, so it gets no <c>[InitialFetch]</c>; an opened one does.</summary>
 public enum RepoEntrySource
 {
@@ -10,7 +10,7 @@ public enum RepoEntrySource
 }
 
 /// <summary>Per-tab position in the current <c>[AutoFetch]</c> cycle, for the developer-only
-/// tab colour bars (§12.1 / §21). Red / yellow / green.</summary>
+/// tab colour bars. Red / yellow / green.</summary>
 public enum AutoFetchTabState
 {
     /// <summary>The <c>[AutoFetch]</c> loop has not started yet (start-condition wait,
@@ -28,7 +28,7 @@ public enum AutoFetchTabState
 /// <summary>
 /// App-supplied bridge the Core <see cref="IAutoFetchService"/> uses to (a) know when a
 /// repository tab is <b>fully loaded</b> — branches panel, full graph paint, changes panel
-/// (§12.1) — and (b) actually run a background <c>git fetch</c>. Kept out of Core so the
+/// — and (b) actually run a background <c>git fetch</c>. Kept out of Core so the
 /// schedule logic can be tested with no real repository, watcher, or git process.
 /// </summary>
 public interface IAutoFetchHost
@@ -37,14 +37,14 @@ public interface IAutoFetchHost
     /// its own; a headless context completes it immediately.</summary>
     Task WhenFullyLoadedAsync(RepositoryContext context, CancellationToken ct);
 
-    /// <summary>Runs one background fetch on <paramref name="context"/> (§12.1 — honours SSH
+    /// <summary>Runs one background fetch on <paramref name="context"/> (honours SSH
     /// Only, never prompts, quiet on failure). Exceptions other than cancellation are swallowed
     /// by the caller.</summary>
     Task FetchAsync(RepositoryContext context, CancellationToken ct);
 }
 
 /// <summary>
-/// §12.1: keeps every open repository's remote-tracking refs warm without a manual Fetch. An
+/// keeps every open repository's remote-tracking refs warm without a manual Fetch. An
 /// app-lifetime singleton. Once the app has fully loaded its repo(s) it runs an optional
 /// one-shot <c>[InitialFetch]</c> and then an infinite <c>[AutoFetch]</c> loop (5&#160;min idle,
 /// then one fetch per open repo 1&#160;min apart, then restart). A successful fetch also refreshes
@@ -70,7 +70,7 @@ public interface IAutoFetchService : IAsyncDisposable
     void NotifyRepoEntering(RepoEntrySource source);
 
     /// <summary>This repo's state in the current <c>[AutoFetch]</c> cycle — for the developer-only
-    /// tab colour bars (§21). Cheap; safe to call from the UI thread.</summary>
+    /// tab colour bars. Cheap; safe to call from the UI thread.</summary>
     AutoFetchTabState GetTabState(RepositoryContext context);
 
     /// <summary>Raised (on an arbitrary thread) whenever a <see cref="GetTabState"/> result may

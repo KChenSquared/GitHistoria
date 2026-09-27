@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>§V3-10.2: the navigation bus provides a read side so a native control can tell
+/// <summary>the navigation bus provides a read side so a native control can tell
 /// whether Home or a repository is showing.</summary>
 [Trait("tier", "unit")]
 public class NavigationBusTests

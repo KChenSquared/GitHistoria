@@ -170,7 +170,7 @@ public sealed class GitCliService : IGitCliService
             try
             {
                 await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-                // Drain both pipes fully before reading — never before this point (§6.5.1).
+                // Drain both pipes fully before reading — never before this point.
                 await Task.WhenAll(stdoutDrained, stderrDone.Task).ConfigureAwait(false);
             }
             catch (OperationCanceledException)

@@ -1,7 +1,7 @@
 namespace Historia.Controls;
 
 /// <summary>
-/// The custom-drawn embedded terminal (V5 §6). A monospace grid of coloured cells — a simpler
+/// The custom-drawn embedded terminal. A monospace grid of coloured cells — a simpler
 /// drawing problem than <see cref="CommitGraphControl"/>: no lane assignment, no DAG layout, no
 /// bezier routing. Windowed render, pooled brushes/pens, a per-codepoint glyph cache, all
 /// miss-counted through the Core <see cref="RenderResourceCache{TKey,TValue}"/> (rule 24).
@@ -81,7 +81,7 @@ public sealed class TerminalControl : Control
     public TerminalSession? Session => _session;
 
     /// <summary>Raised when the user presses Enter in a session whose shell has exited — the
-    /// dock restarts it (V5 §7.2, "no auto-respawn").</summary>
+    /// dock restarts it ("no auto-respawn").</summary>
     public event EventHandler? RestartRequested;
 
     public void SetSession(TerminalSession? session)
@@ -166,7 +166,7 @@ public sealed class TerminalControl : Control
         InvalidateVisual();
     }
 
-    // ── font metrics (V5 §6.1) ──────────────────────────────────────────────────────────────
+    // ── font metrics ──────────────────────────────────────────────────────────────
 
     private void RemeasureFont()
     {
@@ -266,7 +266,7 @@ public sealed class TerminalControl : Control
         InvalidateVisual();
     }
 
-    // ── render (V5 §6.2) ────────────────────────────────────────────────────────────────────
+    // ── render ────────────────────────────────────────────────────────────────────
 
     public override void Render(DrawingContext dc)
     {
@@ -285,7 +285,7 @@ public sealed class TerminalControl : Control
             var total = view.TotalLines;
             // The emulator's own viewport top (YDisp) is the authoritative bottom-anchor:
             // XTerm.NET pre-grows the buffer toward its scrollback capacity, so `total - rows`
-            // points at blank pre-allocated lines far below the content (review §6).
+            // points at blank pre-allocated lines far below the content (review).
             var bottomTop = Math.Clamp(view.ViewportTop, 0, Math.Max(0, total - 1));
             var top = Math.Clamp(bottomTop - (int)Math.Round(_scrollOffsetLines), 0, bottomTop);
             (metMax, metValue) = (bottomTop, top);
@@ -499,7 +499,7 @@ public sealed class TerminalControl : Control
         return (fg, flags);
     }
 
-    /// <summary>Resolves fg/bg, swapping them first when the cell is inverse (V5 §6.2) so
+    /// <summary>Resolves fg/bg, swapping them first when the cell is inverse so
     /// inverse cells still merge into runs.</summary>
     private (uint Bg, uint Fg) ApplyInverse(TerminalCellSnapshot cell, IReadOnlyDictionary<string, Rgb> palette)
     {
@@ -515,7 +515,7 @@ public sealed class TerminalControl : Control
         return new Typeface(_typeface.FontFamily, style, weight);
     }
 
-    // ── input (V5 §6.5) ─────────────────────────────────────────────────────────────────────
+    // ── input ─────────────────────────────────────────────────────────────────────
 
     protected override void OnGotFocus(Avalonia.Input.GotFocusEventArgs e)
     {
@@ -559,7 +559,7 @@ public sealed class TerminalControl : Control
 
         var mods = ToModifiers(e.KeyModifiers);
 
-        // Terminal-scoped chords the control does NOT claim (V5 §7.3).
+        // Terminal-scoped chords the control does NOT claim.
         if (mods == TerminalModifiers.Control && e.Key == Key.OemTilde) { base.OnKeyDown(e); return; }
         if (mods.HasFlag(TerminalModifiers.Control) && mods.HasFlag(TerminalModifiers.Shift)
             && e.Key is Key.C or Key.V or Key.F)
@@ -643,7 +643,7 @@ public sealed class TerminalControl : Control
         e.Handled = true;
     }
 
-    // ── selection & clipboard (V5 §6.7) ─────────────────────────────────────────────────────
+    // ── selection & clipboard ─────────────────────────────────────────────────────
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
@@ -652,7 +652,7 @@ public sealed class TerminalControl : Control
         if (_session is null || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
             return;
 
-        // Ctrl+Click opens the active OSC 8 hyperlink (V5 §9.3). IExternalLauncher itself
+        // Ctrl+Click opens the active OSC 8 hyperlink. IExternalLauncher itself
         // enforces absolute http(s) only, so a non-web scheme simply does not open.
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && _session.LastHyperlink is { } url)
         {
@@ -673,7 +673,7 @@ public sealed class TerminalControl : Control
     {
         base.OnPointerMoved(e);
 
-        // Phishing mitigation (V5 §9.3): surface the real OSC 8 target rather than the styled
+        // Phishing mitigation: surface the real OSC 8 target rather than the styled
         // link text. Per-cell hyperlink hit-testing needs buffer-view support it doesn't have
         // yet — the active-hyperlink target is shown while one is in effect (named gap).
         var link = _session?.LastHyperlink;

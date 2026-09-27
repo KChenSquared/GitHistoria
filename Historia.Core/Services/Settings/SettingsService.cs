@@ -26,7 +26,7 @@ public sealed class SettingsService : ISettingsService, IAsyncDisposable
     }
 
     /// <summary>
-    /// Synchronous load, called once before the window is shown (§6.2.2). <c>settings.json</c>
+    /// Synchronous load, called once before the window is shown. <c>settings.json</c>
     /// is small; this is the one permitted blocking read. A missing or corrupt file yields
     /// defaults without throwing.
     /// </summary>

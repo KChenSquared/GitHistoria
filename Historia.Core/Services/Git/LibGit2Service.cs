@@ -1,14 +1,14 @@
 namespace Historia.Services.Git;
 
 /// <summary>
-/// LibGit2Sharp projection adapter (§6.4). Every method here is <b>synchronous</b> and is
+/// LibGit2Sharp projection adapter. Every method here is <b>synchronous</b> and is
 /// meant to be invoked <i>inside</i> a <c>RepositoryContext.WithRepositoryAsync</c> callback
-/// (§6.3.1); it projects LibGit2Sharp objects into Historia's own records and returns only
+///; it projects LibGit2Sharp objects into Historia's own records and returns only
 /// those. Stateless — registered as a singleton.
 /// </summary>
 public sealed class LibGit2Service
 {
-    /// <summary><see cref="Branch.RemoteName"/> throws for a local branch — guard it (§V3-11.1).</summary>
+    /// <summary><see cref="Branch.RemoteName"/> throws for a local branch — guard it.</summary>
     private static string? SafeRemoteName(Branch branch)
     {
         if (!branch.IsRemote)
@@ -33,7 +33,7 @@ public sealed class LibGit2Service
         };
     }
 
-    /// <summary>True when an executable <c>pre-commit</c> or <c>commit-msg</c> hook is present (§6.9.2).</summary>
+    /// <summary>True when an executable <c>pre-commit</c> or <c>commit-msg</c> hook is present.</summary>
     public static bool RepoHasCommitHooks(string gitDir)
     {
         // core.hooksPath is not consulted here — the common husky / pre-commit / lint-staged
@@ -238,7 +238,7 @@ public sealed class LibGit2Service
                 IsCurrent = branch.IsCurrentRepositoryHead,
                 TipCommitId = branch.Tip?.Id,
                 UpstreamName = branch.TrackedBranch?.FriendlyName,
-                // Ahead/behind stays null here — computed lazily per visible row (§6.12).
+                // Ahead/behind stays null here — computed lazily per visible row.
             });
         }
 
@@ -289,9 +289,9 @@ public sealed class LibGit2Service
     }
 
     /// <summary>
-    /// Projects a single-file diff for one of the sources in §6.10.2, including the
+    /// Projects a single-file diff for one of the sources in including the
     /// merge-commit and root-commit cases. The size guard runs before content is materialized
-    /// (§6.10.3): files above 5 MB or 50,000 lines return <c>IsTruncated</c> with no hunks.
+    ///: files above 5 MB or 50,000 lines return <c>IsTruncated</c> with no hunks.
     /// </summary>
     public FileDiff ProjectDiff(Repository repo, DiffRequest request)
     {
@@ -374,7 +374,7 @@ public sealed class LibGit2Service
         if (commit is null)
             throw new HistoriaGitException(GitErrorKind.RefNotFound, "Commit not found.");
 
-        // Root commit → empty tree; merge commit → the requested parent (§6.10.2).
+        // Root commit → empty tree; merge commit → the requested parent.
         var parent = commit.Parents.ElementAtOrDefault(Math.Max(0, request.ParentIndex - 1));
         return repo.Diff.Compare<Patch>(parent?.Tree, commit.Tree, paths, explicitPathsOptions: null, compareOptions: options);
     }
@@ -390,7 +390,7 @@ public sealed class LibGit2Service
     {
         options.Algorithm = DiffAlgorithm.Myers;
         // LibGit2Sharp exposes whitespace handling only through raw diff flags on some
-        // builds; the viewer applies IgnoreAll/IgnoreTrailing as a display option (§6.10.4).
+        // builds; the viewer applies IgnoreAll/IgnoreTrailing as a display option.
         _ = mode;
     }
 
@@ -413,7 +413,7 @@ public sealed class LibGit2Service
         _ => DiffKind.Modified,
     };
 
-    // ── Cheap local mutations (§6.4.1) ──
+    // ── Cheap local mutations ──
 
     public void Stage(Repository repo, IReadOnlyList<string> paths) => Commands.Stage(repo, paths);
 
@@ -742,7 +742,7 @@ public sealed class LibGit2Service
             Path = path,
             Kind = kind,
             OldPath = oldPath,
-            IsBinary = false, // Refined by the diff engine when the file is opened (§6.10).
+            IsBinary = false, // Refined by the diff engine when the file is opened.
             IsSubmodule = isSubmodule,
             SizeBytes = size,
         };

@@ -1,18 +1,18 @@
 namespace Historia.Controls;
 
 /// <summary>
-/// Native commit graph + history list (§7.4). Avalonia port of the WPF
+/// Native commit graph + history list. Avalonia port of the WPF
 /// <c>NativeControls.CommitGraphControl</c>. Fully virtualized: only the visible row range is
-/// drawn each frame. Selection flows through <see cref="IRepositoryStateService"/> (§7.7).
+/// drawn each frame. Selection flows through <see cref="IRepositoryStateService"/>.
 /// </summary>
 public sealed partial class CommitGraphControl : Control
 {
     private const double MinRowHeight = 20;
     private const double MaxRowHeight = 44;
     private const double WashRowGap = 2; // px of background between adjacent rows' lane washes
-    private const double MinLaneWidth = 15; // §V3.1
+    private const double MinLaneWidth = 15;
     private const double MaxLaneWidth = 60;
-    /// <summary>§V3.2: commit node radius.</summary>
+    /// <summary>commit node radius.</summary>
     private const double NodeRadius = 5;
     private const double RowTextSize = 14;
     private const double HeaderTextSize = 12;
@@ -21,11 +21,11 @@ public sealed partial class CommitGraphControl : Control
     private const double QueryBarHeight = 32;
     private const double BoundaryGrab = 4;
     private const double TickWidth = 4;
-    /// <summary>§V6-G2: the lane-line stroke width, shared by <see cref="LanePen"/> and the
+    /// <summary>the lane-line stroke width, shared by <see cref="LanePen"/> and the
     /// HEAD badge→node connector.</summary>
     private const double LaneStrokeWidth = 2.0;
 
-    private double _laneWidth = 18; // §V3.1: raised from 16 (+2px)
+    private double _laneWidth = 18; // raised from 16 (+2px)
     private double LaneWidth => _laneWidth;
 
     private IServiceProvider _services = default!;
@@ -43,7 +43,7 @@ public sealed partial class CommitGraphControl : Control
     private Historia.Services.UI.IScrollDirectionProbe _scrollProbe = default!;
     private Historia.Services.Settings.IRepoLayoutService _repoLayout = default!;
 
-    // §7.6 takes effect on the next launch, and GraphLayoutService snapshots it at construction.
+    // takes effect on the next launch, and GraphLayoutService snapshots it at construction.
     // Snapshot it here too so the control's resident-row ceiling always matches the service's —
     // a mid-session toggle must not make the control cap at the configurable disk-mode ceiling
     // (AppSettings.ResidentRowCap, clamped to 500k..10M) while metadata is still fully resident
@@ -53,9 +53,9 @@ public sealed partial class CommitGraphControl : Control
     private int _residentRowCapSetting;
     private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk, _residentRowCapSetting);
 
-    // §V10.1.2: the silent background crawler pre-loads only this many rows into the
+    // the silent background crawler pre-loads only this many rows into the
     // resident layout after first paint, advancing in discrete threshold steps as the user
-    // scrolls (R3/R4). Deeper history reaches disk in full via the §7.6 background spill
+    // scrolls (R3/R4). Deeper history reaches disk in full via the background spill
     // regardless of this cap (R2). Crawling all the way to ResidentRowCap (2,000,000 on a big
     // repo) built a multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
     // Configurable (AppSettings.SilentCrawlRowCap, default 100,000); 0 means uncapped, i.e. the
@@ -75,7 +75,7 @@ public sealed partial class CommitGraphControl : Control
     private IReadOnlyList<GraphColumn> _columns = GraphColumnDefaults.All;
     private bool _graphWidthPinned;
 
-    // ── Reveal-toward-an-unrendered-commit (§7.3) ──
+    // ── Reveal-toward-an-unrendered-commit ──
     private ObjectId? _revealTarget;         // commit the pump is walking toward; null = idle
     private GraphDecoration? _revealDeco;    // stand-in badge drawn while walking
     private bool _revealUserTookOver;        // user scrolled/zoomed since the click → stop driving
@@ -163,7 +163,7 @@ public sealed partial class CommitGraphControl : Control
     private double _scrollOffset;
     private double _hScrollOffset;
 
-    // §V3.1 in-graph lane pan: scrolls the lanes INSIDE the Graph column without moving any
+    // in-graph lane pan: scrolls the lanes INSIDE the Graph column without moving any
     // other column, so any lane is reachable while Message stays on screen. In DIP, lane space.
     // Per repo for the session only (reset to lane 0 at launch) — saved on repo switch, restored
     // on Attach, never persisted.
@@ -362,11 +362,11 @@ public sealed partial class CommitGraphControl : Control
     private readonly Dictionary<int, SolidColorBrush> _laneBrushes = [];
     private readonly Dictionary<int, Pen> _emphPens = [];
     private readonly Dictionary<int, Pen> _pillBorders = [];
-    // §V6-G1: badge label/icon ink — one of two shared brushes per lane colour's luminance.
+    // badge label/icon ink — one of two shared brushes per lane colour's luminance.
     private readonly Dictionary<int, SolidColorBrush> _badgeInk = [];
-    // §V6-G2: faint 1 DIP pen per lane colour for the non-HEAD badge→node connector.
+    // faint 1 DIP pen per lane colour for the non-HEAD badge→node connector.
     private readonly Dictionary<int, Pen> _faintConnectorPens = [];
-    // §V6-G2: per-frame row -> right edge (screen x) of the primary drawn badge.
+    // per-frame row -> right edge (screen x) of the primary drawn badge.
     private readonly Dictionary<int, double> _badgeRightEdge = [];
     private readonly Dictionary<int, SolidColorBrush> _laneFills = [];
     private readonly Dictionary<int, SolidColorBrush> _laneTicks = [];
@@ -684,7 +684,7 @@ public sealed partial class CommitGraphControl : Control
             _state.RevealCommitRequested -= OnRevealCommitRequested;
         }
 
-        // §V3.1: stash this repo's lane-pan offset for the session before switching away.
+        // stash this repo's lane-pan offset for the session before switching away.
         if (_context is { } leaving)
             _panByRepo[Historia.Services.Settings.IRepoLayoutService.KeyFor(leaving.RepositoryPath)] = _graphPanOffset;
 
@@ -797,7 +797,7 @@ public sealed partial class CommitGraphControl : Control
         {
             if (_context is null)
                 return;
-            // §V3.1: accept this repo's own change and any application-wide column change.
+            // accept this repo's own change and any application-wide column change.
             var mine = string.Equals(e.RepoPath,
                 Historia.Services.Settings.IRepoLayoutService.KeyFor(_context.RepositoryPath), StringComparison.Ordinal);
             var global = string.Equals(e.RepoPath,
@@ -857,7 +857,7 @@ public sealed partial class CommitGraphControl : Control
         InvalidateVisual();
     }
 
-    /// <summary>§V3.1: pan the Graph column so the selected commit's lane is visible. Runs from
+    /// <summary>pan the Graph column so the selected commit's lane is visible. Runs from
     /// the one place the selected row changes (row click, clamped-node click, keyboard nav,
     /// Ctrl+F step, reveal) — never from hover.</summary>
     private void AutoPanToSelectedRow()
@@ -1023,12 +1023,12 @@ public sealed partial class CommitGraphControl : Control
     }
 
     private int ResolveRow(ObjectId? id)
-        // §Phase 2: RowByCommitId is shared with the layout service's still-growing accumulator
+        // 2: RowByCommitId is shared with the layout service's still-growing accumulator
         // (not copied per snapshot), so an older layout must ignore rows beyond its own RowCount.
         => id is not null && _layout is { } l && l.Layout.RowByCommitId.TryGetValue(id, out var row)
             && row < l.Layout.RowCount ? row : -1;
 
-    /// <summary>§7.3: rows laid out in the first, fast phase before the configured
+    /// <summary>rows laid out in the first, fast phase before the configured
     /// "Initial rows loaded" batch, so a repo open / switch paints almost immediately.</summary>
     private const int QuickInitialRows = 200;
 
@@ -1169,7 +1169,7 @@ public sealed partial class CommitGraphControl : Control
         _selectedRow = ResolveRow(_state?.SelectedCommitId);
         RecomputeMatches();
         InvalidateMeasure();
-        // §V3.1: TotalLaneCount drives the auto Graph width — re-arrange, not just re-paint.
+        // TotalLaneCount drives the auto Graph width — re-arrange, not just re-paint.
         InvalidateArrange();
         InvalidateVisual();
     }
@@ -1404,7 +1404,7 @@ public sealed partial class CommitGraphControl : Control
         {
             await Task.Yield();
 
-            // §V10.1.2: don't pre-load history until this tab has fully loaded (first paint +
+            // don't pre-load history until this tab has fully loaded (first paint +
             // its own identity resolution + first RefreshAllAsync). Otherwise the crawl floods
             // the foreground repo gate with ~1 request/second and the tab's own status/branch
             // work is starved (observed: a 47 s footer freeze mid-crawl on linux). Bounded
@@ -1525,14 +1525,14 @@ public sealed partial class CommitGraphControl : Control
         _refsBaseWidth = Math.Clamp(w, GraphColumnDefaults.RefsStaticFloor, 240);
     }
 
-    /// <summary>§V6-G9: the resolved lane colour for an index, read from the theme service
+    /// <summary>the resolved lane colour for an index, read from the theme service
     /// (built-in rainbow or the active custom overlay). The maths lives in
     /// <see cref="GraphLanePalette.LaneRgb"/> so it is unit-testable; this is the control-state
     /// binding of it.</summary>
     private Rgb LaneRgb(int colorIndex)
         => GraphLanePalette.LaneRgb(colorIndex, _theme.LaneColors, _themeMode);
 
-    // §V6: every per-lane-colour Pen/Brush is memoised in its own dictionary (all cleared
+    // every per-lane-colour Pen/Brush is memoised in its own dictionary (all cleared
     // together by RebuildThemeResources on a theme change). One shape: look it up, else build
     // it once and cache. The build lambda runs only on a miss.
     private static T Pooled<T>(Dictionary<int, T> pool, int colorIndex, Func<int, T> build)
@@ -1545,7 +1545,7 @@ public sealed partial class CommitGraphControl : Control
     private Pen LanePen(int colorIndex) => Pooled(_lanePens, colorIndex,
         i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), LaneStrokeWidth, lineCap: PenLineCap.Square));
 
-    /// <summary>§V6-G2: a thin, faint version of the lane colour for a non-HEAD badge→node
+    /// <summary>a thin, faint version of the lane colour for a non-HEAD badge→node
     /// connector. 1 DIP at 45% alpha — the crisp, stable equivalent of "thin and faint" (a
     /// sub-pixel stroke rounds away under layout rounding).</summary>
     private Pen FaintConnectorPen(int colorIndex) => Pooled(_faintConnectorPens, colorIndex, i =>
@@ -1560,7 +1560,7 @@ public sealed partial class CommitGraphControl : Control
     private Pen EmphPen(int colorIndex) => Pooled(_emphPens, colorIndex,
         i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 3.0, lineCap: PenLineCap.Square));
 
-    /// <summary>§V6-G1: the badge is a solid opaque lane-colour fill, so its label and icons
+    /// <summary>the badge is a solid opaque lane-colour fill, so its label and icons
     /// need ink that contrasts against that hue — near-black on a light badge, near-white on a
     /// dark one. Two shared brush instances keep <see cref="Text"/>'s cache keying correct.</summary>
     private SolidColorBrush BadgeInk(int colorIndex) => Pooled(_badgeInk, colorIndex,
@@ -1600,7 +1600,7 @@ public sealed partial class CommitGraphControl : Control
             double.IsInfinity(availableSize.Height) ? 400 : availableSize.Height);
     }
 
-    /// <summary>§V3.1: resolve the column band into <see cref="_resolvedColumns"/>,
+    /// <summary>resolve the column band into <see cref="_resolvedColumns"/>,
     /// <see cref="_bandWidth"/>, <see cref="_graphColLeft"/>, <see cref="_graphColWidth"/> and
     /// clamp the lane pan. Runs in <see cref="ArrangeOverride"/> (so the scrollbar logic there
     /// sees this frame's band width, not last frame's) and again at the top of
@@ -1709,7 +1709,7 @@ public sealed partial class CommitGraphControl : Control
             _zoomOverridesPin = true;
             _elbowGeometryCache.Clear();
 
-            // §V3.1: scale the pan by the same ratio the lane width actually changed by, so the
+            // scale the pan by the same ratio the lane width actually changed by, so the
             // same lanes stay in view; ClampPan again once the resolved column width settles.
             if (laneBefore > 0)
                 _graphPanOffset *= _laneWidth / laneBefore;
@@ -1724,7 +1724,7 @@ public sealed partial class CommitGraphControl : Control
             return;
         }
 
-        // §V3.1: Shift+wheel, or a trackpad horizontal swipe, over the Graph column's rows pans
+        // Shift+wheel, or a trackpad horizontal swipe, over the Graph column's rows pans
         // the lanes. Some platforms deliver Shift+wheel as Delta.X already, so accept either.
         // With no hidden lanes (MaxPan == 0) this falls through to vertical scrolling, as today.
         if (MaxPan > 0)
@@ -1802,7 +1802,7 @@ public sealed partial class CommitGraphControl : Control
             var eff = _resizeInverted ? -delta : delta;
             var min = GraphColumnDefaults.MinWidthFor(_resizeKind);
             var max = GraphColumnDefaults.MaxWidthFor(_resizeKind);
-            // §V3.1: Graph never drags wider than the lanes the layout uses (skip until a
+            // Graph never drags wider than the lanes the layout uses (skip until a
             // layout has lanes). Applying the ceiling during the drag — not only on save —
             // also removes the snap-back when a non-Graph column is released past 2,000px.
             if (_resizeKind == GraphColumnKind.Graph && _layout is { } l && l.Layout.TotalLaneCount > 0)
@@ -2030,7 +2030,7 @@ public sealed partial class CommitGraphControl : Control
         base.OnKeyDown(e);
     }
 
-    // ── Graph query & find (§V2-17.3) ──
+    // ── Graph query & find ──
 
     private void ToggleQueryBar(bool show)
     {
@@ -2067,7 +2067,7 @@ public sealed partial class CommitGraphControl : Control
         var term = _searchBox.Text?.Trim() ?? "";
 
         // The store owns the scan: an in-memory array loops; a disk-backed store streams its
-        // search sidecar rather than paging every record (§7.5, §7.6).
+        // search sidecar rather than paging every record.
         _matches.Reset(term.Length > 0 && _layout is { } l ? l.Layout.Commits.Search(term) : []);
         if (_matches.HasMatches)
             ScrollRowIntoView(_matches.Rows[0]);
@@ -2323,7 +2323,7 @@ public sealed partial class CommitGraphControl : Control
         _ = _repoLayout.UpdateAsync(ctx.RepositoryPath, l => l with { Columns = cols, GraphWidthPinned = pinned });
     }
 
-    /// <summary>§V3.1: the width that shows every lane the layout uses, plus one lane of margin
+    /// <summary>the width that shows every lane the layout uses, plus one lane of margin
     /// for the right-edge tick.</summary>
     private double NaturalGraphWidth(int lanes) => (lanes + 1) * LaneWidth;
 
@@ -2333,7 +2333,7 @@ public sealed partial class CommitGraphControl : Control
             return;
         var layout = result.Layout;
 
-        // §V3.1: Graph auto-fit stretches to show the whole graph at once — every lane plus one
+        // Graph auto-fit stretches to show the whole graph at once — every lane plus one
         // lane of tick margin — bounded by the floor and the hand-edit sanity ceiling. (Without
         // this it measured an empty string and landed on its 150px floor.)
         if (kind == GraphColumnKind.Graph)
@@ -2736,7 +2736,7 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
-    // ── §V3-B: folded-badge ref list ──
+    // ── folded-badge ref list ──
 
     private bool RefListBadgeHovered()
     {
@@ -2945,7 +2945,7 @@ public sealed partial class CommitGraphControl : Control
         left.Children.Add(kind);
         left.Children.Add(name);
 
-        // Same local/remote status glyphs as the badge itself (§V6-G2), right-aligned here so
+        // Same local/remote status glyphs as the badge itself, right-aligned here so
         // the row reads consistently with the badge that this popup expanded from.
         var icons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
         if (type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
@@ -3004,7 +3004,7 @@ public sealed partial class CommitGraphControl : Control
         return rowBorder;
     }
 
-    // ── Render (§V2-6.3) ──
+    // ── Render ──
 
     private readonly Dictionary<int, List<GraphDecoration>> _decoIndex = [];
     private object? _decoIndexKey;
@@ -3054,7 +3054,7 @@ public sealed partial class CommitGraphControl : Control
 
         if (_layout is not { } result)
         {
-            // §V10.1.2: nothing painted yet — the optimistic snapshot missed and the real walk
+            // nothing painted yet — the optimistic snapshot missed and the real walk
             // is still priming (on a large, never-before-opened repo `git log --date-order` can
             // take a couple of seconds to yield its first row; see
             // GraphLayoutService.PrimeCliWalkAsync).
@@ -3116,11 +3116,11 @@ public sealed partial class CommitGraphControl : Control
             return;
 
         // Fault the visible block of a disk-backed store in with one read before the column
-        // passes start indexing it row by row (§7.6). A no-op for the in-memory store.
+        // passes start indexing it row by row. A no-op for the in-memory store.
         layout.Commits.Prefetch(first, last);
 
         // Derive the lane segments for the whole drawn block up front, with a tight window after
-        // a jump such as a scrollbar drag (§7.6).
+        // a jump such as a scrollbar drag.
         layout.EnsureRows(first, last);
 
         _pillRects.Clear();
@@ -3151,7 +3151,7 @@ public sealed partial class CommitGraphControl : Control
             {
                 var gr = layout.Rows[row];
                 var colorIndex = gr.ColorIndex;
-                // §V3.2: the wash starts at the commit's own node — the graph line it sits on —
+                // the wash starts at the commit's own node — the graph line it sits on —
                 // and runs right to the column edge, rather than beginning half a lane to its
                 // left and covering the whole lane band.
                 var fillLeft = Math.Max(gx, NodeX(gr.LaneIndex, out _));
@@ -3224,7 +3224,7 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
-    /// <summary>§V6-G2: when the Branch/Tags column sits immediately left of the Graph column,
+    /// <summary>when the Branch/Tags column sits immediately left of the Graph column,
     /// draw a short horizontal line from each row's primary badge to its commit node. The
     /// checked-out branch's row gets the full lane line (colour + <see cref="LaneStrokeWidth"/>);
     /// every other decorated row gets a faint 1 DIP hairline in the same lane colour. Runs
@@ -3357,7 +3357,7 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
-    /// <summary>§V10.1.2: shown instead of a blank graph body while this context has no layout
+    /// <summary>shown instead of a blank graph body while this context has no layout
     /// at all yet — the optimistic snapshot missed and the real walk hasn't produced its first
     /// batch. Distinct from <see cref="DrawRevealPlaceholder"/> (which has a target commit and a
     /// live row count to show); here there is nothing to report yet beyond "still working".</summary>
@@ -3370,7 +3370,7 @@ public sealed partial class CommitGraphControl : Control
 
     /// <summary>The blanked-graph placeholder: a stand-in ref badge centred in the Branch/Tags
     /// column, and a borderless "Loading history… N rows" line just below it. Shown while the
-    /// reveal pump walks toward an as-yet-unrendered commit (§7.3).</summary>
+    /// reveal pump walks toward an as-yet-unrendered commit.</summary>
     private void DrawRevealPlaceholder(DrawingContext dc, Size size)
     {
         const double h = 20;
@@ -3414,7 +3414,7 @@ public sealed partial class CommitGraphControl : Control
     {
         var hoverLane = _hoverRow >= 0 && _hoverRow < layout.RowCount ? layout.Rows[_hoverRow].LaneIndex : -1;
 
-        // §V3.1: cull lane geometry against the visible span — the Graph column intersected with
+        // cull lane geometry against the visible span — the Graph column intersected with
         // the viewport — with a small margin for the pen width. A stretched or panned column
         // "contains" every lane, so culling against the column edge alone would skip nothing;
         // this stops issuing draw calls for lines nobody can see.
@@ -3507,7 +3507,7 @@ public sealed partial class CommitGraphControl : Control
 
     /// <summary>The commit dots — a pass after <see cref="DrawBadgeConnectors"/> so the
     /// connector lines render behind them. Every dot is the same size and solid-filled in its
-    /// lane colour (§V6).</summary>
+    /// lane colour.</summary>
     private void DrawGraphNodes(DrawingContext dc, GraphLayout layout, int first, int last)
     {
         for (var row = first; row <= last; row++)
@@ -3523,12 +3523,12 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
-    // §V3.1: _hScrollOffset scrolls the whole column band; _graphPanOffset scrolls only the
+    // _hScrollOffset scrolls the whole column band; _graphPanOffset scrolls only the
     // lanes inside the Graph column. Culling, NodeX edge-clamping, the lane wash, badge
     // connectors and hover emphasis all derive from LaneX, so they follow the pan automatically.
     private double LaneX(int lane) => _graphColLeft + (lane + 0.5) * LaneWidth - _hScrollOffset - _graphPanOffset;
 
-    /// <summary>§V3.1: pan just enough to bring <paramref name="lane"/> inside the visible part
+    /// <summary>pan just enough to bring <paramref name="lane"/> inside the visible part
     /// of the Graph column, leaving one lane of margin. A no-op when the lane already shows or
     /// nothing is hidden. Never called from hover.</summary>
     private void EnsureLaneInView(int lane)
@@ -3549,10 +3549,10 @@ public sealed partial class CommitGraphControl : Control
         InvalidateVisual();
     }
 
-    /// <summary>§V3.1: screen x of a commit node — always its plain lane centre. The single
+    /// <summary>screen x of a commit node — always its plain lane centre. The single
     /// source of a node's x: the drawn dot, its hit area, its lane wash and its badge connector
     /// all read from here so they always agree.
-    /// <para>§V10.1.2: there is no longer an edge-clamp while the lanes are panned
+    /// <para>there is no longer an edge-clamp while the lanes are panned
     /// (<c>_graphPanOffset != 0</c>). It pinned the dot to the column edge but the lane
     /// segments / elbows kept reading <see cref="LaneX"/>, so a shift+scroll pan visibly
     /// detached the dots from their lines. Panned-out dots and lines now clip against the Graph
@@ -3609,7 +3609,7 @@ public sealed partial class CommitGraphControl : Control
         return (rightExtras, natural, min);
     }
 
-    /// <summary>§V6-G2: record, per row, the screen-X right edge of the primary badge — the
+    /// <summary>record, per row, the screen-X right edge of the primary badge — the
     /// start point for <see cref="DrawBadgeConnectors"/>, which now runs before the Refs column
     /// paints. Mirrors the primary-badge width calc in <see cref="DrawRefsColumn"/> exactly.</summary>
     private void MeasureBadgeRightEdges(Dictionary<int, List<GraphDecoration>> decosByRow,
@@ -3670,7 +3670,7 @@ public sealed partial class CommitGraphControl : Control
                 bx += w + 4;
             }
 
-            // §V6-G2: the primary badge's right edge (the connector start) is measured up front
+            // the primary badge's right edge (the connector start) is measured up front
             // in MeasureBadgeRightEdges — DrawBadgeConnectors runs before this column now.
 
             if (drawn.Count < decos.Count)
@@ -3698,7 +3698,7 @@ public sealed partial class CommitGraphControl : Control
     {
         var rect = new Rect(x, top, w, h);
         var headRing = d.IsHead || d.Type == DecorationType.Head;
-        // §V6-G1: solid opaque lane-colour fill + same-hue border.
+        // solid opaque lane-colour fill + same-hue border.
         dc.DrawRectangle(
             LaneBrush(d.ColorIndex),
             headRing ? _hoverPen : PillBorder(d.ColorIndex),
@@ -3722,7 +3722,7 @@ public sealed partial class CommitGraphControl : Control
             dc.DrawText(pf, new Point(x + w - BadgePadX - plusW, CenteredTextY(pf, top, h, BadgeLabelSize)));
         }
 
-        // §V6-G2 / v8 M2: the icon cluster and the +N counter are always laid out from the badge's
+        // / v8 M2: the icon cluster and the +N counter are always laid out from the badge's
         // right edge with a fixed order and a guaranteed gap, so the cloud glyph can never be
         // clipped or hidden behind +N. If the badge is pathologically narrow, the label is what
         // yields (its budget already floors low), never the right-edge cluster.

@@ -1,8 +1,8 @@
 namespace Historia.Services.Workspace;
 
 /// <summary>
-/// Per-repository-tab handle (§6.3, §6.6.3). Owns exactly one <see cref="Repository"/> and
-/// serializes every access through a single-slot async gate (§6.3.1) — no LibGit2Sharp object
+/// Per-repository-tab handle. Owns exactly one <see cref="Repository"/> and
+/// serializes every access through a single-slot async gate — no LibGit2Sharp object
 /// may escape <see cref="WithRepositoryAsync{T}"/>. Also owns the reactive state service, the
 /// gateway, the file watcher, and a lifetime cancellation scope.
 /// </summary>
@@ -15,7 +15,7 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     // Count of callers currently blocked in (or about to enter) the foreground gate queue.
     // WithRepositoryBackgroundAsync stands aside while this is non-zero so a user-driven walk,
-    // status refresh, or diff never queues behind the §7.6 background history spill.
+    // status refresh, or diff never queues behind the background history spill.
     private int _foregroundGateWaiters;
 
     // Count of callers currently blocked in (or about to enter) WithRepositoryBackgroundAsync.
@@ -44,14 +44,14 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// <summary>Idempotent -- safe to call once per attempt or not at all.</summary>
     public void MarkFirstGraphPaintDone() => _firstGraphPaint.TrySetResult();
 
-    // §12.1: signalled once this tab is "fully loaded" -- identity resolved and the first full
+    // signalled once this tab is "fully loaded" -- identity resolved and the first full
     // state refresh (branches, graph, changes) has completed. IAutoFetchService waits on this
     // before its [InitialFetch] / [AutoFetch] loop touches the repo. Like FirstGraphPaint it
     // never faults; a headless open completes it as soon as InitializeContextAsync runs.
     private readonly TaskCompletionSource _firstFullLoad =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    /// <summary>Completes once this context has fully loaded (§12.1). Never faults.</summary>
+    /// <summary>Completes once this context has fully loaded. Never faults.</summary>
     public Task FirstFullLoad => _firstFullLoad.Task;
 
     /// <summary>Idempotent. Called by <c>WorkspaceService.InitializeContextAsync</c> when the
@@ -80,19 +80,19 @@ public sealed class RepositoryContext : IAsyncDisposable
     internal IWorkspaceService? Workspace { get; set; }
 
     /// <summary>Null when this tab is standalone; otherwise the tab that opened it as one of its
-    /// submodules (§F9). Invariant <see cref="WorkspaceService"/> maintains in its open-tab list:
+    /// submodules. Invariant <see cref="WorkspaceService"/> maintains in its open-tab list:
     /// a linked tab always sits contiguously after its owner, and one owner's own children are
     /// always contiguous too — never interleaved with a different owner's group. Cleared (not
     /// closed) when the owner tab closes (see <c>WorkspaceService.CloseAsync</c>).</summary>
     public RepositoryContext? LinkOwner { get; internal set; }
 
     /// <summary>
-    /// Stable repo identity (§9.3.1), resolved once per open by <c>IRepoIdentityService</c>
+    /// Stable repo identity, resolved once per open by <c>IRepoIdentityService</c>
     /// and cached here — it walks history, so it is never recomputed per status refresh.
     /// </summary>
     public RepoIdentityKey? IdentityKey { get; set; }
 
-    /// <summary>The profile resolved for this tab (§9.4). Null in zero-profile mode.</summary>
+    /// <summary>The profile resolved for this tab. Null in zero-profile mode.</summary>
     public GitProfile? ActiveProfile => State.ActiveProfile;
 
     private RepositoryContext(Repository repository, IServiceProvider services)
@@ -132,7 +132,7 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     /// <summary>
     /// Opens a repository discovered from <paramref name="path"/>. Runs off the UI thread
-    /// (<see cref="Repository"/> construction is I/O, §6.2.2). Throws
+    /// (<see cref="Repository"/> construction is I/O). Throws
     /// <see cref="RepositoryNotFoundException"/> when no repository is found.
     /// </summary>
     public static RepositoryContext Open(string path, IServiceProvider services)
@@ -177,7 +177,7 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     /// <summary>
     /// Serializes access to the owned <see cref="Repository"/> and marshals the work to the
-    /// thread pool (§6.3.1). Handlers must project into Historia's own records <b>inside</b> the
+    /// thread pool. Handlers must project into Historia's own records <b>inside</b> the
     /// callback and return only those — no <see cref="Commit"/>, <see cref="Tree"/>,
     /// <see cref="Blob"/>, <see cref="Patch"/>, or <see cref="Branch"/> may escape.
     /// </summary>
@@ -245,7 +245,7 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// <summary>
     /// Like <see cref="WithRepositoryAsync{T}"/> but low priority: yields the gate to any
     /// foreground caller that is waiting (or arrives while this one is waiting), up to
-    /// <see cref="BackgroundGateMaxYield"/>, before taking its own turn. Used by the §7.6
+    /// <see cref="BackgroundGateMaxYield"/>, before taking its own turn. Used by the
     /// background history spill so it never makes the user wait for a tab switch, scroll,
     /// status refresh, or diff on the same repo. Callers should still slice their work so one
     /// acquisition is short — this only reorders the queue, it cannot preempt a turn in flight.
@@ -333,7 +333,7 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// <summary>
     /// Like <see cref="WithRepositoryBackgroundAsync{T}"/> but lower priority still: yields to a
     /// foreground caller AND to a <see cref="WithRepositoryBackgroundAsync{T}"/> caller, up to
-    /// <see cref="BackgroundGateMaxYield"/>, before taking its own turn. Used by the §7.6
+    /// <see cref="BackgroundGateMaxYield"/>, before taking its own turn. Used by the
     /// full-history disk spill, which otherwise sits at the same tier as (and can starve) the
     /// commit-graph's own silent crawl (also a <see cref="WithRepositoryBackgroundAsync{T}"/>
     /// caller) — both count as "background" to a genuine foreground request, but the spill has no
@@ -412,7 +412,7 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     /// <summary>
     /// Marks a scope as one of Historia's own Git operations so the watcher suppresses the
-    /// self-triggered refresh storm and issues one explicit refresh on completion (§6.8.2).
+    /// self-triggered refresh storm and issues one explicit refresh on completion.
     /// </summary>
     public IDisposable BeginSelfOperation()
     {
@@ -503,7 +503,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         // finish, return without hanging the tab close — but still reclaim the gate, the CTS,
         // and the native handle once that operation eventually does finish, via
         // DisposeWhenGateFreesAsync below, rather than leaking both for the rest of the
-        // process (§findings: WithRepositoryAsync's finally only releases the semaphore;
+        // process (WithRepositoryAsync's finally only releases the semaphore;
         // nothing here ever disposed it or the Repository on this path).
         //
         // Note: _lifetimeCts is intentionally NOT disposed here. A parameterless

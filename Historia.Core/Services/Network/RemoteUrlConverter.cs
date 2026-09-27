@@ -1,7 +1,7 @@
 ﻿namespace Historia.Services.Network;
 
 /// <summary>
-/// Parse-based (never regex-substitution) bidirectional remote URL conversion (§6.14.1).
+/// Parse-based (never regex-substitution) bidirectional remote URL conversion.
 /// Round-tripping is lossless for clean URLs; non-default SSH ports keep the <c>ssh://</c>
 /// form; inline HTTPS credentials are stripped and never written back to config.
 /// </summary>
@@ -97,7 +97,7 @@ public static partial class RemoteUrlConverter
             if (colon >= 0)
             {
                 user = userinfo[..colon];
-                hadCreds = true; // password present — strip it, never write it back (§6.14.1)
+                hadCreds = true; // password present — strip it, never write it back
             }
             else
             {

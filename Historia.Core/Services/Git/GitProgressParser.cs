@@ -1,7 +1,7 @@
 ﻿namespace Historia.Services.Git;
 
 /// <summary>
-/// Parses <c>git --progress</c> stderr lines into <see cref="GitProgress"/> (§6.6.2), e.g.
+/// Parses <c>git --progress</c> stderr lines into <see cref="GitProgress"/>, e.g.
 /// <c>Receiving objects:  47% (4700/10000), 1.20 MiB | 800.00 KiB/s</c>.
 /// </summary>
 public static partial class GitProgressParser

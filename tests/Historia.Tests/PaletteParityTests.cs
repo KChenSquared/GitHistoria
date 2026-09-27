@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §V2-3 / §V2-15.1: <see cref="HistoriaPalette"/> is the single source of truth for every colour
+/// <see cref="HistoriaPalette"/> is the single source of truth for every colour
 /// the app paints (the theme is generated from this table by <c>AvaloniaThemeApplier</c>).
 /// Asserts self-consistency: every theme defines exactly the declared token set, and each hex
 /// round-trips.
@@ -42,7 +42,7 @@ public class PaletteParityTests
         Assert.Equal(Color.FromRgb(0x1F, 0x1F, 0x1F), HistoriaPalette.Get(EffectiveTheme.Light, "ref-label"));
     }
 
-    // §V3-B: the palette hues are the SOLID line and pill-border colour, so EdgeColorFor
+    // the palette hues are the SOLID line and pill-border colour, so EdgeColorFor
     // is the identity in every theme.
     [Theory]
     [InlineData(EffectiveTheme.Dark)]
@@ -54,7 +54,7 @@ public class PaletteParityTests
             Assert.Equal(LanePalette.ColorFor(i, theme), LanePalette.EdgeColorFor(i, theme));
     }
 
-    // §V6-G6: the dark theme is the 9-colour rainbow (docs/9-color-rainbow-palette.png) verbatim.
+    // the dark theme is the 9-colour rainbow (docs/9-color-rainbow-palette.png) verbatim.
     [Fact]
     public void RainbowDark_matches_the_palette_image()
     {
@@ -70,7 +70,7 @@ public class PaletteParityTests
         Assert.Equal(Color.FromRgb(0xFF, 0x14, 0x93), LanePalette.ColorFor(8, EffectiveTheme.Dark)); // Pink
     }
 
-    // §V6-G6: no two lanes may share a colour within a theme; keep them perceptually apart.
+    // no two lanes may share a colour within a theme; keep them perceptually apart.
     [Theory]
     [MemberData(nameof(Themes))]
     public void Every_theme_has_nine_distinct_lane_colours(EffectiveTheme theme)
@@ -88,7 +88,7 @@ public class PaletteParityTests
         }
     }
 
-    // §V6-G6 / M1.2: a 2 DIP line of each light-theme lane must clear ~3:1 on white; each
+    // / M1.2: a 2 DIP line of each light-theme lane must clear ~3:1 on white; each
     // high-contrast lane must clear WCAG AA (4.5:1) on black.
     [Fact]
     public void Light_and_hc_lane_lines_meet_contrast()

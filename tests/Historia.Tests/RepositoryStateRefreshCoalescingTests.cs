@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// M2.1: Single-flight coalescing and incremental ref publishing (§F1, §F3).
+/// M2.1: Single-flight coalescing and incremental ref publishing.
 /// Ensures concurrent calls run the gateway once, mid-flight callers get a trailing run,
 /// faults are not cached, joiner cancellation does not cancel shared runs, and branches
 /// publish before tags finish.

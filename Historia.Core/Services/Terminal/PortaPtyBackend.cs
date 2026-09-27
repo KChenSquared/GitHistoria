@@ -3,7 +3,7 @@
 /// <summary>
 /// The one production <see cref="ITerminalBackend"/>: a thin adapter over <c>Porta.Pty</c>
 /// (ConPTY on Windows, a <c>forkpty</c>/<c>execvp</c> native shim on macOS/Linux). Kept thin on
-/// purpose — every line of logic here is a line that cannot be unit-tested (V5 §3.1).
+/// purpose — every line of logic here is a line that cannot be unit-tested.
 /// </summary>
 public sealed class PortaPtyBackend : ITerminalBackend
 {
@@ -53,7 +53,7 @@ public sealed class PortaPtyBackend : ITerminalBackend
 
             // Dedicated background threads, never the ThreadPool: Porta.Pty's ReaderStream is a
             // synchronous FileStream, so an async read loop would block a pool worker in an
-            // uninterruptible ReadFile and never give it back (V5 §3.1, deviation D5).
+            // uninterruptible ReadFile and never give it back (deviation D5).
             _pump = new PtyIoPump(
                 output: _inner.ReaderStream,
                 input: _inner.WriterStream,

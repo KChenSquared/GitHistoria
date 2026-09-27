@@ -1,12 +1,12 @@
 namespace Historia.Services.Graph;
 
-/// <summary>Result of a layout call: the layout, the opaque allocator state (§7.8), and the ref fingerprint.</summary>
+/// <summary>Result of a layout call: the layout, the opaque allocator state, and the ref fingerprint.</summary>
 public sealed record GraphLayoutResult(GraphLayout Layout, GraphLayoutState State, long Fingerprint = 0);
 
 /// <summary>
-/// Computes the visual commit-graph layout for a repository (§7.8). Runs entirely on a
+/// Computes the visual commit-graph layout for a repository. Runs entirely on a
 /// background thread and accesses the repository only through the owning
-/// <see cref="RepositoryContext"/>'s gate (§6.3.1). Registered as a singleton.
+/// <see cref="RepositoryContext"/>'s gate. Registered as a singleton.
 /// </summary>
 public interface IGraphLayoutService
 {
@@ -37,7 +37,7 @@ public interface IGraphLayoutService
         bool background = false);
 
     /// <summary>
-    /// Recomputes the layout after a history change (§7.3 invalidation table). Appended commits
+    /// Recomputes the layout after a history change (invalidation table). Appended commits
     /// recompute from row 0 to the first unchanged row; every other change recomputes the whole
     /// window.
     /// </summary>
@@ -109,7 +109,7 @@ public interface IGraphLayoutService
 
     /// <summary>
     /// Pre-caches a newly cloned repository's commit-graph and layout cache before its tab is
-    /// opened (§6.6.1, R5). Runs ahead of the background-work gate. Writes the commit-graph first,
+    /// opened (R5). Runs ahead of the background-work gate. Writes the commit-graph first,
     /// then spools the full history walk to disk. Progress reports the commit-graph phase and then
     /// each spilled batch. Cancellation stops caching while keeping whatever was already durably
     /// written.

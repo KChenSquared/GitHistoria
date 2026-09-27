@@ -19,7 +19,7 @@ public sealed class StashService(IGitCliService cli) : IStashService
             args.Add(options.Message);
         }
 
-        // `--` and pathspecs come AFTER the message (§8.3.3); Git 2.35+.
+        // `--` and pathspecs come AFTER the message; Git 2.35+.
         if (options.Paths is { Count: > 0 })
         {
             args.Add("--");
@@ -95,7 +95,7 @@ public sealed class StashService(IGitCliService cli) : IStashService
     {
         using var _ = context.BeginSelfOperation();
 
-        // §8.3.2 protocol: re-list, find the entry by commit id, act on its CURRENT index.
+        // protocol: re-list, find the entry by commit id, act on its CURRENT index.
         var current = await context.WithRepositoryAsync(Project, ct).ConfigureAwait(false);
         var entry = current.FirstOrDefault(e => e.CommitId == commitId)
                     ?? throw new HistoriaGitException(GitErrorKind.RefNotFound,

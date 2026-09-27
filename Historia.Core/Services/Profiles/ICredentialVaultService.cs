@@ -1,7 +1,7 @@
 ﻿namespace Historia.Services.Profiles;
 
 /// <summary>
-/// Secure credential storage via Windows Credential Manager (DPAPI-backed) (§12). All methods
+/// Secure credential storage via Windows Credential Manager (DPAPI-backed). All methods
 /// are async to avoid blocking the UI thread during vault access, which can be slow on first
 /// call or while Defender scans the vault. Registered as a singleton.
 /// </summary>

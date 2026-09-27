@@ -1,6 +1,6 @@
 ﻿namespace Historia.Services.Profiles;
 
-/// <summary>Profile field validation rules (§9.2). Throws <see cref="ProfileValidationException"/> on failure.</summary>
+/// <summary>Profile field validation rules. Throws <see cref="ProfileValidationException"/> on failure.</summary>
 public static partial class ProfileValidation
 {
     public const int MaxProfiles = 50;

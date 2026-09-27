@@ -3,10 +3,10 @@ namespace Historia.Services.AutoFetch;
 /// <inheritdoc cref="IAutoFetchService"/>
 public sealed class AutoFetchService : IAutoFetchService
 {
-    /// <summary>§12.1.2: the quiet period that opens every <c>[AutoFetch]</c> cycle.</summary>
+    /// <summary>the quiet period that opens every <c>[AutoFetch]</c> cycle.</summary>
     internal static readonly TimeSpan InitialIdle = TimeSpan.FromMinutes(5);
 
-    /// <summary>§12.1.2: the gap between one open repo's fetch and the next (also the trailing
+    /// <summary>the gap between one open repo's fetch and the next (also the trailing
     /// wait before the cycle restarts).</summary>
     internal static readonly TimeSpan PerRepoStep = TimeSpan.FromMinutes(1);
 
@@ -25,7 +25,7 @@ public sealed class AutoFetchService : IAutoFetchService
     private int _lastCount;
     private bool _started;
 
-    // §21 dev visuals: per-tab state in the current [AutoFetch] cycle.
+    // dev visuals: per-tab state in the current [AutoFetch] cycle.
     private volatile bool _loopRunning;
     private readonly HashSet<RepositoryContext> _fetchedThisCycle = [];
 
@@ -124,7 +124,7 @@ public sealed class AutoFetchService : IAutoFetchService
             if (!_started)
                 return;
 
-            // §12.1.2: a net add/close restarts an in-progress cycle; a pure reorder (same
+            // a net add/close restarts an in-progress cycle; a pure reorder (same
             // count) does not.
             if (e.OpenRepositories.Count != _lastCount)
             {
@@ -147,7 +147,7 @@ public sealed class AutoFetchService : IAutoFetchService
         }
         catch
         {
-            // §12.1: the loop must never take the app down.
+            // the loop must never take the app down.
         }
         finally
         {
@@ -156,7 +156,6 @@ public sealed class AutoFetchService : IAutoFetchService
         }
     }
 
-    // §12.1.1
     private async Task WaitForStartConditionAsync(CancellationToken ct)
     {
         var open = _workspace.OpenRepositories;
@@ -177,7 +176,7 @@ public sealed class AutoFetchService : IAutoFetchService
         }
         else
         {
-            // Wait for *every* open repo — active or not — to fully load (§3, §12.1.1).
+            // Wait for *every* open repo — active or not — to fully load.
             await Task.WhenAll(open.Select(r => _host.WhenFullyLoadedAsync(r, ct))).ConfigureAwait(false);
 
             var target = _workspace.Focused ?? _workspace.OpenRepositories.FirstOrDefault();
@@ -211,7 +210,6 @@ public sealed class AutoFetchService : IAutoFetchService
         }
     }
 
-    // §12.1.2
     private async Task AutoFetchLoopAsync(CancellationToken ct)
     {
         _loopRunning = true;
@@ -224,7 +222,7 @@ public sealed class AutoFetchService : IAutoFetchService
                 _cycleCts?.Dispose();
                 _cycleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cycle = _cycleCts;
-                _fetchedThisCycle.Clear(); // §21: a fresh cycle (incl. a restart) resets every tab to yellow
+                _fetchedThisCycle.Clear(); // a fresh cycle (incl. a restart) resets every tab to yellow
             }
             RaiseTabStates();
 
@@ -234,7 +232,7 @@ public sealed class AutoFetchService : IAutoFetchService
                 await _delay(InitialIdle, cct).ConfigureAwait(false);
 
                 // Positional, not per-tab: the repo at slot `pos` when this step fires is the one
-                // fetched — reordering tabs is deliberately not re-targeted (§12.1.2). The count
+                // fetched — reordering tabs is deliberately not re-targeted. The count
                 // is read once per cycle; a net add/close cancels `cct` and restarts.
                 var count = _workspace.OpenRepositories.Count;
                 for (var pos = 0; pos < count; pos++)
@@ -261,7 +259,7 @@ public sealed class AutoFetchService : IAutoFetchService
     }
 
     /// <summary>
-    /// §12.1: runs one fetch for <paramref name="context"/>. On success, also refreshes that repo's
+    /// runs one fetch for <paramref name="context"/>. On success, also refreshes that repo's
     /// commit-graph and, for an inactive tab, queues its headless disk cache. Failures stop quietly.
     /// </summary>
     /// <returns><c>true</c> if the fetch completed without error.</returns>
@@ -275,9 +273,9 @@ public sealed class AutoFetchService : IAutoFetchService
             // [InitialFetch] callers above and the [AutoFetch] loop both go through here). Itself
             // fire-and-forget and best-effort — never allowed to fail this fetch or the loop.
             try { _graphLayoutService?.RefreshCommitGraphAfterFetch(context); }
-            catch { /* §12.1: commit-graph maintenance must never take the loop down */ }
+            catch { /* commit-graph maintenance must never take the loop down */ }
 
-            // Bring an inactive tab's on-disk graph cache up to date headlessly (§12.1 / R1).
+            // Bring an inactive tab's on-disk graph cache up to date headlessly (/ R1).
             // Never queued for the focused tab (R2: its own RefsChanged re-spill covers it).
             if (context != _workspace.Focused)
             {
@@ -286,7 +284,7 @@ public sealed class AutoFetchService : IAutoFetchService
                     _graphLayoutService?.EnqueueInactiveTabCaching(context, WorkspaceService.TabGraphQuery);
                     Diagnostics.PerfLog.Mark($"auto-fetch: queued headless disk cache ({context.DisplayName})");
                 }
-                catch { /* §12.1: headless disk caching must never take the loop down */ }
+                catch { /* headless disk caching must never take the loop down */ }
             }
 
             return true;
@@ -297,7 +295,7 @@ public sealed class AutoFetchService : IAutoFetchService
         }
         catch
         {
-            // §12.1: a failed auto-fetch stops quietly.
+            // a failed auto-fetch stops quietly.
             return false;
         }
     }

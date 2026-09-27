@@ -1,6 +1,6 @@
 ﻿namespace Historia.Models;
 
-/// <summary>Fields for creating a profile (§9.8). Tokens are supplied separately and stored in the vault.</summary>
+/// <summary>Fields for creating a profile. Tokens are supplied separately and stored in the vault.</summary>
 public sealed record GitProfileCreateRequest
 {
     public required string DisplayName { get; init; }
@@ -17,7 +17,7 @@ public sealed record GitProfileCreateRequest
     public string? BitbucketToken { get; init; }
 }
 
-/// <summary>Fields for updating a profile (§9.8). A null field leaves the existing value unchanged.</summary>
+/// <summary>Fields for updating a profile. A null field leaves the existing value unchanged.</summary>
 public sealed record GitProfileUpdateRequest
 {
     public string? DisplayName { get; init; }

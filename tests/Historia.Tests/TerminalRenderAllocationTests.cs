@@ -2,7 +2,7 @@ namespace Historia.Tests;
 
 /// <summary>
 /// Constitution rule 24 — "the render path creates no Historia-owned object per frame" — measured
-/// as pool/cache misses, and "a test says so" (V5 §6.4). The control lives in <c>Historia.App</c>
+/// as pool/cache misses, and "a test says so". The control lives in <c>Historia.App</c>
 /// which the test project cannot reference, so the pooling lives in the Core
 /// <see cref="RenderResourceCache{TKey,TValue}"/> and the test drives that directly: warm over a
 /// frame, reset counters, render the same frame again, assert every miss counter is zero.

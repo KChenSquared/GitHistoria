@@ -1,7 +1,7 @@
 namespace Historia.Services.UI;
 
 /// <summary>
-/// Shared keyboard-accelerator router for the WPF region and the WebView (§6.15.2). A WebView
+/// Shared keyboard-accelerator router for the WPF region and the WebView. A WebView
 /// cannot swallow accelerators, so unhandled <c>keydown</c> events from the
 /// Blazor side are forwarded here and dispatched to the same handlers the WPF side uses.
 /// Registered as a singleton.

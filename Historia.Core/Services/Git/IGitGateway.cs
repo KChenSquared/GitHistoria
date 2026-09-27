@@ -1,9 +1,9 @@
 namespace Historia.Services.Git;
 
 /// <summary>
-/// The only Git surface the UI and higher-level services talk to (§6.4.2). Decides per
+/// The only Git surface the UI and higher-level services talk to. Decides per
 /// operation whether to use LibGit2Sharp (fast, in-process, no network) or the Git CLI
-/// (canonical semantics, credential-aware, network-capable) per the routing table (§6.4.1).
+/// (canonical semantics, credential-aware, network-capable) per the routing table.
 /// One instance per repository tab, owned by <c>RepositoryContext</c>.
 /// </summary>
 public interface IGitGateway
@@ -15,7 +15,7 @@ public interface IGitGateway
     Task<RepositoryStatus> GetStatusAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// Paged linear commit history (§I-6.4.2). Retained as the paged-history API surface — the
+    /// Paged linear commit history. Retained as the paged-history API surface — the
     /// underlying <c>LibGit2Service.ProjectCommits</c> is still covered by tests.
     /// </summary>
     Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default);
@@ -26,7 +26,7 @@ public interface IGitGateway
     Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default);
     Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default);
 
-    /// <summary>Ahead/behind of a local branch versus its upstream, computed lazily per visible row (§6.12).</summary>
+    /// <summary>Ahead/behind of a local branch versus its upstream, computed lazily per visible row.</summary>
     Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default);
 
     /// <summary>Ahead/behind between any two refs via <c>git rev-list --left-right --count</c>
@@ -35,16 +35,16 @@ public interface IGitGateway
     /// upstream — that is an ordinary case for a caller asking "is this ahead?", not an error.</summary>
     Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default);
 
-    /// <summary>The repository's currently configured <c>user.name</c>/<c>user.email</c>, read fresh (§9.5.1, §9.6).</summary>
+    /// <summary>The repository's currently configured <c>user.name</c>/<c>user.email</c>, read fresh.</summary>
     Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default);
 
     /// <summary>The user's <b>global</b> <c>~/.gitconfig</c> <c>user.name</c>/<c>user.email</c>, read
-    /// fresh via <c>git config --global --get</c> (§9.6). Used as the conflict-banner baseline when no
+    /// fresh via <c>git config --global --get</c>. Used as the conflict-banner baseline when no
     /// primary profile is explicitly set.</summary>
     Task<(string? Name, string? Email)> GetGlobalIdentityAsync(CancellationToken ct = default);
 
     /// <summary>The effective <c>commit.gpgsign</c> (local → global), read fresh. Used under
-    /// <i>Local config</i> where Historia manages no signing settings of its own (§14.4).</summary>
+    /// <i>Local config</i> where Historia manages no signing settings of its own.</summary>
     Task<bool> GetGpgSignConfiguredAsync(CancellationToken ct = default);
 
     // ── Working tree mutations ──
@@ -53,7 +53,7 @@ public interface IGitGateway
     Task DiscardAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
     Task<ObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default);
 
-    /// <summary>Merges <paramref name="refish"/> into the current branch (CLI-routed, §6.4.1). Conflicts surface as <see cref="Models.GitErrorKind.MergeConflict"/>.</summary>
+    /// <summary>Merges <paramref name="refish"/> into the current branch (CLI-routed). Conflicts surface as <see cref="Models.GitErrorKind.MergeConflict"/>.</summary>
     Task MergeAsync(string refish, bool noFastForward, CancellationToken ct = default);
 
     /// <summary>Moves the current branch to <paramref name="target"/> (CLI-routed). <c>Hard</c> is destructive.</summary>

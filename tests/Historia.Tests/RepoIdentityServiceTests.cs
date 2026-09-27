@@ -1,8 +1,8 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §1 linux cold-prime plan: <see cref="RepoIdentityService"/>'s smallest-reachable-root-SHA
-/// resolution (§9.3.1) now runs primarily via a separate <c>git rev-list --max-parents=0</c>
+/// linux cold-prime plan: <see cref="RepoIdentityService"/>'s smallest-reachable-root-SHA
+/// resolution now runs primarily via a separate <c>git rev-list --max-parents=0</c>
 /// process instead of a libgit2 topological revwalk on the repo gate. Both the CLI path and the
 /// forced-fallback (no git) libgit2 path must agree on the same repo, since either can run
 /// depending on whether git.exe is discoverable.

@@ -1,19 +1,19 @@
 ﻿namespace Historia.Models;
 
-/// <summary>Result of converting a remote URL for the current network mode (§6.14.1).</summary>
+/// <summary>Result of converting a remote URL for the current network mode.</summary>
 public sealed record RemoteUrlConversion(
     string OriginalUrl,
     string? ConvertedUrl,
     bool WasConverted,
     string? SkipReason)
 {
-    /// <summary>True when the URL carried inline credentials that were stripped (§6.14.1).</summary>
+    /// <summary>True when the URL carried inline credentials that were stripped.</summary>
     public bool HadEmbeddedCredentials { get; init; }
 
     public static RemoteUrlConversion Skipped(string url, string reason) => new(url, null, false, reason);
 }
 
-/// <summary>The parsed shape of a Git remote URL (§6.14.1).</summary>
+/// <summary>The parsed shape of a Git remote URL.</summary>
 public enum RemoteUrlKind
 {
     ScpLike,        // git@github.com:owner/repo.git — colon separates host from path, not a port

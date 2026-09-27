@@ -84,7 +84,7 @@ public sealed class SettingsView : UserControl, IDisposable
             themeRow.Children.Add(TextButton(m.ToString(), () => _ = _theme.ApplyModeAsync(mode), primary: _theme.CurrentMode == m));
         }
 
-        // §V6-G9: a 4th "Custom" option. With ≥ 1 saved theme it activates the last-selected
+        // a 4th "Custom" option. With ≥ 1 saved theme it activates the last-selected
         // (or first) one; with none it routes straight to the Themes panel.
         var savedThemes = _customThemes.List();
         themeRow.Children.Add(TextButton("Custom", () =>
@@ -242,7 +242,7 @@ public sealed class SettingsView : UserControl, IDisposable
             v => _ = _cfg.UpdateAsync(s => s with { UseCustomStashNames = v })),
             "When on, the \"Stash all\" buttons ask you for a message. When off, they name the stash \"Stash of <branch>\"."));
 
-        // ── Terminal (V5 §13) — collapsed ──
+        // ── Terminal — collapsed ──
         var termBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
 
         var shellPath = new TextBox { Text = c.TerminalShellPath ?? "", Watermark = "Platform default (pwsh / zsh / bash)", Width = 360, HorizontalAlignment = HorizontalAlignment.Left };
@@ -642,7 +642,7 @@ public sealed class RepoSettingsView : UserControl, IDisposable
             }
             else if (ctx.State.ActiveProfile is { } p)
             {
-                // §14.3 stale rendering: a row that names a missing profile shows "<name> (unavailable)".
+                // stale rendering: a row that names a missing profile shows "<name> (unavailable)".
                 label = _profiles.GetProfileById(p.Id) is null
                     ? $"{p.DisplayName} (unavailable)"
                     : p.IsGlobal ? "Local config" : p.DisplayName;
@@ -683,7 +683,7 @@ public sealed class RepoSettingsView : UserControl, IDisposable
         hint.TextWrapping = TextWrapping.Wrap;
         _root.Children.Add(hint);
 
-        // §V3.1: the editor works on the application-wide column set and shows even with no repo.
+        // the editor works on the application-wide column set and shows even with no repo.
         var columns = _repoLayout.GlobalColumns;
         var path = ctx?.RepositoryPath ?? "";
         _dragRepoPath = path;

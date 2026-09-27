@@ -1,6 +1,6 @@
 ﻿namespace Historia.Services.Terminal;
 
-/// <summary>Start-up / runtime failure classes for the terminal subsystem (V5 §9.5). Mirrors
+/// <summary>Start-up / runtime failure classes for the terminal subsystem. Mirrors
 /// <see cref="Historia.Services.Git.GitErrorKind"/> in spirit: there is no
 /// <c>WebViewRuntimeMissing</c> — that failure class does not exist in this design.</summary>
 public enum TerminalErrorKind
@@ -14,7 +14,7 @@ public enum TerminalErrorKind
 }
 
 /// <summary>
-/// Thrown when a terminal session cannot start (V5 §9.5). <see cref="Kind"/> drives the
+/// Thrown when a terminal session cannot start. <see cref="Kind"/> drives the
 /// actionable message; <see cref="Exception.Message"/> carries the offending detail (e.g. the
 /// configured shell path for <see cref="TerminalErrorKind.ShellNotFound"/>).
 /// </summary>
@@ -25,7 +25,7 @@ public sealed class TerminalStartException(TerminalErrorKind kind, string detail
 }
 
 /// <summary>
-/// Maps a start-up failure to an actionable message (V5 §9.5). Mirrors
+/// Maps a start-up failure to an actionable message. Mirrors
 /// <c>GitErrorClassifier</c>: <see cref="TerminalErrorKind.Unknown"/> surfaces the underlying
 /// text behind a Details expander — never a silent fallback (constitution rule 11).
 /// </summary>

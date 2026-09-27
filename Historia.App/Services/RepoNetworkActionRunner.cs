@@ -63,7 +63,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         actionBus.NetworkActionRequested += (_, request) => _ = RunAsync(request);
     }
 
-    /// <summary>§14.5: a tab whose selection went stale (profile deleted / default changed)
+    /// <summary>a tab whose selection went stale (profile deleted / default changed)
     /// re-resolves on the next Git operation, not eagerly.</summary>
     private async Task EnsureActiveProfileFreshAsync(RepositoryContext repo)
     {
@@ -83,7 +83,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
 
     private void RefreshCommitGraphAfterFetch(RepositoryContext repo, RepoNetworkAction op)
     {
-        // A manual Fetch/Pull refreshes only the active tab's commit-graph (§12.1 / R3); its refs
+        // A manual Fetch/Pull refreshes only the active tab's commit-graph (/ R3); its refs
         // cache and graph store already refresh through RefreshAllAsync -> RefsChanged.
         // Other tabs are never queued here.
         try { _graph.RefreshCommitGraphAfterFetch(repo); }
@@ -172,7 +172,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
     }
 
     /// <summary>
-    /// §6.13: a push rejected as non-fast-forward means <c>remote/branch</c> has commits this
+    /// a push rejected as non-fast-forward means <c>remote/branch</c> has commits this
     /// local branch doesn't. Offer the three ways out in a modal the user can't lose behind
     /// later toasts — integrate then re-push (rebase or merge), or overwrite the remote
     /// (force-with-lease). A rebase/merge that stops in conflicts leaves the push for the user
@@ -324,7 +324,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                 }
                 catch (Exception retryEx)
                 {
-                    // §13.1: persist the switch only if the retry succeeds — roll back on failure.
+                    // persist the switch only if the retry succeeds — roll back on failure.
                     try
                     {
                         var key = repo.IdentityKey ?? await _identity.ResolveAsync(repo, repo.Lifetime);

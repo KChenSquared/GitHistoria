@@ -1,6 +1,6 @@
 namespace Historia.Services.Network;
 
-/// <summary>One transport attempt in a routing plan (§13.1).</summary>
+/// <summary>One transport attempt in a routing plan.</summary>
 public enum RouteTransport
 {
     /// <summary>Run over SSH. The effective URL is the SSH form (converted if the stored URL is HTTPS).</summary>
@@ -14,7 +14,7 @@ public enum RouteTransport
 }
 
 /// <summary>
-/// Pure, table-driven decision for how a fetch / push / pull is routed (§13.1). The URL's own
+/// Pure, table-driven decision for how a fetch / push / pull is routed. The URL's own
 /// scheme decides which transport is tried first; the other is the fallback, unless
 /// <c>SSH Only</c> forces SSH with no fallback.
 /// </summary>

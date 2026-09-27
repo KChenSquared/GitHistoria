@@ -2,7 +2,7 @@
 
 /// <summary>
 /// A small, dependency-free GitHub-Flavored-Markdown renderer for commit bodies, notes, and
-/// READMEs (§V2-17.5, D12: bundled, must sanitize).
+/// READMEs (D12: bundled, must sanitize).
 /// <para>
 /// Security model: the input is untrusted (whoever wrote the commit / README). Raw HTML never
 /// passes through — every source character is HTML-encoded before markup is added. Link hrefs
@@ -303,7 +303,7 @@ public static class MarkdownRenderer
         s = Regex.Replace(s, @"`([^`]+)`", "<code>$1</code>");
 
         // Links [text](href). Emitted with data-href (not href) so the WebView never navigates
-        // itself — Historia.wireMarkdown hands the URL to the system browser (§V2-17.5).
+        // itself — Historia.wireMarkdown hands the URL to the system browser.
         s = Regex.Replace(s, @"\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)", m =>
         {
             var href = SafeHref(WebUtility.HtmlDecode(m.Groups[2].Value));

@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>§V10.1: with "Read commit details from disk" on, the first layout spills
+/// <summary>with "Read commit details from disk" on, the first layout spills
 /// per-commit metadata and stubs the resident copy. That stub must keep <c>CommitWhen</c> — the
 /// tip-priority pre-pass sorts candidate tips by it, and zeroing it would make re-layouts after
 /// the first spill sort tips by SHA and pin the trunk to a random lane.</summary>

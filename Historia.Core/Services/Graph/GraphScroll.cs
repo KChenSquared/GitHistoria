@@ -1,7 +1,7 @@
 namespace Historia.Services.Graph;
 
 /// <summary>
-/// Pure scroll offset arithmetic for the commit graph (§V3-8.4).
+/// Pure scroll offset arithmetic for the commit graph.
 /// </summary>
 public static class GraphScroll
 {

@@ -12,7 +12,7 @@ public sealed record PtyStartInfo
 }
 
 /// <summary>
-/// Spawns a pseudoterminal. The seam that isolates <c>Porta.Pty</c> (V5 §2) so an
+/// Spawns a pseudoterminal. The seam that isolates <c>Porta.Pty</c> so an
 /// <c>xterm.js</c>-in-WebView surface — or a test fake — can substitute without touching the
 /// session service, settings, theming, or entry points.
 /// </summary>
@@ -22,7 +22,7 @@ public interface ITerminalBackend
 }
 
 /// <summary>
-/// A live pseudoterminal. Raw bytes both ways — never strings (V5 §2): decoding each chunk to a
+/// A live pseudoterminal. Raw bytes both ways — never strings: decoding each chunk to a
 /// string splits multi-byte UTF-8 at chunk boundaries. Decoding is the emulator's job.
 /// </summary>
 public interface IPtyConnection : IDisposable

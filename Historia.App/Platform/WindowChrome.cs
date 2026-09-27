@@ -1,7 +1,7 @@
 ﻿namespace Historia.Platform;
 
 /// <summary>
-/// Windows-only caption theming via DWM (V4 §split — the thin remnant of the WPF
+/// Windows-only caption theming via DWM (the thin remnant of the WPF
 /// <c>WindowChromeTheming</c>). Dark caption on 1809+, caption/border/text colours on Win11.
 /// A no-op on macOS and Linux, whose window managers theme their own chrome (and Avalonia
 /// already follows <c>ActualThemeVariant</c> for the Win32 caption anyway — this just adds the

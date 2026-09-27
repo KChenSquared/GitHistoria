@@ -1,7 +1,7 @@
 ﻿namespace Historia;
 
 /// <summary>
-/// An 8-bit-per-channel ARGB colour. V4 §split: <see cref="Historia.Core"/> owns no UI framework,
+/// An 8-bit-per-channel ARGB colour. <see cref="Historia.Core"/> owns no UI framework,
 /// so <see cref="Services.Theming.HistoriaPalette"/> and <see cref="Services.Graph.LanePalette"/>
 /// produce these instead of <c>System.Windows.Media.Color</c> / <c>Avalonia.Media.Color</c>.
 /// The App layer converts to its framework's colour type at the boundary. Channel order and

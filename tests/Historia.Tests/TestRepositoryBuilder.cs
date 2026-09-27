@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// Generates fixture repositories programmatically with the real <c>git</c> CLI (§16.1)
+/// Generates fixture repositories programmatically with the real <c>git</c> CLI
 /// or high-speed template copying and fast-import streams (F1). Each instance owns a
 /// temp directory that is deleted on <see cref="Dispose"/>.
 /// </summary>

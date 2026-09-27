@@ -14,7 +14,7 @@ public sealed record SelectedConflictPathChangedEventArgs(string? Path);
 
 /// <summary>
 /// The contract between every producer (Git services, watcher, profile service) and every
-/// consumer (WPF controls and Blazor components) for a single repository (§6.7). The
+/// consumer (WPF controls and Blazor components) for a single repository. The
 /// graph and power tools plug into this same surface unchanged.
 /// <para>
 /// Threading contract: all mutation happens on a background thread; every event is raised on
@@ -44,7 +44,7 @@ public interface IRepositoryStateService
     /// <summary>Which conflicted file the resolver shows; written by the staging panel on click and by the resolver when it switches on its own; raised on the UI dispatcher.</summary>
     string? SelectedConflictPath { get; }
 
-    /// <summary>The diff currently occupying the center panel, or null when the graph is shown (§V2-8.2).</summary>
+    /// <summary>The diff currently occupying the center panel, or null when the graph is shown.</summary>
     DiffRequest? OpenDiff { get; }
 
     // ── Mutations: safe to call from any thread ──
@@ -55,12 +55,12 @@ public interface IRepositoryStateService
 
     /// <summary>
     /// Asks the graph to bring <paramref name="id"/> into view and centre it vertically
-    /// (§V3-B). Selection is a separate concern — call <see cref="SetSelectedCommit"/> too.
+    ///. Selection is a separate concern — call <see cref="SetSelectedCommit"/> too.
     /// A no-op consumer is fine; the graph is the only listener.
     /// </summary>
     void RequestRevealCommit(ObjectId id);
 
-    /// <summary>Opens or closes the center diff. Idempotent; safe to call from any thread (§V2-8.2).</summary>
+    /// <summary>Opens or closes the center diff. Idempotent; safe to call from any thread.</summary>
     void SetOpenDiff(DiffRequest? request);
     void SetActiveProfile(GitProfile? profile);
     Task RefreshStatusAsync(CancellationToken ct = default);
@@ -82,7 +82,7 @@ public interface IRepositoryStateService
     event EventHandler<ProfileChangedEventArgs>? ActiveProfileChanged;
     event EventHandler<OperationStateChangedEventArgs>? OperationStateChanged;
 
-    /// <summary>Raised on the UI dispatcher, like every other event on this service (§V2-8.2).</summary>
+    /// <summary>Raised on the UI dispatcher, like every other event on this service.</summary>
     event EventHandler<OpenDiffChangedEventArgs>? OpenDiffChanged;
 
     /// <summary>Raised on the UI dispatcher whenever IsConflictSessionActive flips value.</summary>

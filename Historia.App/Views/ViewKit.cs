@@ -2,7 +2,7 @@ namespace Historia.Views;
 
 /// <summary>
 /// Shared helpers for the hand-built Avalonia views that replace the V3 Blazor components
-/// (V4 §views). Pure-C# construction, matching the native-control style, so there is no XAML
+///. Pure-C# construction, matching the native-control style, so there is no XAML
 /// compiler in the loop for the ported panels.
 /// </summary>
 internal static class ViewKit

@@ -2,11 +2,11 @@
 namespace Historia.Services.Graph;
 
 /// <summary>
-/// Deterministic lane color palette (§7.5). The layout engine computes color <i>indices</i>;
+/// Deterministic lane color palette. The layout engine computes color <i>indices</i>;
 /// this maps an index to a concrete <see cref="Rgb"/>.
 /// </summary>
 /// <remarks>
-/// §V6-G6 correction (recorded per Rule 35, not silently reverted): the Material Design 500
+/// correction (recorded per Rule 35, not silently reverted): the Material Design 500
 /// swatch set — one table for every theme — is replaced by a nine-colour rainbow
 /// (<c>docs/9-color-rainbow-palette.png</c>) for the dark/System-dark theme, plus a
 /// hand-picked darker, still mutually-distinct nine-colour set for the light theme and a
@@ -14,9 +14,9 @@ namespace Historia.Services.Graph;
 /// (asserted by <c>PaletteParityTests</c> with a CIE76 ΔE floor). This is the graph layer's
 /// palette only — <see cref="Historia.Services.Theming.HistoriaPalette"/> still owns the theme tokens.
 /// These are "the available colors" for the <b>solid</b> lane lines and the branch/tag pill
-/// borders, so <see cref="EdgeColorFor"/> is the identity. Backgrounds (the §6 lane-square
+/// borders, so <see cref="EdgeColorFor"/> is the identity. Backgrounds (the lane-square
 /// fill, the pill fills) derive a translucent tint from <see cref="ColorFor"/>. Each renumber
-/// (here 10 -> 9) breaks the §I-7.5 colour-index stability guarantee — existing repos re-seed
+/// (here 10 -> 9) breaks the colour-index stability guarantee — existing repos re-seed
 /// their lane colours on next open.
 /// </remarks>
 public static class LanePalette
@@ -92,10 +92,10 @@ public static class LanePalette
     }
 
     /// <summary>
-    /// The stroke/border variant of a lane colour (§V3-4.2). The dark/HC white-lift is withdrawn
-    /// (§V3-B correction): the user asked for the palette hues as the <b>solid</b> line and pill
+    /// The stroke/border variant of a lane colour. The dark/HC white-lift is withdrawn
+    /// (correction): the user asked for the palette hues as the <b>solid</b> line and pill
     /// border colour, so this is now the identity in every theme. Kept as a named seam so the
-    /// call sites (lane pens, emphasis pens, pill borders, the §6 tick) do not have to change.
+    /// call sites (lane pens, emphasis pens, pill borders, the tick) do not have to change.
     /// </summary>
     public static Rgb EdgeColorFor(int colorIndex, EffectiveTheme theme) => ColorFor(colorIndex, theme);
 }

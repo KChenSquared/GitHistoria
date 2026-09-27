@@ -1,31 +1,31 @@
 namespace Historia.Models;
 
 /// <summary>
-/// Application-wide settings (§10.1). Persisted as <c>settings.json</c> in
-/// <c>%APPDATA%/Historia/</c>, loaded once synchronously at startup (§6.2.2) and written back
-/// with debounced atomic writes (§9.3).
+/// Application-wide settings. Persisted as <c>settings.json</c> in
+/// <c>%APPDATA%/Historia/</c>, loaded once synchronously at startup and written back
+/// with debounced atomic writes.
 /// </summary>
 public sealed record AppSettings
 {
-    /// <summary>Schema version for the migration pipeline (§9.3). v2: graph columns (§V2-11.1);
-    /// v3: issue autolinks (§V2-17.6); v4: hidden Author/Date/SHA, session restore on, recents 30
-    /// (§V3-13); v5: multi-line tab strip (§V3-B); v6: persistent graph cache toggle; v7: graph
+    /// <summary>Schema version for the migration pipeline. v2: graph columns;
+    /// v3: issue autolinks; v4: hidden Author/Date/SHA, session restore on, recents 30
+    ///; v5: multi-line tab strip; v6: persistent graph cache toggle; v7: graph
     /// row hard cap; v8: local repo-state cache toggle; v9: terminal (V5); v10: tab-width mode
-    /// (V5.5); v11: custom-theme id (§V6-G9); v12: splash-screen toggle.</summary>
+    /// (V5.5); v11: custom-theme id; v12: splash-screen toggle.</summary>
     public int SchemaVersion { get; init; } = 18;
 
     // ── Profile &amp; Identity ──
-    /// <summary>§14.2: the default profile — the clone-dialog pre-selection and what an opened
+    /// <summary>the default profile — the clone-dialog pre-selection and what an opened
     /// repo adopts when it has no per-repo selection and the default is non-global. Null = the
     /// reserved global profile is the default (the automatic case).</summary>
     public Guid? DefaultProfileId { get; init; }
 
-    // ── Network &amp; Privacy (§13) ──
+    // ── Network &amp; Privacy ──
     /// <summary>Gates background polling / hosting-API calls; effective only while a
     /// token-bearing profile is the active per-repo selection.</summary>
     public bool EnableBackgroundPolling { get; init; } = true;
 
-    /// <summary>§12.1: drives <c>IAutoFetchService</c>'s <c>[InitialFetch]</c> + <c>[AutoFetch]</c>
+    /// <summary>drives <c>IAutoFetchService</c>'s <c>[InitialFetch]</c> + <c>[AutoFetch]</c>
     /// loop, which periodically <c>git fetch</c>es every open repository. Unlike
     /// <see cref="EnableBackgroundPolling"/> it is <b>not</b> gated to a token-bearing profile —
     /// it fetches SSH and <i>Local config</i> repos too — so this toggle is the single opt-out
@@ -33,14 +33,14 @@ public sealed record AppSettings
     public bool AutoFetchEnabled { get; init; } = true;
 
     // ── UI preferences ──
-    /// <summary>User choice; <c>EffectiveTheme</c> is derived (§11.6). New installs follow the
+    /// <summary>User choice; <c>EffectiveTheme</c> is derived. New installs follow the
     /// OS; existing users keep whatever they had (no migration).</summary>
     public ThemeMode AppTheme { get; init; } = ThemeMode.System;
 
-    /// <summary>Independent override; wins over <see cref="AppTheme"/> (§11.6).</summary>
+    /// <summary>Independent override; wins over <see cref="AppTheme"/>.</summary>
     public bool HighContrastOverride { get; init; }
 
-    /// <summary>§V6-G9: the id of the active custom theme (a file stem under
+    /// <summary>the id of the active custom theme (a file stem under
     /// <c>themes/</c>). Only meaningful while <see cref="AppTheme"/> is
     /// <see cref="ThemeMode.Custom"/>; null otherwise.</summary>
     public string? CustomThemeId { get; init; }
@@ -59,15 +59,15 @@ public sealed record AppSettings
     public WheelScrollDirection WheelScrollDirection { get; init; } = WheelScrollDirection.Auto;
 
     /// <summary>When on (default), a brief splash animation covers startup while the shell and
-    /// the focused repository's commit graph load out of sight (§6.2.2). Off = the shell window
+    /// the focused repository's commit graph load out of sight. Off = the shell window
     /// appears immediately and the graph fills in as it loads. Takes effect on the next launch.</summary>
     public bool ShowSplashScreen { get; init; } = true;
 
-    /// <summary>§V3-B: when the repo tab strip overflows, wrap tabs onto extra app-band rows
+    /// <summary>when the repo tab strip overflows, wrap tabs onto extra app-band rows
     /// instead of horizontal-scrolling a single row. <see cref="MaxTabRows"/> caps the count.</summary>
     public bool EnableMultiLineTabs { get; init; }
 
-    /// <summary>§V3-B: 2–5. Maximum app-band rows to fill with tabs before the ◀ ▶ paging
+    /// <summary>2–5. Maximum app-band rows to fill with tabs before the ◀ ▶ paging
     /// arrows appear on the bottom row. Ignored unless <see cref="EnableMultiLineTabs"/>.</summary>
     public int MaxTabRows { get; init; } = 3;
 
@@ -87,7 +87,7 @@ public sealed record AppSettings
     /// <summary>Math.Clamp to the accepted <see cref="FixedTabWidth"/> range.</summary>
     public static int ClampFixedTabWidth(int value) => Math.Clamp(value, MinFixedTabWidth, MaxFixedTabWidth);
 
-    // §V3-B: graph column layout (order, widths, visibility, the width pin) and the commit-walk
+    // graph column layout (order, widths, visibility, the width pin) and the commit-walk
     // ceiling moved to a per-repository store — see Historia.Services.Settings.IRepoLayoutService.
 
     /// <summary>Flat path list vs. collapsible folder tree for a commit's changed files.</summary>
@@ -98,10 +98,10 @@ public sealed record AppSettings
     public int TabWidth { get; init; } = 4;
 
     // ── Git &amp; repository ──
-    /// <summary>Overrides discovery (§6.2.3).</summary>
+    /// <summary>Overrides discovery.</summary>
     public string? GitExecutablePath { get; init; }
 
-    /// <summary>On by default (§V3-9.3, Correction against §I-17 Q4). Restore opens only the
+    /// <summary>On by default (Correction against Q4). Restore opens only the
     /// focused repository; every other tab is a placeholder until first focused.</summary>
     public bool RestoreSessionTabs { get; init; } = true;
     public bool PruneOnFetch { get; init; } = true;
@@ -119,7 +119,7 @@ public sealed record AppSettings
     public bool PersistRepoCache { get; init; } = true;
 
     /// <summary>
-    /// §7.6: when on, the graph keeps only the fixed-size layout arrays in memory and pages
+    /// when on, the graph keeps only the fixed-size layout arrays in memory and pages
     /// per-commit metadata (message, author, dates) from a random-access cache file, and
     /// background-caches the whole history to disk. Read once at startup — a change takes
     /// effect on the next launch. Default on.
@@ -128,7 +128,7 @@ public sealed record AppSettings
 
     /// <summary>
     /// When on (default), a large repository (≥ 30,000 commits walked, checked as the
-    /// §7.6 background spill proceeds in 25k-row chunks) that has no commit-graph file yet gets
+    /// background spill proceeds in 25k-row chunks) that has no commit-graph file yet gets
     /// one written in the background (<c>git commit-graph write --reachable</c>). A commit-graph
     /// is what lets Git's own <c>--date-order</c> walk (the CLI graph engine) expand lazily by
     /// generation number instead of touching the whole history up front.
@@ -147,10 +147,10 @@ public sealed record AppSettings
     public bool EnableGraphSplice { get; init; }
 
     /// <summary>
-    /// How many rows the graph's silent background crawler (§V10.1.2) pre-loads into the
+    /// How many rows the graph's silent background crawler pre-loads into the
     /// resident layout after first paint, before stopping until the viewport scrolls past the
     /// loaded threshold (R3/R4), advancing another this many rows each step. Deeper history
-    /// reaches disk in full via the §7.6 background spill regardless of this cap (R2).
+    /// reaches disk in full via the background spill regardless of this cap (R2).
     /// <c>0</c> means uncapped — the crawler runs all the way to the resident-row ceiling
     /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 100,000.
     /// </summary>
@@ -170,7 +170,7 @@ public sealed record AppSettings
     public static int ClampSilentCrawlRowCap(int value) => Math.Clamp(value, MinSilentCrawlRowCap, MaxSilentCrawlRowCap);
 
     /// <summary>
-    /// The resident-row hardcap (§7.3, §7.6) applied when
+    /// The resident-row hardcap applied when
     /// <see cref="GraphMetadataFromDisk"/> is on — the absolute ceiling on how many rows the
     /// graph layout will ever keep resident for one repository, regardless of scrolling or the
     /// background crawler/spill. Raising it lets a very large repository's full history become
@@ -186,24 +186,24 @@ public sealed record AppSettings
     /// <summary>Math.Clamp to the accepted <see cref="ResidentRowCap"/> range.</summary>
     public static int ClampResidentRowCap(int value) => Math.Clamp(value, MinResidentRowCap, MaxResidentRowCap);
 
-    /// <summary>Issue-key → URL rules applied to commit messages (§V2-17.6). Account-free.</summary>
+    /// <summary>Issue-key → URL rules applied to commit messages. Account-free.</summary>
     public IReadOnlyList<IssueAutolinkRule> IssueAutolinks { get; init; } = [];
 
-    /// <summary>Word-wrap diff lines instead of horizontal scroll (§V2-17.4).</summary>
+    /// <summary>Word-wrap diff lines instead of horizontal scroll.</summary>
     public bool DiffWordWrap { get; init; }
 
     // ── External tools ──
     public string? ExternalMergeTool { get; init; }
 
-    // ── Terminal (V5 §13) ──
-    /// <summary>Explicit shell override. Null → resolve per platform (V5 §4.1). A set-but-missing
+    // ── Terminal ──
+    /// <summary>Explicit shell override. Null → resolve per platform. A set-but-missing
     /// path is a <c>ShellNotFound</c> error, never a silent fallback.</summary>
     public string? TerminalShellPath { get; init; }
 
     /// <summary>Shell arguments, passed as a list. Default empty — no <c>-l</c> login flag.</summary>
     public IReadOnlyList<string> TerminalShellArgs { get; init; } = [];
 
-    /// <summary>Null → the platform monospace stack (V5 §8).</summary>
+    /// <summary>Null → the platform monospace stack.</summary>
     public string? TerminalFontFamily { get; init; }
 
     public int TerminalFontSize { get; init; } = 13;

@@ -757,7 +757,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             var name = profile?.GitUserName ?? "";
             var email = profile?.GitUserEmail ?? "";
 
-            // §14.4: under Local config (no active profile) the identity comes from git config.
+            // under Local config (no active profile) the identity comes from git config.
             if (profile is null && (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(email)))
             {
                 var (cfgName, cfgEmail) = await _ctx.Gateway.GetConfiguredIdentityAsync(_ctx.Lifetime);
@@ -775,7 +775,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
                 return;
             }
 
-            // §14.4: with no profile, honour whatever git config says about signing.
+            // with no profile, honour whatever git config says about signing.
             var sign = profile?.SignCommits ?? await _ctx.Gateway.GetGpgSignConfiguredAsync(_ctx.Lifetime);
 
             await _ctx.Gateway.CommitAsync(new CommitRequest

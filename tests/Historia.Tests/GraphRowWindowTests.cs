@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>§7.6: <see cref="GraphLayout.EnsureRows"/> sizes the derived row window by how the
+/// <summary><see cref="GraphLayout.EnsureRows"/> sizes the derived row window by how the
 /// viewport got there. Scrolling past the edge gets the full ±1,000 window, and a jump gets a tight
 /// ±128 one, which must still produce exactly the lines a full derivation would.</summary>
 [Trait("tier", "unit")]

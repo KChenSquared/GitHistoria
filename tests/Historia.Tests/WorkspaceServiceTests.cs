@@ -154,7 +154,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         }
     }
 
-    // ── §V3-B/19.21: tab drag-and-drop reorder ──
+    // ── tab drag-and-drop reorder ──
 
     [Fact(Timeout = 30000)]
     public async Task Move_reorders_open_tabs_and_raises_open_changed()
@@ -224,7 +224,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
             node["paths"]!.AsArray().Select(n => Norm(n!.GetValue<string>())));
     }
 
-    // ── §V3-9.3: session restore ──
+    // ── session restore ──
 
     [Fact(Timeout = 30000)]
     public async Task Session_v1_array_still_loads()
@@ -624,7 +624,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
     private static TestRepositoryBuilder RepoWithoutLocalIdentity()
     {
         var b = Repo("f.txt");
-        // §9.6's write path only triggers when the repo has neither user.name nor user.email set
+        //'s write path only triggers when the repo has neither user.name nor user.email set
         // locally — TestRepositoryBuilder.Create() sets both so Commit() works, so clear them here.
         b.Git("config", "--local", "--unset", "user.name");
         b.Git("config", "--local", "--unset", "user.email");
@@ -744,7 +744,7 @@ public class WorkspaceServiceTests : IAsyncDisposable
         }
     }
 
-    // ── §F9: linked submodule tab groups ──
+    // ── linked submodule tab groups ──
 
     /// <summary>A real nested git repo under <paramref name="owner"/>'s working directory —
     /// enough for <c>Repository.Discover</c> to find it, without needing real

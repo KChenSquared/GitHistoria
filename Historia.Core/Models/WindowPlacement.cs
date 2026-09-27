@@ -2,7 +2,7 @@
 
 /// <summary>
 /// Main-window geometry, persisted to <c>window.json</c> in <c>AppPaths.MachineDirectory</c>
-/// (§V3-9.2). Deliberately <b>not</b> a field on <see cref="AppSettings"/> — monitor coordinates
+///. Deliberately <b>not</b> a field on <see cref="AppSettings"/> — monitor coordinates
 /// must not follow the user to another machine (D15).
 /// </summary>
 public sealed record WindowPlacement

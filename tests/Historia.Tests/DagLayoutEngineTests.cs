@@ -27,7 +27,7 @@ public class DagLayoutEngineTests
         Func<ObjectId, ObjectId, bool>? isAncestor = null)
         => _engine.Compute(commits, deco, maxRows, isAncestor: isAncestor);
 
-    /// <summary>§Phase 2: Segments/Elbows are no longer flat arrays on <see cref="GraphLayout"/>
+    /// <summary>2: Segments/Elbows are no longer flat arrays on <see cref="GraphLayout"/>
     /// — they're derived per row window on demand. Asserts the two layouts produce byte-identical
     /// segments and elbows for every row, the same equality the old whole-array comparison gave.</summary>
     private static void AssertSameLines(GraphLayout expected, GraphLayout actual)
@@ -191,7 +191,7 @@ public class DagLayoutEngineTests
     [Fact]
     public void Deferred_merge_parent_does_not_widen_a_windowed_layout()
     {
-        // §V3-B: row 0 merges id 5 (first parent) and id 9 (second parent, past the window).
+        // row 0 merges id 5 (first parent) and id 9 (second parent, past the window).
         // The 2nd-parent column must not be claimed until id 9 is actually placed, so the
         // windowed layout stays one lane wide and the stub runs straight down the merge lane.
         var commits = new[]
@@ -266,7 +266,7 @@ public class DagLayoutEngineTests
         Assert.Equal(expected, a.Layout.Rows[0].ColorIndex);
     }
 
-    // ── §V3-16.1: every non-OffWindow edge starts in its FromRow's own lane ──
+    // ── every non-OffWindow edge starts in its FromRow's own lane ──
 
     private static void AssertEndpointInvariant(GraphLayoutResult r)
     {
@@ -310,7 +310,7 @@ public class DagLayoutEngineTests
     [Fact]
     public void Merge_edge_leaves_the_merge_commits_own_lane_not_the_parents()
     {
-        // §V3-3.2: 6 = merge(5, 3) over 5 -> 4 -> 2 -> 1 with 3 -> 2.
+        // 6 = merge(5, 3) over 5 -> 4 -> 2 -> 1 with 3 -> 2.
         var commits = new[] { C(6, 5, 3), C(5, 4), C(4, 2), C(3, 2), C(2, 1), C(1) };
         var r = Compute(commits);
 
@@ -340,7 +340,7 @@ public class DagLayoutEngineTests
     [Fact]
     public void Merge_in_edge_is_coloured_by_the_merged_in_branch_not_the_destination()
     {
-        // §V6-G7: 6 = merge(5, 3); the merged-in branch is the one holding commit 3.
+        // 6 = merge(5, 3); the merged-in branch is the one holding commit 3.
         var commits = new[] { C(6, 5, 3), C(5, 4), C(4, 2), C(3, 2), C(2, 1), C(1) };
         var r = Compute(commits);
 
@@ -356,7 +356,7 @@ public class DagLayoutEngineTests
     [Fact]
     public void First_parent_edges_keep_the_child_lane_colour()
     {
-        // §V6-G7: only MergeIn changes. A branch-out first-parent edge still carries the
+        // only MergeIn changes. A branch-out first-parent edge still carries the
         // child's own lane colour.
         //   4 -> 2 (first parent) and 3 -> 2 (first parent) with 2 -> 1; 4 branched off.
         var commits = new[] { C(4, 2), C(3, 2), C(2, 1), C(1) };
@@ -370,7 +370,7 @@ public class DagLayoutEngineTests
     public void ChildLane_survives_a_resumed_walk()
     {
         // The merge commit and its second parent land in different Consume calls, so ChildLane
-        // must be captured at reservation time inside the resumable walk (§V3-3.5).
+        // must be captured at reservation time inside the resumable walk.
         var commits = new[] { C(6, 5, 3), C(5, 4), C(4, 2), C(3, 2), C(2, 1), C(1) };
 
         var full = Compute(commits);
@@ -381,7 +381,7 @@ public class DagLayoutEngineTests
         AssertEndpointInvariant(extended);
     }
 
-    // ── §V10.1: "newest tip wins the trunk, with a checked-out-branch exception" ──
+    // ── "newest tip wins the trunk, with a checked-out-branch exception" ──
 
     [Fact]
     public void Newest_branch_tip_holds_the_trunk_lane_when_no_head_is_marked()
@@ -694,7 +694,7 @@ public class DagLayoutEngineTests
         Assert.Equal(full.Layout.Decorations, extended.Layout.Decorations);
     }
 
-    // ── §7.1 (v8 M7): lane colours are a pure function of the walk ──
+    // ── (v8 M7): lane colours are a pure function of the walk ──
 
     /// <summary>Decorates the chain so several lanes carry branch refs and one commit carries
     /// two — the case that used to let ref-enumeration order flip a lane's seed.</summary>
@@ -809,7 +809,7 @@ public class DagLayoutEngineTests
     [Fact]
     public void Merge_edge_turns_at_the_merge_row_and_runs_down_the_source_lane()
     {
-        // §V3-3.2: 6 = merge(5, 3) over 5 -> 4 -> 2 -> 1 with 3 -> 2. The merged-in parent (3)
+        // 6 = merge(5, 3) over 5 -> 4 -> 2 -> 1 with 3 -> 2. The merged-in parent (3)
         // sits two rows below the merge, so the merge edge spans rows 0..3.
         var commits = new[] { C(6, 5, 3), C(5, 4), C(4, 2), C(3, 2), C(2, 1), C(1) };
         var r = Compute(commits);
@@ -842,7 +842,7 @@ public class DagLayoutEngineTests
             s => s.Type == LaneSegmentType.TopToNode && s.Lane == 1);
     }
 
-    // ── §V3.1: uncapped lanes + ±4 colour de-collision ──
+    // ── uncapped lanes + ±4 colour de-collision ──
 
     [Fact]
     public void Uncapped_engine_gives_every_lineage_its_own_lane()
@@ -875,7 +875,7 @@ public class DagLayoutEngineTests
     [Fact]
     public void Windowed_derivation_matches_full_derivation_for_every_row_range()
     {
-        // A long gnarly chain spans many checkpoint boundaries (§Phase 2 CheckpointStride = 256),
+        // A long gnarly chain spans many checkpoint boundaries (2 CheckpointStride = 256),
         // and BuildWideFan gives hundreds of concurrent lanes whose long-lived edges cross many
         // checkpoints at once — exactly the shapes the crossing index has to get right. Each
         // layout's GraphLayout.GetRowSegments/Elbows internally derives a small overscan window

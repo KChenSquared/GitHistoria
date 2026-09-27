@@ -13,7 +13,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     private readonly object _sync = new();
     private RepositoryContext? _focused;
 
-    // §V3-9.3: restored-but-not-yet-focused tabs whose InitializeContextAsync has been deferred.
+    // restored-but-not-yet-focused tabs whose InitializeContextAsync has been deferred.
     // They get the ordinary open path on first focus, exactly once.
     private readonly HashSet<RepositoryContext> _deferredInit = [];
 
@@ -34,8 +34,8 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         }
     }
 
-    // §V10.1.2 / M3.1: serial background-init/refresh pump. Drains in app-band tab order,
-    // one repo at a time, behind the focused tab's FirstFullLoad (§F4, §F5).
+    // / M3.1: serial background-init/refresh pump. Drains in app-band tab order,
+    // one repo at a time, behind the focused tab's FirstFullLoad.
     private readonly List<BackgroundQueueItem> _bgQueue = [];
     private bool _bgInitPumpIdle = true;
     private RepositoryContext? _foregroundInit; // the focused/opened tab currently initialising
@@ -65,14 +65,14 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // long for a first-paint signal that will never come before its identity/refresh runs.
     private static readonly TimeSpan GraphPriorityTimeout = TimeSpan.FromSeconds(8);
 
-    // §V10.1.2: the FOCUSED tab's graph control WILL paint — wait for that, not a short guess,
+    // the FOCUSED tab's graph control WILL paint — wait for that, not a short guess,
     // before its identity resolution + RefreshAllAsync take the repo gate. 8s was far too short
     // on a big repo (linux first paint alone is tens of seconds), so identity/refresh jumped the
     // gate mid-first-walk and stalled it for ~60s. This ceiling is only a stuck-guard.
     private static readonly TimeSpan GraphFirstPaintCeiling = TimeSpan.FromSeconds(120);
 
     /// <summary>
-    /// Default query for repository tabs (§7.6, R5). Must match <c>CommitGraphControl._query</c>'s default.
+    /// Default query for repository tabs (R5). Must match <c>CommitGraphControl._query</c>'s default.
     /// Used by clone precache and inactive-tab background caching so the store matches the tab's first walk.
     /// </summary>
     internal static readonly GraphQuery TabGraphQuery = new()
@@ -124,7 +124,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             ?? throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
                 $"No Git repository was found at or above '{path}'.");
 
-        // Duplicate-open guard: focus the existing tab rather than racing on the index lock (§6.6.3).
+        // Duplicate-open guard: focus the existing tab rather than racing on the index lock.
         var normalizedGitDir = NormalizeDir(discovered);
         RepositoryContext? existing;
         lock (_sync)
@@ -134,7 +134,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         }
         if (existing is not null)
         {
-            // §I-6.7 / rule 18: never raise an event while holding _sync. FocusInternal fires
+            // / rule 18: never raise an event while holding _sync. FocusInternal fires
             // FocusedRepositoryChanged, whose handlers marshal to the UI thread — doing that
             // under the lock deadlocks against any UI-thread reader of OpenRepositories/Focused.
             FocusInternal(existing);
@@ -147,7 +147,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     /// <summary>
     /// Shared open path. <paramref name="initialize"/> is false only for a session-restored tab
     /// that is not the focused one — its <see cref="InitializeContextAsync"/> is deferred until
-    /// it is first focused, so a 15-tab restore costs one repository open, not fifteen (§V3-9.3).
+    /// it is first focused, so a 15-tab restore costs one repository open, not fifteen.
     /// <paramref name="recordRecent"/> is false for session restore: re-opening the previous
     /// tab-set on launch must not reshuffle (or restamp) the Recent list — that list only moves
     /// when the user explicitly opens or clones a repo.
@@ -200,7 +200,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     }
 
     /// <summary>
-    /// Resolves the repo identity key and the cascading active profile (§9.3.1, §9.4), then
+    /// Resolves the repo identity key and the cascading active profile, then
     /// performs the first full state refresh. Runs off the open path so a large repo does not
     /// hold up the tab appearing.
     /// </summary>
@@ -216,7 +216,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         {
             var outcome = await InitializeContextCoreAsync(context, foreground, attemptCts.Token).ConfigureAwait(false);
             if (outcome != InitOutcome.Interrupted)
-                context.MarkFirstFullLoadDone(); // §12.1: unblock any auto-fetch waiter
+                context.MarkFirstFullLoadDone(); // unblock any auto-fetch waiter
         }
         finally
         {
@@ -238,7 +238,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         // it) starts within a few hundred ms of the tab opening and can hold that gate for
         // seconds on a large repo -- observed: 3+s of the graph's fingerprint+load work sitting
         // in the queue behind it, on a repo where the graph's own paint takes barely over a
-        // second once it actually gets a turn. §V10.1.2: the focused tab's graph WILL paint, so
+        // second once it actually gets a turn. the focused tab's graph WILL paint, so
         // wait for that (large stuck-guard ceiling); a background force-init has no graph
         // attached, so only the short ceiling applies. Task.WhenAny never throws or propagates
         // either branch's outcome, so no try/catch is needed here.
@@ -294,7 +294,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     }
 
     /// <summary>Repo→profile identity resolution and the cascading active-profile bind/touch/git-config
-    /// write (§9.3.1, §9.4, §9.6). Never throws — a failure here must not stop the repo from
+    /// write. Never throws — a failure here must not stop the repo from
     /// opening, and cancellation is classified by the caller against <see cref="InitOutcome"/>.</summary>
     private async Task ResolveIdentityAsync(RepositoryContext context, CancellationToken ct)
     {
@@ -302,7 +302,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         {
             var key = await _identity.ResolveAsync(context, ct).ConfigureAwait(false);
 
-            // Keep the binding's last-known path fresh — the rename case working as intended (§9.3.1).
+            // Keep the binding's last-known path fresh — the rename case working as intended.
             var existingBinding = _profiles.GetProfileForRepository(key);
             if (existingBinding is not null)
                 await _profiles.BindProfileToRepositoryAsync(key, context.RepositoryPath, existingBinding.Id, ct).ConfigureAwait(false);
@@ -313,7 +313,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             {
                 await _profiles.TouchProfileAsync(profile.Id, ct).ConfigureAwait(false);
 
-                // §9.6: when the repo has no existing user.name/user.email, write the profile's
+                // when the repo has no existing user.name/user.email, write the profile's
                 // values. A mismatch with existing values is surfaced by the repo view as a
                 // non-blocking banner rather than being overwritten here.
                 if (!context.IsBare)
@@ -417,7 +417,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
         if (result.ErrorKind == GitErrorKind.Cancelled || ct.IsCancellationRequested)
         {
-            // Delete the partial target only if Historia created it — never a pre-existing dir (§6.6.2).
+            // Delete the partial target only if Historia created it — never a pre-existing dir.
             if (createdTarget)
                 TryDeleteDirectory(targetDirectory);
             throw new OperationCanceledException(ct);
@@ -568,7 +568,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             removed = _open.Remove(context);
             if (removed)
             {
-                // §F9 (Decisions table): closing a group's owner detaches its children rather than
+                // (Decisions table): closing a group's owner detaches its children rather than
                 // closing them — no uncommitted work in a submodule tab is ever silently discarded.
                 foreach (var t in _open)
                     if (ReferenceEquals(t.LinkOwner, context))
@@ -598,7 +598,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService)) as Historia.Services.Graph.IGraphLayoutService)
             ?.Forget(context);
 
-        // V5 §3.3: close the terminal session bound to this tab so its shell releases the
+        // close the terminal session bound to this tab so its shell releases the
         // working-directory handle before the context is disposed. Keyed by the tab's own id,
         // so a second tab open on the same repository keeps its shell running.
         if (_services.GetService(typeof(Historia.Services.Terminal.ITerminalSessionService))
@@ -635,7 +635,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         if (!moved)
             return;
 
-        // §I-6.7 / rule 18: raise outside the lock. RaiseOpenChanged re-persists the session, so
+        // / rule 18: raise outside the lock. RaiseOpenChanged re-persists the session, so
         // the dragged order is what a later RestoreSessionAsync replays.
         RaiseOpenChanged();
     }
@@ -749,7 +749,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         // The loop adds tabs to _open (and focuses/initializes the right one) strictly in
         // saved-session order. Once the focused tab is open, the loop pauses briefly before
         // opening the rest — each remaining tab only needs RepositoryContext.Open (no graph
-        // work — InitializeContextAsync is deferred until it is actually focused, §V3-9.3),
+        // work — InitializeContextAsync is deferred until it is actually focused),
         // giving the focused tab's graph walk first claim on the CPU/disk it needs to paint as fast
         // as possible.
         var prefetches = new Dictionary<string, Task<RepositoryContext>>(StringComparer.OrdinalIgnoreCase);
@@ -855,9 +855,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         }
     }
 
-    /// <summary>§12.1 (AF4): force a still-deferred session-restore tab through the ordinary
+    /// <summary>(AF4): force a still-deferred session-restore tab through the ordinary
     /// initialize path, instead of waiting for its first focus — auto-fetch needs every open
-    /// repo fully loaded before its loop starts. §V10.1.2: enqueued onto the serial background
+    /// repo fully loaded before its loop starts. enqueued onto the serial background
     /// pump rather than fired immediately, so a restore does not fan every tab's identity walk +
     /// status refresh out at once. No-op for a tab that is already initialising.</summary>
     public void EnsureInitialized(RepositoryContext context)
@@ -937,7 +937,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     }
 
     /// <summary>Initialises and refreshes the queued background tabs one at a time in app-band tab order,
-    /// and never before the focused tab has fully loaded — that tab is what the user is waiting on (§F4, §F5).</summary>
+    /// and never before the focused tab has fully loaded — that tab is what the user is waiting on.</summary>
     private async Task DrainBackgroundInitQueueAsync()
     {
         while (true)
@@ -1011,7 +1011,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         if (_bgQueue.Count == 0)
             return null;
 
-        // 1. Interrupted tab has priority ahead of tab-order selection (§F4, §F5).
+        // 1. Interrupted tab has priority ahead of tab-order selection.
         var interrupted = _bgQueue.FirstOrDefault(x => x.IsInterruptedPriority);
         if (interrupted is not null)
             return interrupted;
@@ -1050,7 +1050,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             // already completed has nothing to interrupt. The interrupted attempt is requeued at
             // the front of the background pump (ahead of never-started tabs) to resume once
             // priority frees up — RefreshAllAsync is read-only, and identity resolution's only
-            // write (seeding git config from the active profile, §9.6) checks the attempt token
+            // write (seeding git config from the active profile) checks the attempt token
             // before starting and then runs uncancelled, so re-running from scratch
             // is fine: either the write never started, or it already completed.
             if (old is not null && !old.FirstFullLoad.IsCompleted && _attemptCts.TryGetValue(old, out var oldCts))
@@ -1092,7 +1092,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             }
         }
 
-        // §I-6.7 / rule 18: never run cancellation callbacks while holding _sync.
+        // / rule 18: never run cancellation callbacks while holding _sync.
         toCancel?.Cancel();
         if (startPump)
             _ = Task.Run(DrainBackgroundInitQueueAsync);
@@ -1106,12 +1106,12 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             is Historia.Services.Graph.IGraphLayoutService graphSvcForFocus)
             _ = graphSvcForFocus.CancelInactiveTabCachingAsync(context);
 
-        // §V3-9.3: a placeholder (or previously interrupted) tab initialises through the ordinary
+        // a placeholder (or previously interrupted) tab initialises through the ordinary
         // open path on first/renewed focus.
         if (needsInit)
             _ = InitializeContextAsync(context, foreground: true);
 
-        PersistSession(); // §V3-9.3: focus is recorded, not only tab-set changes.
+        PersistSession(); // focus is recorded, not only tab-set changes.
         FocusedRepositoryChanged?.Invoke(this, new FocusedRepositoryChangedEventArgs(old, context));
 
         // Release the outgoing tab's graph memory and, once the newly focused tab is done loading,

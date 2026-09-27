@@ -12,7 +12,7 @@ public enum OSPlatformKind
 public sealed record ResolvedShell(string Path, IReadOnlyList<string> Arguments);
 
 /// <summary>
-/// Resolves which shell to launch (V5 §4.1). Pure and unit-tested: the filesystem and
+/// Resolves which shell to launch. Pure and unit-tested: the filesystem and
 /// environment are injected so every platform chain is testable from any platform.
 /// <para>
 /// Order, first hit wins:

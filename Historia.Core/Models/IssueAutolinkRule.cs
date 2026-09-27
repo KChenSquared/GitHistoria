@@ -1,7 +1,7 @@
 ﻿namespace Historia.Models;
 
 /// <summary>
-/// One issue-autolink rule (§I-5.4, §V2-17.6): a regex applied to commit-message text, with a
+/// One issue-autolink rule: a regex applied to commit-message text, with a
 /// URL template whose <c>$1</c>, <c>$2</c>… are replaced by the match's capture groups (and
 /// <c>$0</c> by the whole match). Account-free — pure text substitution plus a shell open.
 /// </summary>

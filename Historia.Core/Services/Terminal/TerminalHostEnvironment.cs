@@ -3,7 +3,7 @@
 /// <summary>
 /// The OS-facing seams <see cref="TerminalSessionService"/> uses to resolve a shell, a start
 /// directory, and the child environment. Injected so every part of session start-up is unit
-/// testable from any platform (V5 §4).
+/// testable from any platform.
 /// </summary>
 public sealed record TerminalHostEnvironment
 {

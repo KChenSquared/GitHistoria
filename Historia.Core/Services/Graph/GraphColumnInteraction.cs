@@ -1,7 +1,7 @@
 namespace Historia.Services.Graph;
 
 /// <summary>
-/// Pure geometry for the commit-graph column header's pointer interactions (§V3-8.4): which
+/// Pure geometry for the commit-graph column header's pointer interactions: which
 /// boundary a resize drag grabs, where a reorder drag would insert, which column sits under
 /// the pointer, and the reorder itself. Lifted out of <c>CommitGraphControl</c> so the
 /// arithmetic is unit-testable (debloat audit T3.3). The control keeps the drag state,

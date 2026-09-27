@@ -2,7 +2,7 @@
 
 /// <summary>
 /// The UI thread, abstracted so <see cref="Historia.Core"/> stays free of any UI framework
-/// (V4 §split). The App layer implements it over <c>Avalonia.Threading.Dispatcher.UIThread</c>;
+///. The App layer implements it over <c>Avalonia.Threading.Dispatcher.UIThread</c>;
 /// tests supply a synchronous inline implementation.
 /// </summary>
 public interface IUiDispatcher

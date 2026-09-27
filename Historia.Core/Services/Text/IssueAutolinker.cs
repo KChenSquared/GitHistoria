@@ -4,7 +4,7 @@
 public readonly record struct AutolinkRun(string Text, string? Url);
 
 /// <summary>
-/// Applies <see cref="IssueAutolinkRule"/>s to commit-message text (§V2-17.6). Pure and
+/// Applies <see cref="IssueAutolinkRule"/>s to commit-message text. Pure and
 /// account-free — regex match plus <c>$n</c> capture-group substitution into the URL template.
 /// The caller renders the runs and opens <see cref="AutolinkRun.Url"/> in the system browser.
 /// </summary>

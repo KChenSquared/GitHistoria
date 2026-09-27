@@ -1,7 +1,7 @@
 namespace Historia.Services.UI;
 
 /// <summary>
-/// Pure geometry for the app-band tab-strip drag reorder (§V2-9.3). Lifted out of
+/// Pure geometry for the app-band tab-strip drag reorder. Lifted out of
 /// <c>AppBandControl</c> so the drag threshold, the cursor-to-slot mapping and the edge-scroll
 /// trigger are unit-testable (debloat audit T3.6). The control keeps the pointer capture, the
 /// drag ghost, the edge timer and the child-collection surgery.
@@ -40,7 +40,7 @@ public static class AppBandDragReorder
          : viewportX > viewportWidth - zone ? 1
          : 0;
 
-    /// <summary>§F9: clamps a linked child tab's live drag target into its own group's legal
+    /// <summary>clamps a linked child tab's live drag target into its own group's legal
     /// sibling range — <c>[groupStart + 1, groupStart + groupCount - 1]</c> — so a linked tab's
     /// preview can never cross into another group or ahead of its own owner. Returns
     /// <paramref name="groupStart"/> itself (a "no legal move" sentinel) when the group has one

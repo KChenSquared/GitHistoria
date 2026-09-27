@@ -42,7 +42,7 @@ internal static class GraphCacheLocks
 }
 
 /// <summary>
-/// On-disk, random-access store for the graph's per-commit metadata (§7.6). When the
+/// On-disk, random-access store for the graph's per-commit metadata. When the
 /// "Read commit details from disk" setting is on, <see cref="GraphLayoutService"/> spills the
 /// laid-out rows here and points <see cref="GraphLayout.Commits"/> at a
 /// <see cref="DiskCommitStore"/>, so only the fixed-size layout arrays stay resident on a
@@ -527,7 +527,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         => Append(i => rows[i], _ => null, start, count);
 
     /// <summary>Overload that reads metadata + real parent SHAs straight off the walk records
-    /// (no projection copy) — this is what the §7.6 spill uses, and what makes the store usable
+    /// (no projection copy) — this is what the spill uses, and what makes the store usable
     /// as an optimistic-snapshot source (v10.1.2).</summary>
     public void Append(IReadOnlyList<RawCommit> rows, int start, int count)
         => Append(i => rows[i].Metadata, i => rows[i].ParentIds, start, count);
@@ -866,7 +866,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     private readonly Queue<int> _decodedOrder = new(DecodeCacheCap);
     private readonly object _sync = new();
 
-    // Lease count (§7.6): the RepoCache that opened the store holds the first lease; every
+    // Lease count: the RepoCache that opened the store holds the first lease; every
     // consumer that parks a reference to read from later takes another via AddRef(). The file
     // handle closes only when the last lease is released, so a RefsChanged re-walk dropping the
     // cache's lease can't pull the handle out from under an in-flight Render. Reads no-op once
@@ -1184,7 +1184,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 
     /// <summary>
-    /// Ctrl+F backing scan (§7.5): streams <c>.meta.search</c>, one line per RECORD (
+    /// Ctrl+F backing scan: streams <c>.meta.search</c>, one line per RECORD (
     /// the file is record-indexed, like <c>.dat</c>/<c>.idx</c>, so it is never rewritten by a
     /// reorder). Matches the in-memory find exactly — substring on message or author, prefix on
     /// the SHA. For an identity-order store a record index IS the row; otherwise the hits are

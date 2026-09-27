@@ -1,7 +1,7 @@
 namespace Historia.Services.UI;
 
 /// <summary>
-/// Cross-WebView navigation channel (§6.2.1). Hosts the sidebar and the detail area in
+/// Cross-WebView navigation channel. Hosts the sidebar and the detail area in
 /// two separate <c>BlazorWebView</c> instances with the native commit graph between them; the
 /// sidebar publishes navigation intents here and the detail root consumes them. Singleton.
 /// </summary>
@@ -12,7 +12,7 @@ public interface INavigationBus
 
     void RequestNavigate(string relativeUri);
 
-    /// <summary>The detail WebView's current relative route ("" = Home). Reported by Routes.razor (§V3-10.2).</summary>
+    /// <summary>The detail WebView's current relative route ("" = Home). Reported by Routes.razor.</summary>
     string CurrentRoute { get; }
 
     /// <summary>Raised on the caller's thread when the detail route changes; native subscribers marshal.</summary>

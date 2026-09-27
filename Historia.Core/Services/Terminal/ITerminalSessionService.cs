@@ -2,7 +2,7 @@
 namespace Historia.Services.Terminal;
 
 /// <summary>
-/// Owns every live terminal session, keyed by <see cref="TerminalOrigin.Key"/> (V5 §2, §7.2).
+/// Owns every live terminal session, keyed by <see cref="TerminalOrigin.Key"/>.
 /// Registered as a <b>singleton</b> — never <c>AddScoped</c> (constitution rule 20). The only
 /// terminal surface the views talk to.
 /// </summary>
@@ -20,13 +20,13 @@ public interface ITerminalSessionService
 
     /// <summary>
     /// Always starts a fresh session for this origin, even when one is already live — the
-    /// "New Terminal" / <c>+</c> path (review §3, §5). The new session becomes the focused one.
+    /// "New Terminal" / <c>+</c> path (review). The new session becomes the focused one.
     /// </summary>
     Task<TerminalSession> OpenNewAsync(TerminalOrigin origin, CancellationToken ct = default);
 
     /// <summary>
     /// Asks the dock to show itself without touching the session set or focus — the
-    /// "Open Terminal just reveals the dock" path (review §2, §4). No-op if nothing is listening.
+    /// "Open Terminal just reveals the dock" path (review). No-op if nothing is listening.
     /// </summary>
     void RequestActivation();
 
@@ -34,7 +34,7 @@ public interface ITerminalSessionService
 
     Task CloseAsync(Guid sessionId);
 
-    /// <summary>Called by <c>WorkspaceService</c> when a repository tab closes (V5 §3.3), so a
+    /// <summary>Called by <c>WorkspaceService</c> when a repository tab closes, so a
     /// closed tab does not leave an orphaned shell holding a directory handle open.
     /// <paramref name="tabId"/> is the closing <c>RepositoryContext.Id</c>; only that tab's
     /// session is killed — a second tab open on the same repository keeps its shell.</summary>
@@ -44,6 +44,6 @@ public interface ITerminalSessionService
     event EventHandler? FocusedSessionChanged;
     event EventHandler<TerminalSession>? SessionExited;
 
-    /// <summary>Raised when an entry point wants the dock brought into view (review §2).</summary>
+    /// <summary>Raised when an entry point wants the dock brought into view (review).</summary>
     event EventHandler? ActivationRequested;
 }

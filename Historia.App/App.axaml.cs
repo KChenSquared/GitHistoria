@@ -1,7 +1,7 @@
 namespace Historia;
 
 /// <summary>
-/// Composition root and startup sequence (§6.2.2, §6.3) — the Avalonia port of the WPF
+/// Composition root and startup sequence — the Avalonia port of the WPF
 /// <c>App</c>. One <see cref="IServiceProvider"/> is built here and handed to the window.
 /// </summary>
 public sealed class App : Application
@@ -20,7 +20,7 @@ public sealed class App : Application
     // exiting. Guard so only the first pass does any of this.
     private int _exiting;
 
-    /// <summary>How long the splash stays up before the shell is revealed (§6.2.2). The shell
+    /// <summary>How long the splash stays up before the shell is revealed. The shell
     /// (and the focused repo's commit graph) load in the background during this window. 2 s for
     /// the built-in themes; a custom theme sets its own 1–10 s (0 disables the splash).</summary>
     private TimeSpan _splashDuration = TimeSpan.FromSeconds(2);
@@ -35,7 +35,7 @@ public sealed class App : Application
         Historia.Diagnostics.PerfLog.Mark("App.OnFrameworkInitializationCompleted start");
 
         // Settings are loaded synchronously so the correct theme is applied on first paint
-        // with no flash (§6.2.2) — the one permitted blocking read.
+        // with no flash — the one permitted blocking read.
         AppPaths.EnsureCreated();
         AppLog.Write(AppLogLevel.Info, "app", $"start — pid {Environment.ProcessId}, {Environment.OSVersion}");
         _settings = SettingsService.Load();
@@ -128,7 +128,7 @@ public sealed class App : Application
 
         base.OnFrameworkInitializationCompleted();
 
-        // Listen for later launches handing us their repo paths (§3), and honour any path on
+        // Listen for later launches handing us their repo paths, and honour any path on
         // our own command line.
         if (Program.IsPrimaryInstance)
         {
@@ -190,7 +190,7 @@ public sealed class App : Application
 
     private void ConfigureServices(IServiceCollection services, SettingsService settings)
     {
-        // ── Platform seams (V4 §split) ──
+        // ── Platform seams ──
         services.AddSingleton<IAppLog>(AppLog.Current);
         services.AddSingleton<IUiDispatcher, UiDispatcher>();
         services.AddSingleton<ISystemThemeProbe, PlatformSystemThemeProbe>();
@@ -202,7 +202,7 @@ public sealed class App : Application
         services.AddSingleton<Historia.Services.AutoFetch.IAutoFetchHost, AutoFetchHost>();
         services.AddSingleton<Historia.Services.AutoFetch.IAutoFetchService, Historia.Services.AutoFetch.AutoFetchService>();
 
-        // ── Singletons: app-lifetime, no repository affinity (§6.3) ──
+        // ── Singletons: app-lifetime, no repository affinity ──
         services.AddSingleton<ISettingsService>(settings);
         services.AddSingleton<SettingsService>(settings);
         services.AddSingleton<IRepoLayoutService, RepoLayoutService>();
@@ -235,11 +235,11 @@ public sealed class App : Application
         services.AddSingleton<IUnsavedWorkRegistry, UnsavedWorkRegistry>();
         services.AddSingleton<ConflictResolverHost>();
 
-        // ── Terminal (V5 §3.3). Singletons — never AddScoped (rule 20). ──
+        // ── Terminal. Singletons — never AddScoped (rule 20). ──
         services.AddSingleton<Historia.Services.Terminal.ITerminalBackend, Historia.Services.Terminal.PortaPtyBackend>();
         services.AddSingleton<Historia.Services.Terminal.ITerminalSessionService, Historia.Services.Terminal.TerminalSessionService>();
 
-        // ── Per-repository context: constructed and owned by WorkspaceService (§6.3). ──
+        // ── Per-repository context: constructed and owned by WorkspaceService. ──
     }
 
     /// <summary>
@@ -316,11 +316,11 @@ public sealed class App : Application
             : Task.CompletedTask;
         await Task.WhenAll(resolveGit, restoreTabs).ConfigureAwait(false);
 
-        // §14.1: refresh the reserved global profile's identity from ~/.gitconfig once git is resolved.
+        // refresh the reserved global profile's identity from ~/.gitconfig once git is resolved.
         try { await Services.GetRequiredService<Historia.Services.Profiles.IProfileService>().SyncGlobalIdentityAsync().ConfigureAwait(false); }
         catch { /* a missing or unreadable ~/.gitconfig just leaves the global profile blank */ }
 
-        // §12.1: start auto-fetch after restore has populated the tab strip, so the "open repos
+        // start auto-fetch after restore has populated the tab strip, so the "open repos
         // present" branch sees them and waits for all to fully load before [InitialFetch].
         try { Services.GetRequiredService<Historia.Services.AutoFetch.IAutoFetchService>().Start(); }
         catch { /* auto-fetch is best-effort and must never block startup */ }

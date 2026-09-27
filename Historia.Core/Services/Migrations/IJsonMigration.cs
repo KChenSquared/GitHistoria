@@ -1,7 +1,7 @@
 ﻿namespace Historia.Services.Migrations;
 
 /// <summary>
-/// One step in a JSON schema migration pipeline (§9.3). Migrations run in ascending
+/// One step in a JSON schema migration pipeline. Migrations run in ascending
 /// <see cref="FromVersion"/> order until the document reaches the app's current schema
 /// version. Each migration mutates the <see cref="JsonObject"/> in place and is responsible
 /// for setting <c>schemaVersion</c> to its target.

@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>§13.1, §findings: <c>FetchAsync</c> with <see cref="GitFetchOptions.All"/> must route
+/// <summary><c>FetchAsync</c> with <see cref="GitFetchOptions.All"/> must route
 /// each remote individually — a single untargeted "git fetch --all" can only be routed as
 /// <see cref="RouteTransport.AsIs"/> (no remote name means no URL to classify), which silently
 /// skips the active profile's credential injection and makes the SSH-Only setting a no-op.</summary>

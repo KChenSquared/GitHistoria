@@ -1,7 +1,7 @@
 namespace Historia.Platform;
 
 /// <summary>
-/// App-side <see cref="IDialogService"/> (V4 §split — replaces the WPF <c>DialogService</c>).
+/// App-side <see cref="IDialogService"/> (replaces the WPF <c>DialogService</c>).
 /// Folder/file pickers go through Avalonia's <see cref="IStorageProvider"/>; confirm / message /
 /// prompt are one small hand-rolled <see cref="Window"/> (Avalonia has no built-in MessageBox,
 /// and pulling in a package for it was rejected). Safe to call from any thread.
@@ -313,7 +313,7 @@ internal static class SimpleDialog
 }
 
 /// <summary>Outcome of the clone dialog: <c>null</c> when cancelled / closed.</summary>
-/// <param name="ProfileId">§13.4: the checkout identity chosen in the clone dialog — null means
+/// <param name="ProfileId">the checkout identity chosen in the clone dialog — null means
 /// <i>Local config</i>. The caller binds it to the newly-cloned repo.</param>
 public sealed record CloneDialogResult(
     string Url,
@@ -353,7 +353,7 @@ internal static class CloneDialog
         var urlHint = new TextBlock { FontSize = 11, Margin = new Thickness(0, 3, 0, 0), IsVisible = false }.Dyn(TextBlock.ForegroundProperty, "ColorDanger");
 
         // Which identity checks the clone out under, and in which network mode:
-        // §13.4: the chosen identity becomes this repo's per-repo selection once the clone
+        // the chosen identity becomes this repo's per-repo selection once the clone
         // finishes; "(Local config)" writes the Local-config marker row.
         var profileLabels = new List<string> { "Local config" };
         profileLabels.AddRange(profiles.Select(p => p.IsGlobal ? "Global (~/.gitconfig)" : p.DisplayName));

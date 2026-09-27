@@ -1,7 +1,7 @@
 ﻿namespace Historia.Views;
 
 /// <summary>
-/// Interactive-rebase todo editor (§8.1) — V4 port of RebaseEditorPage.razor. Reached via the
+/// Interactive-rebase todo editor — V4 port of RebaseEditorPage.razor. Reached via the
 /// <c>rebase?onto=&lt;ref&gt;</c> route. Reorder + set an action per commit, then Start.
 /// </summary>
 public sealed class RebaseEditorView : UserControl

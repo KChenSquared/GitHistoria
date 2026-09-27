@@ -71,7 +71,7 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
                 return Task.FromResult(existing);
             }
 
-            // Re-entrancy guard (V5 §4.1 trap): a double-click must produce one process.
+            // Re-entrancy guard (trap): a double-click must produce one process.
             // Return a pending start only while it is genuinely in-flight. A completed entry
             // is always stale: if successful it is already in _sessions above, and if faulted
             // or cancelled it must not block retrying.
@@ -100,7 +100,7 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
             ObjectDisposedException.ThrowIf(_disposed, this);
 
         // Deliberately bypasses the reuse / in-flight checks — an explicit user request for a
-        // second shell (review §3, §5). StartAsync focuses it and raises ActivationRequested.
+        // second shell (review). StartAsync focuses it and raises ActivationRequested.
         return StartAsync(origin, ct);
     }
 

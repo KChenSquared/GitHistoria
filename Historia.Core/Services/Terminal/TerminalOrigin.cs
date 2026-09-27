@@ -1,7 +1,7 @@
 ﻿
 namespace Historia.Services.Terminal;
 
-/// <summary>What a terminal session is "for" (V5 §4.2).</summary>
+/// <summary>What a terminal session is "for".</summary>
 public enum TerminalOriginKind
 {
     /// <summary>The global entry point (app menu). Starts in the user's home directory.</summary>
@@ -12,7 +12,7 @@ public enum TerminalOriginKind
 }
 
 /// <summary>
-/// The dictionary key for a live terminal session (V5 §17 open question 6). Deliberately a
+/// The dictionary key for a live terminal session (open question 6). Deliberately a
 /// separate value type rather than an <c>Equals</c>/<c>GetHashCode</c> override on
 /// <see cref="TerminalOrigin"/>: the compiler-generated record equality members
 /// (<c>EqualityContract</c> / <c>PrintMembers</c>) make a partial override easy to get subtly
@@ -28,8 +28,8 @@ public enum TerminalOriginKind
 public readonly record struct TerminalOriginKey(TerminalOriginKind Kind, string? TabId);
 
 /// <summary>
-/// Identifies what a terminal session is "for" (V5 §4.2). One live session per
-/// <see cref="Key"/> (V5 §2). The <see cref="WorkingDirectory"/> and <see cref="Title"/> are
+/// Identifies what a terminal session is "for". One live session per
+/// <see cref="Key"/>. The <see cref="WorkingDirectory"/> and <see cref="Title"/> are
 /// display / start-up data, not identity — see <see cref="TerminalOriginKey"/>.
 /// </summary>
 public sealed record TerminalOrigin
@@ -45,7 +45,7 @@ public sealed record TerminalOrigin
     /// makes a repository session unique (see <see cref="TerminalOriginKey"/>).</summary>
     public string? TabId { get; init; }
 
-    /// <summary>Resolved start directory (V5 §4.2). Display only after start-up.</summary>
+    /// <summary>Resolved start directory. Display only after start-up.</summary>
     public required string WorkingDirectory { get; init; }
 
     /// <summary>Dock tab caption: "Home", or the repository's folder name.</summary>

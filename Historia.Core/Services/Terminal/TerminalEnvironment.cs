@@ -1,7 +1,7 @@
 namespace Historia.Services.Terminal;
 
 /// <summary>
-/// Builds the child process environment for a terminal session (V5 §9.2).
+/// Builds the child process environment for a terminal session.
 /// <para>
 /// Historia never sets its internal variables process-globally — <c>GitCliService</c> composes
 /// them on each child <c>ProcessStartInfo</c> per invocation, and there is no
@@ -73,7 +73,7 @@ public static class TerminalEnvironment
 
         if (!string.IsNullOrWhiteSpace(sshKeyPath))
         {
-            // Trap (V5 §9.2): these are a PAIR. GIT_SSH_COMMAND references $HISTORIA_SSH_KEY, so
+            // Trap: these are a PAIR. GIT_SSH_COMMAND references $HISTORIA_SSH_KEY, so
             // setting one without the other expands to `ssh -i "" …` and breaks every SSH op.
             result["HISTORIA_SSH_KEY"] = sshKeyPath;
             result["GIT_SSH_COMMAND"] = "ssh -i \"$HISTORIA_SSH_KEY\" -o IdentitiesOnly=yes";

@@ -5,7 +5,7 @@ public sealed record ThemeChangedEventArgs(EffectiveTheme OldTheme, EffectiveThe
 
 /// <summary>
 /// Drives both the Blazor CSS <c>data-theme</c> attribute and the native WPF
-/// <c>ResourceDictionary</c> (§11.6). Registered as a singleton.
+/// <c>ResourceDictionary</c>. Registered as a singleton.
 /// </summary>
 public interface IThemeService
 {
@@ -25,21 +25,21 @@ public interface IThemeService
     string EffectiveCssThemeName { get; }
 
     /// <summary>
-    /// §V6-G9: the resolved token → colour map every consumer should paint from. Identical to
+    /// the resolved token → colour map every consumer should paint from. Identical to
     /// <c>HistoriaPalette.For(Effective)</c> for the built-in modes; the custom overlay when
     /// <see cref="CurrentMode"/> is <see cref="ThemeMode.Custom"/> and a theme is selected (HC
     /// still wins). Recomputed on <see cref="ThemeChanged"/>.
     /// </summary>
     IReadOnlyDictionary<string, Rgb> Palette { get; }
 
-    /// <summary>§V6-G9: the resolved lane-colour list (length <c>LanePalette.Size</c>) — the
+    /// <summary>the resolved lane-colour list (length <c>LanePalette.Size</c>) — the
     /// built-in rainbow for a theme, or the custom overlay under <see cref="ThemeMode.Custom"/>.</summary>
     IReadOnlyList<Rgb> LaneColors { get; }
 
     /// <summary>Persists the mode, swaps the WPF dictionary, and updates the WebView attribute.</summary>
     Task ApplyModeAsync(ThemeMode mode, CancellationToken ct = default);
 
-    /// <summary>§V6-G9: select a custom theme by id — sets the mode to
+    /// <summary>select a custom theme by id — sets the mode to
     /// <see cref="ThemeMode.Custom"/>, stores the id, and refreshes even when the effective
     /// base theme is unchanged.</summary>
     Task ApplyCustomThemeAsync(string themeId, CancellationToken ct = default);

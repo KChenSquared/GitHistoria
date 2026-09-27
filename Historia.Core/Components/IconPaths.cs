@@ -1,7 +1,7 @@
 namespace Historia.Components;
 
 /// <summary>
-/// Path data for the utility icon set (§17 "Icons"). Glyphs are Google
+/// Path data for the utility icon set ("Icons"). Glyphs are Google
 /// Material Symbols (Outlined style, 24px optical size, weight 400), vendored as SVG
 /// under <c>assets/material-symbols/</c> and flattened into <c>IconPaths.Generated.cs</c> by
 /// <c>dev/vendor-material-symbols.ps1</c> — nothing is fetched at build or run time (Rule 0).

@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// V5 §8: in High Contrast every ANSI colour must clear 4.5:1 against <c>term-bg</c>. A
+/// in High Contrast every ANSI colour must clear 4.5:1 against <c>term-bg</c>. A
 /// contrast guarantee checked by eye regresses silently (constitution rule 36) — so it is a
 /// test, not a spreadsheet.
 /// </summary>

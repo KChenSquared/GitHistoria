@@ -1,6 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>§V3-B: per-repository graph layout store.</summary>
+/// <summary>per-repository graph layout store.</summary>
 [Trait("tier", "unit")]
 public class RepoLayoutServiceTests : IDisposable
 {

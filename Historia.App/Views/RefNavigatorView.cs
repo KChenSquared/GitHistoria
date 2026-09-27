@@ -117,7 +117,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         _workspace.FocusedRepositoryChanged += OnFocusChanged;
         Bind(_workspace.Focused);
 
-        // §V3-10.4: a click on empty sidebar space returns the detail panel to the repo. Rows
+        // a click on empty sidebar space returns the detail panel to the repo. Rows
         // that do something set e.Handled, so this only fires for background clicks.
         AddHandler(PointerReleasedEvent, (_, e) =>
         {

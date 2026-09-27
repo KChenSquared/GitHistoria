@@ -1,6 +1,6 @@
 ﻿namespace Historia.Services.Theming;
 
-/// <summary>§V6-G9: enumerate / load / save / validate the user's custom themes, and compose a
+/// <summary>enumerate / load / save / validate the user's custom themes, and compose a
 /// theme against its built-in base into a concrete <see cref="ResolvedPalette"/>. Singleton.</summary>
 public interface ICustomThemeService
 {
@@ -143,7 +143,7 @@ public sealed class CustomThemeService : ICustomThemeService
             if (theme is null || string.IsNullOrWhiteSpace(theme.Id) || string.IsNullOrWhiteSpace(theme.Name))
                 return null;
 
-            // §V6-G9: every hex the file DOES specify must parse, or the theme is rejected
+            // every hex the file DOES specify must parse, or the theme is rejected
             // outright — never a half-applied theme.
             foreach (var hex in theme.Tokens.Values)
                 if (!TryParse(hex, out _))

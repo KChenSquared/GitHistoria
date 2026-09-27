@@ -62,7 +62,7 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
         string? tempDir = null;
         if (unchanged)
         {
-            // Non-interactive fast path (§8.1.4).
+            // Non-interactive fast path.
             args.Add("--onto");
             args.Add(session.OntoRefName);
             args.Add(session.UpstreamRefName);

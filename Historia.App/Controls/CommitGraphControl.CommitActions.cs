@@ -1,6 +1,6 @@
 namespace Historia.Controls;
 
-// Tier 3.4 of the debloat audit (§5.1): the commit-row / branch-pill / drop-intent context
+// Tier 3.4 of the debloat audit: the commit-row / branch-pill / drop-intent context
 // menus and the git operations they invoke (checkout, create branch/tag, reset, cherry-pick,
 // revert, merge, delete) split out of the CommitGraphControl god-file. Pure file split —
 // same private members on the same partial class, no behaviour change. The Avalonia Pen/Brush
@@ -30,7 +30,7 @@ public sealed partial class CommitGraphControl
             () => ctx.Gateway.CheckoutAsync(refish, new GitCheckoutOptions(), ctx.Lifetime), "Checkout");
     }
 
-    // ── Context menus (§7.6) ──
+    // ── Context menus ──
 
     private void ShowCommitContextMenu(ObjectId id)
     {
@@ -299,7 +299,7 @@ public sealed partial class CommitGraphControl
     }
 
     /// <summary>Max characters of a branch/tag name shown in a context-menu item before it's
-    /// ellipsis-trimmed (§ pill-menu fix) — long names otherwise force the right-click popup
+    /// ellipsis-trimmed — long names otherwise force the right-click popup
     /// wider than the screen.</summary>
     private const int MenuNameMaxChars = 25;
 

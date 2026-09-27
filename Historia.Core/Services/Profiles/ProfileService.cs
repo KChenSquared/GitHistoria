@@ -59,7 +59,7 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
         EnsureGlobalProfile();
     }
 
-    // ── Global profile (§14.1) ──
+    // ── Global profile ──
 
     /// <summary>The single reserved global profile — always present after construction.</summary>
     public GitProfile GetGlobalProfile()
@@ -92,7 +92,7 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
             PersistProfiles();
     }
 
-    /// <summary>§14.1: refresh the global profile's identity from <c>git config --global</c>.
+    /// <summary>refresh the global profile's identity from <c>git config --global</c>.
     /// Call once at startup; a no-op when nothing changed or git is unavailable.</summary>
     public async Task SyncGlobalIdentityAsync(CancellationToken ct = default)
     {
@@ -140,7 +140,7 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
 
     public IReadOnlyList<GitProfile> GetAllProfiles()
     {
-        // §14.1: the global profile always sorts first, then the rest by creation order.
+        // the global profile always sorts first, then the rest by creation order.
         lock (_sync) return _profiles.OrderByDescending(p => p.IsGlobal).ThenBy(p => p.CreatedAt).ToList();
     }
 
@@ -190,7 +190,7 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
 
         PersistProfiles();
 
-        // §14.2: the default stays the global profile (null) unless the user explicitly changes
+        // the default stays the global profile (null) unless the user explicitly changes
         // it — creating a profile never makes it the default.
         _ = isFirst;
 
@@ -253,12 +253,12 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
             if (profile is null)
                 return ProfileDeleteResult.NotFound;
             if (profile.IsGlobal)
-                return ProfileDeleteResult.CannotDeleteGlobal; // §14.5 — the global profile is undeletable.
+                return ProfileDeleteResult.CannotDeleteGlobal; // the global profile is undeletable.
 
             _profiles.Remove(profile);
             _usage.RemoveAll(u => u.ProfileId == id);
 
-            // Drop every per-repo selection row that named it (§14.5). Local-config marker rows
+            // Drop every per-repo selection row that named it. Local-config marker rows
             // (ProfileId == null) are untouched.
             var orphanedKeys = _bindings.Where(kv => kv.Value.ProfileId == id).Select(kv => kv.Key).ToList();
             foreach (var key in orphanedKeys)
@@ -267,13 +267,13 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
             wasDefault = _settings.Current.DefaultProfileId == id;
         }
 
-        // Delete associated tokens from the vault (§12).
+        // Delete associated tokens from the vault.
         await DeleteAllTokensAsync(profile, ct).ConfigureAwait(false);
 
         PersistProfiles();
         PersistBindings();
 
-        // §14.5: deleting the current default clears it — global becomes the automatic default
+        // deleting the current default clears it — global becomes the automatic default
         // again. No other profile is auto-promoted.
         if (wasDefault)
             await _settings.UpdateAsync(s => s with { DefaultProfileId = null }, ct).ConfigureAwait(false);
@@ -283,7 +283,7 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
         return wasDefault ? ProfileDeleteResult.DeletedClearedDefault : ProfileDeleteResult.Deleted;
     }
 
-    // ── Default profile (§14.2) ──
+    // ── Default profile ──
 
     /// <summary>The default profile: the one named by <c>DefaultProfileId</c>, else the global
     /// profile. Never null after construction.</summary>
@@ -303,7 +303,7 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
 
     public Task SetDefaultProfileAsync(Guid? profileId, CancellationToken ct = default)
     {
-        // §14.2: the global profile as default is stored as null (the automatic case).
+        // the global profile as default is stored as null (the automatic case).
         Guid? store = profileId;
         lock (_sync)
         {
@@ -313,7 +313,7 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
         return _settings.UpdateAsync(s => s with { DefaultProfileId = store }, ct);
     }
 
-    // ── Per-repo selection (§14.3) ──
+    // ── Per-repo selection ──
 
     public GitProfile? GetProfileForRepository(RepoIdentityKey repoKey)
     {
@@ -340,7 +340,7 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    /// <summary>§14.3: pin this repo to <i>Local config</i> — an explicit marker row, distinct
+    /// <summary>pin this repo to <i>Local config</i> — an explicit marker row, distinct
     /// from the absence of a row.</summary>
     public Task SetLocalConfigForRepositoryAsync(RepoIdentityKey repoKey, string displayPath, CancellationToken ct = default)
     {
@@ -413,10 +413,10 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
         return Task.FromResult(removed);
     }
 
-    // ── Resolution cascade (§14.3) ──
+    // ── Resolution cascade ──
 
     /// <summary>
-    /// §14.3: (1) an explicit <c>repo-profiles.json</c> row — a profile, or the <i>Local config</i>
+    /// (1) an explicit <c>repo-profiles.json</c> row — a profile, or the <i>Local config</i>
     /// marker (→ null); a row naming a missing profile is ignored. (2) no row + a non-global
     /// default → that default. (3) otherwise → null (<i>Local config</i>).
     /// </summary>
@@ -496,7 +496,7 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
         return tokenRef is null ? null : await _vault.RetrieveTokenAsync(tokenRef, ct).ConfigureAwait(false);
     }
 
-    // ── Export / import (§12) ──
+    // ── Export / import ──
 
     public async Task ExportProfilesAsync(string exportFilePath, bool includeTokens, string? password, CancellationToken ct = default)
     {

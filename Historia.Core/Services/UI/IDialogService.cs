@@ -10,7 +10,7 @@ public enum DialogIcon
 }
 
 /// <summary>
-/// Native WPF dialogs invoked from Blazor components (§6.2.1 — cross-boundary popups must be
+/// Native WPF dialogs invoked from Blazor components (cross-boundary popups must be
 /// WPF, not HTML overlays). Registered as a singleton; safe to call from any thread.
 /// </summary>
 public interface IDialogService
@@ -18,7 +18,7 @@ public interface IDialogService
     Task<string?> PickFolderAsync(string title, string? initialDirectory = null);
     Task<string?> PickFileAsync(string title, string filter, string? initialDirectory = null);
 
-    /// <summary>Non-destructive confirmation (§6.9.1, §6.15.1) — detached checkout, merge,
+    /// <summary>Non-destructive confirmation — detached checkout, merge,
     /// "switch to Local config", and the like. For anything that destroys uncommitted work or
     /// rewrites history, use <see cref="ConfirmDestructiveAsync"/> instead (constitution Rule
     /// 00). <paramref name="defaultToCancel"/> makes <c>Cancel</c> the highlighted (primary /

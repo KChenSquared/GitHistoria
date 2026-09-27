@@ -2,7 +2,7 @@
 
 /// <summary>
 /// App-side <see cref="ISystemThemeProbe"/> over Avalonia's cross-platform
-/// <see cref="IPlatformSettings"/> (V4 §split — replaces the WPF registry + <c>HwndSource</c>
+/// <see cref="IPlatformSettings"/> (replaces the WPF registry + <c>HwndSource</c>
 /// probe). Works on Windows, macOS, and Linux with no platform code here.
 /// </summary>
 public sealed class PlatformSystemThemeProbe : ISystemThemeProbe, IDisposable

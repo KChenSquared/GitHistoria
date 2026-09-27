@@ -1,7 +1,7 @@
 namespace Historia;
 
 /// <summary>
-/// The Avalonia shell window (§6.2.1, §7.4): app band on top, the three body regions
+/// The Avalonia shell window: app band on top, the three body regions
 /// (sidebar | commit graph | detail) with two user-driven dividers, status bar on the bottom.
 /// The service provider is built by <see cref="App"/> and passed in.
 /// </summary>
@@ -109,7 +109,7 @@ public partial class MainWindow : Window
     private void WindowChromeFor(EffectiveTheme theme)
         => Historia.Platform.WindowChrome.Apply(TryGetPlatformHandle()?.Handle ?? IntPtr.Zero, theme);
 
-    // ── Body panel layout (§V3-B/19.24, §3) ──
+    // ── Body panel layout ──
     //
     // Each divider resizes only the two panels it sits between: the left divider trades width
     // between Left and Centre, the right divider between Centre and Right. The panel on the far
@@ -120,9 +120,9 @@ public partial class MainWindow : Window
 
     private const double DividerPx = 4;
     private const double BaseLeftMin = 250;
-    // §V3.1: floor the centre panel at the default columns' combined minimum plus padding
+    // floor the centre panel at the default columns' combined minimum plus padding
     // (Refs 140 + Graph 150 + Message 150 + 40), so a sidebar-divider drag can't squeeze
-    // Message past the right edge. Both dividers clamp against it (§4.2.9).
+    // Message past the right edge. Both dividers clamp against it.
     private const double CentreMin = 480;
     // The detail pane's declared floor, set marginally above the width the right shortcut bar's
     // four labelled buttons render at, keeping the pane minimum a deliberate design constraint
@@ -254,7 +254,7 @@ public partial class MainWindow : Window
     private void OnDividerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
         => _dividerDragging = false;
 
-    // ── Keyboard accelerators (§6.15.2) — same chord grammar as the WPF shell ──
+    // ── Keyboard accelerators — same chord grammar as the WPF shell ──
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
@@ -284,7 +284,7 @@ public partial class MainWindow : Window
         // Decide synchronously and mark the key handled *before* dispatching — a handler that
         // yields (e.g. CommitAsync) would otherwise leave e.Handled unset until long after this
         // routed-event walk has finished, letting the keystroke fall through into a focused
-        // TextBox (§findings: async chord swallow bug).
+        // TextBox (async chord swallow bug).
         if (!_keyboard.IsRegistered(chord))
             return;
 
@@ -304,7 +304,7 @@ public partial class MainWindow : Window
         }
     }
 
-    // ── Window geometry (§V3-9.2) ──
+    // ── Window geometry ──
 
     private void QueuePlacementSave()
     {

@@ -1,6 +1,6 @@
 ﻿namespace Historia.Models;
 
-/// <summary>An entry in the recent-repositories list (§6.6.1). Validated lazily on display.</summary>
+/// <summary>An entry in the recent-repositories list. Validated lazily on display.</summary>
 public sealed record RecentRepository
 {
     public required string Path { get; init; }

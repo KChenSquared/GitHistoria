@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// §7.6 / R4, R5: pins that a leased <see cref="ICommitStore"/> (the painted graph's lease)
+/// / R4, R5: pins that a leased <see cref="ICommitStore"/> (the painted graph's lease)
 /// keeps reading correct, uncorrupted rows even while the on-disk cache is rewritten underneath
 /// it — either by a from-row-0 re-spill at a new walk key (which calls <c>Reset</c>) or by an
 /// append-only reorder commit.

@@ -197,7 +197,7 @@ public sealed class HomeView : UserControl, IDisposable
         _busy = true;
         try
         {
-            // §12.1.1: on a cold start this tells the auto-fetch loop to run an [InitialFetch].
+            // on a cold start this tells the auto-fetch loop to run an [InitialFetch].
             _autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.Opened);
             await _workspace.OpenAsync(path);
             _nav.RequestNavigate("repo");
@@ -219,7 +219,7 @@ public sealed class HomeView : UserControl, IDisposable
         _busy = true;
         try
         {
-            // §12.1.1: a fresh init is already current — start the loop with no [InitialFetch].
+            // a fresh init is already current — start the loop with no [InitialFetch].
             _autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.ClonedOrInitialized);
             await _workspace.InitAsync(path, string.IsNullOrWhiteSpace(branch) ? "main" : branch.Trim());
             _nav.RequestNavigate("repo");
