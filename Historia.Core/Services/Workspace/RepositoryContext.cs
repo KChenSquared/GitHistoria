@@ -9,6 +9,8 @@ namespace Historia.Services.Workspace;
 public sealed class RepositoryContext : IAsyncDisposable
 {
     private readonly SemaphoreSlim _repoGate = new(1, 1);
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private readonly AsyncLocal<bool> _isHoldingWriteLock = new();
     private readonly Repository _repository;
     private readonly CancellationTokenSource _lifetimeCts = new();
     private int _selfOperationDepth;
@@ -416,6 +418,58 @@ public sealed class RepositoryContext : IAsyncDisposable
         [CallerMemberName] string callerMember = "",
         [CallerFilePath] string callerFile = "")
         => WithRepositorySpillAsync(repo => { work(repo); return true; }, ct, label, callerMember, callerFile);
+
+    /// <summary>
+    /// Serializes Git operations that mutate the index, HEAD, refs, or the work tree.
+    /// Reads never take this lock. Re-entrant acquisition from within the work delegate throws.
+    /// </summary>
+    public async Task<T> WithWriteLockAsync<T>(
+        Func<CancellationToken, Task<T>> work,
+        CancellationToken ct = default,
+        string? label = null,
+        [CallerMemberName] string callerMember = "",
+        [CallerFilePath] string callerFile = "")
+    {
+        if (_isHoldingWriteLock.Value)
+            throw new InvalidOperationException("Nested or re-entrant write lock acquisition is not permitted.");
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, Lifetime);
+        var waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        await _writeLock.WaitAsync(linked.Token).ConfigureAwait(false);
+        var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds;
+        if (waitMs > GateLogThresholdMs && PerfLog.Enabled)
+        {
+            Interlocked.Increment(ref FormattedGateMarksCount);
+            PerfLog.Mark($"write lock wait {waitMs:F1}ms ({DisplayName})");
+        }
+
+        var resolvedLabel = ResolveCallerLabel(label, callerMember, callerFile);
+        _isHoldingWriteLock.Value = true;
+        var holdStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            return await work(linked.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            var holdMs = System.Diagnostics.Stopwatch.GetElapsedTime(holdStart).TotalMilliseconds;
+            if (holdMs > GateLogThresholdMs && PerfLog.Enabled)
+            {
+                Interlocked.Increment(ref FormattedGateMarksCount);
+                PerfLog.Mark($"write lock hold {resolvedLabel} {holdMs:F1}ms ({DisplayName})");
+            }
+            _isHoldingWriteLock.Value = false;
+            _writeLock.Release();
+        }
+    }
+
+    public Task WithWriteLockAsync(
+        Func<CancellationToken, Task> work,
+        CancellationToken ct = default,
+        string? label = null,
+        [CallerMemberName] string callerMember = "",
+        [CallerFilePath] string callerFile = "")
+        => WithWriteLockAsync(async innerCt => { await work(innerCt).ConfigureAwait(false); return true; }, ct, label, callerMember, callerFile);
 
     /// <summary>
     /// Marks a scope as one of Historia's own Git operations so the watcher suppresses the

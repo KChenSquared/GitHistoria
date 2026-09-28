@@ -140,11 +140,11 @@ public sealed partial class GitGateway(
         if (noFastForward) args.Add("--no-ff");
         args.Add(refish);
 
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = args,
             WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
+        }, innerCt), ct).ConfigureAwait(false);
 
         if (!result.IsSuccess && result.ErrorKind != GitErrorKind.MergeConflict)
         {
@@ -169,11 +169,11 @@ public sealed partial class GitGateway(
             _ => "--mixed",
         };
 
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = ["reset", flag, target],
             WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
+        }, innerCt), ct).ConfigureAwait(false);
 
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, "Reset");
@@ -196,11 +196,11 @@ public sealed partial class GitGateway(
     public async Task SetUpstreamAsync(string branchName, string upstreamRef, CancellationToken ct = default)
     {
         using var _ = context.BeginSelfOperation();
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = ["branch", $"--set-upstream-to={upstreamRef}", branchName],
             WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
+        }, innerCt), ct).ConfigureAwait(false);
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, "Set upstream");
     }
@@ -247,6 +247,10 @@ public sealed partial class GitGateway(
         await RunNetworkAsync(args, "Fetch", remote, progress, ct, options.Background).ConfigureAwait(false);
     }
 
+    // Deliberately not wrapped in WithWriteLockAsync: pull can raise an interactive askpass
+    // credential prompt mid-process. Holding the write lock while the user sits at the prompt
+    // would block all other git write operations on the repository. Any concurrency collision
+    // with another write surfaces naturally as Git's own index lock error.
     public async Task PullAsync(string remote, string branch, GitPullOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default)
     {
         var args = new List<string> { "pull", "--progress" };
