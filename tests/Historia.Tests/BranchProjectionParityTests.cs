@@ -43,8 +43,8 @@ public sealed class BranchProjectionParityTests : IAsyncDisposable
             .OrderBy(b => b.CanonicalName, StringComparer.Ordinal)
             .ToList();
 
-        var sortedActual = actual.OrderBy(b => b.CanonicalName, StringComparer.Ordinal).ToList();
-        Assert.Equal(expected, sortedActual);
+        // Direct assertion on actual without sorting — proves actual is ordered by ordinal canonical name.
+        Assert.Equal(expected, actual);
     }
 
     [Fact]
@@ -104,10 +104,20 @@ public sealed class BranchProjectionParityTests : IAsyncDisposable
         await using var ctx = _host.Open(builder.Path);
         var branches = await ctx.Gateway.GetBranchesAsync();
 
+        using var repo = new Repository(builder.Path);
+        var libOrphan = repo.Branches.Single(b => b.CanonicalName == "refs/remotes/orphan/feat");
+
         var orphan = Assert.Single(branches, b => b.CanonicalName == "refs/remotes/orphan/feat");
-        Assert.True(orphan.IsRemote);
+        Assert.Equal(libOrphan.FriendlyName, orphan.Name);
+        Assert.Equal(libOrphan.CanonicalName, orphan.CanonicalName);
+        Assert.Equal(libOrphan.IsRemote, orphan.IsRemote);
+        Assert.Equal(libOrphan.IsCurrentRepositoryHead, orphan.IsCurrent);
+        Assert.Equal(libOrphan.Tip?.Id.ToGitObjectId(), orphan.TipCommitId);
+        Assert.Equal(libOrphan.TrackedBranch?.FriendlyName, orphan.UpstreamName);
+
+        // Decision: keep BranchProjection first-segment fallback (refs/remotes/orphan/x -> RemoteName = "orphan")
+        // matching graph BuildDecorations; libgit2 returns null.
         Assert.Equal("orphan", orphan.RemoteName);
-        Assert.Equal("orphan/feat", orphan.Name);
     }
 
     [Fact]
@@ -116,6 +126,7 @@ public sealed class BranchProjectionParityTests : IAsyncDisposable
         using var builder = TestRepositoryBuilder.FromTemplate("branch-parity-2k", b =>
         {
             b.WriteFile("f.txt", "1").Stage().Commit("initial");
+            b.Git("remote", "add", "origin", b.Path);
             var headSha = b.HeadSha;
             var sb = new StringBuilder();
             sb.Append("# pack-refs with: peeled-tags fully-peeled sorted\n");
@@ -130,7 +141,22 @@ public sealed class BranchProjectionParityTests : IAsyncDisposable
         var actual = await ctx.Gateway.GetBranchesAsync();
 
         using var repo = new Repository(builder.Path);
-        Assert.Equal(repo.Branches.Count(), actual.Count);
+        var expected = repo.Branches
+            .Select(b => new BranchInfo
+            {
+                Name = b.FriendlyName,
+                CanonicalName = b.CanonicalName,
+                IsRemote = b.IsRemote,
+                RemoteName = SafeRemoteName(b),
+                IsCurrent = b.IsCurrentRepositoryHead,
+                TipCommitId = b.Tip?.Id.ToGitObjectId(),
+                UpstreamName = b.TrackedBranch?.FriendlyName,
+            })
+            .OrderBy(b => b.CanonicalName, StringComparer.Ordinal)
+            .ToList();
+
+        // Compares full records, not counts.
+        Assert.Equal(expected, actual);
     }
 
     [Fact]

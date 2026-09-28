@@ -1,7 +1,13 @@
 namespace Historia.Tests;
 
-public sealed class GraphDecorationsCliTests
+public sealed class GraphDecorationsCliTests : IAsyncDisposable
 {
+    private readonly MiniHost _host = new();
+
+    public async ValueTask DisposeAsync()
+    {
+        await _host.DisposeAsync();
+    }
     private sealed class CustomOutputCli(string stdout) : IGitCliService
     {
         public List<GitCliRequest> Requests { get; } = [];
@@ -130,5 +136,30 @@ public sealed class GraphDecorationsCliTests
 
         var req = Assert.Single(cli.Requests);
         Assert.Equal(["log", "-g", "--format=%H", "refs/stash"], req.Arguments);
+    }
+
+    [Fact]
+    public async Task ReadStashShas_real_repo_with_two_stashes_matches_libgit2()
+    {
+        using var builder = TestRepositoryBuilder.FromTemplate("stash-real-two", b =>
+        {
+            b.WriteFile("f.txt", "1\n").Stage().Commit("c1");
+            b.WriteFile("f.txt", "stash 1\n");
+            b.Git("stash", "push", "-m", "stash 1");
+            b.WriteFile("f.txt", "stash 2\n");
+            b.Git("stash", "push", "-m", "stash 2");
+        });
+
+        await using var ctx = _host.Open(builder.Path);
+        var snapshot = await ctx.RefSnapshots.GetAsync();
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+
+        var shas = await GraphLayoutService.ReadStashShasAsync(cli, builder.Path, snapshot, CancellationToken.None);
+
+        using var repo = new Repository(builder.Path);
+        var expected = repo.Stashes.Select(s => s.WorkTree.Id.Sha).ToList();
+
+        Assert.Equal(2, expected.Count);
+        Assert.Equal(expected, shas);
     }
 }

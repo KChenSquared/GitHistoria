@@ -259,20 +259,46 @@ public sealed class GraphPrepareGateTests : IAsyncDisposable
         Assert.Equal(123, result);
     }
 
-    [Fact]
-    public void Replaced_RepoCache_on_the_same_context_shares_the_gate()
+    [Fact(Timeout = 10000)]
+    public async Task Replaced_RepoCache_on_the_same_context_shares_the_gate()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("gate-share", b =>
         {
             b.WriteFile("f.txt", "1\n").Stage();
             b.Commit("c1");
         });
-        var ctx = _host.Open(repo.Path);
+        await using var ctx = _host.Open(repo.Path);
 
-        var gate1 = GraphLayoutService.GetGateFor(ctx);
-        var gate2 = GraphLayoutService.GetGateFor(ctx);
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
+        var q1 = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeRemoteBranches = false };
+        var q2 = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeRemoteBranches = true };
 
-        Assert.NotNull(gate1);
-        Assert.Same(gate1, gate2);
+        // 1. Initial query populates RepoCache 1 for ctx.
+        var r1 = await svc.ComputeLayoutAsync(ctx, q1, maxRows: 100);
+        Assert.NotNull(r1);
+
+        // 2. Obtain the gate and hold it.
+        var gate = GraphLayoutService.GetGateFor(ctx);
+        var holdEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdTask = gate.ExecuteAsync(async () =>
+        {
+            holdEntered.SetResult();
+            await holdTcs.Task;
+        });
+        await holdEntered.Task;
+
+        // 3. Query change triggers GetOrResetCache (replacing the RepoCache for ctx).
+        // The new RepoCache's prepare walk must wait on the same gate that is currently held.
+        var q2Task = Task.Run(() => svc.ComputeLayoutAsync(ctx, q2, maxRows: 100));
+        await Task.Delay(300);
+        Assert.False(q2Task.IsCompleted);
+
+        // 4. Release the gate and verify the new cache's prepare completes successfully.
+        holdTcs.SetResult();
+        await holdTask;
+
+        var r2 = await q2Task;
+        Assert.NotNull(r2);
     }
 }

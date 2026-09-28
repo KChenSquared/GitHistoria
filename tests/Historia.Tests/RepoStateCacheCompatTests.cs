@@ -165,4 +165,40 @@ public sealed class RepoStateCacheCompatTests : IDisposable
         Assert.Equal(32, tip.Value.HashSize);
         Assert.Equal(sha256, tip.Value.ToString());
     }
+
+    [Fact]
+    public void Read_pre_gitobjectid_fixture_files_loads_all_entities_and_ids()
+    {
+        var settings = new FakeSettingsService(new AppSettings { PersistRepoCache = true });
+        var cache = new RepoStateCache(settings);
+        const string repoPath = "C:/compat-fixture-repo";
+
+        var fixtureDir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "repo-state-cache-pre-gitobjectid");
+        Directory.CreateDirectory(AppPaths.CacheDirectory);
+        foreach (var file in Directory.GetFiles(fixtureDir, "*.json.gz"))
+        {
+            File.Copy(file, Path.Combine(AppPaths.CacheDirectory, Path.GetFileName(file)), overwrite: true);
+        }
+
+        var snapshot = cache.TryLoad(repoPath);
+        Assert.NotNull(snapshot);
+
+        Assert.Equal(2, snapshot.Branches!.Count);
+        Assert.Equal(GitObjectId.Parse("1111111111111111111111111111111111111111"), snapshot.Branches[0].TipCommitId);
+        Assert.Null(snapshot.Branches[1].TipCommitId);
+
+        Assert.Equal(2, snapshot.Tags!.Count);
+        Assert.Equal(GitObjectId.Parse("2222222222222222222222222222222222222222"), snapshot.Tags[0].TargetCommitId);
+        Assert.Equal(GitObjectId.Zero, snapshot.Tags[1].TargetCommitId);
+
+        Assert.Single(snapshot.Stashes!);
+        Assert.Equal(GitObjectId.Parse("3333333333333333333333333333333333333333"), snapshot.Stashes![0].CommitId);
+
+        Assert.Single(snapshot.Submodules!);
+        Assert.Equal(GitObjectId.Parse("4444444444444444444444444444444444444444"), snapshot.Submodules![0].HeadCommitId);
+        Assert.Equal(GitObjectId.Parse("5555555555555555555555555555555555555555"), snapshot.Submodules![0].RegisteredCommitId);
+
+        Assert.Single(snapshot.Worktrees!);
+        Assert.Equal(GitObjectId.Parse("6666666666666666666666666666666666666666"), snapshot.Worktrees![0].HeadCommitId);
+    }
 }
