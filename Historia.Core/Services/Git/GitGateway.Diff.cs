@@ -164,6 +164,9 @@ public sealed partial class GitGateway
         {
             Arguments = args,
             WorkingDirectory = context.RepositoryPath,
+            // Trap: line-mode capture re-joins lines with Environment.NewLine, turning an LF
+            // patch into CRLF on Windows (and dropping real CRs) — hunk staging then fails.
+            RawStandardOutput = true,
             MaxStandardOutputBytes = maxBytes,
             Timeout = TimeSpan.FromSeconds(30),
         }, ct).ConfigureAwait(false);

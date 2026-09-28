@@ -449,4 +449,38 @@ public sealed class FileDiffCliParityTests : IAsyncDisposable
         Assert.Equal(expected.LinesAdded, actual.AddedLines);
         Assert.Equal(expected.LinesDeleted, actual.DeletedLines);
     }
+
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public async Task Raw_patch_keeps_line_endings_and_a_hunk_stages(string eol)
+    {
+        // Line-mode capture re-joined stdout with Environment.NewLine: an LF patch came back
+        // CRLF on Windows (and real CRs were lost), so git apply rejected every staged hunk.
+        using var repo = TestRepositoryBuilder.FromTemplate("diff-eol-stage-" + (eol == "\n" ? "lf" : "crlf"), b =>
+        {
+            b.Git("config", "core.autocrlf", "false");
+            var lines = Enumerable.Range(1, 20).Select(i => $"line {i}").ToArray();
+            b.WriteFile("f.txt", string.Join(eol, lines) + eol).Stage().Commit("base");
+            lines[1] = "changed 2";
+            lines[17] = "changed 18";
+            b.WriteFile("f.txt", string.Join(eol, lines) + eol);
+        });
+
+        await using var ctx = _host.Open(repo.Path);
+        var diff = await ctx.Gateway.GetFileDiffAsync(new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "f.txt" });
+
+        Assert.Equal(2, diff.Hunks.Count);
+        Assert.Contains("-line 2" + eol + "+changed 2" + eol, diff.RawPatch);
+        if (eol == "\n")
+            Assert.DoesNotContain("\r", diff.RawPatch);
+
+        var patches = new PatchService(_host.Cli);
+        var patch = patches.GeneratePatch(diff, PatchScope.SingleHunk, new HashSet<DiffLineRef> { new(0, 0) });
+        await patches.ApplyPatchAsync(ctx, patch, PatchTarget.StagingArea, reverse: false);
+
+        var staged = repo.Git("diff", "--cached", "--no-color", "--", "f.txt");
+        Assert.Contains("+changed 2", staged);
+        Assert.DoesNotContain("changed 18", staged);
+    }
 }
