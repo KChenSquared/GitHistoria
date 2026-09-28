@@ -145,8 +145,18 @@ public sealed class CommitFilesCliParityTests : IAsyncDisposable
         var libParent1 = _lib.ProjectCommitFiles(git, mergeId, parentIndex: 1);
         var libParent2 = _lib.ProjectCommitFiles(git, mergeId, parentIndex: 2);
 
+        var cliParent0 = await ctx.Gateway.GetCommitFilesAsync(mergeId, parentIndex: 0);
         var cliParent1 = await ctx.Gateway.GetCommitFilesAsync(mergeId, parentIndex: 1);
         var cliParent2 = await ctx.Gateway.GetCommitFilesAsync(mergeId, parentIndex: 2);
+        var cliParent3 = await ctx.Gateway.GetCommitFilesAsync(mergeId, parentIndex: 3);
+
+        // parentIndex 0 and 1 both resolve to the first parent
+        Assert.Equal(cliParent1.Count, cliParent0.Count);
+        for (var i = 0; i < cliParent1.Count; i++)
+        {
+            Assert.Equal(cliParent1[i].Path, cliParent0[i].Path);
+            Assert.Equal(cliParent1[i].Kind, cliParent0[i].Kind);
+        }
 
         // Parity with libgit2 for parent 1 (merges feature.txt)
         Assert.Contains(cliParent1, f => f.Path == "feature.txt" && f.Kind == FileChangeKind.Added);
@@ -157,6 +167,117 @@ public sealed class CommitFilesCliParityTests : IAsyncDisposable
         Assert.Contains(cliParent2, f => f.Path == "main.txt" && f.Kind == FileChangeKind.Added);
         Assert.DoesNotContain(cliParent2, f => f.Path == "feature.txt");
         Assert.Equal(libParent2.Count, cliParent2.Count);
+
+        // parentIndex 3 is past the 2-parent merge count: diffs against empty tree like libgit2 null parent
+        var commit = git.Lookup<Commit>(mergeId.ToLibGit2());
+        using var changesNull = git.Diff.Compare<TreeChanges>(null, commit.Tree);
+        Assert.Equal(changesNull.Count(), cliParent3.Count);
+    }
+
+    [Fact]
+    public async Task Merge_with_ours_strategy_has_empty_diff_against_parent1()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("commit-files-merge-ours", b =>
+        {
+            b.WriteFile("base.txt", "base\n").Stage().Commit("base");
+            b.Checkout("feature", create: true).WriteFile("feature.txt", "feat\n").Stage().Commit("on feature");
+            b.Checkout("main");
+            b.Git("merge", "-s", "ours", "-m", "merge ours", "feature");
+        });
+
+        await using var ctx = _host.Open(repo.Path);
+        var mergeId = new GitObjectId(repo.HeadSha);
+
+        using var git = new Repository(repo.Path);
+        var commit = git.Lookup<Commit>(mergeId.ToLibGit2());
+
+        // Parent 1 diff is empty because -s ours keeps main's tree exactly.
+        var cliParent1 = await ctx.Gateway.GetCommitFilesAsync(mergeId, parentIndex: 1);
+        using var changes1 = git.Diff.Compare<TreeChanges>(commit.Parents.ElementAt(0).Tree, commit.Tree);
+        Assert.Empty(cliParent1);
+        Assert.Equal(changes1.Count(), cliParent1.Count);
+
+        // Parent 2 diff is non-empty.
+        var cliParent2 = await ctx.Gateway.GetCommitFilesAsync(mergeId, parentIndex: 2);
+        using var changes2 = git.Diff.Compare<TreeChanges>(commit.Parents.ElementAt(1).Tree, commit.Tree);
+        Assert.NotEmpty(cliParent2);
+        Assert.Equal(changes2.Count(), cliParent2.Count);
+    }
+
+    [Fact]
+    public async Task Out_of_range_parent_index_diffs_against_empty_tree_matching_libgit2()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("commit-files-out-of-range", b =>
+        {
+            b.WriteFile("a.txt", "content\n").Stage().Commit("root");
+        });
+
+        await using var ctx = _host.Open(repo.Path);
+        var commitId = new GitObjectId(repo.HeadSha);
+
+        using var git = new Repository(repo.Path);
+        var commit = git.Lookup<Commit>(commitId.ToLibGit2());
+        using var changes = git.Diff.Compare<TreeChanges>(null, commit.Tree);
+
+        // parentIndex: 5 on a 0-parent root commit diffs against empty tree
+        var cliActual = await ctx.Gateway.GetCommitFilesAsync(commitId, parentIndex: 5);
+        Assert.Equal(changes.Count(), cliActual.Count);
+        Assert.Single(cliActual);
+        Assert.Equal("a.txt", cliActual[0].Path);
+        Assert.Equal(FileChangeKind.Added, cliActual[0].Kind);
+    }
+
+    [Fact]
+    public async Task Normal_commit_spawns_single_diff_tree_process()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("commit-files-spawns", b =>
+        {
+            b.WriteFile("a.txt", "line1\n");
+            b.Stage().Commit("c1");
+            b.WriteFile("a.txt", "line2\n");
+            b.Stage().Commit("c2");
+        });
+
+        var realCli = _host.Provider.GetRequiredService<IGitCliService>();
+        var recordingCli = new DelegatingRecordingCli(realCli);
+
+        var sc = new ServiceCollection();
+        sc.AddSingleton<ISettingsService>(_host.Settings);
+        sc.AddSingleton<IRepoLayoutService, RepoLayoutService>();
+        sc.AddSingleton<LibGit2Service>();
+        sc.AddSingleton<IGitExecutableLocator>(_host.Locator);
+        sc.AddSingleton<IGitCliService>(recordingCli);
+        sc.AddSingleton<ICredentialVaultService, FakeVault>();
+        await using var provider = sc.BuildServiceProvider();
+
+        await using var ctx = RepositoryContext.Open(repo.Path, provider);
+        var commitId = new GitObjectId(repo.HeadSha);
+
+        var files = await ctx.Gateway.GetCommitFilesAsync(commitId, parentIndex: 1);
+        Assert.Single(files);
+        Assert.Equal(1, recordingCli.RunCount);
+        Assert.Contains(recordingCli.Requests[0].Arguments, a => a == "diff-tree");
+    }
+
+    private sealed class DelegatingRecordingCli(IGitCliService inner) : IGitCliService
+    {
+        public int RunCount { get; private set; }
+        public List<GitCliRequest> Requests { get; } = [];
+        public bool IsGitAvailable => inner.IsGitAvailable;
+
+        public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default)
+        {
+            RunCount++;
+            Requests.Add(request);
+            return inner.RunAsync(request, ct);
+        }
+
+        public Task<GitCliResult> RunAsync(GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default)
+        {
+            RunCount++;
+            Requests.Add(request);
+            return inner.RunAsync(request, progress, onStdoutLine, ct);
+        }
     }
 
     [Fact]

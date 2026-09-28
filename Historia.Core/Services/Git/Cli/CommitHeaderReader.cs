@@ -34,7 +34,8 @@ public sealed class CommitHeaderReader(IGitCliService cli, string repositoryPath
             return [];
 
         // log.showSignature=true would print verification text ahead of each record.
-        var args = new List<string>(ids.Count + 4)
+        var distinctIds = ids.Distinct().ToList();
+        var args = new List<string>(distinctIds.Count + 4)
         {
             "log",
             "--no-walk=unsorted",
@@ -42,7 +43,7 @@ public sealed class CommitHeaderReader(IGitCliService cli, string repositoryPath
             $"--format={Format}",
         };
 
-        foreach (var id in ids)
+        foreach (var id in distinctIds)
             args.Add(id.ToString());
 
         var result = await cli.RunAsync(new GitCliRequest
@@ -58,14 +59,30 @@ public sealed class CommitHeaderReader(IGitCliService cli, string repositoryPath
             throw HistoriaGitException.FromCli(result, "Read commit headers");
 
         var records = Parse(result.StandardOutput);
-        if (records.Count != ids.Count)
+        if (records.Count != distinctIds.Count)
         {
             throw new HistoriaGitException(
                 GitErrorKind.RefNotFound,
-                $"Expected {ids.Count} commit header(s), but received {records.Count}.");
+                $"Expected {distinctIds.Count} commit header(s), but received {records.Count}.");
         }
 
-        return records;
+        if (distinctIds.Count == ids.Count)
+            return records;
+
+        var byId = records.ToDictionary(r => r.Id);
+        var mapped = new List<CommitHeaderRecord>(ids.Count);
+        foreach (var id in ids)
+        {
+            if (!byId.TryGetValue(id, out var record))
+            {
+                throw new HistoriaGitException(
+                    GitErrorKind.RefNotFound,
+                    $"Commit header for {id} was not returned.");
+            }
+            mapped.Add(record);
+        }
+
+        return mapped;
     }
 
     internal static List<CommitHeaderRecord> Parse(string stdout)

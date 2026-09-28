@@ -84,6 +84,33 @@ public sealed class CommitHeaderReaderTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Duplicate_ids_returns_records_in_requested_order_and_count()
+    {
+        GitObjectId c1Id = default;
+        GitObjectId c2Id = default;
+
+        using var repo = TestRepositoryBuilder.FromTemplate("header-reader-dups", r =>
+        {
+            r.WriteFile("f1", "c1").Stage().Commit("commit 1");
+            c1Id = GitObjectId.Parse(r.HeadSha);
+
+            r.WriteFile("f2", "c2").Stage().Commit("commit 2");
+            c2Id = GitObjectId.Parse(r.HeadSha);
+        });
+
+        var reader = new CommitHeaderReader(Cli, repo.Path);
+        var headers = await reader.ReadAsync([c1Id, c2Id, c1Id]);
+
+        Assert.Equal(3, headers.Count);
+        Assert.Equal(c1Id, headers[0].Id);
+        Assert.Equal(c2Id, headers[1].Id);
+        Assert.Equal(c1Id, headers[2].Id);
+        Assert.Equal("commit 1", headers[0].Subject);
+        Assert.Equal("commit 2", headers[1].Subject);
+        Assert.Equal("commit 1", headers[2].Subject);
+    }
+
+    [Fact]
     public async Task Unknown_id_throws_classified_ref_not_found_exception()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("header-reader-err", r =>

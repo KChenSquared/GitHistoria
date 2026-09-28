@@ -3,6 +3,11 @@ namespace Historia.Services.Git;
 public sealed partial class GitGateway
 {
 
+    private const string Sha1EmptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    private const string Sha256EmptyTree = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
+    private static readonly IReadOnlyDictionary<string, string> NoReplaceObjects =
+        new Dictionary<string, string> { ["GIT_NO_REPLACE_OBJECTS"] = "1" };
+
     public async Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default)
     {
         var reader = new CommitHeaderReader(cli, context.RepositoryPath);
@@ -32,24 +37,13 @@ public sealed partial class GitGateway
 
     public async Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default)
     {
-        var reader = new CommitHeaderReader(cli, context.RepositoryPath);
-        var records = await reader.ReadAsync([id], ct).ConfigureAwait(false);
-        var record = records[0];
-
-        var parentIndex0 = Math.Max(0, parentIndex - 1);
-        GitObjectId? parent = parentIndex0 < record.ParentIds.Count ? record.ParentIds[parentIndex0] : null;
-
-        var args = new List<string> { "diff-tree", "-r", "-z", "-M", "--name-status", "--no-commit-id" };
-        if (record.ParentIds.Count == 0 || parent is null)
+        var n = Math.Max(1, parentIndex);
+        var args = new List<string>
         {
-            args.Add("--root");
-            args.Add(id.ToString());
-        }
-        else
-        {
-            args.Add(parent.Value.ToString());
-            args.Add(id.ToString());
-        }
+            "diff-tree", "-r", "-z", "-M", "--name-status", "--no-commit-id",
+            $"{id}^{n}",
+            id.ToString(),
+        };
 
         var result = await cli.RunAsync(new GitCliRequest
         {
@@ -57,13 +51,33 @@ public sealed partial class GitGateway
             WorkingDirectory = context.RepositoryPath,
             RawStandardOutput = true,
             Timeout = Timeout.InfiniteTimeSpan,
-            ExtraEnvironment = CommitHeaderReader.NoReplaceObjects,
+            ExtraEnvironment = NoReplaceObjects,
         }, ct).ConfigureAwait(false);
 
-        if (!result.IsSuccess)
-            throw HistoriaGitException.FromCli(result, "Commit files");
+        if (result.IsSuccess)
+            return ParseCommitFiles(result.StandardOutput);
 
-        return ParseCommitFiles(result.StandardOutput);
+        var emptyTree = id.HashSize == 32 ? Sha256EmptyTree : Sha1EmptyTree;
+        var fallbackArgs = new List<string>
+        {
+            "diff-tree", "-r", "-z", "-M", "--name-status", "--no-commit-id",
+            emptyTree,
+            id.ToString(),
+        };
+
+        var fallbackResult = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = fallbackArgs,
+            WorkingDirectory = context.RepositoryPath,
+            RawStandardOutput = true,
+            Timeout = Timeout.InfiniteTimeSpan,
+            ExtraEnvironment = NoReplaceObjects,
+        }, ct).ConfigureAwait(false);
+
+        if (!fallbackResult.IsSuccess)
+            throw HistoriaGitException.FromCli(fallbackResult, "Commit files");
+
+        return ParseCommitFiles(fallbackResult.StandardOutput);
     }
 
     internal static IReadOnlyList<FileStatusEntry> ParseCommitFiles(string stdout)
