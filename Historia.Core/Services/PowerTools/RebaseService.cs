@@ -94,13 +94,13 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
 
         try
         {
-            var result = await cli.RunAsync(new GitCliRequest
+            var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
             {
                 Arguments = args,
                 WorkingDirectory = context.RepositoryPath,
                 ExtraEnvironment = env,
                 Timeout = TimeSpan.FromMinutes(10),
-            }, ct).ConfigureAwait(false);
+            }, innerCt), ct).ConfigureAwait(false);
 
             await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
 

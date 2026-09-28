@@ -125,7 +125,7 @@ public sealed class WorktreeService(IGitCliService cli) : IWorktreeService
     private async Task Mutate(RepositoryContext context, IReadOnlyList<string> args, string what, CancellationToken ct)
     {
         using var _ = context.BeginSelfOperation();
-        var result = await Run(context, args, ct).ConfigureAwait(false);
+        var result = await context.WithWriteLockAsync(innerCt => Run(context, args, innerCt), ct).ConfigureAwait(false);
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, what);
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);

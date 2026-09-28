@@ -26,7 +26,7 @@ public sealed class StashService(IGitCliService cli) : IStashService
             args.AddRange(options.Paths);
         }
 
-        var result = await cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, ct)
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, innerCt), ct)
             .ConfigureAwait(false);
 
         if (result.StandardOutput.Contains("No local changes to save", StringComparison.OrdinalIgnoreCase)
@@ -50,7 +50,7 @@ public sealed class StashService(IGitCliService cli) : IStashService
             args.Add(message);
         }
 
-        var result = await cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, ct)
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, innerCt), ct)
             .ConfigureAwait(false);
 
         // Nothing staged → git prints one of these and exits non-zero; treat as a no-op.
@@ -80,11 +80,11 @@ public sealed class StashService(IGitCliService cli) : IStashService
     public async Task ClearAsync(RepositoryContext context, CancellationToken ct = default)
     {
         using var _ = context.BeginSelfOperation();
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = ["stash", "clear"],
             WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
+        }, innerCt), ct).ConfigureAwait(false);
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, "Stash clear");
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
@@ -114,7 +114,7 @@ public sealed class StashService(IGitCliService cli) : IStashService
             args.Add(stashRef);
         }
 
-        var result = await cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, ct)
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, innerCt), ct)
             .ConfigureAwait(false);
 
         // A conflicting pop/apply leaves the working tree with markers and the entry intact.

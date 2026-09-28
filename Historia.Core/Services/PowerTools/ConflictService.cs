@@ -167,11 +167,11 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
 
         if (stage)
         {
-            var add = await cli.RunAsync(new GitCliRequest
+            var add = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
             {
                 Arguments = ["add", "--", filePath],
                 WorkingDirectory = context.RepositoryPath,
-            }, ct).ConfigureAwait(false);
+            }, innerCt), ct).ConfigureAwait(false);
             if (!add.IsSuccess)
             {
                 return new ResolutionSaveResult
@@ -264,21 +264,21 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         {
             if (chosenStagePresent && !string.IsNullOrEmpty(chosenStageSha))
             {
-                var update = await cli.RunAsync(new GitCliRequest
+                var update = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
                 {
                     Arguments = ["update-index", "--cacheinfo", $"160000,{chosenStageSha},{filePath}"],
                     WorkingDirectory = context.RepositoryPath,
-                }, ct).ConfigureAwait(false);
+                }, innerCt), ct).ConfigureAwait(false);
                 if (!update.IsSuccess)
                     throw HistoriaGitException.FromCli(update, "Resolve submodule side");
             }
             else
             {
-                var rm = await cli.RunAsync(new GitCliRequest
+                var rm = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
                 {
                     Arguments = ["rm", "--cached", "--", filePath],
                     WorkingDirectory = context.RepositoryPath,
-                }, ct).ConfigureAwait(false);
+                }, innerCt), ct).ConfigureAwait(false);
                 if (!rm.IsSuccess)
                     throw HistoriaGitException.FromCli(rm, "Resolve submodule side (rm)");
             }
@@ -288,29 +288,32 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         if (chosenStagePresent)
         {
             var sideArg = side == ConflictSide.Ours ? "--ours" : "--theirs";
-            var checkout = await cli.RunAsync(new GitCliRequest
+            await context.WithWriteLockAsync(async innerCt =>
             {
-                Arguments = ["checkout", sideArg, "--", filePath],
-                WorkingDirectory = context.RepositoryPath,
-            }, ct).ConfigureAwait(false);
-            if (!checkout.IsSuccess)
-                throw HistoriaGitException.FromCli(checkout, $"Resolve ({sideArg})");
+                var checkout = await cli.RunAsync(new GitCliRequest
+                {
+                    Arguments = ["checkout", sideArg, "--", filePath],
+                    WorkingDirectory = context.RepositoryPath,
+                }, innerCt).ConfigureAwait(false);
+                if (!checkout.IsSuccess)
+                    throw HistoriaGitException.FromCli(checkout, $"Resolve ({sideArg})");
 
-            var add = await cli.RunAsync(new GitCliRequest
-            {
-                Arguments = ["add", "--", filePath],
-                WorkingDirectory = context.RepositoryPath,
+                var add = await cli.RunAsync(new GitCliRequest
+                {
+                    Arguments = ["add", "--", filePath],
+                    WorkingDirectory = context.RepositoryPath,
+                }, innerCt).ConfigureAwait(false);
+                if (!add.IsSuccess)
+                    throw HistoriaGitException.FromCli(add, "Resolve (stage)");
             }, ct).ConfigureAwait(false);
-            if (!add.IsSuccess)
-                throw HistoriaGitException.FromCli(add, "Resolve (stage)");
         }
         else
         {
-            var rm = await cli.RunAsync(new GitCliRequest
+            var rm = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
             {
                 Arguments = ["rm", "-f", "--", filePath],
                 WorkingDirectory = context.RepositoryPath,
-            }, ct).ConfigureAwait(false);
+            }, innerCt), ct).ConfigureAwait(false);
             if (!rm.IsSuccess)
                 throw HistoriaGitException.FromCli(rm, "Resolve (delete)");
         }
@@ -320,11 +323,11 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
     {
         using var _ = context.BeginSelfOperation();
 
-        var res = await cli.RunAsync(new GitCliRequest
+        var res = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = ["checkout", "--conflict=zdiff3", "--", filePath],
             WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
+        }, innerCt), ct).ConfigureAwait(false);
 
         if (!res.IsSuccess)
             throw HistoriaGitException.FromCli(res, "Recreate conflict");
@@ -672,12 +675,12 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         };
 
         var env = new Dictionary<string, string> { ["GIT_EDITOR"] = "true" }; // never open an editor on --continue
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = [verb, action],
             WorkingDirectory = context.RepositoryPath,
             ExtraEnvironment = env,
-        }, ct).ConfigureAwait(false);
+        }, innerCt), ct).ConfigureAwait(false);
 
         var isConflict = (string.Equals(action, "--continue", StringComparison.Ordinal) || string.Equals(action, "--skip", StringComparison.Ordinal))
             && (result.ErrorKind == GitErrorKind.MergeConflict

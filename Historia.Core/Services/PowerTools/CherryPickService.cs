@@ -22,11 +22,11 @@ public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
             throw new HistoriaGitException(GitErrorKind.Unknown, "There is no operation to undo this session.");
 
         using var op = context.BeginSelfOperation();
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = ["reset", "--hard", sha],
             WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
+        }, innerCt), ct).ConfigureAwait(false);
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, "Undo");
 
@@ -60,12 +60,12 @@ public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
             args.Add(id.ToString());
 
         var env = new Dictionary<string, string> { ["GIT_EDITOR"] = "true" };
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = args,
             WorkingDirectory = context.RepositoryPath,
             ExtraEnvironment = env,
-        }, ct).ConfigureAwait(false);
+        }, innerCt), ct).ConfigureAwait(false);
 
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
 
