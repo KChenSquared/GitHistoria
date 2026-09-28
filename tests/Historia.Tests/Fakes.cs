@@ -187,6 +187,32 @@ public sealed class RecordingGitCliService : IGitCliService
     }
 }
 
+/// <summary>Delegates to a real CLI, records every request, and lets a test replace the result
+/// of chosen requests (<see cref="Intercept"/> returns null to pass a request through).</summary>
+public sealed class InterceptingGitCliService(IGitCliService inner) : IGitCliService
+{
+    private readonly ConcurrentQueue<GitCliRequest> _requests = new();
+
+    public IReadOnlyList<GitCliRequest> Requests => _requests.ToList();
+    public Func<GitCliRequest, GitCliResult?>? Intercept { get; set; }
+    public bool IsGitAvailable => inner.IsGitAvailable;
+
+    public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default)
+        => RunAsync(request, progress: null, onStdoutLine: null, ct);
+
+    public Task<GitCliResult> RunAsync(
+        GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default)
+    {
+        _requests.Enqueue(request);
+        return Intercept?.Invoke(request) is { } replaced
+            ? Task.FromResult(replaced)
+            : inner.RunAsync(request, progress, onStdoutLine, ct);
+    }
+
+    public static GitCliResult Failure(GitErrorKind kind = GitErrorKind.Unknown, int exitCode = 128)
+        => new(exitCode, "", "fatal: injected failure", kind, TimeSpan.Zero);
+}
+
 /// <summary>An <see cref="IRepoIdentityService"/> that blocks resolution for a given repository
 /// path until <see cref="Release"/> is called for that path (or the caller's token is cancelled)
 /// — for tests that need a deterministic window where a specific context's identity resolution

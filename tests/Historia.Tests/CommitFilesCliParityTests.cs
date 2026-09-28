@@ -259,6 +259,29 @@ public sealed class CommitFilesCliParityTests : IAsyncDisposable
         Assert.Contains(recordingCli.Requests[0].Arguments, a => a == "diff-tree");
     }
 
+    [Fact]
+    public async Task Failure_with_an_existing_parent_throws_instead_of_diffing_the_empty_tree()
+    {
+        // An empty-tree diff succeeds wherever the real diff failed for another reason (e.g. a
+        // partial clone that can't fetch blobs), reporting every file as added.
+        using var repo = TestRepositoryBuilder.FromTemplate("commit-files-real-failure", b =>
+        {
+            b.WriteFile("a.txt", "1\n").Stage().Commit("c1");
+            b.WriteFile("b.txt", "2\n").Stage().Commit("c2");
+        });
+
+        var cli = new InterceptingGitCliService(_host.Provider.GetRequiredService<IGitCliService>())
+        {
+            Intercept = r => r.Arguments[0] == "diff-tree" ? InterceptingGitCliService.Failure() : null,
+        };
+        await using var ctx = _host.Open(repo.Path, cli);
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() =>
+            ctx.Gateway.GetCommitFilesAsync(new GitObjectId(repo.HeadSha), parentIndex: 1));
+
+        Assert.Single(cli.Requests, r => r.Arguments[0] == "diff-tree");
+    }
+
     private sealed class DelegatingRecordingCli(IGitCliService inner) : IGitCliService
     {
         public int RunCount { get; private set; }

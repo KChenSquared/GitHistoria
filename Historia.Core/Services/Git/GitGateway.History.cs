@@ -57,6 +57,12 @@ public sealed partial class GitGateway
         if (result.IsSuccess)
             return ParseCommitFiles(result.StandardOutput);
 
+        // Only a parent that does not exist (root commit, or n past the parent count) diffs
+        // against the empty tree, as libgit2 does for a null parent. Any other failure is real:
+        // an empty-tree diff would still succeed and report every file as added.
+        if (!await ParentIsMissingAsync(id, n, ct).ConfigureAwait(false))
+            throw HistoriaGitException.FromCli(result, "Commit files");
+
         var emptyTree = id.HashSize == 32 ? Sha256EmptyTree : Sha1EmptyTree;
         var fallbackArgs = new List<string>
         {
@@ -78,6 +84,20 @@ public sealed partial class GitGateway
             throw HistoriaGitException.FromCli(fallbackResult, "Commit files");
 
         return ParseCommitFiles(fallbackResult.StandardOutput);
+    }
+
+    /// <summary>True when <c>&lt;id&gt;^&lt;n&gt;</c> does not resolve: <c>rev-parse --verify -q</c>
+    /// exits 1 for a missing revision and 128 for a broken repository.</summary>
+    private async Task<bool> ParentIsMissingAsync(GitObjectId id, int n, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var probe = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-parse", "--verify", "-q", $"{id}^{n}"],
+            WorkingDirectory = context.RepositoryPath,
+            ExtraEnvironment = NoReplaceObjects,
+        }, ct).ConfigureAwait(false);
+        return probe.ExitCode == 1 && probe.ErrorKind != GitErrorKind.Cancelled;
     }
 
     internal static IReadOnlyList<FileStatusEntry> ParseCommitFiles(string stdout)
