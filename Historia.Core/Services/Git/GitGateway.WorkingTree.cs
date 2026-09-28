@@ -27,6 +27,7 @@ public sealed partial class GitGateway
                 WorkingDirectory = context.RepositoryPath,
                 StandardInput = stdin,
                 ExtraEnvironment = LiteralPathspecEnv,
+                Timeout = TimeSpan.FromMinutes(5),
             }, innerCt).ConfigureAwait(false);
 
             if (!result.IsSuccess && !(result.ExitCode == 1 && IsIgnoredAdviceOnly(result.StandardError)))
@@ -60,6 +61,7 @@ public sealed partial class GitGateway
                     WorkingDirectory = context.RepositoryPath,
                     StandardInput = stdin,
                     ExtraEnvironment = LiteralPathspecEnv,
+                    Timeout = TimeSpan.FromMinutes(5),
                 }, innerCt).ConfigureAwait(false);
 
                 if (!result.IsSuccess)
@@ -73,6 +75,7 @@ public sealed partial class GitGateway
                 WorkingDirectory = context.RepositoryPath,
                 StandardInput = stdin,
                 ExtraEnvironment = LiteralPathspecEnv,
+                Timeout = TimeSpan.FromMinutes(5),
             }, innerCt).ConfigureAwait(false);
 
             if (!restoreResult.IsSuccess)
@@ -152,6 +155,7 @@ public sealed partial class GitGateway
                     WorkingDirectory = context.RepositoryPath,
                     StandardInput = string.Join('\0', inHead) + '\0',
                     ExtraEnvironment = LiteralPathspecEnv,
+                    Timeout = TimeSpan.FromMinutes(5),
                 }, innerCt).ConfigureAwait(false);
 
                 if (!restoreResult.IsSuccess)
@@ -166,6 +170,7 @@ public sealed partial class GitGateway
                     WorkingDirectory = context.RepositoryPath,
                     StandardInput = string.Join('\0', notInHead) + '\0',
                     ExtraEnvironment = LiteralPathspecEnv,
+                    Timeout = TimeSpan.FromMinutes(5),
                 }, innerCt).ConfigureAwait(false);
 
                 foreach (var path in notInHead)
