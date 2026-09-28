@@ -13,8 +13,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private static readonly TimeSpan SpillStartGrace = TimeSpan.FromSeconds(180);
 
     /// <summary>Rows per chunk of the background full-history walk. Each chunk *resumes*
-    /// the primed <c>git log</c> walk (cheap — no respawn), off the repo gate while no ref file
-    /// has changed and otherwise after one low-priority gate turn, so this bounds how long a
+    /// the primed <c>git log</c> walk (cheap — no respawn) while no ref file has changed
+    /// and otherwise after one low-priority gate turn, so this bounds how long a
     /// foreground extend can wait behind the spill to roughly one chunk's pull.</summary>
     private const int SpillWalkChunkRows = 25_000;
 
@@ -222,7 +222,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // A live, primed `git log` process (GitLogStream) pulled forward in chunks by
         // EnsureWalkedAsync — the quick phase, each scroll Extend, the silent crawler and the
         // background spill all continue this ONE walk instead of respawning from the tips every
-        // time. Pulled OFF the repo gate, under WalkLock. Disposed on reset / Forget / exhaustion /
+        // time. Pulled under WalkLock. Disposed on reset / Forget / exhaustion /
         // failure, and when a tip-set change supersedes the walk (WalkSuperseded) — a walk is
         // never re-primed over another tip set within one cache.
         public IEnumerator<RawCommit>? LiveWalk { get; set; }
@@ -236,10 +236,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         /// <summary>The <see cref="RefSnapshot.Token"/> the live walk's tip set was last
         /// confirmed against. While the repo's ref files still hash to it, a walk step resumes
-        /// straight off the repo gate — no ref read, no tip resolution. 0 = unconfirmed.</summary>
+        /// directly — no ref read, no tip resolution. 0 = unconfirmed.</summary>
         public long LiveWalkSnapshotToken { get; set; }
 
-        // Serializes a prime/resume pull (which runs off the repo gate) against a concurrent one
+        // Serializes a prime/resume pull against a concurrent one
         // — e.g. a foreground Extend racing the background spill's next chunk.
         public readonly SemaphoreSlim WalkLock = new(1, 1);
 
@@ -324,7 +324,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         // The trunk pre-pass's ancestry check needs no repo handle: DagLayoutEngine.SeedTipPriority
         // answers it with an exact in-window walk over the already-fetched commit prefix
-        // (isAncestor: null below), so Compute runs fully off the repo gate.
+        // (isAncestor: null below), so Compute runs fully in memory.
         GraphLayoutResult result;
         using (Diagnostics.PerfLog.Scope("engine.Compute"))
             result = _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct, retainCommits: !spill);
@@ -714,8 +714,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// scrolling. Cancelled by <see cref="Forget"/> when the ref set changes or the tab closes.
     /// <para>The heavy full-history walk does not start until this context's first graph paint
     /// has landed (<see cref="SpillStartGrace"/> safety net) — on a large repo it can run for
-    /// tens of seconds and it serializes through the same single-access repo gate the quick +
-    /// extend paint needs, so racing it against first paint is what makes a cold open of a big
+    /// tens of seconds, so racing it against first paint is what makes a cold open of a big
     /// repo take far longer than the "small first window" design should ever cost.</para>
     /// </summary>
     private void MaybeStartBackgroundSpill(RepositoryContext context, RepoCache cache, GraphQuery query)
@@ -914,7 +913,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) Existing)?> ProbeStoreAsync(
         RepositoryContext context, GraphQuery query, CancellationToken ct, IGitCliService? cli = null)
     {
-        // Off the repo gate: the tips come from the ref snapshot, and the probes are header reads
+        // The tips come from the ref snapshot, and the probes are header reads
         // of Historia's own files.
         var repoPath = context.RepositoryPath;
         if (await TryGetRefStateWithCliAsync(context, query, background: true, ct, cli).ConfigureAwait(false) is not { } state)
@@ -937,7 +936,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         var repoPath = context.RepositoryPath;
 
-        // Step 1 — off the repo gate: tip resolution + walk key from the ref snapshot, and a
+        // Step 1: tip resolution + walk key from the ref snapshot, and a
         // header-only probe both at the current key and at whatever key the store was last
         // written under, regardless of match.
         if (await ProbeStoreAsync(context, query, ct, _cli).ConfigureAwait(false) is not { } probe)
@@ -1388,8 +1387,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         // Let the background spill observe the cancellation and finish its own turn before
         // this touches LiveWalk — disposing it while a chunk may still be mid-MoveNext is exactly
-        // the race DropLiveWalk exists to avoid. A stuck spill (repo gate never freed) falls back
-        // to the same off-gate drop Forget already uses, rather than hanging tab-switch forever.
+        // the race DropLiveWalk exists to avoid. A stuck spill falls back
+        // to the same drop Forget already uses, rather than hanging tab-switch forever.
         if (cache.BackgroundSpillTask is { } spillTask)
         {
             try { await spillTask.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
@@ -1404,8 +1403,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         {
             try
             {
-                // GitLogStream is a separate process — no repo gate needed, only serialization
-                // against a concurrent pull.
+                // GitLogStream is a separate process — only serialization against a concurrent pull
+                // is needed.
                 await cache.WalkLock.WaitAsync().ConfigureAwait(false);
                 try
                 {
@@ -1504,9 +1503,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         GatePrep prep = default;
         for (var pass = 0; pass < 2; pass++)
         {
-            // Step 0 — off the gate: the repo's refs. A file-state check (ms) unless a ref moved
-            // since the last read, in which case one `git for-each-ref` — never a LibGit2Sharp
-            // enumeration, which costs seconds at tens of thousands of refs.
+            // Step 0 — the repo's refs. A file-state check (ms) unless a ref moved
+            // since the last read, in which case one `git for-each-ref`.
             RefSnapshot? snapshot = null;
             string failure = "git.exe was not found";
             if (_locator.Current.Found)
@@ -1529,8 +1527,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
             if (cache.LiveWalk is not null && liveToken != 0 && liveToken == snapshot.Token)
             {
                 // No ref file changed since this walk's tip set was confirmed: the tips,
-                // fingerprint and decorations are exactly the cache's — resume without touching
-                // the repo gate. (The token covers HEAD and the stash reflog too, so this holds
+                // fingerprint and decorations are exactly the cache's — resume directly.
+                // (The token covers HEAD and the stash reflog too, so this holds
                 // with stashes on.) A resume never writes the cache's ref state, so nothing it
                 // reads here can be merged back stale.
                 prep = GatePrep.ForResumeCli(cache.Fingerprint, cache.LiveWalkFingerprint, TotalWalked(cache),
@@ -1539,8 +1537,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
 
             // Step 1 — on the graph prepare gate: probe on-disk cache, derive ref state, and
-            // resolve decorations — without touching the repository gate. It deliberately stops
-            // short of spawning or pulling `git log` — the walk itself is what runs off the gate.
+            // resolve decorations. It deliberately stops
+            // short of spawning or pulling `git log` — the walk itself runs concurrently.
             prep = await WithGate(() =>
                 PrepareWalk(repoPath, query, wantCount, deco, cache, snapshot, _metaFromDisk, _walkCache, context.RemoteConfig, _cli, ct))
                 .ConfigureAwait(false);
@@ -1697,10 +1695,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
             new(GatePrepKind.PrimeCli, default, fp, walkKey, have, want, tips, decorations, decosFresh, snapshotToken);
     }
 
-    /// <summary>Caller holds the repo gate. Derives the fingerprint and walk key from
+    /// <summary>Derives the fingerprint and walk key from
     /// <paramref name="snapshot"/> (plus the stash list, when the query includes stashes) and tries
     /// the on-disk caches; otherwise hands back what the caller needs to resume the live
-    /// <see cref="GitLogStream"/> or prime a fresh one, both OFF the gate. Never spawns or pulls
+    /// <see cref="GitLogStream"/> or prime a fresh one. Never spawns or pulls
     /// the stream itself.</summary>
     private static async Task<GatePrep> PrepareWalk(
         string repoPath, GraphQuery query, int wantCount, DecoCache? decoCache,
@@ -1847,8 +1845,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         return unchecked((long)h);
     }
 
-    /// <summary>Spawns <see cref="GitLogStream"/> and pulls the first batch — entirely off the
-    /// repo gate. When git is missing, the process can't start, or it fails, the walk stops there
+    /// <summary>Spawns <see cref="GitLogStream"/> and pulls the first batch. When git is missing,
+    /// the process can't start, or it fails, the walk stops there
     /// (<see cref="RepoCache.WalkFailed"/>): the rows already pulled are kept and returned
     /// non-exhausted, so an empty or partial history is never recorded as complete.
     /// <para>The prime's ref state (fingerprint, walk key, decorations) reaches the cache here,
@@ -1936,7 +1934,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         AppLog.Write(AppLogLevel.Warn, "graph", $"Commit graph walk failed for {context.RepositoryPath}: {reason}");
     }
 
-    /// <summary>Resumes an already-primed <see cref="GitLogStream"/> — off the repo gate, so a
+    /// <summary>Resumes an already-primed <see cref="GitLogStream"/>, so a
     /// scroll Extend or the background spill's next chunk never queues behind status/diff
     /// work on this repo.</summary>
     private static async Task<WalkResult> ResumeCliWalkAsync(
@@ -2062,11 +2060,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// branch later deleted is only reachable that way); a ref that reaches a tree or blob, such
     /// as linux's <c>v2.6.11-tree</c>, is dropped (<see cref="RefEntry.PeeledCommit"/>). A dangling
     /// symbolic ref never appears in the snapshot at all. The scope filters are the plain
-    /// <c>refs/heads/</c> / <c>refs/remotes/</c> / <c>refs/tags/</c> prefix tests LibGit2Sharp's
-    /// <c>IsLocalBranch</c> / <c>IsRemoteTrackingBranch</c> / <c>IsTag</c> apply (verified against
-    /// 0.31.0), and <see cref="GraphRefScope.Selected"/> names are full ref names or <c>HEAD</c> —
-    /// so the walk key over this tip set is the one LibGit2Sharp-resolved tips gave, and existing
-    /// on-disk stores stay valid.</para>
+    /// <c>refs/heads/</c> / <c>refs/remotes/</c> / <c>refs/tags/</c> prefix tests, and
+    /// <see cref="GraphRefScope.Selected"/> names are full ref names or <c>HEAD</c>.</para>
     /// The returned array is sorted ordinally — git's topological sort depends on the order tips
     /// are fed to it (measured), and the fingerprint already ignores ref enumeration order, so an
     /// unsorted list would let `git gc`/`pack-refs` silently reorder the walk under an unchanged
@@ -2130,8 +2125,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         bool CarriesRefState = true);
 
     /// <summary>Each stash's work-tree commit, newest first — the one ref-derived input the
-    /// snapshot can't supply (older stashes live only in the stash reflog). Caller holds the
-    /// repo gate; only read when the query includes stashes.</summary>
+    /// snapshot can't supply (older stashes live only in the stash reflog). Only read when
+    /// the query includes stashes.</summary>
     /// <summary>
     /// Reads stash work-tree commits via Git CLI, newest first.
     /// Only spawns a process if refs/stash is present in <paramref name="snapshot"/>.
@@ -2172,7 +2167,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         return (fp, tips, ComputeWalkKey(tips, query));
     }
 
-    /// <summary>The current ref state for <paramref name="query"/>, read off the repo gate (the
+    /// <summary>The current ref state for <paramref name="query"/> (the
     /// snapshot is a token check or one separate process); only a query that includes stashes
     /// reads the stash log. Null when the refs can't be read — the
     /// <see cref="HistoriaGitException"/> has already logged why, and each caller decides what an

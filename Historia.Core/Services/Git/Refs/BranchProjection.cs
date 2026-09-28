@@ -2,7 +2,7 @@ namespace Historia.Services.Git;
 
 /// <summary>
 /// Projects <see cref="BranchInfo"/> records from a <see cref="RefSnapshot"/> and known
-/// <see cref="RemoteInfo"/> records, without running any extra git process or taking the repo gate.
+/// <see cref="RemoteInfo"/> records, without running any extra git process.
 /// </summary>
 public static class BranchProjection
 {

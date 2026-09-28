@@ -56,7 +56,7 @@ public sealed partial class CommitGraphControl : Control
     // resident layout after first paint, advancing in discrete threshold steps as the user
     // scrolls. Deeper history reaches disk in full via the background spill
     // regardless of this cap. Crawling all the way to ResidentRowCap (2,000,000 on a big
-    // repo) built a multi-GB GraphRow[] and flooded the repo gate for minutes right after first paint.
+    // repo) built a multi-GB GraphRow[] and consumed CPU/memory for minutes right after first paint.
     // Configurable (AppSettings.SilentCrawlRowCap, default 100,000); 0 means uncapped, i.e. the
     // crawler runs to ResidentRowCap same as an explicit scroll would. Snapshotted at
     // construction like _graphMetaFromDisk — a mid-session change takes effect on next launch.
@@ -144,7 +144,7 @@ public sealed partial class CommitGraphControl : Control
         int BatchSize,
         TaskCompletionSource? Completion,
         CancellationToken Token,
-        bool Background = false); // silent crawler → low-priority repo gate; scroll → foreground
+        bool Background = false); // silent crawler (background); scroll → foreground
 
     private Channel<ExtendRequest>? _extendChannel;
     private int _cappedNotified;
@@ -1423,8 +1423,8 @@ public sealed partial class CommitGraphControl : Control
             await Task.Yield();
 
             // don't pre-load history until this tab has fully loaded (first paint +
-            // its own identity resolution + first RefreshAllAsync). Otherwise the crawl floods
-            // the foreground repo gate with ~1 request/second and the tab's own status/branch
+            // its own identity resolution + first RefreshAllAsync). Otherwise the crawl competes
+            // with ~1 request/second and the tab's own status/branch
             // work is starved (observed: a 47 s footer freeze mid-crawl on linux). Bounded
             // guard for a headless/no-signal path. Mirrors MaybeStartBackgroundSpill.
             await WaitForCrawlGuardAsync(context, CrawlStuckGuardCeiling, ct).ConfigureAwait(false);

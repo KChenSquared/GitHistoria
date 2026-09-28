@@ -21,8 +21,7 @@ public sealed partial class GitGateway
     }
 
     /// <summary>From the repo's cached ref snapshot — one <c>git for-each-ref</c>, shared with
-    /// the commit graph, and never the repo gate (LibGit2Sharp's tag enumeration held it for
-    /// 9–13 s at chromium's 39k tags, queueing status behind it).</summary>
+    /// the commit graph.</summary>
     public async Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default)
     {
         var snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false);

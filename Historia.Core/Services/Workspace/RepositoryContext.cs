@@ -14,8 +14,8 @@ public sealed class RepositoryContext : IAsyncDisposable
     // Signaled once the graph control's first paint for this context lands (success, failure,
     // or cancellation -- whichever comes first). WorkspaceService's InitializeContextAsync waits
     // on this (bounded by its own timeout) before it starts touching the repo itself, so the
-    // graph's first walk -- what the user is actually staring at during cold open -- gets the
-    // single-access gate uncontended instead of queueing behind identity/branches/status work.
+    // graph's first walk -- what the user is actually staring at during cold open -- runs first
+    // instead of queueing behind identity/branches/status work.
     private readonly TaskCompletionSource _firstGraphPaint =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -141,7 +141,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         }
     }
 
-    private const double GateLogThresholdMs = 5.0;
+    private const double WriteLockLogThresholdMs = 5.0;
 
     private static string ResolveCallerLabel(string? label, string callerMember, string callerFile)
     {
@@ -173,7 +173,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         var waitStart = System.Diagnostics.Stopwatch.GetTimestamp();
         await _writeLock.WaitAsync(linked.Token).ConfigureAwait(false);
         var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds;
-        if (waitMs > GateLogThresholdMs && PerfLog.Enabled)
+        if (waitMs > WriteLockLogThresholdMs && PerfLog.Enabled)
         {
             PerfLog.Mark($"write lock wait {waitMs:F1}ms ({DisplayName})");
         }
@@ -188,7 +188,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         finally
         {
             var holdMs = System.Diagnostics.Stopwatch.GetElapsedTime(holdStart).TotalMilliseconds;
-            if (holdMs > GateLogThresholdMs && PerfLog.Enabled)
+            if (holdMs > WriteLockLogThresholdMs && PerfLog.Enabled)
             {
                 PerfLog.Mark($"write lock hold {resolvedLabel} {holdMs:F1}ms ({DisplayName})");
             }

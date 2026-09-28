@@ -2,7 +2,7 @@ namespace Historia.Services.Git;
 
 /// <summary>
 /// Parses git status --porcelain=v2 -z output into staged, unstaged, untracked, and conflicted entries,
-/// and pairs pure worktree moves by blob hash outside the repository gate.
+/// and pairs pure worktree moves by blob hash.
 /// </summary>
 internal static class GitStatusParser
 {

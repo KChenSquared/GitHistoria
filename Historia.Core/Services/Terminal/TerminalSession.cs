@@ -1,12 +1,11 @@
-﻿namespace Historia.Services.Terminal;
+namespace Historia.Services.Terminal;
 
 public enum TerminalSessionState { Starting, Running, Exited, Failed }
 
 /// <summary>
 /// One live terminal: a pty, an <c>XTerm.NET</c> emulator, and the pump between them.
 /// <para>
-/// The emulator's screen buffer is guarded by a single-slot lock — the same discipline
-/// <c>RepositoryContext</c> applies to its LibGit2Sharp handle. The pty read loop mutates on a
+/// The emulator's screen buffer is guarded by a single-slot lock. The pty read loop mutates on a
 /// background thread; events are raised on the UI dispatcher.
 /// <c>BufferChanged</c> is coalesced on a ~16 ms trailing window so a flood renders once per
 /// frame, not once per chunk — the parser still sees every byte in order.

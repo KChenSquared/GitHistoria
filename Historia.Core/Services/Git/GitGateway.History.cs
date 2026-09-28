@@ -58,8 +58,8 @@ public sealed partial class GitGateway
             return ParseCommitFiles(result.StandardOutput);
 
         // Only a parent that does not exist (root commit, or n past the parent count) diffs
-        // against the empty tree, as libgit2 does for a null parent. Any other failure is real:
-        // an empty-tree diff would still succeed and report every file as added.
+        // against the empty tree. Any other failure is real: an empty-tree diff would still
+        // succeed and report every file as added.
         if (!await ParentIsMissingAsync(id, n, ct).ConfigureAwait(false))
             throw HistoriaGitException.FromCli(result, "Commit files");
 

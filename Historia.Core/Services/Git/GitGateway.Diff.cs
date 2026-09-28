@@ -10,8 +10,8 @@ public sealed partial class GitGateway
     // - --no-textconv: bypass textconv filters to ensure raw diff rather than transformed representations.
     // - --no-color: suppress ANSI color codes (color.diff) that corrupt diff line parsing.
     // - --src-prefix=a/ and --dst-prefix=b/: guarantee deterministic path prefixes regardless of diff.noprefix.
-    // - -M: ensure rename and copy detection matching libgit2 SimilarityOptions.Renames.
-    // - --diff-algorithm=myers: pin the Myers algorithm to match libgit2 and avoid user diff.algorithm overrides.
+    // - -M: ensure rename and copy detection.
+    // - --diff-algorithm=myers: pin the Myers algorithm and avoid user diff.algorithm overrides.
     // - --unified=<n>: control context line budget deterministically overriding diff.context.
     private static List<string> BuildPinnedFlags(int contextLines) =>
     [
@@ -102,8 +102,7 @@ public sealed partial class GitGateway
                 var commitId = request.CommitId
                     ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, "No commit id supplied.");
 
-                // git's ^n is 1-based, the same parent libgit2's DiffCommit picks with
-                // Math.Max(0, ParentIndex - 1) into its 0-based list.
+                // git's ^n is 1-based, selecting parent by index.
                 var sha = commitId.ToString();
                 var parent = $"{sha}^{Math.Max(1, request.ParentIndex)}";
                 args = ["diff", ..pinnedFlags, parent, sha, "--", path];
@@ -113,8 +112,7 @@ public sealed partial class GitGateway
                 if (!result.IsSuccess && !result.OutputTruncated
                     && await ParentIsMissingAsync(commitId, Math.Max(1, request.ParentIndex), ct).ConfigureAwait(false))
                 {
-                    // Root commit, or parent index past the parent count: diff against the empty
-                    // tree, as libgit2 does for a null parent.
+                    // Root commit, or parent index past the parent count: diff against the empty tree.
                     var emptyTree = await GetEmptyTreeIdAsync(ct).ConfigureAwait(false);
                     args = ["diff", ..pinnedFlags, emptyTree, sha, "--", path];
                     numstatArgs = ["diff", ..numstatFlags, emptyTree, sha, "--", path];

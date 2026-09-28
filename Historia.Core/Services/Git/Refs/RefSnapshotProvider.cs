@@ -3,22 +3,19 @@ namespace Historia.Services.Git;
 /// <summary>
 /// One per open repository (<see cref="RepositoryContext.RefSnapshots"/>): hands out the current
 /// <see cref="RefSnapshot"/>, re-reading refs with one <c>git for-each-ref</c> only when
-/// <see cref="RefStateToken"/> says a ref file changed. Never touches the repo gate — the scan is
-/// a separate process — so the graph's walk steps and the tag list stop queueing status and diff
-/// work behind a multi-second LibGit2Sharp ref enumeration.
+/// <see cref="RefStateToken"/> says a ref file changed. The scan is a separate process, so ref
+/// enumeration runs concurrently with other repository reads.
 /// <para>One scan at a time: callers that miss on the same token share one scan, and a caller
 /// whose token differs from the scan in flight waits for it to finish before looking again, so a
 /// burst of ref writes (a fetch) never stacks up overlapping scans of every ref. The scan runs on
 /// the repository's lifetime token, not a caller's, and each caller waits with its own token — one
 /// caller giving up never cancels the scan the others are waiting on.</para>
 /// <para>A ref that points at a missing object (a half-deleted branch, a corrupt
-/// <c>packed-refs</c>), or an annotated tag whose tagged object is missing, is left out, as the
-/// LibGit2Sharp-based graph walk always dropped it — the full format makes git stop at the first
-/// one, so the scan then reads refs without their objects and asks <c>cat-file</c> about each
-/// object and each tag's peel instead. In a partial clone, an object git would otherwise fetch
-/// from the promisor remote counts as missing: the scan never goes to the network. Any other
-/// failure is a
-/// <see cref="HistoriaGitException"/>.</para>
+/// <c>packed-refs</c>), or an annotated tag whose tagged object is missing, is left out — the
+/// full format makes git stop at the first missing object, so the scan then reads refs without
+/// their objects and asks <c>cat-file</c> about each object and each tag's peel instead. In a
+/// partial clone, an object git would otherwise fetch from the promisor remote counts as missing:
+/// the scan never goes to the network. Any other failure is a <see cref="HistoriaGitException"/>.</para>
 /// </summary>
 public sealed class RefSnapshotProvider
 {

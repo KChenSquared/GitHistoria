@@ -671,7 +671,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
 
     /// <summary>Renames a remote's alias from the sidebar. Rejects an empty/unchanged name
     /// or a collision with an existing remote before calling git — a caller-side check is
-    /// friendlier than letting libgit2 throw for the common mistakes. Surfaces any fetch
+    /// friendlier than letting git throw for the common mistakes. Surfaces any fetch
     /// refspecs the rename could not rewrite automatically as a warning, per the
     /// <c>RenameRemoteAsync</c> contract.</summary>
     private async Task RenameRemoteAsync(string oldName)

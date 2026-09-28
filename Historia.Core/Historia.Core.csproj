@@ -18,7 +18,7 @@
     <!-- RepositoryContext resolves per-repo collaborators from the app's IServiceProvider. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
     <!-- Headless VT/ANSI emulator + pseudoterminal. Both are framework-free process /
-         parsing libraries — the same category as LibGit2Sharp — so Core purity holds. -->
+         parsing libraries, so Core purity holds. -->
     <PackageReference Include="XTerm.NET" Version="1.2.0" />
     <PackageReference Include="Porta.Pty" Version="2.2.1" />
   </ItemGroup>

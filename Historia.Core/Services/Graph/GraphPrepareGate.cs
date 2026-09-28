@@ -1,12 +1,9 @@
-using System.Runtime.CompilerServices;
-using Historia.Diagnostics;
-
 namespace Historia.Services.Graph;
 
 /// <summary>
 /// Three-tier priority gate for graph layout preparation (one per <see cref="Workspace.RepositoryContext"/>).
 /// Graph turns keep their order (foreground wins, background crawl yields to foreground, disk spill yields to both)
-/// without blocking branch/tag enumeration, diff, or status on the repository gate.
+/// without blocking branch/tag enumeration, diff, or status.
 /// </summary>
 public sealed class GraphPrepareGate(string displayName = "")
 {

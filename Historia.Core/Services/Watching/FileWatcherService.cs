@@ -264,10 +264,9 @@ public sealed class FileWatcherService : IAsyncDisposable
     internal bool IsLikelyIgnored(string relPath)
     {
         // Cheap synchronous pre-filter for the common build-output offenders only. The
-        // authoritative .gitignore check is LibGit2Sharp's ignore rules, consulted lazily
-        // during the status scan — never here: this runs on the FileSystemWatcher callback
-        // thread, and blocking it on the per-repo async gate (a running walk can hold that
-        // gate for seconds) stalls every later event and can starve the thread pool.
+        // authoritative .gitignore check is handled lazily during the status scan — never here:
+        // this runs on the FileSystemWatcher callback thread, and expensive Git CLI operations
+        // here would stall later filesystem events and can starve the thread pool.
         //
         // node_modules/.vs/.git are near-certain vendor/tooling dirs, always skipped. bin/obj
         // are also skipped, but only where they actually look like build output — beside a

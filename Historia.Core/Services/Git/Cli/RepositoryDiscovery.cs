@@ -9,7 +9,7 @@ namespace Historia.Services.Git;
 public sealed record DiscoveredRepository(string GitDirectory, string RepositoryPath, bool IsBare);
 
 /// <summary>
-/// Discovers Git repositories through <c>git rev-parse</c> without requiring LibGit2Sharp.
+/// Discovers Git repositories through <c>git rev-parse</c>.
 /// Resolves working trees, subdirectories, linked worktrees, submodules, bare repositories,
 /// and SHA-256 repositories.
 /// </summary>

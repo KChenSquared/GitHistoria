@@ -1,7 +1,7 @@
 namespace Historia.Models;
 
 /// <summary>
-/// Immutable per-commit metadata, projected from LibGit2Sharp inside the repository gate.
+/// Immutable per-commit metadata, projected from the git CLI log stream.
 /// One instance per commit; stored once in <see cref="GraphLayout.Commits"/>
 /// and referenced everywhere else by row index.
 /// </summary>

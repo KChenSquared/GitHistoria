@@ -4,7 +4,7 @@ namespace Historia.Services.Graph;
 /// Pure C# DAG layout algorithm. Converts a topologically ordered commit stream
 /// (children before parents) into visual rows, lanes, and edges in three conceptual passes:
 /// ordered walk → greedy lane assignment + edge emission → stable compaction + color.
-/// No LibGit2Sharp object is retained; input is <see cref="RawCommit"/> records.
+/// Input is <see cref="RawCommit"/> records.
 /// </summary>
 public sealed class DagLayoutEngine
 {
@@ -619,9 +619,8 @@ public sealed class DagLayoutEngine
 
         if (head is { } h && !tips[0].Id.Equals(h.Id))
         {
-            // The libgit2 CalculateHistoryDivergence oracle is
-            // retired everywhere — every real caller now passes isAncestor: null and gets the
-            // exact in-window check below for free (no repo access, no gate). The parameter stays
+            // Every real caller passes isAncestor: null and gets the
+            // exact in-window check below for free (no repo access). The parameter stays
             // only so tests can inject a stand-in oracle against a synthetic DAG.
             Dictionary<GitObjectId, int>? rowById = null;
             if (isAncestor is null)
@@ -691,8 +690,7 @@ public sealed class DagLayoutEngine
     }
 
     /// <summary>
-    /// Exact in-window ancestry check that answers the same question the
-    /// retired libgit2 oracle did — <c>isAncestor(a, b)</c> is true when commit <paramref
+    /// Exact in-window ancestry check — <c>isAncestor(a, b)</c> is true when commit <paramref
     /// name="h"/> is an ancestor of (or equal to) <paramref name="t"/> — using ONLY the already
     /// scanned topo-ordered prefix (<paramref name="commits"/>[0, <see cref="TipPriorityScanHorizon"/>)),
     /// with no repo access.

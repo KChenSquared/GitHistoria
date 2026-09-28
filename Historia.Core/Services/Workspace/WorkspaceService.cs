@@ -66,9 +66,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     private static readonly TimeSpan GraphPriorityTimeout = TimeSpan.FromSeconds(8);
 
     // the FOCUSED tab's graph control WILL paint — wait for that, not a short guess,
-    // before its identity resolution + RefreshAllAsync take the repo gate. 8s was far too short
-    // on a big repo (linux first paint alone is tens of seconds), so identity/refresh jumped the
-    // gate mid-first-walk and stalled it for ~60s. This ceiling is only a stuck-guard.
+    // before its identity resolution + RefreshAllAsync run. 8s was far too short
+    // on a big repo (linux first paint alone is tens of seconds), so identity/refresh
+    // ran mid-first-walk and stalled it for ~60s. This ceiling is only a stuck-guard.
     private static readonly TimeSpan GraphFirstPaintCeiling = TimeSpan.FromSeconds(120);
 
     /// <summary>
@@ -231,12 +231,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
     private async Task<InitOutcome> InitializeContextCoreAsync(RepositoryContext context, bool foreground, CancellationToken attemptToken)
     {
-        // Let the graph control's own first walk for this context claim the repo's single-access
-        // gate uncontended. Without this, identity resolution below (and RefreshAllAsync after
-        // it) starts within a few hundred ms of the tab opening and can hold that gate for
-        // seconds on a large repo -- observed: 3+s of the graph's fingerprint+load work sitting
-        // in the queue behind it, on a repo where the graph's own paint takes barely over a
-        // second once it actually gets a turn. the focused tab's graph WILL paint, so
+        // Let the graph control's own first walk for this context proceed
+        // uncontended. Without this, identity resolution below (and RefreshAllAsync after
+        // it) starts within a few hundred ms of the tab opening and can compete for CPU/IO
+        // on a large repo. The focused tab's graph WILL paint, so
         // wait for that (large stuck-guard ceiling); a background force-init has no graph
         // attached, so only the short ceiling applies. Task.WhenAny never throws or propagates
         // either branch's outcome, so no try/catch is needed here.
@@ -734,8 +732,8 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         var focusTarget = existing ?? paths.FirstOrDefault(System.IO.Directory.Exists);
         _restoredFocusPath = focusTarget;
         // Trim a trailing separator before GetFileName: RepositoryPath (the source of both
-        // "paths" and "focusedPath" once persisted) is libgit2's WorkingDirectory, which always
-        // ends in one, and GetFileName returns "" for a path ending in a separator.
+        // "paths" and "focusedPath" once persisted) may end in a separator,
+        // and GetFileName returns "" for a path ending in a separator.
         var focusTargetName = focusTarget is null
             ? "(none)"
             : System.IO.Path.GetFileName(focusTarget.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
@@ -791,7 +789,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                     {
                         var ownerPath = linkOwnerPaths[i];
                         if (ownerPath is null) continue;
-                        // Raw session-file paths don't share libgit2's normalized RepositoryPath
+                        // Raw session-file paths don't share normalized RepositoryPath
                         // formatting (trailing separator, casing), so compare normalized forms —
                         // the same helper OpenAsync's own duplicate-open check uses.
                         var childKey = NormalizeDir(paths[i]);
@@ -807,7 +805,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         finally
         {
             // Any prefetched repo that wasn't consumed (due to cancellation, duplicates, or
-            // error) must be disposed so its native libgit2 handles and file watchers don't leak.
+            // error) must be disposed so its background resources and file watchers don't leak.
             foreach (var unconsumed in prefetches.Values)
             {
                 _ = unconsumed.ContinueWith(async t =>

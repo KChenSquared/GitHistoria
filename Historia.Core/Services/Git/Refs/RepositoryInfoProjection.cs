@@ -1,8 +1,7 @@
 namespace Historia.Services.Git;
 
 /// <summary>
-/// Projects <see cref="RepositoryInfo"/> from a <see cref="RefSnapshot"/> and repository facts,
-/// matching LibGit2Sharp's <see cref="LibGit2Service.ProjectInfo"/> without entering the repo gate.
+/// Projects <see cref="RepositoryInfo"/> from a <see cref="RefSnapshot"/> and repository facts.
 /// </summary>
 public static class RepositoryInfoProjection
 {

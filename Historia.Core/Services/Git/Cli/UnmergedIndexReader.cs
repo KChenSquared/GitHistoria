@@ -66,8 +66,8 @@ public sealed class UnmergedIndexReader(IGitCliService cli)
     }
 
     /// <summary>
-    /// Returns the ids of the <paramref name="entries"/> whose blobs libgit2's
-    /// <c>Blob.IsBinary</c> would call binary. One <c>cat-file --batch-check</c> for every size,
+    /// Returns the ids of the <paramref name="entries"/> whose blobs are detected as binary
+    /// (first 8 000 bytes contain a null byte). One <c>cat-file --batch-check</c> for every size,
     /// then <c>cat-file --batch</c> in chunks of at most <see cref="MaxBatchBytes"/>; a blob over
     /// the 5 MB budget reads only its first 8 000 bytes, which is all the heuristic looks at.
     /// </summary>

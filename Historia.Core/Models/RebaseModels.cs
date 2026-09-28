@@ -6,7 +6,7 @@ public sealed record RebaseEntry
 {
     public required GitObjectId CommitId { get; init; }
     public required string MessageShort { get; init; }
-    public required string AuthorName { get; init; }   // projected, never a LibGit2Sharp Signature
+    public required string AuthorName { get; init; }
     public required string AuthorEmail { get; init; }
     public RebaseAction Action { get; init; } = RebaseAction.Pick;
 

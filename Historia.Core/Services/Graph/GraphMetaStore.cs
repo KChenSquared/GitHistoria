@@ -78,13 +78,8 @@ public sealed class StoreInvalidException : InvalidOperationException
 
 internal sealed class GraphMetaStore
 {
-    // Format version history:
-    // 2: Each .dat record carries ParentCount parent SHAs so the store can seed
-    //    TryOptimisticSnapshot's first paint on its own, without depending on the walk cache.
-    // 3: WalkEngine in header — CLI streaming and libgit2 can order rows differently.
-    // 4: Keyed on canonical sorted tip order in lockstep with GraphWalkCache.Version.
-    // 5: Added RecordCount and OrderVersion to the header for order indirection.
-    // 6: rows in commit-date order (`git log --date-order`); v5 stores were topo-ordered.
+    // Version 6: rows stored in commit-date order (`git log --date-order`), canonical sorted tips,
+    // and record count with order indirection in the header.
     internal const int Version = 6;
     internal const string HdrExt = ".meta.hdr";
     internal const string DatExt = ".meta.dat";

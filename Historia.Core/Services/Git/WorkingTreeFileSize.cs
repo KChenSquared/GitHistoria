@@ -1,7 +1,7 @@
 namespace Historia.Services.Git;
 
-/// <summary>Best-effort worktree file size lookup shared by every status backend (libgit2 and the
-/// git-CLI parser) — a missing or inaccessible file is not an error here, it just sizes as 0.</summary>
+/// <summary>Best-effort worktree file size lookup used during status parsing — a missing or
+/// inaccessible file is not an error here, it just sizes as 0.</summary>
 internal static class WorkingTreeFileSize
 {
     public static long GetOrZero(string fullPath)

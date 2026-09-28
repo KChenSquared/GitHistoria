@@ -32,9 +32,8 @@ public sealed record RefEntry(
 
 /// <summary>
 /// Every ref of one repository at one moment, read with a single <c>git for-each-ref</c> — the
-/// source the commit graph (fingerprint, tip set, decorations) and the tag list read instead of
-/// enumerating refs through LibGit2Sharp, which costs ~7× as much on a repo with tens of
-/// thousands of tags. Immutable; <see cref="RefSnapshotProvider"/> hands out the same instance
+/// source the commit graph (fingerprint, tip set, decorations) and the tag list read.
+/// Immutable; <see cref="RefSnapshotProvider"/> hands out the same instance
 /// until <see cref="Token"/> no longer matches the files on disk.
 /// </summary>
 public sealed class RefSnapshot

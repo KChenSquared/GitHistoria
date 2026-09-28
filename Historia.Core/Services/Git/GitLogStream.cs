@@ -100,8 +100,8 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
         }
 
         GitCliProcessSetup.ComposeEnvironment(psi, profile, extraEnvironment: null);
-        // Graph rows must name the same commit objects the rest of Historia reads through
-        // libgit2 (details, diffs, decorations), and libgit2 ignores replace refs entirely.
+        // Graph rows must name real commit objects consistently across details, diffs, and decorations;
+        // ignore replace refs entirely.
         psi.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
         if (filtered)
             psi.Environment["GIT_LITERAL_PATHSPECS"] = "1";

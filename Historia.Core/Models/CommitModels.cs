@@ -2,7 +2,7 @@ namespace Historia.Models;
 
 /// <summary>
 /// Lightweight commit row for the history list and the graph. Projected
-/// from LibGit2Sharp inside the repository gate — no live Git object is retained.
+/// from the git CLI — immutable commit metadata.
 /// </summary>
 public sealed record CommitSummary
 {
