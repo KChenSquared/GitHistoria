@@ -99,4 +99,23 @@ public sealed class RepositoryInfoProjectionTests : IAsyncDisposable
 
         Assert.True(info.HasCommitHooks);
     }
+
+    [Fact]
+    public async Task Cancelled_token_throws_operation_canceled_exception()
+    {
+        using var builder = TestRepositoryBuilder.FromTemplate("repoinfo-cancelled", b =>
+        {
+            b.WriteFile("f.txt", "1").Stage().Commit("initial");
+        });
+
+        await using var ctx = _host.Open(builder.Path);
+        // Prime the snapshot cache so context.RefSnapshots.GetAsync returns immediately
+        await ctx.Gateway.GetRepositoryInfoAsync();
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ctx.Gateway.GetRepositoryInfoAsync(cts.Token));
+    }
 }

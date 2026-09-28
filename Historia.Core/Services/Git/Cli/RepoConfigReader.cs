@@ -9,8 +9,8 @@ public sealed class RepoConfigReader(IGitCliService cli, string gitDirectory, st
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly string _cwd = string.IsNullOrWhiteSpace(workingDirectory) ? gitDirectory : workingDirectory;
 
-    private (long Mtime, long Length)? _lastStamp;
-    private IReadOnlyList<RemoteInfo>? _cachedRemotes;
+    private sealed record CacheEntry((long Mtime, long Length) Stamp, IReadOnlyList<RemoteInfo> Remotes);
+    private CacheEntry? _cache;
     private int _readCount;
 
     /// <summary>Number of times git config was invoked — test seam for cache hit/miss assertions.</summary>
@@ -20,14 +20,16 @@ public sealed class RepoConfigReader(IGitCliService cli, string gitDirectory, st
     {
         var stamp = GetConfigStamp();
 
-        if (_cachedRemotes is not null && _lastStamp == stamp)
-            return _cachedRemotes;
+        var cached = Volatile.Read(ref _cache);
+        if (cached is not null && cached.Stamp == stamp)
+            return cached.Remotes;
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_cachedRemotes is not null && _lastStamp == stamp)
-                return _cachedRemotes;
+            cached = Volatile.Read(ref _cache);
+            if (cached is not null && cached.Stamp == stamp)
+                return cached.Remotes;
 
             // Trap: include.path / global-scope remotes are only re-read when the repo config stamp changes.
             Interlocked.Increment(ref _readCount);
@@ -41,17 +43,16 @@ public sealed class RepoConfigReader(IGitCliService cli, string gitDirectory, st
 
             if (result.ExitCode == 1)
             {
-                _cachedRemotes = [];
-                _lastStamp = stamp;
-                return _cachedRemotes;
+                var empty = (IReadOnlyList<RemoteInfo>)[];
+                Volatile.Write(ref _cache, new CacheEntry(stamp, empty));
+                return empty;
             }
 
             if (!result.IsSuccess)
                 throw HistoriaGitException.FromCli(result, "Read remotes config");
 
             var remotes = ParseRemotes(result.StandardOutput);
-            _cachedRemotes = remotes;
-            _lastStamp = stamp;
+            Volatile.Write(ref _cache, new CacheEntry(stamp, remotes));
             return remotes;
         }
         finally

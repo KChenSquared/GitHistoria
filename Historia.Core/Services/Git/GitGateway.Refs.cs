@@ -2,9 +2,9 @@ namespace Historia.Services.Git;
 
 public sealed partial class GitGateway
 {
+    private sealed record HooksCacheEntry((long Mtime, long Length) Stamp, string HooksDir);
     private readonly SemaphoreSlim _hooksGate = new(1, 1);
-    private (long Mtime, long Length)? _lastHooksConfigStamp;
-    private string? _cachedHooksDir;
+    private HooksCacheEntry? _hooksCache;
 
     public async Task<RepositoryInfo> GetRepositoryInfoAsync(CancellationToken ct = default)
     {
@@ -53,15 +53,18 @@ public sealed partial class GitGateway
 
     private async Task<string?> GetHooksDirectoryAsync(CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         var stamp = GetConfigStamp();
-        if (_cachedHooksDir is not null && _lastHooksConfigStamp == stamp)
-            return _cachedHooksDir;
+        var cached = Volatile.Read(ref _hooksCache);
+        if (cached is not null && cached.Stamp == stamp)
+            return cached.HooksDir;
 
         await _hooksGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_cachedHooksDir is not null && _lastHooksConfigStamp == stamp)
-                return _cachedHooksDir;
+            cached = Volatile.Read(ref _hooksCache);
+            if (cached is not null && cached.Stamp == stamp)
+                return cached.HooksDir;
 
             var res = await cli.RunAsync(new GitCliRequest
             {
@@ -74,19 +77,19 @@ public sealed partial class GitGateway
                 var outPath = res.StandardOutput.Trim();
                 if (!string.IsNullOrEmpty(outPath))
                 {
-                    _cachedHooksDir = Path.IsPathRooted(outPath)
+                    var resolved = Path.IsPathRooted(outPath)
                         ? Path.GetFullPath(outPath)
                         : Path.GetFullPath(Path.Combine(context.RepositoryPath, outPath));
-                    _lastHooksConfigStamp = stamp;
-                    return _cachedHooksDir;
+                    Volatile.Write(ref _hooksCache, new HooksCacheEntry(stamp, resolved));
+                    return resolved;
                 }
             }
 
-            _cachedHooksDir = Path.Combine(context.GitDirectory, "hooks");
-            _lastHooksConfigStamp = stamp;
-            return _cachedHooksDir;
+            var fallback = Path.Combine(context.GitDirectory, "hooks");
+            Volatile.Write(ref _hooksCache, new HooksCacheEntry(stamp, fallback));
+            return fallback;
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return Path.Combine(context.GitDirectory, "hooks");
         }

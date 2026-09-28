@@ -158,4 +158,71 @@ public sealed class RepoConfigReaderTests : IAsyncDisposable
             }
         }
     }
+
+    [Fact]
+    public async Task Parallel_readers_interleaved_with_writes_return_consistent_state()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("parallel-remotes", r =>
+        {
+            r.WriteFile("a", "1").Stage().Commit("c1");
+        });
+
+        var gitDir = Path.Combine(repo.Path, ".git");
+        var reader = new RepoConfigReader(Cli, gitDir, repo.Path);
+
+        const int writerSteps = 10;
+        const int readerCount = 8;
+        var distinctStamps = new HashSet<(long Mtime, long Length)>();
+        using var cancellation = new CancellationTokenSource();
+        var exceptions = new ConcurrentBag<Exception>();
+
+        var configPath = Path.Combine(gitDir, "config");
+        if (File.Exists(configPath))
+        {
+            var fi = new FileInfo(configPath);
+            distinctStamps.Add((fi.LastWriteTimeUtc.Ticks, fi.Length));
+        }
+
+        var readerTasks = Enumerable.Range(0, readerCount).Select(async _ =>
+        {
+            await Task.Yield();
+            while (!cancellation.IsCancellationRequested)
+            {
+                try
+                {
+                    var remotes = await reader.GetRemotesAsync(CancellationToken.None);
+                    // Verify consistency: all returned remotes must have valid name and url matching r{k}
+                    foreach (var r in remotes)
+                    {
+                        if (string.IsNullOrEmpty(r.Name) || !r.Name.StartsWith("r") || r.Url != $"https://example.com/{r.Name}.git")
+                        {
+                            exceptions.Add(new InvalidOperationException($"Inconsistent remote state observed: name={r.Name}, url={r.Url}"));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    exceptions.Add(ex);
+                }
+            }
+        }).ToArray();
+
+        // Writer thread performs sequential config additions
+        for (var step = 1; step <= writerSteps; step++)
+        {
+            repo.Git("config", $"remote.r{step}.url", $"https://example.com/r{step}.git");
+            var fi = new FileInfo(configPath);
+            distinctStamps.Add((fi.LastWriteTimeUtc.Ticks, fi.Length));
+            await Task.Delay(10);
+        }
+
+        // Allow readers to complete another pass
+        await Task.Delay(50);
+        cancellation.Cancel();
+        await Task.WhenAll(readerTasks);
+
+        Assert.Empty(exceptions);
+        // The read count must stay <= the number of distinct stamps observed
+        Assert.InRange(reader.ReadCountForTesting, 1, distinctStamps.Count);
+    }
 }
