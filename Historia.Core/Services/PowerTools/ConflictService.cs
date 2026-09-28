@@ -3,12 +3,47 @@ namespace Historia.Services.PowerTools;
 /// <inheritdoc cref="IConflictService"/>
 public sealed class ConflictService(IGitCliService cli, ISettingsService settings) : IConflictService
 {
-    // 5 MB / 50 000 lines: budget twins of LibGit2Service's diff budgets.
+    private readonly UnmergedIndexReader _unmergedReader = new(cli);
+
+    // 5 MB / 50 000 lines: file diff and conflict working copy size budgets.
     private const long MaxWorkingCopyBytes = 5 * 1024 * 1024;
     private const int MaxWorkingCopyLines = 50_000;
 
-    public Task<IReadOnlyList<ConflictFile>> GetConflictsAsync(RepositoryContext context, CancellationToken ct = default)
-        => context.WithRepositoryAsync(ListConflicts, ct);
+    public async Task<IReadOnlyList<ConflictFile>> GetConflictsAsync(RepositoryContext context, CancellationToken ct = default)
+    {
+        var conflicts = await _unmergedReader.ReadAsync(context.RepositoryPath, null, ct).ConfigureAwait(false);
+        var result = new List<ConflictFile>(conflicts.Count);
+
+        foreach (var conflict in conflicts)
+        {
+            var isSubmodule = (conflict.Ancestor?.Mode == "160000")
+                           || (conflict.Ours?.Mode == "160000")
+                           || (conflict.Theirs?.Mode == "160000");
+
+            var isBinary = false;
+            if (!isSubmodule)
+            {
+                if (conflict.Ours is not null)
+                    isBinary = await _unmergedReader.IsBinaryAsync(context.RepositoryPath, conflict.Ours, ct).ConfigureAwait(false);
+
+                if (!isBinary && conflict.Theirs is not null && conflict.Theirs.Id != conflict.Ours?.Id)
+                    isBinary = await _unmergedReader.IsBinaryAsync(context.RepositoryPath, conflict.Theirs, ct).ConfigureAwait(false);
+
+                if (!isBinary && conflict.Ancestor is not null && conflict.Ancestor.Id != conflict.Ours?.Id && conflict.Ancestor.Id != conflict.Theirs?.Id)
+                    isBinary = await _unmergedReader.IsBinaryAsync(context.RepositoryPath, conflict.Ancestor, ct).ConfigureAwait(false);
+            }
+
+            result.Add(new ConflictFile
+            {
+                FilePath = conflict.Path,
+                Status = DeriveStatus(conflict),
+                IsBinary = isBinary,
+                IsSubmodule = isSubmodule,
+            });
+        }
+
+        return result;
+    }
 
     public async Task<ConflictWorkingCopy> LoadWorkingCopyAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
     {
@@ -214,19 +249,17 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
     {
         using var _ = context.BeginSelfOperation();
 
-        var (isSubmodule, chosenStageSha, chosenStagePresent) = await context.WithRepositoryAsync(repo =>
-        {
-            repo.RetrieveStatus();
-            var conflict = repo.Index.Conflicts[filePath]
-                ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"'{filePath}' is not a conflicted path.");
+        var conflicts = await _unmergedReader.ReadAsync(context.RepositoryPath, filePath, ct).ConfigureAwait(false);
+        var conflict = conflicts.FirstOrDefault(c => string.Equals(c.Path, filePath, StringComparison.Ordinal))
+            ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"'{filePath}' is not a conflicted path.");
 
-            var isSub = (conflict.Ours?.Mode == Mode.GitLink)
-                     || (conflict.Theirs?.Mode == Mode.GitLink)
-                     || (conflict.Ancestor?.Mode == Mode.GitLink);
+        var isSubmodule = (conflict.Ours?.Mode == "160000")
+                       || (conflict.Theirs?.Mode == "160000")
+                       || (conflict.Ancestor?.Mode == "160000");
 
-            var chosenEntry = side == ConflictSide.Ours ? conflict.Ours : conflict.Theirs;
-            return (isSub, chosenEntry?.Id.Sha, chosenEntry is not null);
-        }, ct).ConfigureAwait(false);
+        var chosenEntry = side == ConflictSide.Ours ? conflict.Ours : conflict.Theirs;
+        var chosenStagePresent = chosenEntry is not null;
+        var chosenStageSha = chosenEntry?.Id.ToString() ?? string.Empty;
 
         if (isSubmodule)
         {
@@ -303,133 +336,189 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         var op = RepoOperation(context);
         var gitDir = context.GitDirectory;
 
-        return await context.WithRepositoryAsync(repo =>
+        var headShaResult = await cli.RunAsync(new GitCliRequest
         {
-            var headSha = repo.Head.Tip?.Sha ?? string.Empty;
-            var headBranch = repo.Head.FriendlyName;
-            var headShort = headSha.Length >= 7 ? headSha[..7] : headSha;
-            var headSubject = repo.Head.Tip?.MessageShort ?? string.Empty;
-            var oursTitle = headBranch;
-            var oursDetail = $"{headShort} {headSubject}".Trim();
+            Arguments = ["rev-parse", "--verify", "-q", "HEAD"],
+            WorkingDirectory = context.RepositoryPath,
+        }, ct).ConfigureAwait(false);
+        var headSha = headShaResult.IsSuccess ? headShaResult.StandardOutput.Trim() : string.Empty;
 
-            string theirsTitle;
-            string theirsDetail;
-            string opHeadSha = string.Empty;
-            string msgNum = string.Empty;
+        var branchResult = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["symbolic-ref", "--short", "-q", "HEAD"],
+            WorkingDirectory = context.RepositoryPath,
+        }, ct).ConfigureAwait(false);
+        var headBranch = branchResult.IsSuccess ? branchResult.StandardOutput.Trim() : "(no branch)";
 
-            switch (op)
+        var headShort = headSha.Length >= 7 ? headSha[..7] : headSha;
+        var oursTitle = headBranch;
+
+        string theirsTitle;
+        string opHeadSha = string.Empty;
+        string msgNum = string.Empty;
+        string ontoSha = string.Empty;
+
+        switch (op)
+        {
+            case OperationState.Merging:
             {
-                case OperationState.Merging:
-                {
-                    var mergeHeadFile = Path.Combine(gitDir, "MERGE_HEAD");
-                    if (File.Exists(mergeHeadFile))
-                        opHeadSha = File.ReadAllText(mergeHeadFile).Trim();
+                var mergeHeadFile = Path.Combine(gitDir, "MERGE_HEAD");
+                if (File.Exists(mergeHeadFile))
+                    opHeadSha = File.ReadAllText(mergeHeadFile).Trim();
 
-                    var mergeMsgFile = Path.Combine(gitDir, "MERGE_MSG");
-                    var firstMsgLine = File.Exists(mergeMsgFile)
-                        ? (File.ReadLines(mergeMsgFile).FirstOrDefault() ?? string.Empty).Trim()
-                        : string.Empty;
+                var mergeMsgFile = Path.Combine(gitDir, "MERGE_MSG");
+                var firstMsgLine = File.Exists(mergeMsgFile)
+                    ? (File.ReadLines(mergeMsgFile).FirstOrDefault() ?? string.Empty).Trim()
+                    : string.Empty;
 
-                    var commit = !string.IsNullOrEmpty(opHeadSha) ? repo.Lookup<Commit>(opHeadSha) : null;
-                    var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
-                    theirsTitle = !string.IsNullOrEmpty(firstMsgLine) ? firstMsgLine : (shortSha.Length > 0 ? shortSha : "Incoming merge");
-                    theirsDetail = commit is not null ? $"{shortSha} {commit.MessageShort}".Trim() : shortSha;
-                    break;
-                }
-
-                case OperationState.Rebasing:
-                {
-                    var rebaseMergeDir = Path.Combine(gitDir, "rebase-merge");
-                    var rebaseApplyDir = Path.Combine(gitDir, "rebase-apply");
-                    var rebaseDir = Directory.Exists(rebaseMergeDir) ? rebaseMergeDir : rebaseApplyDir;
-
-                    var ontoPath = Path.Combine(rebaseDir, "onto");
-                    var ontoSha = File.Exists(ontoPath) ? File.ReadAllText(ontoPath).Trim() : string.Empty;
-                    var ontoCommit = !string.IsNullOrEmpty(ontoSha) ? repo.Lookup<Commit>(ontoSha) : null;
-                    var ontoShort = ontoSha.Length >= 7 ? ontoSha[..7] : ontoSha;
-
-                    oursTitle = "the branch you are rebasing onto";
-                    oursDetail = ontoCommit is not null ? $"{ontoShort} {ontoCommit.MessageShort}".Trim() : ontoShort;
-
-                    var headNamePath = Path.Combine(rebaseDir, "head-name");
-                    var headName = File.Exists(headNamePath) ? File.ReadAllText(headNamePath).Trim() : string.Empty;
-                    if (headName.StartsWith("refs/heads/", StringComparison.Ordinal))
-                        headName = headName[11..];
-
-                    var stoppedShaPath = Path.Combine(rebaseDir, "stopped-sha");
-                    var stoppedSha = File.Exists(stoppedShaPath) ? File.ReadAllText(stoppedShaPath).Trim() : string.Empty;
-                    if (string.IsNullOrEmpty(stoppedSha))
-                    {
-                        var rebaseHeadFile = Path.Combine(gitDir, "REBASE_HEAD");
-                        if (File.Exists(rebaseHeadFile))
-                            stoppedSha = File.ReadAllText(rebaseHeadFile).Trim();
-                    }
-                    opHeadSha = stoppedSha;
-
-                    var stoppedCommit = !string.IsNullOrEmpty(stoppedSha) ? repo.Lookup<Commit>(stoppedSha) : null;
-                    var stoppedShort = stoppedSha.Length >= 7 ? stoppedSha[..7] : stoppedSha;
-
-                    theirsTitle = !string.IsNullOrEmpty(headName) ? $"{headName} (replaying)" : "your commit being replayed";
-                    theirsDetail = stoppedCommit is not null ? $"{stoppedShort} {stoppedCommit.MessageShort}".Trim() : stoppedShort;
-
-                    var msgNumFile = Path.Combine(rebaseMergeDir, "msgnum");
-                    if (File.Exists(msgNumFile))
-                        msgNum = File.ReadAllText(msgNumFile).Trim();
-                    else
-                    {
-                        var nextFile = Path.Combine(rebaseApplyDir, "next");
-                        if (File.Exists(nextFile))
-                            msgNum = File.ReadAllText(nextFile).Trim();
-                    }
-                    break;
-                }
-
-                case OperationState.CherryPicking:
-                {
-                    var cherryHeadFile = Path.Combine(gitDir, "CHERRY_PICK_HEAD");
-                    if (File.Exists(cherryHeadFile))
-                        opHeadSha = File.ReadAllText(cherryHeadFile).Trim();
-
-                    var commit = !string.IsNullOrEmpty(opHeadSha) ? repo.Lookup<Commit>(opHeadSha) : null;
-                    var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
-                    theirsTitle = $"Cherry-pick {shortSha}".Trim();
-                    theirsDetail = commit is not null ? $"{shortSha} {commit.MessageShort}".Trim() : shortSha;
-                    break;
-                }
-
-                case OperationState.Reverting:
-                {
-                    var revertHeadFile = Path.Combine(gitDir, "REVERT_HEAD");
-                    if (File.Exists(revertHeadFile))
-                        opHeadSha = File.ReadAllText(revertHeadFile).Trim();
-
-                    var commit = !string.IsNullOrEmpty(opHeadSha) ? repo.Lookup<Commit>(opHeadSha) : null;
-                    var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
-                    theirsTitle = $"Revert {shortSha}".Trim();
-                    theirsDetail = commit is not null ? $"{shortSha} {commit.MessageShort}".Trim() : shortSha;
-                    break;
-                }
-
-                default:
-                {
-                    theirsTitle = "Stashed / applied changes";
-                    theirsDetail = "Working tree changes";
-                    break;
-                }
+                var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+                theirsTitle = !string.IsNullOrEmpty(firstMsgLine) ? firstMsgLine : (shortSha.Length > 0 ? shortSha : "Incoming merge");
+                break;
             }
 
-            var stopId = $"{headSha}:{opHeadSha}:{msgNum}";
-
-            return new ConflictSideLabels
+            case OperationState.Rebasing:
             {
-                OursTitle = oursTitle,
-                OursDetail = oursDetail,
-                TheirsTitle = theirsTitle,
-                TheirsDetail = theirsDetail,
-                Operation = op,
-                StopId = stopId,
-            };
-        }, ct).ConfigureAwait(false);
+                var rebaseMergeDir = Path.Combine(gitDir, "rebase-merge");
+                var rebaseApplyDir = Path.Combine(gitDir, "rebase-apply");
+                var rebaseDir = Directory.Exists(rebaseMergeDir) ? rebaseMergeDir : rebaseApplyDir;
+
+                var ontoPath = Path.Combine(rebaseDir, "onto");
+                ontoSha = File.Exists(ontoPath) ? File.ReadAllText(ontoPath).Trim() : string.Empty;
+
+                oursTitle = "the branch you are rebasing onto";
+
+                var headNamePath = Path.Combine(rebaseDir, "head-name");
+                var headName = File.Exists(headNamePath) ? File.ReadAllText(headNamePath).Trim() : string.Empty;
+                if (headName.StartsWith("refs/heads/", StringComparison.Ordinal))
+                    headName = headName[11..];
+
+                var stoppedShaPath = Path.Combine(rebaseDir, "stopped-sha");
+                var stoppedSha = File.Exists(stoppedShaPath) ? File.ReadAllText(stoppedShaPath).Trim() : string.Empty;
+                if (string.IsNullOrEmpty(stoppedSha))
+                {
+                    var rebaseHeadFile = Path.Combine(gitDir, "REBASE_HEAD");
+                    if (File.Exists(rebaseHeadFile))
+                        stoppedSha = File.ReadAllText(rebaseHeadFile).Trim();
+                }
+                opHeadSha = stoppedSha;
+
+                theirsTitle = !string.IsNullOrEmpty(headName) ? $"{headName} (replaying)" : "your commit being replayed";
+
+                var msgNumFile = Path.Combine(rebaseMergeDir, "msgnum");
+                if (File.Exists(msgNumFile))
+                    msgNum = File.ReadAllText(msgNumFile).Trim();
+                else
+                {
+                    var nextFile = Path.Combine(rebaseApplyDir, "next");
+                    if (File.Exists(nextFile))
+                        msgNum = File.ReadAllText(nextFile).Trim();
+                }
+                break;
+            }
+
+            case OperationState.CherryPicking:
+            {
+                var cherryHeadFile = Path.Combine(gitDir, "CHERRY_PICK_HEAD");
+                if (File.Exists(cherryHeadFile))
+                    opHeadSha = File.ReadAllText(cherryHeadFile).Trim();
+
+                var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+                theirsTitle = $"Cherry-pick {shortSha}".Trim();
+                break;
+            }
+
+            case OperationState.Reverting:
+            {
+                var revertHeadFile = Path.Combine(gitDir, "REVERT_HEAD");
+                if (File.Exists(revertHeadFile))
+                    opHeadSha = File.ReadAllText(revertHeadFile).Trim();
+
+                var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+                theirsTitle = $"Revert {shortSha}".Trim();
+                break;
+            }
+
+            default:
+            {
+                theirsTitle = "Stashed / applied changes";
+                break;
+            }
+        }
+
+        var idsToLookup = new List<GitObjectId>();
+        if (GitObjectId.TryParse(headSha, out var headId))
+            idsToLookup.Add(headId);
+        if (!string.IsNullOrEmpty(opHeadSha) && GitObjectId.TryParse(opHeadSha, out var opId))
+            idsToLookup.Add(opId);
+        if (!string.IsNullOrEmpty(ontoSha) && GitObjectId.TryParse(ontoSha, out var ontoId))
+            idsToLookup.Add(ontoId);
+
+        var subjects = new Dictionary<GitObjectId, string>();
+        if (idsToLookup.Count > 0)
+        {
+            try
+            {
+                var headers = await new CommitHeaderReader(cli, context.RepositoryPath)
+                    .ReadAsync(idsToLookup, ct)
+                    .ConfigureAwait(false);
+                foreach (var h in headers)
+                    subjects[h.Id] = h.Subject;
+            }
+            catch (HistoriaGitException)
+            {
+            }
+        }
+
+        string oursDetail;
+        if (op == OperationState.Rebasing)
+        {
+            var ontoShort = ontoSha.Length >= 7 ? ontoSha[..7] : ontoSha;
+            if (GitObjectId.TryParse(ontoSha, out var oid) && subjects.TryGetValue(oid, out var ontoSubj))
+                oursDetail = $"{ontoShort} {ontoSubj}".Trim();
+            else
+                oursDetail = ontoShort;
+        }
+        else
+        {
+            if (GitObjectId.TryParse(headSha, out var hid) && subjects.TryGetValue(hid, out var headSubj))
+                oursDetail = $"{headShort} {headSubj}".Trim();
+            else
+                oursDetail = headShort;
+        }
+
+        string theirsDetail;
+        if (op is OperationState.Merging or OperationState.CherryPicking or OperationState.Reverting)
+        {
+            var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+            if (GitObjectId.TryParse(opHeadSha, out var opOid) && subjects.TryGetValue(opOid, out var opSubj))
+                theirsDetail = $"{shortSha} {opSubj}".Trim();
+            else
+                theirsDetail = shortSha;
+        }
+        else if (op == OperationState.Rebasing)
+        {
+            var stoppedShort = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+            if (GitObjectId.TryParse(opHeadSha, out var opOid) && subjects.TryGetValue(opOid, out var opSubj))
+                theirsDetail = $"{stoppedShort} {opSubj}".Trim();
+            else
+                theirsDetail = stoppedShort;
+        }
+        else
+        {
+            theirsDetail = "Working tree changes";
+        }
+
+        var stopId = $"{headSha}:{opHeadSha}:{msgNum}";
+
+        return new ConflictSideLabels
+        {
+            OursTitle = oursTitle,
+            OursDetail = oursDetail,
+            TheirsTitle = theirsTitle,
+            TheirsDetail = theirsDetail,
+            Operation = op,
+            StopId = stopId,
+        };
     }
 
     public async Task<bool> LaunchExternalMergeToolAsync(RepositoryContext context, string filePath, CancellationToken ct = default)
@@ -450,12 +539,11 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         try
         {
             var ext = Path.GetExtension(filePath);
-            var (hasStage1, hasStage2, hasStage3) = await context.WithRepositoryAsync(repo =>
-            {
-                repo.RetrieveStatus();
-                var conflict = repo.Index.Conflicts[filePath];
-                return (conflict?.Ancestor is not null, conflict?.Ours is not null, conflict?.Theirs is not null);
-            }, ct).ConfigureAwait(false);
+            var conflicts = await _unmergedReader.ReadAsync(context.RepositoryPath, filePath, ct).ConfigureAwait(false);
+            var conflict = conflicts.FirstOrDefault(c => string.Equals(c.Path, filePath, StringComparison.Ordinal));
+            var hasStage1 = conflict?.Ancestor is not null;
+            var hasStage2 = conflict?.Ours is not null;
+            var hasStage3 = conflict?.Theirs is not null;
 
             var basePath = await CheckoutStageTempAsync(context, filePath, 1, hasStage1, temp, "BASE", ext, ct).ConfigureAwait(false);
             var localPath = await CheckoutStageTempAsync(context, filePath, 2, hasStage2, temp, "LOCAL", ext, ct).ConfigureAwait(false);
@@ -551,7 +639,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
     {
         using var _ = context.BeginSelfOperation();
 
-        var stillUnmerged = await context.WithRepositoryAsync(HasUnmergedPaths, ct).ConfigureAwait(false);
+        var stillUnmerged = await _unmergedReader.HasUnmergedPathsAsync(context.RepositoryPath, ct).ConfigureAwait(false);
         if (stillUnmerged)
             throw new HistoriaGitException(GitErrorKind.MergeConflict, "Some paths are still unmerged. Resolve every conflicted file first.");
 
@@ -605,38 +693,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
     private static OperationState RepoOperation(RepositoryContext context)
         => Historia.Services.State.RepositoryStateService.DetectOperationState(context.GitDirectory);
 
-    private static IReadOnlyList<ConflictFile> ListConflicts(Repository repo)
-    {
-        repo.RetrieveStatus();
-        var result = new List<ConflictFile>();
-        foreach (var conflict in repo.Index.Conflicts)
-        {
-            var path = conflict.Ancestor?.Path ?? conflict.Ours?.Path ?? conflict.Theirs?.Path ?? "";
-            var status = DeriveStatus(conflict);
-            var isBinary = IsBinary(repo, conflict.Ours) || IsBinary(repo, conflict.Theirs) || IsBinary(repo, conflict.Ancestor);
-            var isSubmodule = (conflict.Ancestor?.Mode == Mode.GitLink)
-                           || (conflict.Ours?.Mode == Mode.GitLink)
-                           || (conflict.Theirs?.Mode == Mode.GitLink);
-
-            result.Add(new ConflictFile
-            {
-                FilePath = path,
-                Status = status,
-                IsBinary = isBinary,
-                IsSubmodule = isSubmodule,
-            });
-        }
-
-        return result;
-    }
-
-    private static bool HasUnmergedPaths(Repository repo)
-    {
-        repo.RetrieveStatus();
-        return repo.Index.Conflicts.Any();
-    }
-
-    private static ConflictStatus DeriveStatus(Conflict c)
+    private static ConflictStatus DeriveStatus(UnmergedPathConflict c)
     {
         var haveBase = c.Ancestor is not null;
         var haveOurs = c.Ours is not null;
@@ -653,9 +710,6 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             _ => ConflictStatus.BothDeletedRenamed,
         };
     }
-
-    private static bool IsBinary(Repository repo, IndexEntry? entry)
-        => entry is not null && (repo.Lookup<Blob>(entry.Id)?.IsBinary ?? false);
 
     private static int CountLines(string text)
     {
