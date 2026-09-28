@@ -72,22 +72,18 @@ public sealed partial class GitGateway
                 WorkingDirectory = context.RepositoryPath,
             }, ct).ConfigureAwait(false);
 
-            if (res.IsSuccess)
-            {
-                var outPath = res.StandardOutput.Trim();
-                if (!string.IsNullOrEmpty(outPath))
-                {
-                    var resolved = Path.IsPathRooted(outPath)
-                        ? Path.GetFullPath(outPath)
-                        : Path.GetFullPath(Path.Combine(context.RepositoryPath, outPath));
-                    Volatile.Write(ref _hooksCache, new HooksCacheEntry(stamp, resolved));
-                    return resolved;
-                }
-            }
+            // The CLI reports cancellation as a result, not an exception.
+            ct.ThrowIfCancellationRequested();
 
-            var fallback = Path.Combine(context.GitDirectory, "hooks");
-            Volatile.Write(ref _hooksCache, new HooksCacheEntry(stamp, fallback));
-            return fallback;
+            var outPath = res.IsSuccess ? res.StandardOutput.Trim() : string.Empty;
+            if (string.IsNullOrEmpty(outPath))
+                return Path.Combine(context.GitDirectory, "hooks");
+
+            var resolved = Path.IsPathRooted(outPath)
+                ? Path.GetFullPath(outPath)
+                : Path.GetFullPath(Path.Combine(context.RepositoryPath, outPath));
+            Volatile.Write(ref _hooksCache, new HooksCacheEntry(stamp, resolved));
+            return resolved;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

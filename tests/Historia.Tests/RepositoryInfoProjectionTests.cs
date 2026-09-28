@@ -118,4 +118,40 @@ public sealed class RepositoryInfoProjectionTests : IAsyncDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             ctx.Gateway.GetRepositoryInfoAsync(cts.Token));
     }
+
+    [Fact]
+    public async Task Cancellation_during_hooks_lookup_throws_and_caches_nothing()
+    {
+        using var builder = TestRepositoryBuilder.FromTemplate("repoinfo-cancel-midspawn", b =>
+        {
+            b.WriteFile("f.txt", "1").Stage().Commit("initial");
+            var customHooks = Path.Combine(b.Path, ".custom-hooks");
+            Directory.CreateDirectory(customHooks);
+            File.WriteAllText(Path.Combine(customHooks, "pre-commit"), "#!/bin/sh\nexit 0\n");
+            b.Git("config", "core.hooksPath", ".custom-hooks");
+        });
+
+        using var cts = new CancellationTokenSource();
+        var armed = true;
+        var cli = new InterceptingGitCliService(_host.Cli)
+        {
+            Intercept = r =>
+            {
+                if (!armed || !r.Arguments.Contains("--git-path"))
+                    return null;
+                cts.Cancel();
+                return InterceptingGitCliService.Failure(GitErrorKind.Cancelled, exitCode: -1);
+            },
+        };
+        await using var ctx = _host.Open(builder.Path, cli);
+
+        // The CLI reports a cancelled spawn as a result; the lookup must still throw.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ctx.Gateway.GetRepositoryInfoAsync(cts.Token));
+
+        // A cached <gitdir>/hooks fallback would hide core.hooksPath until the config changes.
+        armed = false;
+        var info = await ctx.Gateway.GetRepositoryInfoAsync();
+        Assert.True(info.HasCommitHooks);
+    }
 }
