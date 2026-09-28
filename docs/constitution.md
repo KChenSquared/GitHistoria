@@ -120,7 +120,10 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
 **0.4 — Assume the baseline, but verify it — never silently repair it.** Anything outside the
    package is detected at startup and, when absent, reported with an actionable message naming
    what is missing and how to get it. The app still starts where it can. Never a crash, never a
-   silent download. Applies to `git.exe` and the .NET Desktop Runtime. *(§I-6.2.3, §V2-10.3)*
+   silent download. Applies to `git.exe` (minimum version 2.31) and the .NET Desktop Runtime.
+   Dubious repository ownership (`UnsafeRepository`) is reported with an actionable message
+   giving the `safe.directory` command; Historia never writes `safe.directory` automatically.
+   *(§I-6.2.3, §V2-10.3)*
 **0.5 — Windows 10 is supported but is not the baseline.** The TFM floor is 1809. A dependency
    guaranteed on Windows 11 may legitimately be missing there, which is exactly what rule 0.4
    exists to handle gracefully.
@@ -135,14 +138,16 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
 
 ## Git correctness
 
-6. **`LibGit2Sharp.Repository` is not thread-safe.** One instance per `RepositoryContext`,
-   every access through its single-slot gate, never on the UI thread. *(§I-6.3.1)*
-7. **Nothing LibGit2Sharp owns escapes the gate.** Project into Historia's own records inside
-   the callback. A `Commit`, `Tree`, `Blob`, or `Signature` outliving the gate is the most
-   likely source of a native crash. *(§I-6.3.1)*
-8. **LibGit2Sharp never touches the network.** It has no access to `ssh-agent`,
-   `GIT_SSH_COMMAND`, or GCM, so its transport would bypass the entire auth and privacy
-   model. Clone, fetch, pull, push are always CLI. *(§I-6.4.1)*
+6. **Git access is the CLI only.** Every process is set up by `GitCliProcessSetup`
+   (`IGitCliService`, or `GitLogStream` for the streamed graph walk). LibGit2Sharp is a
+   test-only fixture dependency; `NoLibGit2InProductionTests` enforces it. *(§I-6.3.1)*
+7. **Repository writes run inside the write lock; reads never take it.** Historia's own
+   index/HEAD/ref/work-tree writes run inside the repository write lock; reads never take it
+   and run with `--no-optional-locks`. The lock is never held across a dialog or a nested
+   locked call. *(§I-6.3.1)*
+8. **Network is CLI only.** Git clone, fetch, pull, and push always run through the CLI with
+   full access to `ssh-agent`, `GIT_SSH_COMMAND`, and GCM for authentication and privacy.
+   *(§I-6.4.1)*
 9. **CLI arguments go through `ArgumentList`.** Never a concatenated string, never a shell.
    Paths after `--` as literal pathspecs. *(§I-6.5.1)*
 10. **Drain stdout and stderr concurrently before `WaitForExit`.** The other order deadlocks
@@ -158,8 +163,8 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     00** — the general requirement and the dialog contract (red `warning`, Cancel
     primary and rightmost, "Don't ask again this session" the only suppression) live there.
     *(§I-6.9.1)*
-15. **Route commits through the CLI when hooks or signing are present.** LibGit2Sharp runs
-    neither, and that discrepancy silently breaks `husky` and `pre-commit`. *(§I-6.9.2)*
+15. **Commits always go through the CLI.** Hooks (including `core.hooksPath`) and signing
+    always apply, preserving tools such as `husky` and `pre-commit`. *(§I-6.9.2)*
 16. **Paths are repo-relative with forward slashes.** Convert only at the filesystem
     boundary. *(§I-6.8.1)*
 17. **History is always paged.** No call materializes an unbounded commit list. *(§I-6.4.2)*
