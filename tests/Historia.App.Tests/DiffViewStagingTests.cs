@@ -612,7 +612,7 @@ public class DiffViewStagingTests : IDisposable
         for (var i = 0; i < 50; i++)
         {
             Dispatcher.UIThread.RunJobs();
-            if (view.PresenterForTesting is TextBlock tb)
+            if (view.PresenterForTesting is TextBlock tb && tb.Text != "Loading diff...")
             {
                 return tb;
             }

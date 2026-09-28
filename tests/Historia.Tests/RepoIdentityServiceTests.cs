@@ -1,11 +1,8 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// linux cold-prime plan: <see cref="RepoIdentityService"/>'s smallest-reachable-root-SHA
-/// resolution now runs primarily via a separate <c>git rev-list --max-parents=0</c>
-/// process instead of a libgit2 topological revwalk on the repo gate. Both the CLI path and the
-/// forced-fallback (no git) libgit2 path must agree on the same repo, since either can run
-/// depending on whether git.exe is discoverable.
+/// <see cref="RepoIdentityService"/>'s smallest-reachable-root-SHA resolution runs via a separate
+/// <c>git rev-list --max-parents=0</c> process.
 /// </summary>
 [Trait("tier", "git")]
 public sealed class RepoIdentityServiceTests : IAsyncDisposable
@@ -61,30 +58,20 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Cli_path_and_forced_libgit2_fallback_agree_on_the_same_repo()
+    public async Task When_git_cli_is_unavailable_generates_explicit_guid()
     {
-        var cli = _host.Provider.GetRequiredService<IGitCliService>();
-        Assert.True(cli.IsGitAvailable, "test requires git.exe to be discoverable");
+        var svc = new RepoIdentityService(new NoGitCli());
+        await using var ctx = _host.Open(_repo.Path);
 
-        var cliSvc = new RepoIdentityService(cli);
-        await using var ctxCli = _host.Open(_repo.Path);
-        var cliKey = await cliSvc.ResolveAsync(ctxCli);
+        var key = await svc.ResolveAsync(ctx);
 
-        // NoGitCli reports git as unavailable, forcing ResolveAsync onto the libgit2
-        // (SortBy.None, streamed) fallback walk instead of `git rev-list`.
-        var fallbackSvc = new RepoIdentityService(new NoGitCli());
-        await using var ctxFallback = _host.Open(_repo.Path);
-        var fallbackKey = await fallbackSvc.ResolveAsync(ctxFallback);
-
-        var expected = RepoIdentityKey.FromRootCommit(ExpectedSmallestRoot());
-        Assert.Equal(expected, cliKey);
-        Assert.Equal(expected, fallbackKey);
+        Assert.True(Guid.TryParseExact(key.Value, "N", out _));
     }
 
-    // ── The CLI path must ignore `git replace` grafts, same as the libgit2 fallback ──
+    // ── The CLI path must ignore `git replace` grafts ──
 
     [Fact(Timeout = 20000)]
-    public async Task CLI_path_ignores_git_replace_grafts_same_as_the_libgit2_fallback()
+    public async Task CLI_path_ignores_git_replace_grafts()
     {
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
         Assert.True(cli.IsGitAvailable, "test requires git.exe to be discoverable");
@@ -94,8 +81,7 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
         // GIT_NO_REPLACE_OBJECTS=1, `git rev-list --max-parents=0` transparently substitutes the
         // graft's content for the real root, so the root no longer looks parentless and drops out
         // of the walk's root-candidate set, changing the reported "smallest root" to the other
-        // one. The libgit2 fallback never resolves replace refs at all, so it always sees the real
-        // (still parentless) root.
+        // one.
         var smallest = ExpectedSmallestRoot();
         var other = smallest == _rootA ? _rootB : _rootA;
         var smallTree = _repo.Git("rev-parse", $"{smallest}^{{tree}}").Trim();
@@ -106,12 +92,7 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
         await using var ctxCli = _host.Open(_repo.Path);
         var cliKey = await cliSvc.ResolveAsync(ctxCli);
 
-        var fallbackSvc = new RepoIdentityService(new NoGitCli());
-        await using var ctxFallback = _host.Open(_repo.Path);
-        var fallbackKey = await fallbackSvc.ResolveAsync(ctxFallback);
-
         var expected = RepoIdentityKey.FromRootCommit(smallest);
         Assert.Equal(expected, cliKey);
-        Assert.Equal(expected, fallbackKey);
     }
 }

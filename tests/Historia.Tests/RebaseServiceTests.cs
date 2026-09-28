@@ -121,4 +121,100 @@ public class RebaseServiceTests : IDisposable
         Assert.DoesNotContain("\nf2\n", "\n" + subjects);
         Assert.False(File.Exists(Path.Combine(repo.Path, "f2.txt")));
     }
+
+    [Fact]
+    public async Task Build_session_matches_libgit2_oracle_with_merge_in_range()
+    {
+        await using var host = new MiniHost();
+        using var repo = TestRepositoryBuilder.FromTemplate("rebase-merge-fixture", b =>
+        {
+            b.WriteFile("base.txt", "base\n").Stage().Commit("c1");
+            b.Checkout("feature", create: true);
+            b.WriteFile("f1.txt", "1\n").Stage().Commit("f1");
+            b.Checkout("topic", create: true);
+            b.WriteFile("t1.txt", "t1\n").Stage().Commit("t1");
+            b.Checkout("feature");
+            b.WriteFile("f2.txt", "2\n").Stage().Commit("f2");
+            b.Git("merge", "topic", "-m", "merge topic");
+            b.WriteFile("f3.txt", "3\n").Stage().Commit("f3");
+            b.Checkout("main");
+            b.WriteFile("m2.txt", "m\n").Stage().Commit("m2");
+            b.Checkout("feature");
+        });
+        await using var ctx = host.Open(repo.Path);
+        var svc = Make(host);
+
+        var session = await svc.BuildSessionAsync(ctx, "main");
+
+        using var directRepo = new Repository(repo.Path);
+        var upstream = directRepo.Lookup<Commit>("main") ?? directRepo.Branches["main"]!.Tip;
+        var filter = new CommitFilter
+        {
+            SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time,
+            IncludeReachableFrom = directRepo.Head.Tip,
+            ExcludeReachableFrom = upstream,
+        };
+
+        var expectedCommits = directRepo.Commits.QueryBy(filter).Reverse().ToList();
+
+        Assert.Equal(upstream.Id.Sha, session.OntoCommitId.ToString());
+        Assert.Equal("feature", session.SourceBranchName);
+        Assert.Equal(string.Join(", ", expectedCommits.Select(c => c.MessageShort)), string.Join(", ", session.Entries.Select(e => e.MessageShort)));
+        Assert.Equal(expectedCommits.Count, session.Entries.Count);
+        for (var i = 0; i < expectedCommits.Count; i++)
+        {
+            Assert.Equal(expectedCommits[i].Id.Sha, session.Entries[i].CommitId.ToString());
+            Assert.Equal(expectedCommits[i].MessageShort, session.Entries[i].MessageShort);
+            Assert.Equal(expectedCommits[i].Author.Name, session.Entries[i].AuthorName);
+            Assert.Equal(expectedCommits[i].Author.Email, session.Entries[i].AuthorEmail);
+        }
+    }
+
+    [Fact]
+    public async Task Build_session_matches_libgit2_oracle_with_equal_timestamps()
+    {
+        await using var host = new MiniHost();
+        using var repo = TestRepositoryBuilder.FromTemplate("rebase-equal-dates-fixture", b =>
+        {
+            b.WriteFile("base.txt", "base\n").Stage();
+            b.Git("commit", "--date=2026-01-01T00:00:00Z", "-m", "c1");
+            b.Checkout("feature", create: true);
+            b.WriteFile("f1.txt", "1\n").Stage();
+            b.Git("commit", "--date=2026-01-02T12:00:00Z", "-m", "f1");
+            b.WriteFile("f2.txt", "2\n").Stage();
+            b.Git("commit", "--date=2026-01-02T12:00:00Z", "-m", "f2");
+            b.WriteFile("f3.txt", "3\n").Stage();
+            b.Git("commit", "--date=2026-01-02T12:00:00Z", "-m", "f3");
+            b.Checkout("main");
+            b.WriteFile("m2.txt", "m\n").Stage();
+            b.Git("commit", "--date=2026-01-02T12:00:00Z", "-m", "m2");
+            b.Checkout("feature");
+        });
+        await using var ctx = host.Open(repo.Path);
+        var svc = Make(host);
+
+        var session = await svc.BuildSessionAsync(ctx, "main");
+
+        using var directRepo = new Repository(repo.Path);
+        var upstream = directRepo.Lookup<Commit>("main") ?? directRepo.Branches["main"]!.Tip;
+        var filter = new CommitFilter
+        {
+            SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time,
+            IncludeReachableFrom = directRepo.Head.Tip,
+            ExcludeReachableFrom = upstream,
+        };
+
+        var expectedCommits = directRepo.Commits.QueryBy(filter).Reverse().ToList();
+
+        Assert.Equal(upstream.Id.Sha, session.OntoCommitId.ToString());
+        Assert.Equal("feature", session.SourceBranchName);
+        Assert.Equal(expectedCommits.Count, session.Entries.Count);
+        for (var i = 0; i < expectedCommits.Count; i++)
+        {
+            Assert.Equal(expectedCommits[i].Id.Sha, session.Entries[i].CommitId.ToString());
+            Assert.Equal(expectedCommits[i].MessageShort, session.Entries[i].MessageShort);
+            Assert.Equal(expectedCommits[i].Author.Name, session.Entries[i].AuthorName);
+            Assert.Equal(expectedCommits[i].Author.Email, session.Entries[i].AuthorEmail);
+        }
+    }
 }

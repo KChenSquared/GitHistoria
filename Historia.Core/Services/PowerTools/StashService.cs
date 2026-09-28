@@ -4,7 +4,7 @@ namespace Historia.Services.PowerTools;
 public sealed class StashService(IGitCliService cli) : IStashService
 {
     public Task<IReadOnlyList<StashEntry>> ListAsync(RepositoryContext context, CancellationToken ct = default)
-        => context.WithRepositoryAsync(Project, ct);
+        => ListStashesAsync(context.RepositoryPath, ct);
 
     public async Task<bool> SaveAsync(RepositoryContext context, StashSaveOptions options, CancellationToken ct = default)
     {
@@ -96,7 +96,7 @@ public sealed class StashService(IGitCliService cli) : IStashService
         using var _ = context.BeginSelfOperation();
 
         // protocol: re-list, find the entry by commit id, act on its CURRENT index.
-        var current = await context.WithRepositoryAsync(Project, ct).ConfigureAwait(false);
+        var current = await ListStashesAsync(context.RepositoryPath, ct).ConfigureAwait(false);
         var entry = current.FirstOrDefault(e => e.CommitId == commitId)
                     ?? throw new HistoriaGitException(GitErrorKind.RefNotFound,
                         "The stash list changed — refresh the stash panel and try again.");
@@ -124,29 +124,103 @@ public sealed class StashService(IGitCliService cli) : IStashService
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
     }
 
-    private static IReadOnlyList<StashEntry> Project(Repository repo)
+    private async Task<IReadOnlyList<StashEntry>> ListStashesAsync(string repositoryPath, CancellationToken ct)
     {
-        var result = new List<StashEntry>();
-        var i = 0;
-        foreach (var stash in repo.Stashes)
+        var result = await cli.RunAsync(new GitCliRequest
         {
-            var commit = stash.WorkTree;
-            var includesUntracked = commit.Parents.Count() == 3; // HEAD, index, [untracked tree]
-            result.Add(new StashEntry
+            Arguments =
+            [
+                "log",
+                "-g",
+                "--no-renames",
+                "--diff-merges=first-parent",
+                "--name-only",
+                "-z",
+                "--format=__HISTORIA_STASH__%x00%H%x00%P%x00%an%x00%ae%x00%aI%x00%gs%x00",
+                "refs/stash",
+            ],
+            WorkingDirectory = repositoryPath,
+            RawStandardOutput = true,
+        }, ct).ConfigureAwait(false);
+
+        if (result.ExitCode == 128 || result.ErrorKind == GitErrorKind.RefNotFound)
+            return [];
+
+        if (!result.IsSuccess)
+            throw HistoriaGitException.FromCli(result, "List stashes");
+
+        return ParseStashLog(result.StandardOutput);
+    }
+
+    internal static IReadOnlyList<StashEntry> ParseStashLog(string stdout)
+    {
+        if (string.IsNullOrEmpty(stdout))
+            return [];
+
+        var parts = stdout.Split('\0');
+        var entries = new List<StashEntry>();
+        var index = 0;
+        var i = 0;
+
+        while (i < parts.Length)
+        {
+            if (parts[i] != "__HISTORIA_STASH__")
             {
-                Index = i++,
-                CommitId = commit.Id.ToGitObjectId(),
-                Message = stash.Message,
-                AuthorName = commit.Author.Name,
-                AuthorEmail = commit.Author.Email,
-                CreatedAt = commit.Author.When,
-                BranchName = ExtractBranch(stash.Message),
+                i++;
+                continue;
+            }
+
+            if (i + 6 >= parts.Length)
+                break;
+
+            var commitSha = parts[i + 1].Trim();
+            if (!GitObjectId.TryParse(commitSha, out var commitId))
+            {
+                i++;
+                continue;
+            }
+
+            var parentStr = parts[i + 2].Trim();
+            var parentCount = string.IsNullOrEmpty(parentStr)
+                ? 0
+                : parentStr.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+            var includesUntracked = parentCount == 3;
+
+            var authorName = parts[i + 3];
+            var authorEmail = parts[i + 4];
+            var createdAt = DateTimeOffset.TryParse(parts[i + 5], CultureInfo.InvariantCulture, DateTimeStyles.None, out var dto)
+                ? dto
+                : DateTimeOffset.UtcNow;
+            var message = parts[i + 6];
+
+            i += 7;
+            if (i < parts.Length && parts[i].Length == 0)
+                i++;
+
+            var fileCount = 0;
+            while (i < parts.Length && parts[i] != "__HISTORIA_STASH__")
+            {
+                var p = parts[i].TrimStart('\r', '\n');
+                if (p.Length > 0)
+                    fileCount++;
+                i++;
+            }
+
+            entries.Add(new StashEntry
+            {
+                Index = index++,
+                CommitId = commitId,
+                Message = message,
+                AuthorName = authorName,
+                AuthorEmail = authorEmail,
+                CreatedAt = createdAt,
+                BranchName = ExtractBranch(message),
                 IncludesUntracked = includesUntracked,
-                FileCount = CountFiles(repo, commit),
+                FileCount = fileCount,
             });
         }
 
-        return result;
+        return entries;
     }
 
     private static string ExtractBranch(string message)
@@ -160,14 +234,5 @@ public sealed class StashService(IGitCliService cli) : IStashService
             return "";
         var colon = message.IndexOf(':', start);
         return colon > start ? message[start..colon].Trim() : "";
-    }
-
-    private static int CountFiles(Repository repo, Commit stashCommit)
-    {
-        var parent = stashCommit.Parents.FirstOrDefault();
-        if (parent is null)
-            return 0;
-        using var changes = repo.Diff.Compare<TreeChanges>(parent.Tree, stashCommit.Tree);
-        return changes.Count();
     }
 }

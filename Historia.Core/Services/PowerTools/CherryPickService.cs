@@ -41,9 +41,13 @@ public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
             return;
 
         // Record HEAD for the session undo.
-        var head = await context.WithRepositoryAsync(r => r.Head.Tip?.Sha, ct).ConfigureAwait(false);
-        if (head is not null)
-            _origHeads[context.Id] = head;
+        var headResult = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-parse", "--verify", "-q", "HEAD"],
+            WorkingDirectory = context.RepositoryPath,
+        }, ct).ConfigureAwait(false);
+        if (headResult.IsSuccess && !string.IsNullOrWhiteSpace(headResult.StandardOutput))
+            _origHeads[context.Id] = headResult.StandardOutput.Trim();
 
         using var op = context.BeginSelfOperation();
 

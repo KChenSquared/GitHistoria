@@ -22,7 +22,7 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
     private static string Fwd(string p) => p.Replace('\\', '/');
 
     public Task<RebaseSession> BuildSessionAsync(RepositoryContext context, string upstreamRef, CancellationToken ct = default)
-        => context.WithRepositoryAsync(repo => Build(repo, upstreamRef), ct);
+        => BuildSessionInternalAsync(context.RepositoryPath, upstreamRef, ct);
 
     public IReadOnlyList<RebaseValidationIssue> Validate(RebaseSession session)
     {
@@ -153,39 +153,105 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
         File.WriteAllText(Path.Combine(dir, "msg-cursor"), "0");
     }
 
-    private static RebaseSession Build(Repository repo, string upstreamRef)
+    private async Task<RebaseSession> BuildSessionInternalAsync(string repositoryPath, string upstreamRef, CancellationToken ct)
     {
-        var upstream = repo.Lookup<Commit>(upstreamRef) ?? (repo.Branches[upstreamRef]?.Tip)
-            ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"'{upstreamRef}' not found.");
-        var head = repo.Head;
-        if (head.Tip is null)
+        var upstreamResult = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-parse", "--verify", "-q", $"{upstreamRef}^{{commit}}"],
+            WorkingDirectory = repositoryPath,
+        }, ct).ConfigureAwait(false);
+
+        if (!upstreamResult.IsSuccess || !GitObjectId.TryParse(upstreamResult.StandardOutput.Trim(), out var ontoCommitId))
+            throw new HistoriaGitException(GitErrorKind.RefNotFound, $"'{upstreamRef}' not found.");
+
+        var headResult = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-parse", "--verify", "-q", "HEAD"],
+            WorkingDirectory = repositoryPath,
+        }, ct).ConfigureAwait(false);
+
+        if (!headResult.IsSuccess)
             throw new HistoriaGitException(GitErrorKind.Unknown, "HEAD has no commits to rebase.");
 
-        var filter = new CommitFilter
+        var branchResult = await cli.RunAsync(new GitCliRequest
         {
-            SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time,
-            IncludeReachableFrom = head.Tip,
-            ExcludeReachableFrom = upstream,
-        };
+            Arguments = ["symbolic-ref", "--short", "-q", "HEAD"],
+            WorkingDirectory = repositoryPath,
+        }, ct).ConfigureAwait(false);
 
-        var entries = repo.Commits.QueryBy(filter)
-            .Reverse() // oldest first
-            .Select(c => new RebaseEntry
-            {
-                CommitId = c.Id.ToGitObjectId(),
-                MessageShort = c.MessageShort,
-                AuthorName = c.Author.Name,
-                AuthorEmail = c.Author.Email,
-            })
-            .ToList();
+        var sourceBranchName = branchResult.IsSuccess
+            ? branchResult.StandardOutput.Trim()
+            : "(no branch)";
+
+        var logResult = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments =
+            [
+                "log",
+                "--reverse",
+                "--date-order",
+                "-z",
+                "--format=%H%x00%s%x00%an%x00%ae%x00",
+                $"{upstreamRef}..HEAD",
+            ],
+            WorkingDirectory = repositoryPath,
+            RawStandardOutput = true,
+        }, ct).ConfigureAwait(false);
+
+        if (!logResult.IsSuccess)
+            throw HistoriaGitException.FromCli(logResult, "Rebase query commits");
+
+        var entries = ParseRebaseEntries(logResult.StandardOutput);
 
         return new RebaseSession
         {
-            OntoCommitId = upstream.Id.ToGitObjectId(),
+            OntoCommitId = ontoCommitId,
             OntoRefName = upstreamRef,
             UpstreamRefName = upstreamRef,
-            SourceBranchName = head.FriendlyName,
+            SourceBranchName = sourceBranchName,
             Entries = entries,
         };
+    }
+
+    internal static List<RebaseEntry> ParseRebaseEntries(string stdout)
+    {
+        if (string.IsNullOrEmpty(stdout))
+            return [];
+
+        var fields = stdout.Split('\0');
+        var entries = new List<RebaseEntry>();
+        for (var i = 0; i + 4 <= fields.Length; )
+        {
+            var shaStr = fields[i].TrimStart('\r', '\n');
+            if (string.IsNullOrWhiteSpace(shaStr))
+            {
+                i++;
+                continue;
+            }
+
+            if (!GitObjectId.TryParse(shaStr, out var id))
+            {
+                i++;
+                continue;
+            }
+
+            var subject = fields[i + 1];
+            var authorName = fields[i + 2];
+            var authorEmail = fields[i + 3];
+
+            entries.Add(new RebaseEntry
+            {
+                CommitId = id,
+                MessageShort = subject,
+                AuthorName = authorName,
+                AuthorEmail = authorEmail,
+            });
+
+            i += 4;
+            if (i < fields.Length && fields[i].Length == 0)
+                i++;
+        }
+
+        return entries;
     }
 }
