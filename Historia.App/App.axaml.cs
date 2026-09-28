@@ -211,7 +211,6 @@ public sealed class App : Application
         services.AddSingleton<SyntaxThemeHost>();
         services.AddSingleton<IGitExecutableLocator, GitExecutableLocator>();
         services.AddSingleton<IGitCliService, GitCliService>();
-        services.AddSingleton<LibGit2Service>();
         services.AddSingleton<IBackgroundWorkGate, BackgroundWorkGate>();
         services.AddSingleton<Historia.Services.Graph.IGraphLayoutService, Historia.Services.Graph.GraphLayoutService>();
         services.AddSingleton<IRepoStateCache, RepoStateCache>();
@@ -304,11 +303,10 @@ public sealed class App : Application
         var notifications = Services.GetRequiredService<INotificationService>();
         var settings = Services.GetRequiredService<ISettingsService>();
 
-        // Resolving the git executable and restoring session tabs run concurrently because
-        // the restore path never touches IGitExecutableLocator — it only needs libgit2, via
-        // RepositoryContext.Open. Restoring the focused tab is what starts its commit-graph walk
-        // (CommitGraphControl.Bind → ComputeLayoutAsync); running them concurrently lets the
-        // graph walk for an already-known tab start immediately.
+        // Resolving the git executable and restoring session tabs run concurrently; CLI operations
+        // wait for git resolution via IGitCliService.WhenResolvedAsync. Restoring the focused tab
+        // is what starts its commit-graph walk (CommitGraphControl.Bind → ComputeLayoutAsync);
+        // running them concurrently lets tab restoration start immediately.
         var resolveGit = ResolveGitAsync(locator, settings, notifications);
         var restoreTabs = settings.Current.RestoreSessionTabs
             ? RestoreSessionTabsAsync(Services.GetRequiredService<IWorkspaceService>(), notifications)

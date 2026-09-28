@@ -2,12 +2,10 @@ namespace Historia.Services.Git;
 
 /// <summary>
 /// <inheritdoc cref="IGitGateway"/>
-/// Bound to one <see cref="RepositoryContext"/>; routes each operation to LibGit2Sharp or the
-/// Git CLI. LibGit2Sharp is <b>never</b> used for a network operation.
+/// Bound to one <see cref="RepositoryContext"/>; routes each operation to the Git CLI.
 /// </summary>
 public sealed partial class GitGateway(
     RepositoryContext context,
-    LibGit2Service lib,
     IGitCliService cli,
     IRepoLayoutService repoLayout,
     ICredentialVaultService credentialVault) : IGitGateway
@@ -17,9 +15,6 @@ public sealed partial class GitGateway(
     public async Task<RepositoryStatus> GetStatusAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-
-        if (!cli.IsGitAvailable)
-            return await context.WithRepositoryAsync(lib.ProjectStatus, ct).ConfigureAwait(false);
 
         if (context.IsBare)
             return RepositoryStatus.Empty with { ComputedAt = DateTimeOffset.Now };
@@ -95,12 +90,6 @@ public sealed partial class GitGateway(
 
     public async Task<bool> GetGpgSignConfiguredAsync(CancellationToken ct = default)
     {
-        if (!cli.IsGitAvailable)
-        {
-            var v = await context.WithRepositoryAsync(r => r.Config.Get<bool?>("commit.gpgsign")?.Value, ct).ConfigureAwait(false);
-            return v == true;
-        }
-
         // No scope flag → git resolves local over global on its own.
         var result = await cli.RunAsync(new GitCliRequest
         {
@@ -115,12 +104,6 @@ public sealed partial class GitGateway(
 
     private async Task<string?> ReadConfigAsync(string scope, string key, CancellationToken ct)
     {
-        if (!cli.IsGitAvailable)
-        {
-            var level = scope == "--global" ? ConfigurationLevel.Global : ConfigurationLevel.Local;
-            return await context.WithRepositoryAsync(r => r.Config.Get<string>(key, level)?.Value, ct).ConfigureAwait(false);
-        }
-
         var result = await cli.RunAsync(new GitCliRequest
         {
             Arguments = ["config", scope, "--get", key],

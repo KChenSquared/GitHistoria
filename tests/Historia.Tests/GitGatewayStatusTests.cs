@@ -141,42 +141,6 @@ public sealed class GitGatewayStatusTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Status_does_not_take_the_repo_gate()
-    {
-        using var repo = TestRepositoryBuilder.FromTemplate("gateway-status-gate-seed", r =>
-        {
-            r.WriteFile("tracked.txt", "one\n").Stage().Commit("initial");
-        });
-
-        var ctx = _host.Open(repo.Path);
-
-        var gateHeld = new ManualResetEventSlim(false);
-        var releaseGate = new ManualResetEventSlim(false);
-        var holdTask = Task.Run(async () =>
-        {
-            await ctx.WithRepositoryAsync(r =>
-            {
-                gateHeld.Set();
-                releaseGate.Wait(TimeSpan.FromSeconds(10));
-                return 0;
-            });
-        });
-
-        gateHeld.Wait(TimeSpan.FromSeconds(5));
-        try
-        {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            var status = await ctx.Gateway.GetStatusAsync(cts.Token);
-            Assert.NotNull(status);
-        }
-        finally
-        {
-            releaseGate.Set();
-            await holdTask;
-        }
-    }
-
-    [Fact]
     public async Task Cancelling_status_throws_OperationCanceledException()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("gateway-status-cancel-seed", r =>

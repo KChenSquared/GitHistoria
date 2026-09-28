@@ -21,7 +21,6 @@ public sealed class MiniHost : IAsyncDisposable
         var sc = new ServiceCollection();
         sc.AddSingleton<ISettingsService>(Settings);
         sc.AddSingleton<IRepoLayoutService, RepoLayoutService>();
-        sc.AddSingleton<LibGit2Service>();
         sc.AddSingleton<IGitExecutableLocator>(SharedLocator.Value);
         sc.AddSingleton<IGitCliService, GitCliService>();
         sc.AddSingleton<ICredentialVaultService, FakeVault>();
@@ -39,7 +38,6 @@ public sealed class MiniHost : IAsyncDisposable
         var sc = new ServiceCollection();
         sc.AddSingleton<ISettingsService>(Settings);
         sc.AddSingleton<IRepoLayoutService, RepoLayoutService>();
-        sc.AddSingleton<LibGit2Service>();
         sc.AddSingleton<IGitExecutableLocator>(SharedLocator.Value);
         sc.AddSingleton(cli);
         sc.AddSingleton<ICredentialVaultService, FakeVault>();

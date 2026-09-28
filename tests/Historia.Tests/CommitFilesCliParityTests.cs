@@ -4,7 +4,37 @@ namespace Historia.Tests;
 public sealed class CommitFilesCliParityTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
-    private readonly LibGit2Service _lib = new();
+
+    private static IReadOnlyList<FileStatusEntry> ProjectCommitFiles(Repository repo, GitObjectId id, int parentIndex = 1)
+    {
+        var commit = repo.Lookup<Commit>(id.ToLibGit2())
+            ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"Commit {id} not found.");
+        var parent = commit.Parents.ElementAtOrDefault(Math.Max(0, parentIndex - 1));
+
+        using var changes = repo.Diff.Compare<TreeChanges>(parent?.Tree, commit.Tree);
+        var result = new List<FileStatusEntry>();
+        foreach (var change in changes)
+        {
+            result.Add(new FileStatusEntry
+            {
+                Path = change.Path,
+                Kind = change.Status switch
+                {
+                    ChangeKind.Added => FileChangeKind.Added,
+                    ChangeKind.Deleted => FileChangeKind.Deleted,
+                    ChangeKind.Renamed => FileChangeKind.Renamed,
+                    ChangeKind.Copied => FileChangeKind.Copied,
+                    ChangeKind.TypeChanged => FileChangeKind.TypeChanged,
+                    _ => FileChangeKind.Modified,
+                },
+                OldPath = change.OldPath == change.Path ? null : change.OldPath,
+                IsBinary = false,
+                IsSubmodule = false,
+            });
+        }
+
+        return result;
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -25,7 +55,7 @@ public sealed class CommitFilesCliParityTests : IAsyncDisposable
         var rootId = new GitObjectId(repo.HeadSha);
 
         using var git = new Repository(repo.Path);
-        var libExpected = _lib.ProjectCommitFiles(git, rootId, parentIndex: 1);
+        var libExpected = ProjectCommitFiles(git, rootId, parentIndex: 1);
         var cliActual = await ctx.Gateway.GetCommitFilesAsync(rootId, parentIndex: 1);
 
         Assert.Equal(libExpected.Count, cliActual.Count);
@@ -59,7 +89,7 @@ public sealed class CommitFilesCliParityTests : IAsyncDisposable
         var commitId = new GitObjectId(repo.HeadSha);
 
         using var git = new Repository(repo.Path);
-        var libExpected = _lib.ProjectCommitFiles(git, commitId, parentIndex: 1);
+        var libExpected = ProjectCommitFiles(git, commitId, parentIndex: 1);
         var cliActual = await ctx.Gateway.GetCommitFilesAsync(commitId, parentIndex: 1);
 
         Assert.Equal(3, cliActual.Count);
@@ -142,8 +172,8 @@ public sealed class CommitFilesCliParityTests : IAsyncDisposable
         var mergeId = new GitObjectId(repo.HeadSha);
 
         using var git = new Repository(repo.Path);
-        var libParent1 = _lib.ProjectCommitFiles(git, mergeId, parentIndex: 1);
-        var libParent2 = _lib.ProjectCommitFiles(git, mergeId, parentIndex: 2);
+        var libParent1 = ProjectCommitFiles(git, mergeId, parentIndex: 1);
+        var libParent2 = ProjectCommitFiles(git, mergeId, parentIndex: 2);
 
         var cliParent0 = await ctx.Gateway.GetCommitFilesAsync(mergeId, parentIndex: 0);
         var cliParent1 = await ctx.Gateway.GetCommitFilesAsync(mergeId, parentIndex: 1);
@@ -244,7 +274,6 @@ public sealed class CommitFilesCliParityTests : IAsyncDisposable
         var sc = new ServiceCollection();
         sc.AddSingleton<ISettingsService>(_host.Settings);
         sc.AddSingleton<IRepoLayoutService, RepoLayoutService>();
-        sc.AddSingleton<LibGit2Service>();
         sc.AddSingleton<IGitExecutableLocator>(_host.Locator);
         sc.AddSingleton<IGitCliService>(recordingCli);
         sc.AddSingleton<ICredentialVaultService, FakeVault>();
@@ -252,11 +281,12 @@ public sealed class CommitFilesCliParityTests : IAsyncDisposable
 
         await using var ctx = RepositoryContext.Open(repo.Path, provider);
         var commitId = new GitObjectId(repo.HeadSha);
+        var runsBefore = recordingCli.RunCount;
 
         var files = await ctx.Gateway.GetCommitFilesAsync(commitId, parentIndex: 1);
         Assert.Single(files);
-        Assert.Equal(1, recordingCli.RunCount);
-        Assert.Contains(recordingCli.Requests[0].Arguments, a => a == "diff-tree");
+        Assert.Equal(1, recordingCli.RunCount - runsBefore);
+        Assert.Contains(recordingCli.Requests.Last().Arguments, a => a == "diff-tree");
     }
 
     [Fact]
@@ -320,7 +350,7 @@ public sealed class CommitFilesCliParityTests : IAsyncDisposable
         var commitId = new GitObjectId(repo.HeadSha);
 
         using var git = new Repository(repo.Path);
-        var libExpected = _lib.ProjectCommitFiles(git, commitId, parentIndex: 1);
+        var libExpected = ProjectCommitFiles(git, commitId, parentIndex: 1);
         var cliActual = await ctx.Gateway.GetCommitFilesAsync(commitId, parentIndex: 1);
 
         Assert.Equal(2, cliActual.Count);

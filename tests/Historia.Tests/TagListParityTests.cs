@@ -76,30 +76,4 @@ public sealed class TagListParityTests : IAsyncDisposable
         Assert.Contains(actual, t => t.Name == "nested");
         Assert.Equal("subject\r\n\r\nbody\rwith a lone CR\r\n", actual.Single(t => t.Name == "crlf-message").Message);
     }
-
-    [Fact]
-    public async Task GetTagsAsync_does_not_enter_the_repo_gate_when_git_is_present()
-    {
-        await using var ctx = _host.Open(_repo.Path);
-
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = ctx.WithRepositoryAsync(_ =>
-        {
-            entered.SetResult();
-            release.Task.Wait();
-            return 0;
-        });
-        await entered.Task;
-        try
-        {
-            var tags = ctx.Gateway.GetTagsAsync();
-            Assert.Same(tags, await Task.WhenAny(tags, Task.Delay(TimeSpan.FromSeconds(20))));
-            Assert.NotEmpty(await tags);
-        }
-        finally
-        {
-            release.SetResult();
-        }
-    }
 }

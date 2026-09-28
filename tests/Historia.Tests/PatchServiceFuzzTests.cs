@@ -56,7 +56,7 @@ public class PatchServiceFuzzTests
     private static FileDiff ProjectDiff(string repoPath, DiffSource source, int contextLines)
     {
         using var repo = new Repository(repoPath);
-        return new LibGit2Service().ProjectDiff(repo, new DiffRequest
+        return repo.ProjectDiff(new DiffRequest
         {
             Source = source,
             Path = "f.txt",

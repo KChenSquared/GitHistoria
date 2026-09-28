@@ -1,4 +1,4 @@
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 
@@ -17,7 +17,6 @@ public sealed class GraphCrawlGuardTests : IDisposable
         var sc = new ServiceCollection();
         sc.AddSingleton<ISettingsService>(SettingsService.Load());
         sc.AddSingleton<IRepoLayoutService, RepoLayoutService>();
-        sc.AddSingleton<LibGit2Service>();
         var locator = new GitExecutableLocator();
         locator.ResolveAsync(null).GetAwaiter().GetResult();
         sc.AddSingleton<IGitExecutableLocator>(locator);

@@ -1,4 +1,4 @@
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 
 /// <summary>
 /// Verify BranchMenu.RunWithStashRecovery integration when a checkout conflict occurs —
@@ -152,7 +152,6 @@ public sealed class CheckoutStashRecoveryTests
         var locator = new GitExecutableLocator();
         locator.ResolveAsync(null).GetAwaiter().GetResult();
         sc.AddSingleton<IGitExecutableLocator>(locator);
-        sc.AddSingleton<LibGit2Service>();
         sc.AddSingleton<IBackgroundWorkGate, BackgroundWorkGate>();
         sc.AddSingleton<IGraphLayoutService, GraphLayoutService>();
         sc.AddSingleton<IRepoStateCache, RepoStateCache>();

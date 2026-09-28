@@ -3,8 +3,32 @@ namespace Historia.Tests;
 [Trait("tier", "git")]
 public class CommitDetailMessageTests : IAsyncDisposable
 {
-    private readonly LibGit2Service _svc = new();
     private readonly MiniHost _host = new();
+
+    private static CommitDetail ProjectCommitDetail(Repository repo, GitObjectId id)
+    {
+        var commit = repo.Lookup<Commit>(id.ToLibGit2())
+            ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"Commit {id} not found.");
+
+        var fullMessage = commit.Message ?? "";
+        var firstBreak = fullMessage.IndexOf('\n');
+        var messageBody = firstBreak >= 0 ? fullMessage[(firstBreak + 1)..].Trim() : "";
+
+        return new CommitDetail
+        {
+            Id = commit.Id.ToGitObjectId(),
+            Message = fullMessage.TrimEnd('\n', '\r'),
+            MessageShort = commit.MessageShort,
+            MessageBody = messageBody,
+            AuthorName = commit.Author.Name,
+            AuthorEmail = commit.Author.Email,
+            AuthorWhen = commit.Author.When,
+            CommitterName = commit.Committer.Name,
+            CommitterEmail = commit.Committer.Email,
+            CommitWhen = commit.Committer.When,
+            ParentIds = commit.Parents.Select(p => p.Id.ToGitObjectId()).ToList(),
+        };
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -25,7 +49,7 @@ public class CommitDetailMessageTests : IAsyncDisposable
         var commit = git.Commit(raw, sig, sig);
         var commitId = commit.Id.ToGitObjectId();
 
-        var detail = _svc.ProjectCommitDetail(git, commitId);
+        var detail = ProjectCommitDetail(git, commitId);
 
         Assert.Equal("feat: x\n\nline one\n\n- bullet", detail.Message);
 
@@ -50,7 +74,7 @@ public class CommitDetailMessageTests : IAsyncDisposable
         var commit = git.Commit(raw, sig, sig);
         var commitId = commit.Id.ToGitObjectId();
 
-        var detail = _svc.ProjectCommitDetail(git, commitId);
+        var detail = ProjectCommitDetail(git, commitId);
 
         Assert.Equal("a\nb\n\nbody", detail.Message);
         Assert.NotEqual(detail.Message, detail.MessageShort);
@@ -77,7 +101,7 @@ public class CommitDetailMessageTests : IAsyncDisposable
         var commit = git.Commit(raw, sig, sig);
         var commitId = commit.Id.ToGitObjectId();
 
-        var detail = _svc.ProjectCommitDetail(git, commitId);
+        var detail = ProjectCommitDetail(git, commitId);
 
         Assert.Equal("wip", detail.Message);
         Assert.Equal("", detail.MessageBody);

@@ -286,7 +286,7 @@ public sealed class PowerToolWriteLockTests : IDisposable
         });
 
         using var repo = new Repository(b.Path);
-        var diff = new LibGit2Service().ProjectDiff(repo, new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "f.txt" });
+        var diff = repo.ProjectDiff(new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "f.txt" });
         var normalSvc = new PatchService(host.Cli);
         var patch = normalSvc.GeneratePatch(diff, PatchScope.SingleHunk, new HashSet<DiffLineRef> { new(0, 0) });
 

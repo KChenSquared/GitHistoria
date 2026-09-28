@@ -1,4 +1,4 @@
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public class DiffViewStagingTests : IDisposable
@@ -177,7 +177,6 @@ public class DiffViewStagingTests : IDisposable
         sc.AddSingleton(_syntaxHost);
         sc.AddSingleton<IRepoLayoutService>(new FakeLayoutService());
         sc.AddSingleton<ICredentialVaultService>(new FakeVault());
-        sc.AddSingleton<LibGit2Service>();
 
         var locator = new GitExecutableLocator();
         locator.ResolveAsync(null).GetAwaiter().GetResult();

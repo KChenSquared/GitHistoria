@@ -1,4 +1,4 @@
-using Avalonia.Headless;
+﻿using Avalonia.Headless;
 
 namespace HistoriaApp.Tests;
 
@@ -58,7 +58,6 @@ public sealed class CloneTabTests
         var locator = new GitExecutableLocator();
         locator.ResolveAsync(null).GetAwaiter().GetResult();
         sc.AddSingleton<IGitExecutableLocator>(locator);
-        sc.AddSingleton<LibGit2Service>();
         sc.AddSingleton<IBackgroundWorkGate, BackgroundWorkGate>();
         sc.AddSingleton<IGraphLayoutService, GraphLayoutService>();
         sc.AddSingleton<Historia.Services.Storage.IRepoStateCache, Historia.Services.Storage.RepoStateCache>();
