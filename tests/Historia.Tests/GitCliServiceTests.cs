@@ -212,6 +212,44 @@ public class GitCliServiceTests
         Assert.Contains("not found", result.StandardError);
     }
 
+    [Fact]
+    public async Task Output_budget_stops_the_process_and_flags_it()
+    {
+        var cli = await MakeAsync();
+        using var repo = TestRepositoryBuilder.FromTemplate("linear-3000", b => b.LinearHistory(3_000));
+
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["log", "--all", "-p"],
+            WorkingDirectory = repo.Path,
+            MaxStandardOutputBytes = 1_000,
+        });
+
+        Assert.True(result.OutputTruncated);
+        Assert.True(result.StandardOutput.Length <= 5_000);
+        Assert.Equal(GitErrorKind.None, result.ErrorKind);
+    }
+
+    [Fact]
+    public async Task Output_budget_stops_the_process_and_flags_it_in_raw_mode()
+    {
+        var cli = await MakeAsync();
+        using var repo = TestRepositoryBuilder.FromTemplate("linear-3000", b => b.LinearHistory(3_000));
+
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["log", "--all", "-p"],
+            WorkingDirectory = repo.Path,
+            RawStandardOutput = true,
+            MaxStandardOutputBytes = 1_000,
+        });
+
+        Assert.True(result.OutputTruncated);
+        Assert.NotNull(result.StandardOutputBytes);
+        Assert.True(result.StandardOutputBytes.Length <= 1_000);
+        Assert.Equal(GitErrorKind.None, result.ErrorKind);
+    }
+
     private sealed class DelayedLocator : IGitExecutableLocator
     {
         private readonly TaskCompletionSource<GitExecutableInfo> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);

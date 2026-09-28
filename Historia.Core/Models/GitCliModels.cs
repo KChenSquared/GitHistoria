@@ -16,6 +16,10 @@ public sealed record GitCliResult(
     /// <summary>Stdout exactly as git wrote it — set only for a
     /// <see cref="GitCliRequest.RawStandardOutput"/> request, null otherwise.</summary>
     public byte[]? StandardOutputBytes { get; init; }
+
+    /// <summary>True when stdout exceeded <see cref="GitCliRequest.MaxStandardOutputBytes"/>,
+    /// stopping the read and terminating the process tree early.</summary>
+    public bool OutputTruncated { get; init; }
 }
 
 /// <summary>
@@ -48,6 +52,10 @@ public sealed record GitCliRequest
     /// splits on CR as well as LF and rejoins lines with CRLF. Can't be combined with
     /// <see cref="StreamOutput"/> or a stdout line callback.</summary>
     public bool RawStandardOutput { get; init; }
+
+    /// <summary>Maximum bytes of stdout to buffer before stopping the read, killing the process
+    /// tree, and flagging <see cref="GitCliResult.OutputTruncated"/>. Null means unlimited.</summary>
+    public long? MaxStandardOutputBytes { get; init; }
 
     /// <summary>When set, written to the process's stdin and then closed (e.g. a patch for <c>git apply -</c>).</summary>
     public string? StandardInput { get; init; }

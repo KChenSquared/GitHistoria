@@ -96,12 +96,25 @@ public sealed class GitCliService : IGitCliService
         var rawStdout = raw ? new MemoryStream() : null;
         var stdoutDone = new TaskCompletionSource();
         var stderrDone = new TaskCompletionSource();
+        var outputTruncated = false;
+        long lineBufferedBytes = 0;
 
         if (!raw)
         {
             process.OutputDataReceived += (_, e) =>
             {
                 if (e.Data is null) { stdoutDone.TrySetResult(); return; }
+                if (outputTruncated) return;
+
+                var lineBytes = Utf8NoBom.GetByteCount(e.Data) + Environment.NewLine.Length;
+                if (request.MaxStandardOutputBytes is { } max && lineBufferedBytes + lineBytes > max)
+                {
+                    outputTruncated = true;
+                    GitCliProcessSetup.TryKill(process);
+                    stdoutDone.TrySetResult();
+                    return;
+                }
+                lineBufferedBytes += lineBytes;
                 stdout.AppendLine(e.Data);
                 onStdoutLine?.Invoke(e.Data);
             };
@@ -135,7 +148,17 @@ public sealed class GitCliService : IGitCliService
 
         // Both streams drain concurrently from here on — in raw mode stdout is copied
         // as bytes instead of being read line by line.
-        var stdoutDrained = raw ? CopyRawAsync(process.StandardOutput.BaseStream, rawStdout!) : stdoutDone.Task;
+        Task rawCopyTask = Task.CompletedTask;
+        if (raw)
+        {
+            rawCopyTask = CopyRawAsync(
+                process.StandardOutput.BaseStream,
+                rawStdout!,
+                request.MaxStandardOutputBytes,
+                process,
+                () => outputTruncated = true);
+        }
+        var stdoutDrained = raw ? rawCopyTask : stdoutDone.Task;
         if (!raw)
             process.BeginOutputReadLine();
         process.BeginErrorReadLine();
@@ -186,7 +209,11 @@ public sealed class GitCliService : IGitCliService
         var stdoutBytes = rawStdout?.ToArray();
         var stdoutText = stdoutBytes is not null ? Utf8NoBom.GetString(stdoutBytes) : stdout.ToString();
         GitCliResult Result(int exitCode, GitErrorKind kind) =>
-            new(exitCode, stdoutText, stderr.ToString(), kind, stopwatch.Elapsed) { StandardOutputBytes = stdoutBytes };
+            new(exitCode, stdoutText, stderr.ToString(), kind, stopwatch.Elapsed)
+            {
+                StandardOutputBytes = stdoutBytes,
+                OutputTruncated = outputTruncated,
+            };
 
         // The caller's own token and the per-request Timeout both trip `cancelled` via the same
         // linked registration — tell them apart so a stalled invocation (killed by the timeout,
@@ -198,18 +225,56 @@ public sealed class GitCliService : IGitCliService
             return Result(-1, GitErrorKind.TimedOut);
 
         var exitCode = SafeExitCode(process);
-        var kind = exitCode == 0
+        var kind = exitCode == 0 || outputTruncated
             ? GitErrorKind.None
             : GitErrorClassifier.Classify(exitCode, stderr.ToString());
 
         return Result(exitCode, kind);
     }
 
-    /// <summary>Copies raw stdout to <paramref name="into"/> until git closes the pipe. A pipe
-    /// broken by a kill (cancel / timeout) just ends the copy — whatever arrived is kept.</summary>
-    private static async Task CopyRawAsync(Stream stdout, MemoryStream into)
+    /// <summary>Copies raw stdout to <paramref name="into"/> until git closes the pipe or
+    /// <paramref name="maxBytes"/> is exceeded. A pipe broken by a kill (cancel / timeout /
+    /// truncation) just ends the copy — whatever arrived is kept.</summary>
+    private static async Task CopyRawAsync(
+        Stream stdout,
+        MemoryStream into,
+        long? maxBytes,
+        Process process,
+        Action onTruncated)
     {
-        try { await stdout.CopyToAsync(into).ConfigureAwait(false); }
+        var buffer = new byte[8192];
+        try
+        {
+            while (true)
+            {
+                var read = await stdout.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+                if (read == 0) break;
+
+                if (maxBytes is { } max)
+                {
+                    var remaining = max - into.Length;
+                    if (remaining <= 0)
+                    {
+                        onTruncated();
+                        GitCliProcessSetup.TryKill(process);
+                        break;
+                    }
+
+                    var toWrite = (int)Math.Min(read, remaining);
+                    into.Write(buffer, 0, toWrite);
+                    if (read > toWrite)
+                    {
+                        onTruncated();
+                        GitCliProcessSetup.TryKill(process);
+                        break;
+                    }
+                }
+                else
+                {
+                    into.Write(buffer, 0, read);
+                }
+            }
+        }
         catch (IOException) { }
         catch (ObjectDisposedException) { }
     }
