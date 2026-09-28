@@ -392,6 +392,9 @@ public sealed partial class CommitGraphControl : Control
     private Typeface _typeface = new(FontFamily.Default);
 
     private GraphQuery _query = new() { RefScope = GraphRefScope.AllRefs };
+    // The query _layout was computed for. _query changes before the recompute lands (and a
+    // dropped ApplyLayout keeps the old layout), so the two can briefly disagree.
+    private GraphQuery? _layoutQuery;
     private readonly Border _queryBar;
     private readonly TextBox _searchBox;
     private readonly TextBox _pathBox;
@@ -1085,7 +1088,7 @@ public sealed partial class CommitGraphControl : Control
                     () => _layoutService.TryOptimisticSnapshot(context, query, quick), ct).ConfigureAwait(true);
                 if (optimistic is not null && !ct.IsCancellationRequested)
                 {
-                    ApplyLayout(optimistic);
+                    ApplyLayout(optimistic, query);
                     if (!_firstPaintQueued)
                     {
                         _firstPaintQueued = true;
@@ -1108,7 +1111,7 @@ public sealed partial class CommitGraphControl : Control
                     () => _layoutService.ComputeLayoutAsync(context, query, quick, ct), ct).ConfigureAwait(true);
                 if (ct.IsCancellationRequested)
                     return;
-                ApplyLayout(fast);
+                ApplyLayout(fast, query);
                 if (!_firstPaintQueued)
                 {
                     _firstPaintQueued = true;
@@ -1126,7 +1129,7 @@ public sealed partial class CommitGraphControl : Control
                     () => _layoutService.ExtendLayoutAsync(context, fast, full - fast.Layout.RowCount, ct), ct).ConfigureAwait(true);
                 if (ct.IsCancellationRequested)
                     return;
-                ApplyLayout(rest);
+                ApplyLayout(rest, query);
                 Historia.Diagnostics.PerfLog.Mark($"graph initial batch extend queued ({rest.Layout.RowCount} rows)");
                 _ = StartBackgroundSilentLoadAsync(context, ct);
                 return;
@@ -1136,7 +1139,7 @@ public sealed partial class CommitGraphControl : Control
                 () => _layoutService.ComputeLayoutAsync(context, query, full, ct), ct).ConfigureAwait(true);
             if (ct.IsCancellationRequested)
                 return;
-            ApplyLayout(result);
+            ApplyLayout(result, query);
             if (!_firstPaintQueued)
             {
                 _firstPaintQueued = true;
@@ -1170,7 +1173,7 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
-    private void ApplyLayout(GraphLayoutResult result)
+    private void ApplyLayout(GraphLayoutResult result, GraphQuery query)
     {
         if (!SetLayout(result))
         {
@@ -1180,6 +1183,7 @@ public sealed partial class CommitGraphControl : Control
             Historia.Diagnostics.PerfLog.Mark("graph ApplyLayout dropped: store closed pre-lease");
             return;
         }
+        _layoutQuery = query;
         _selectedRow = ResolveRow(_state?.SelectedCommitId);
         RecomputeMatches();
         InvalidateMeasure();
@@ -1243,7 +1247,7 @@ public sealed partial class CommitGraphControl : Control
                 _layoutService.RecomputeAsync(context, query, previous, InvalidationReason.RefsChanged, initial, ct), ct).ConfigureAwait(true);
             if (ct.IsCancellationRequested)
                 return;
-            ApplyLayout(result);
+            ApplyLayout(result, query);
             _ = StartBackgroundSilentLoadAsync(context, ct);
         }
         catch (OperationCanceledException) { }

@@ -2,19 +2,19 @@ namespace Historia.Controls;
 
 /// <summary>
 /// Determines whether a commit is a merge commit (parent count &gt; 1).
-/// Reads from the layout row only when the layout query is unfiltered;
-/// a path-filtered walk rewrites parent lists so git itself must be consulted.
+/// Reads from the layout row only when the query the layout was built with is known and
+/// unfiltered; a path-filtered walk rewrites parent lists so git itself must be consulted.
 /// </summary>
 internal static class CommitMergeDetection
 {
     public static async Task<bool> IsMergeAsync(
         GraphLayoutResult? layout,
-        GraphQuery query,
+        GraphQuery? layoutQuery,
         IGitGateway gateway,
         GitObjectId id,
         CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(query.PathFilter)
+        if (layoutQuery is not null && string.IsNullOrEmpty(layoutQuery.PathFilter)
             && layout is { } lay
             && lay.Layout.RowByCommitId.TryGetValue(id, out var row)
             && row >= 0 && row < lay.Layout.Commits.Count)

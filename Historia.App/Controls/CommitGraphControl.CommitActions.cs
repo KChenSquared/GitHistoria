@@ -365,7 +365,7 @@ public sealed partial class CommitGraphControl
     {
         if (_context is not { } ctx)
             return;
-        var isMerge = ids.Count == 1 && await CommitMergeDetection.IsMergeAsync(_layout, _query, ctx.Gateway, ids[0], ctx.Lifetime);
+        var isMerge = ids.Count == 1 && await CommitMergeDetection.IsMergeAsync(_layout, _layoutQuery, ctx.Gateway, ids[0], ctx.Lifetime);
         var mainline = isMerge ? 1 : (int?)null;
         if (!await _dialogs.ConfirmAsync("Cherry-pick",
                 $"Cherry-pick {ids.Count} commit(s) onto {_state?.CurrentBranch?.Name ?? "the current branch"}?"
@@ -388,7 +388,7 @@ public sealed partial class CommitGraphControl
     {
         if (_context is not { } ctx)
             return;
-        var isMerge = ids.Count == 1 && await CommitMergeDetection.IsMergeAsync(_layout, _query, ctx.Gateway, ids[0], ctx.Lifetime);
+        var isMerge = ids.Count == 1 && await CommitMergeDetection.IsMergeAsync(_layout, _layoutQuery, ctx.Gateway, ids[0], ctx.Lifetime);
         if (!await _dialogs.ConfirmAsync("Revert", $"Revert {ids.Count} commit(s)?" + (isMerge ? " (merge commit — mainline parent 1)" : "")))
             return;
         try

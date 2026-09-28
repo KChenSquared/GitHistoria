@@ -66,6 +66,27 @@ public sealed class CommitActionsMergeDetectionTests
     }
 
     [Fact]
+    public async Task Resident_row_with_unknown_layout_query_consults_gateway()
+    {
+        // The control passes the query its layout was built with; with none recorded the
+        // row's ParentCount may come from a filtered walk and cannot be trusted.
+        var mergeId = new GitObjectId("8888888888888888888888888888888888888888");
+        var layout = CreateLayout(mergeId, parentCount: 1);
+        var parent1 = new GitObjectId("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        var parent2 = new GitObjectId("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+        var gateway = new FakeGitGateway
+        {
+            OnGetCommitDetail = id => CreateCommitDetail(id, [parent1, parent2]),
+        };
+
+        var isMerge = await CommitMergeDetection.IsMergeAsync(layout, layoutQuery: null, gateway, mergeId, CancellationToken.None);
+
+        Assert.True(isMerge);
+        Assert.Equal(1, gateway.GetCommitDetailCalls);
+    }
+
+    [Fact]
     public async Task Non_resident_commit_consults_gateway_once()
     {
         var nonResidentId = new GitObjectId("5555555555555555555555555555555555555555");
