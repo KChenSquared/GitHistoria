@@ -120,12 +120,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
     public async Task<RepositoryContext> OpenAsync(string path, CancellationToken ct = default)
     {
-        var discovered = await Task.Run(() => Repository.Discover(path), ct).ConfigureAwait(false)
-            ?? throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
-                $"No Git repository was found at or above '{path}'.");
+        var discovered = await RepositoryDiscovery.DiscoverAsync(path, _cli, ct).ConfigureAwait(false);
 
         // Duplicate-open guard: focus the existing tab rather than racing on the index lock.
-        var normalizedGitDir = NormalizeDir(discovered);
+        var normalizedGitDir = NormalizeDir(discovered.GitDirectory);
         RepositoryContext? existing;
         lock (_sync)
         {
@@ -346,29 +344,29 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     {
         Directory.CreateDirectory(path);
 
-        if (_cli.IsGitAvailable)
+        if (!_cli.IsGitAvailable)
         {
-            var args = new List<string> { "init" };
-            if (!string.IsNullOrWhiteSpace(initialBranch))
-            {
-                args.Add("-b");
-                args.Add(initialBranch);
-            }
-
-            args.Add(path);
-            var result = await _cli.RunAsync(new GitCliRequest
-            {
-                Arguments = args,
-                WorkingDirectory = Path.GetDirectoryName(path.TrimEnd(Path.DirectorySeparatorChar)) ?? path,
-            }, ct).ConfigureAwait(false);
-
-            if (!result.IsSuccess)
-                throw HistoriaGitException.FromCli(result, "Initialize repository");
+            throw new HistoriaGitException(
+                GitErrorKind.Unknown,
+                "Git is required to initialize a repository. Install Git 2.31 or newer, or set its path in Settings.");
         }
-        else
+
+        var args = new List<string> { "init" };
+        if (!string.IsNullOrWhiteSpace(initialBranch))
         {
-            await Task.Run(() => Repository.Init(path), ct).ConfigureAwait(false);
+            args.Add("-b");
+            args.Add(initialBranch);
         }
+
+        args.Add(path);
+        var result = await _cli.RunAsync(new GitCliRequest
+        {
+            Arguments = args,
+            WorkingDirectory = Path.GetDirectoryName(path.TrimEnd(Path.DirectorySeparatorChar)) ?? path,
+        }, ct).ConfigureAwait(false);
+
+        if (!result.IsSuccess)
+            throw HistoriaGitException.FromCli(result, "Initialize repository");
 
         return await OpenAsync(path, ct).ConfigureAwait(false);
     }
@@ -495,11 +493,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                 $"Submodule '{submodule.Name}' isn't initialized. Use Init & update first.");
         }
 
-        var discovered = await Task.Run(() => Repository.Discover(submodulePath), ct).ConfigureAwait(false)
-            ?? throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
-                $"No Git repository was found at or above '{submodulePath}'.");
+        var discovered = await RepositoryDiscovery.DiscoverAsync(submodulePath, _cli, ct).ConfigureAwait(false);
 
-        var normalizedGitDir = NormalizeDir(discovered);
+        var normalizedGitDir = NormalizeDir(discovered.GitDirectory);
         bool orderChanged = false;
         RepositoryContext? existing;
         lock (_sync)

@@ -79,6 +79,7 @@ public static class GitErrorClassifier
         // the process-running message are both unambiguous on their own; keep only those.
         (GitErrorKind.LockedIndex, ["index.lock", "another git process seems to be running"]),
         (GitErrorKind.NotAGitRepository, ["not a git repository"]),
+        (GitErrorKind.UnsafeRepository, ["detected dubious ownership"]),
         (GitErrorKind.LfsMissing, ["git-lfs", "this repository is configured for git lfs but"]),
         (GitErrorKind.UnrelatedHistories, ["refusing to merge unrelated histories"]),
         (GitErrorKind.DetachedHeadOperation, ["you are not currently on a branch", "detached head"]),
@@ -93,6 +94,13 @@ public static class GitErrorClassifier
             "bad object",
         ]),
     ];
+
+    /// <summary>
+    /// Formats an actionable message for <see cref="GitErrorKind.UnsafeRepository"/> naming the path
+    /// and the exact command the user can run to allow it.
+    /// </summary>
+    public static string FormatUnsafeRepositoryMessage(string path) =>
+        $"Repository at '{path}' is not owned by the current user. To add an exception, run: git config --global --add safe.directory \"{path}\"";
 
     public static GitErrorKind Classify(int exitCode, string stderr)
     {

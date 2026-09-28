@@ -1290,5 +1290,31 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
+    [Fact]
+    public async Task OpenAsync_non_repo_path_throws_NotAGitRepository()
+    {
+        var ws = NewWorkspace();
+        var nonRepo = TestScratch.NewDirectory("ws-non-repo-");
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() => ws.OpenAsync(nonRepo));
+        Assert.Equal(GitErrorKind.NotAGitRepository, ex.Kind);
+
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task InitAsync_initializes_and_opens_repository()
+    {
+        var ws = NewWorkspace();
+        var initDir = TestScratch.NewDirectory("ws-init-");
+
+        var ctx = await ws.InitAsync(initDir, "main");
+        Assert.NotNull(ctx);
+        Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(initDir)), Path.TrimEndingDirectorySeparator(ctx.RepositoryPath));
+        Assert.True(Directory.Exists(ctx.GitDirectory));
+
+        await ws.DisposeAsync();
+    }
+
     public async ValueTask DisposeAsync() => await _host.DisposeAsync();
 }
