@@ -201,6 +201,31 @@ public sealed class TestRepositoryBuilder : IDisposable
         return ResolveHeadSha();
     }
 
+    /// <summary>Commits the index with a forged SSH <c>gpgsig</c> header and turns on
+    /// <c>log.showSignature</c>. Verification fails without any signing tool, and git then
+    /// prints "No signature" on stdout ahead of the commit's formatted record.</summary>
+    public string CommitWithForgedSignature(string message)
+    {
+        var tree = Git("write-tree").Trim();
+        var parent = Git("rev-parse", "--verify", "-q", "HEAD").Trim();
+        var body = new StringBuilder()
+            .Append("tree ").Append(tree).Append('\n')
+            .Append("parent ").Append(parent).Append('\n')
+            .Append("author Test User <test@example.com> 1700000000 +0000\n")
+            .Append("committer Test User <test@example.com> 1700000000 +0000\n")
+            .Append("gpgsig -----BEGIN SSH SIGNATURE-----\n U1NIU0lH\n -----END SSH SIGNATURE-----\n")
+            .Append('\n').Append(message).Append('\n')
+            .ToString();
+        var objectFile = System.IO.Path.Combine(Path, ".git", "forged-commit.txt");
+        File.WriteAllText(objectFile, body);
+        var sha = Git("hash-object", "-t", "commit", "-w", objectFile).Trim();
+        File.Delete(objectFile);
+        Git("reset", "--soft", sha);
+        Git("config", "gpg.format", "ssh");
+        Git("config", "log.showSignature", "true");
+        return sha;
+    }
+
     public string HeadSha => ResolveHeadSha();
 
     private string ResolveHeadSha()

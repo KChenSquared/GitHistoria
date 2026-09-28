@@ -183,11 +183,14 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
             ? branchResult.StandardOutput.Trim()
             : "(no branch)";
 
+        // Trap: log.showSignature=true prints verification text ahead of a signed commit's
+        // record; the parser would skip that commit and the todo would silently drop it.
         var logResult = await cli.RunAsync(new GitCliRequest
         {
             Arguments =
             [
                 "log",
+                "--no-show-signature",
                 "--reverse",
                 "--date-order",
                 "-z",

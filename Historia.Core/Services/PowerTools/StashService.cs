@@ -132,6 +132,7 @@ public sealed class StashService(IGitCliService cli) : IStashService
             [
                 "log",
                 "-g",
+                "--no-show-signature",
                 "--no-renames",
                 "--diff-merges=first-parent",
                 "--name-only",

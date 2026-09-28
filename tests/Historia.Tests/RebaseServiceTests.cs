@@ -217,4 +217,27 @@ public class RebaseServiceTests : IDisposable
             Assert.Equal(expectedCommits[i].Author.Email, session.Entries[i].AuthorEmail);
         }
     }
+
+    [Fact]
+    public async Task Build_session_keeps_signed_commits_when_log_shows_signatures()
+    {
+        // log.showSignature=true prints verification text on stdout ahead of a signed commit's
+        // record. A parser that skipped it would leave the commit out of the todo, and the
+        // rebase would silently drop it.
+        await using var host = new MiniHost();
+        using var repo = TestRepositoryBuilder.FromTemplate("rebase-signed-fixture", b =>
+        {
+            b.WriteFile("base.txt", "base\n").Stage().Commit("c1");
+            b.Checkout("feature", create: true);
+            b.WriteFile("f1.txt", "1\n").Stage().Commit("f1");
+            b.WriteFile("f2.txt", "2\n").Stage();
+            b.CommitWithForgedSignature("signed f2");
+            b.WriteFile("f3.txt", "3\n").Stage().Commit("f3");
+        });
+        await using var ctx = host.Open(repo.Path);
+
+        var session = await Make(host).BuildSessionAsync(ctx, "main");
+
+        Assert.Equal(["f1", "signed f2", "f3"], session.Entries.Select(e => e.MessageShort));
+    }
 }
