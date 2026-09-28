@@ -208,6 +208,70 @@ public sealed class UnmergedIndexReaderTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Conflict_list_classifies_every_blob_in_two_cat_file_spawns()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("many-conflicts-test", b =>
+        {
+            for (var i = 0; i < 12; i++)
+                b.WriteFile($"f{i}.txt", $"base {i}\n");
+            b.WriteFile("bin.dat", "\0base");
+            b.Stage().Commit("base");
+            b.Checkout("feature", create: true);
+            for (var i = 0; i < 12; i++)
+                b.WriteFile($"f{i}.txt", $"theirs {i}\n");
+            b.WriteFile("bin.dat", "\0theirs");
+            b.Stage().Commit("theirs");
+            b.Checkout("main");
+            for (var i = 0; i < 12; i++)
+                b.WriteFile($"f{i}.txt", $"ours {i}\n");
+            b.WriteFile("bin.dat", "\0ours");
+            b.Stage().Commit("ours");
+            try { b.Git("merge", "feature"); } catch { }
+        });
+
+        var cli = new InterceptingGitCliService(_host.Cli);
+        await using var ctx = _host.Open(repo.Path);
+        var files = await new ConflictService(cli, _host.Settings).GetConflictsAsync(ctx);
+
+        Assert.Equal(13, files.Count);
+        Assert.True(Assert.Single(files, f => f.FilePath == "bin.dat").IsBinary);
+        Assert.All(files.Where(f => f.FilePath != "bin.dat"), f => Assert.False(f.IsBinary));
+        // 39 stage blobs: one --batch-check for the sizes, one --batch for the content.
+        Assert.Equal(2, cli.Requests.Count(r => r.Arguments[0] == "cat-file"));
+    }
+
+    [Fact]
+    public async Task Blob_over_the_budget_is_classified_by_its_first_8000_bytes()
+    {
+        // libgit2's Blob.IsBinary reads any size; only the first 8 000 bytes decide.
+        using var repo = TestRepositoryBuilder.Create();
+        repo.WriteFile("init.txt", "init\n").Stage().Commit("init");
+
+        var bigText = new string('a', 6 * 1024 * 1024);
+        repo.WriteFile("big.txt", bigText);
+        repo.WriteFile("big.bin", "\0" + bigText);
+        repo.WriteFile("small.txt", "hello\n");
+        var textId = GitObjectId.Parse(repo.Git("hash-object", "-w", "big.txt").Trim());
+        var binId = GitObjectId.Parse(repo.Git("hash-object", "-w", "big.bin").Trim());
+        var smallId = GitObjectId.Parse(repo.Git("hash-object", "-w", "small.txt").Trim());
+
+        using (var lib = new LibGit2Sharp.Repository(repo.Path))
+        {
+            Assert.False(lib.Lookup<LibGit2Sharp.Blob>(textId.ToString()).IsBinary);
+            Assert.True(lib.Lookup<LibGit2Sharp.Blob>(binId.ToString()).IsBinary);
+        }
+
+        var binary = await MakeReader().FindBinaryBlobsAsync(repo.Path,
+        [
+            new UnmergedEntry("100644", textId, 2),
+            new UnmergedEntry("100644", binId, 3),
+            new UnmergedEntry("100644", smallId, 1),
+        ]);
+
+        Assert.Equal([binId], binary);
+    }
+
+    [Fact]
     public async Task Path_with_newline_handled_without_truncation()
     {
         using var repo = TestRepositoryBuilder.Create();

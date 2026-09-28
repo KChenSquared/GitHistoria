@@ -14,24 +14,23 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         var conflicts = await _unmergedReader.ReadAsync(context.RepositoryPath, null, ct).ConfigureAwait(false);
         var result = new List<ConflictFile>(conflicts.Count);
 
+        static bool IsGitLink(UnmergedPathConflict c) =>
+            c.Ancestor?.Mode == "160000" || c.Ours?.Mode == "160000" || c.Theirs?.Mode == "160000";
+
+        // Every stage blob of every non-submodule conflict, classified in a few batched spawns.
+        var binaryBlobs = await _unmergedReader.FindBinaryBlobsAsync(
+            context.RepositoryPath,
+            conflicts.Where(c => !IsGitLink(c))
+                .SelectMany(c => new[] { c.Ours, c.Theirs, c.Ancestor })
+                .OfType<UnmergedEntry>(),
+            ct).ConfigureAwait(false);
+
         foreach (var conflict in conflicts)
         {
-            var isSubmodule = (conflict.Ancestor?.Mode == "160000")
-                           || (conflict.Ours?.Mode == "160000")
-                           || (conflict.Theirs?.Mode == "160000");
-
-            var isBinary = false;
-            if (!isSubmodule)
-            {
-                if (conflict.Ours is not null)
-                    isBinary = await _unmergedReader.IsBinaryAsync(context.RepositoryPath, conflict.Ours, ct).ConfigureAwait(false);
-
-                if (!isBinary && conflict.Theirs is not null && conflict.Theirs.Id != conflict.Ours?.Id)
-                    isBinary = await _unmergedReader.IsBinaryAsync(context.RepositoryPath, conflict.Theirs, ct).ConfigureAwait(false);
-
-                if (!isBinary && conflict.Ancestor is not null && conflict.Ancestor.Id != conflict.Ours?.Id && conflict.Ancestor.Id != conflict.Theirs?.Id)
-                    isBinary = await _unmergedReader.IsBinaryAsync(context.RepositoryPath, conflict.Ancestor, ct).ConfigureAwait(false);
-            }
+            var isSubmodule = IsGitLink(conflict);
+            var isBinary = !isSubmodule
+                && new[] { conflict.Ours, conflict.Theirs, conflict.Ancestor }
+                    .Any(e => e is not null && binaryBlobs.Contains(e.Id));
 
             result.Add(new ConflictFile
             {

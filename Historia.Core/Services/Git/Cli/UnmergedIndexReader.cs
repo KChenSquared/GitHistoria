@@ -15,6 +15,7 @@ public sealed class UnmergedIndexReader(IGitCliService cli)
 {
     private const long MaxBlobBytes = 5 * 1024 * 1024;
     private const int MaxHeuristicBytes = 8000;
+    private const long MaxBatchBytes = 16 * 1024 * 1024;
 
     public async Task<IReadOnlyList<UnmergedPathConflict>> ReadAsync(
         string repositoryPath,
@@ -58,30 +59,144 @@ public sealed class UnmergedIndexReader(IGitCliService cli)
 
     public async Task<bool> IsBinaryAsync(string repositoryPath, UnmergedEntry? entry, CancellationToken ct = default)
     {
-        if (entry is null || entry.Mode == "160000")
+        if (entry is null)
             return false;
+        var binary = await FindBinaryBlobsAsync(repositoryPath, [entry], ct).ConfigureAwait(false);
+        return binary.Contains(entry.Id);
+    }
 
-        var sizeResult = await cli.RunAsync(new GitCliRequest
+    /// <summary>
+    /// Returns the ids of the <paramref name="entries"/> whose blobs libgit2's
+    /// <c>Blob.IsBinary</c> would call binary. One <c>cat-file --batch-check</c> for every size,
+    /// then <c>cat-file --batch</c> in chunks of at most <see cref="MaxBatchBytes"/>; a blob over
+    /// the 5 MB budget reads only its first 8 000 bytes, which is all the heuristic looks at.
+    /// </summary>
+    public async Task<IReadOnlySet<GitObjectId>> FindBinaryBlobsAsync(
+        string repositoryPath,
+        IEnumerable<UnmergedEntry> entries,
+        CancellationToken ct = default)
+    {
+        var ids = entries
+            .Where(e => e.Mode != "160000")
+            .Select(e => e.Id)
+            .Distinct()
+            .ToList();
+        var binary = new HashSet<GitObjectId>();
+        if (ids.Count == 0)
+            return binary;
+
+        var sizes = await ReadBlobSizesAsync(repositoryPath, ids, ct).ConfigureAwait(false);
+
+        var chunk = new List<GitObjectId>();
+        long chunkBytes = 0;
+        foreach (var id in ids)
         {
-            Arguments = ["cat-file", "-s", entry.Id.ToString()],
+            if (!sizes.TryGetValue(id, out var size) || size == 0)
+                continue;
+
+            if (size > MaxBlobBytes)
+            {
+                if (await IsLargeBlobBinaryAsync(repositoryPath, id, ct).ConfigureAwait(false))
+                    binary.Add(id);
+                continue;
+            }
+
+            if (chunk.Count > 0 && chunkBytes + size > MaxBatchBytes)
+            {
+                await ClassifyChunkAsync(repositoryPath, chunk, binary, ct).ConfigureAwait(false);
+                chunk.Clear();
+                chunkBytes = 0;
+            }
+            chunk.Add(id);
+            chunkBytes += size;
+        }
+
+        if (chunk.Count > 0)
+            await ClassifyChunkAsync(repositoryPath, chunk, binary, ct).ConfigureAwait(false);
+
+        return binary;
+    }
+
+    private async Task<Dictionary<GitObjectId, long>> ReadBlobSizesAsync(
+        string repositoryPath,
+        IReadOnlyList<GitObjectId> ids,
+        CancellationToken ct)
+    {
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
             WorkingDirectory = repositoryPath,
+            StandardInput = string.Join('\n', ids) + "\n",
         }, ct).ConfigureAwait(false);
 
-        if (!sizeResult.IsSuccess)
-            throw HistoriaGitException.FromCli(sizeResult, "Read blob size");
+        if (!result.IsSuccess)
+            throw HistoriaGitException.FromCli(result, "Read blob sizes");
 
-        if (!long.TryParse(sizeResult.StandardOutput.Trim(), out var size))
-            return false;
+        // "<id> blob <size>" per object; a missing object prints "<id> missing" and is skipped.
+        var sizes = new Dictionary<GitObjectId, long>();
+        foreach (var line in result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.TrimEnd('\r').Split(' ');
+            if (parts.Length == 3 && parts[1] == "blob"
+                && GitObjectId.TryParse(parts[0], out var id)
+                && long.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var size))
+            {
+                sizes[id] = size;
+            }
+        }
 
-        if (size > MaxBlobBytes)
-            return true;
+        return sizes;
+    }
 
-        if (size == 0)
-            return false;
+    private async Task ClassifyChunkAsync(
+        string repositoryPath,
+        IReadOnlyList<GitObjectId> ids,
+        HashSet<GitObjectId> binary,
+        CancellationToken ct)
+    {
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["cat-file", "--batch"],
+            WorkingDirectory = repositoryPath,
+            StandardInput = string.Join('\n', ids) + "\n",
+            RawStandardOutput = true,
+        }, ct).ConfigureAwait(false);
 
+        if (!result.IsSuccess)
+            throw HistoriaGitException.FromCli(result, "Read blob content");
+
+        // Each object is "<id> <type> <size>\n<size bytes>\n".
+        var bytes = result.StandardOutputBytes ?? [];
+        var pos = 0;
+        while (pos < bytes.Length)
+        {
+            var headerEnd = Array.IndexOf(bytes, (byte)'\n', pos);
+            if (headerEnd < 0)
+                break;
+
+            var header = Encoding.ASCII.GetString(bytes, pos, headerEnd - pos).Split(' ');
+            pos = headerEnd + 1;
+            if (header.Length != 3
+                || !GitObjectId.TryParse(header[0], out var id)
+                || !int.TryParse(header[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var size))
+            {
+                continue;
+            }
+
+            if (pos + size > bytes.Length)
+                break;
+
+            if (IsBinary(bytes.AsSpan(pos, size)))
+                binary.Add(id);
+            pos += size + 1;
+        }
+    }
+
+    private async Task<bool> IsLargeBlobBinaryAsync(string repositoryPath, GitObjectId id, CancellationToken ct)
+    {
         var blobResult = await cli.RunAsync(new GitCliRequest
         {
-            Arguments = ["cat-file", "blob", entry.Id.ToString()],
+            Arguments = ["cat-file", "blob", id.ToString()],
             WorkingDirectory = repositoryPath,
             RawStandardOutput = true,
             MaxStandardOutputBytes = MaxHeuristicBytes,
@@ -91,10 +206,7 @@ public sealed class UnmergedIndexReader(IGitCliService cli)
             throw HistoriaGitException.FromCli(blobResult, "Read blob content");
 
         var bytes = blobResult.StandardOutputBytes;
-        if (bytes is null || bytes.Length == 0)
-            return false;
-
-        return IsBinary(bytes);
+        return bytes is { Length: > 0 } && IsBinary(bytes);
     }
 
     internal static IReadOnlyList<UnmergedPathConflict> Parse(string stdout)
