@@ -22,6 +22,7 @@
     <!-- Pinned to the Avalonia line in Historia.App.csproj (constitution 0.7). -->
     <PackageReference Include="Avalonia.Headless" Version="11.3.20" />
     <PackageReference Include="Avalonia.Headless.XUnit" Version="11.3.20" />
+    <PackageReference Include="LibGit2Sharp" Version="0.31.0" />
   </ItemGroup>
 
   <ItemGroup>

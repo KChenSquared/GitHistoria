@@ -41,5 +41,11 @@ global using Historia.Services.Workspace;
 global using Historia.Theming;
 global using Historia.Views;
 global using Microsoft.Extensions.DependencyInjection;
+global using LibGit2Sharp;
 global using System.Runtime.CompilerServices;
 global using Xunit;
+
+global using CloneOptions = Historia.Services.Workspace.CloneOptions;
+global using Repository = LibGit2Sharp.Repository;
+global using RepositoryStatus = Historia.Models.RepositoryStatus;
+global using SubmoduleStatus = Historia.Models.SubmoduleStatus;

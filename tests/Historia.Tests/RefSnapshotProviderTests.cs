@@ -49,7 +49,8 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
         await using var ctx = _host.Open(_repo.Path);
         var snapshot = await ctx.RefSnapshots.GetAsync();
 
-        var expected = await ctx.WithRepositoryAsync(repo => repo.Refs
+        using var repo = new Repository(ctx.RepositoryPath);
+        var expected = repo.Refs
             .Select(r => (Ref: r, Direct: r.ResolveToDirectReference()))
             .Where(x => x.Direct?.TargetIdentifier is not null)
             .Select(x =>
@@ -61,7 +62,7 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
                 return (Name: x.Ref.CanonicalName, Target: target, Peeled: peeled?.Sha);
             })
             .OrderBy(x => x.Name, StringComparer.Ordinal)
-            .ToList());
+            .ToList();
 
         var actual = snapshot.Refs
             .Select(r => (Name: r.CanonicalName, Target: r.Target!.Value.ToString(), Peeled: r.PeeledCommit?.ToString()))

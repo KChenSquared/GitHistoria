@@ -248,11 +248,11 @@ public sealed class CheckoutStashRecoveryTests
 
                 await action.Invoke();
 
-                await ctx.WithRepositoryAsync(r =>
+                using (var r = new Repository(ctx.RepositoryPath))
                 {
                     Assert.Equal("test-conflict", r.Head.FriendlyName);
                     Assert.Equal(c1, r.Head.Tip.Sha);
-                });
+                }
 
                 var stashes = await stash.ListAsync(ctx, ctx.Lifetime);
                 Assert.Contains(stashes, s => s.Message.Contains("Historia: before Create branch"));

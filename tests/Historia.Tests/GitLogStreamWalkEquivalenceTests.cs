@@ -52,42 +52,40 @@ public sealed class GitLogStreamWalkEquivalenceTests : IAsyncDisposable
     /// <summary>Ground-truth check independent of the walk: for every row, every real parent of
     /// that row's commit (when also present in the walked window) must sort at a LATER row —
     /// children-before-parents.</summary>
-    private static async Task AssertChildrenBeforeParents(RepositoryContext ctx, GraphLayoutResult result)
+    private static Task AssertChildrenBeforeParents(RepositoryContext ctx, GraphLayoutResult result)
     {
         var rowOf = new Dictionary<GitObjectId, int>();
         var ids = RowIds(result);
         for (var i = 0; i < ids.Count; i++)
             rowOf[ids[i]] = i;
 
-        await ctx.WithRepositoryAsync(repo =>
+        using var repo = new Repository(ctx.RepositoryPath);
+        for (var i = 0; i < ids.Count; i++)
         {
-            for (var i = 0; i < ids.Count; i++)
+            var commit = repo.Lookup<Commit>(ids[i].ToLibGit2());
+            if (commit is null)
+                continue;
+            foreach (var parent in commit.Parents)
             {
-                var commit = repo.Lookup<Commit>(ids[i].ToLibGit2());
-                if (commit is null)
-                    continue;
-                foreach (var parent in commit.Parents)
-                {
-                    if (rowOf.TryGetValue(parent.Id.ToGitObjectId(), out var parentRow))
-                        Assert.True(parentRow > i, $"parent {parent.Id} of {ids[i]} must sort after its child (row {parentRow} vs {i})");
-                }
+                if (rowOf.TryGetValue(parent.Id.ToGitObjectId(), out var parentRow))
+                    Assert.True(parentRow > i, $"parent {parent.Id} of {ids[i]} must sort after its child (row {parentRow} vs {i})");
             }
-            return true;
-        });
+        }
+        return Task.CompletedTask;
     }
 
     /// <summary>Test oracle: every commit reachable from HEAD and every ref, by LibGit2Sharp's
     /// own revwalk (which peels annotated tags itself). Independent of the graph service's tip
     /// resolution.</summary>
-    private static Task<HashSet<GitObjectId>> ReachableFromAllRefs(RepositoryContext ctx) =>
-        ctx.WithRepositoryAsync(repo =>
-        {
-            var tips = new List<object> { repo.Head };
-            tips.AddRange(repo.Refs);
-            return repo.Commits.QueryBy(new CommitFilter { IncludeReachableFrom = tips })
-                .Select(c => c.Id.ToGitObjectId())
-                .ToHashSet();
-        });
+    private static Task<HashSet<GitObjectId>> ReachableFromAllRefs(RepositoryContext ctx)
+    {
+        using var repo = new Repository(ctx.RepositoryPath);
+        var tips = new List<object> { repo.Head };
+        tips.AddRange(repo.Refs);
+        return Task.FromResult(repo.Commits.QueryBy(new CommitFilter { IncludeReachableFrom = tips })
+            .Select(c => c.Id.ToGitObjectId())
+            .ToHashSet());
+    }
 
     [Fact]
     public async Task Walk_yields_exactly_the_commits_reachable_from_every_ref()
