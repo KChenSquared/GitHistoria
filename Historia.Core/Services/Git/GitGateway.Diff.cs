@@ -102,43 +102,25 @@ public sealed partial class GitGateway
                 var commitId = request.CommitId
                     ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, "No commit id supplied.");
 
+                // git's ^n is 1-based, the same parent libgit2's DiffCommit picks with
+                // Math.Max(0, ParentIndex - 1) into its 0-based list.
                 var sha = commitId.ToString();
-                var logResult = await cli.RunAsync(new GitCliRequest
-                {
-                    Arguments = ["log", "-1", "--format=%P", sha],
-                    WorkingDirectory = context.RepositoryPath,
-                    Timeout = TimeSpan.FromSeconds(10),
-                }, ct).ConfigureAwait(false);
-
-                if (!logResult.IsSuccess)
-                    throw HistoriaGitException.FromCli(logResult, "CommitDiff");
-
-                var parents = logResult.StandardOutput.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                if (parents.Length == 0)
-                {
-                    // Root commit: diff-tree -p --root -M.
-                    args = ["diff-tree", "--no-commit-id", "-p", "--root", ..pinnedFlags, sha, "--", path];
-                    numstatArgs = ["diff-tree", "--no-commit-id", "--root", ..numstatFlags, sha, "--", path];
-                }
-                else
-                {
-                    var parentIdx = Math.Max(0, request.ParentIndex - 1);
-                    if (parentIdx < parents.Length)
-                    {
-                        var parentSha = parents[parentIdx];
-                        args = ["diff", ..pinnedFlags, parentSha, sha, "--", path];
-                        numstatArgs = ["diff", ..numstatFlags, parentSha, sha, "--", path];
-                    }
-                    else
-                    {
-                        // Parent index out of range: diff against empty tree (matches libgit2 null parent).
-                        var emptyTree = await GetEmptyTreeIdAsync(ct).ConfigureAwait(false);
-                        args = ["diff", ..pinnedFlags, emptyTree, sha, "--", path];
-                        numstatArgs = ["diff", ..numstatFlags, emptyTree, sha, "--", path];
-                    }
-                }
+                var parent = $"{sha}^{Math.Max(1, request.ParentIndex)}";
+                args = ["diff", ..pinnedFlags, parent, sha, "--", path];
+                numstatArgs = ["diff", ..numstatFlags, parent, sha, "--", path];
 
                 var result = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
+                if (!result.IsSuccess && !result.OutputTruncated
+                    && await ParentIsMissingAsync(commitId, Math.Max(1, request.ParentIndex), ct).ConfigureAwait(false))
+                {
+                    // Root commit, or parent index past the parent count: diff against the empty
+                    // tree, as libgit2 does for a null parent.
+                    var emptyTree = await GetEmptyTreeIdAsync(ct).ConfigureAwait(false);
+                    args = ["diff", ..pinnedFlags, emptyTree, sha, "--", path];
+                    numstatArgs = ["diff", ..numstatFlags, emptyTree, sha, "--", path];
+                    result = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
+                }
+
                 return await MapDiffResultAsync(result, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
             }
 

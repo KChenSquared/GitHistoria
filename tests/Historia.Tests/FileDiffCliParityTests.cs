@@ -483,4 +483,29 @@ public sealed class FileDiffCliParityTests : IAsyncDisposable
         Assert.Contains("+changed 2", staged);
         Assert.DoesNotContain("changed 18", staged);
     }
+
+    [Fact]
+    public async Task Commit_diff_of_a_signed_commit_ignores_signature_output()
+    {
+        // log.showSignature=true prints "No signature" on stdout; reading parents from `git log`
+        // turned that text into the "parent" revision and the diff failed.
+        using var repo = TestRepositoryBuilder.FromTemplate("diff-signed-commit", b =>
+        {
+            b.WriteFile("f.txt", "one\n").Stage().Commit("base");
+            b.WriteFile("f.txt", "one\ntwo\n").Stage();
+            b.CommitWithForgedSignature("signed");
+        });
+
+        await using var ctx = _host.Open(repo.Path);
+        var actual = await ctx.Gateway.GetFileDiffAsync(new DiffRequest
+        {
+            Source = DiffSource.Commit,
+            CommitId = new GitObjectId(repo.HeadSha),
+            Path = "f.txt",
+        });
+
+        Assert.Equal(DiffKind.Modified, actual.Kind);
+        Assert.Equal(1, actual.AddedLines);
+        Assert.Equal(0, actual.DeletedLines);
+    }
 }
