@@ -34,6 +34,26 @@ public class StashServiceTests
     }
 
     [Fact]
+    public async Task List_is_empty_without_refs_stash_but_other_failures_throw()
+    {
+        await using var host = new MiniHost();
+        using var b = SeededRepo();
+        await using (var clean = host.Open(b.Path))
+            Assert.Empty(await Make(host).ListAsync(clean));
+
+        // With refs/stash present, a failing `log -g` is a real error, not "no stashes".
+        b.WriteFile("f.txt", "dirty\n");
+        b.Git("stash", "push", "-m", "wip");
+        var cli = new InterceptingGitCliService(host.Cli)
+        {
+            Intercept = r => r.Arguments.Contains("-g") ? InterceptingGitCliService.Failure() : null,
+        };
+        await using var ctx = host.Open(b.Path, cli);
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => new StashService(cli).ListAsync(ctx));
+    }
+
+    [Fact]
     public async Task Save_reports_false_when_nothing_to_stash()
     {
         await using var host = new MiniHost();

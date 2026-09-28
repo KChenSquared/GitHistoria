@@ -144,13 +144,28 @@ public sealed class StashService(IGitCliService cli) : IStashService
             RawStandardOutput = true,
         }, ct).ConfigureAwait(false);
 
-        if (result.ExitCode == 128 || result.ErrorKind == GitErrorKind.RefNotFound)
-            return [];
-
         if (!result.IsSuccess)
+        {
+            // Only a missing refs/stash means "no stashes"; any other failure is a real error.
+            if (result.ErrorKind != GitErrorKind.Cancelled && !await StashRefExistsAsync(repositoryPath, ct).ConfigureAwait(false))
+                return [];
             throw HistoriaGitException.FromCli(result, "List stashes");
+        }
 
         return ParseStashLog(result.StandardOutput);
+    }
+
+    /// <summary>True unless <c>rev-parse</c> reports refs/stash missing (exit 1 under
+    /// <c>--verify -q</c>); an inconclusive probe counts as present so the caller surfaces the
+    /// original failure.</summary>
+    private async Task<bool> StashRefExistsAsync(string repositoryPath, CancellationToken ct)
+    {
+        var probe = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-parse", "--verify", "-q", "refs/stash"],
+            WorkingDirectory = repositoryPath,
+        }, ct).ConfigureAwait(false);
+        return probe.ExitCode != 1;
     }
 
     internal static IReadOnlyList<StashEntry> ParseStashLog(string stdout)
