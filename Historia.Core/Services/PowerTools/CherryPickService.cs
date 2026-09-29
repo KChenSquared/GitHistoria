@@ -26,6 +26,9 @@ public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
         {
             Arguments = ["reset", "--hard", sha],
             WorkingDirectory = context.RepositoryPath,
+            // No wall clock: hooks and large tree updates run long, and a kill midway leaves a
+            // half-updated tree and a stale index.lock. The caller's token still cancels it.
+            Timeout = Timeout.InfiniteTimeSpan,
         }, innerCt), ct).ConfigureAwait(false);
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, "Undo");
@@ -65,6 +68,7 @@ public sealed class CherryPickService(IGitCliService cli) : ICherryPickService
             Arguments = args,
             WorkingDirectory = context.RepositoryPath,
             ExtraEnvironment = env,
+            Timeout = Timeout.InfiniteTimeSpan,
         }, innerCt), ct).ConfigureAwait(false);
 
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);

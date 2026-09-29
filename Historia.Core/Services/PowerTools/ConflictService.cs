@@ -171,6 +171,9 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             {
                 Arguments = ["add", "--", filePath],
                 WorkingDirectory = context.RepositoryPath,
+                // No wall clock: hooks and large tree updates run long, and a kill midway leaves a
+                // half-applied tree or sequencer and a stale index.lock. The caller's token still cancels it.
+                Timeout = Timeout.InfiniteTimeSpan,
             }, innerCt), ct).ConfigureAwait(false);
             if (!add.IsSuccess)
             {
@@ -268,6 +271,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
                 {
                     Arguments = ["update-index", "--cacheinfo", $"160000,{chosenStageSha},{filePath}"],
                     WorkingDirectory = context.RepositoryPath,
+                    Timeout = Timeout.InfiniteTimeSpan,
                 }, innerCt), ct).ConfigureAwait(false);
                 if (!update.IsSuccess)
                     throw HistoriaGitException.FromCli(update, "Resolve submodule side");
@@ -278,6 +282,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
                 {
                     Arguments = ["rm", "--cached", "--", filePath],
                     WorkingDirectory = context.RepositoryPath,
+                    Timeout = Timeout.InfiniteTimeSpan,
                 }, innerCt), ct).ConfigureAwait(false);
                 if (!rm.IsSuccess)
                     throw HistoriaGitException.FromCli(rm, "Resolve submodule side (rm)");
@@ -294,6 +299,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
                 {
                     Arguments = ["checkout", sideArg, "--", filePath],
                     WorkingDirectory = context.RepositoryPath,
+                    Timeout = Timeout.InfiniteTimeSpan,
                 }, innerCt).ConfigureAwait(false);
                 if (!checkout.IsSuccess)
                     throw HistoriaGitException.FromCli(checkout, $"Resolve ({sideArg})");
@@ -302,6 +308,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
                 {
                     Arguments = ["add", "--", filePath],
                     WorkingDirectory = context.RepositoryPath,
+                    Timeout = Timeout.InfiniteTimeSpan,
                 }, innerCt).ConfigureAwait(false);
                 if (!add.IsSuccess)
                     throw HistoriaGitException.FromCli(add, "Resolve (stage)");
@@ -313,6 +320,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             {
                 Arguments = ["rm", "-f", "--", filePath],
                 WorkingDirectory = context.RepositoryPath,
+                Timeout = Timeout.InfiniteTimeSpan,
             }, innerCt), ct).ConfigureAwait(false);
             if (!rm.IsSuccess)
                 throw HistoriaGitException.FromCli(rm, "Resolve (delete)");
@@ -327,6 +335,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
         {
             Arguments = ["checkout", "--conflict=zdiff3", "--", filePath],
             WorkingDirectory = context.RepositoryPath,
+            Timeout = Timeout.InfiniteTimeSpan,
         }, innerCt), ct).ConfigureAwait(false);
 
         if (!res.IsSuccess)
@@ -680,6 +689,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
             Arguments = [verb, action],
             WorkingDirectory = context.RepositoryPath,
             ExtraEnvironment = env,
+            Timeout = Timeout.InfiniteTimeSpan,
         }, innerCt), ct).ConfigureAwait(false);
 
         var isConflict = (string.Equals(action, "--continue", StringComparison.Ordinal) || string.Equals(action, "--skip", StringComparison.Ordinal))

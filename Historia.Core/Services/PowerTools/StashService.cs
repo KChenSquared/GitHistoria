@@ -26,7 +26,14 @@ public sealed class StashService(IGitCliService cli) : IStashService
             args.AddRange(options.Paths);
         }
 
-        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, innerCt), ct)
+        // No wall clock: hooks and large tree updates run long, and a kill midway leaves a
+        // half-updated tree and a stale index.lock. The caller's token still cancels it.
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
+        {
+            Arguments = args,
+            WorkingDirectory = context.RepositoryPath,
+            Timeout = Timeout.InfiniteTimeSpan,
+        }, innerCt), ct)
             .ConfigureAwait(false);
 
         if (result.StandardOutput.Contains("No local changes to save", StringComparison.OrdinalIgnoreCase)
@@ -50,7 +57,12 @@ public sealed class StashService(IGitCliService cli) : IStashService
             args.Add(message);
         }
 
-        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, innerCt), ct)
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
+        {
+            Arguments = args,
+            WorkingDirectory = context.RepositoryPath,
+            Timeout = Timeout.InfiniteTimeSpan,
+        }, innerCt), ct)
             .ConfigureAwait(false);
 
         // Nothing staged → git prints one of these and exits non-zero; treat as a no-op.
@@ -114,7 +126,12 @@ public sealed class StashService(IGitCliService cli) : IStashService
             args.Add(stashRef);
         }
 
-        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, innerCt), ct)
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
+        {
+            Arguments = args,
+            WorkingDirectory = context.RepositoryPath,
+            Timeout = Timeout.InfiniteTimeSpan,
+        }, innerCt), ct)
             .ConfigureAwait(false);
 
         // A conflicting pop/apply leaves the working tree with markers and the entry intact.

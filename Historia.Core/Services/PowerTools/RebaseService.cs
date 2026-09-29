@@ -99,7 +99,9 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
                 Arguments = args,
                 WorkingDirectory = context.RepositoryPath,
                 ExtraEnvironment = env,
-                Timeout = TimeSpan.FromMinutes(10),
+                // No wall clock: hooks and large tree updates run long, and a kill midway leaves a
+                // half-applied tree or sequencer and a stale index.lock. The caller's token still cancels it.
+                Timeout = Timeout.InfiniteTimeSpan,
             }, innerCt), ct).ConfigureAwait(false);
 
             await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
