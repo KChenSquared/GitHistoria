@@ -31,27 +31,37 @@ public sealed partial class GitGateway
             }
             catch
             {
-                var headCheck = await cli.RunAsync(new GitCliRequest
-                {
-                    Arguments = ["rev-parse", "--abbrev-ref", "HEAD"],
-                    WorkingDirectory = context.RepositoryPath,
-                }, ct).ConfigureAwait(false);
-
-                if (headCheck.IsSuccess && headCheck.StandardOutput.Trim() != newName)
-                {
-                    await cli.RunAsync(new GitCliRequest
-                    {
-                        Arguments = ["branch", "-D", newName],
-                        WorkingDirectory = context.RepositoryPath,
-                    }, ct).ConfigureAwait(false);
-                }
-
+                await RollbackCreatedBranchAsync(newName).ConfigureAwait(false);
                 throw;
             }
             return;
         }
 
         await RunCheckoutCmdAsync(refName, options.Force, ct).ConfigureAwait(false);
+    }
+
+    // Removes a branch this call just created after its checkout failed, unless HEAD already
+    // moved onto it. The branch points at a commit that already exists, so deleting it loses
+    // nothing, and it must run even when the operation was cancelled: neither request uses the
+    // caller's token. The caller already holds the write lock, so this takes none.
+    private async Task RollbackCreatedBranchAsync(string name)
+    {
+        var headCheck = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-parse", "--abbrev-ref", "HEAD"],
+            WorkingDirectory = context.RepositoryPath,
+            Timeout = TimeSpan.FromSeconds(10),
+        }, CancellationToken.None).ConfigureAwait(false);
+
+        if (headCheck.IsSuccess && headCheck.StandardOutput.Trim() != name)
+        {
+            await cli.RunAsync(new GitCliRequest
+            {
+                Arguments = ["branch", "-D", name],
+                WorkingDirectory = context.RepositoryPath,
+                Timeout = TimeSpan.FromSeconds(10),
+            }, CancellationToken.None).ConfigureAwait(false);
+        }
     }
 
     private async Task RunCheckoutCmdAsync(string target, bool force, CancellationToken ct)
@@ -148,21 +158,7 @@ public sealed partial class GitGateway
                 }
                 catch
                 {
-                    var headCheck = await cli.RunAsync(new GitCliRequest
-                    {
-                        Arguments = ["rev-parse", "--abbrev-ref", "HEAD"],
-                        WorkingDirectory = context.RepositoryPath,
-                    }, innerCt).ConfigureAwait(false);
-
-                    if (headCheck.IsSuccess && headCheck.StandardOutput.Trim() != name)
-                    {
-                        await cli.RunAsync(new GitCliRequest
-                        {
-                            Arguments = ["branch", "-D", name],
-                            WorkingDirectory = context.RepositoryPath,
-                        }, innerCt).ConfigureAwait(false);
-                    }
-
+                    await RollbackCreatedBranchAsync(name).ConfigureAwait(false);
                     throw;
                 }
             }

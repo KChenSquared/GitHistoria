@@ -81,6 +81,68 @@ public sealed class GitGatewayRefOpsTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Cancelled_checkout_of_new_branch_removes_the_branch()
+    {
+        using var repo = TestRepositoryBuilder.Create();
+        repo.WriteFile("a.txt", "1\n").Stage().Commit("c1");
+
+        using var cts = new CancellationTokenSource();
+        var cli = CancelOnCheckout(cts);
+        var ctx = _host.Open(repo.Path, cli);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => ctx.Gateway.CheckoutAsync(
+            "HEAD", new GitCheckoutOptions { CreateBranch = true, NewBranchName = "tmp" }, cts.Token));
+
+        AssertBranchAbsent(repo.Path, "tmp");
+        AssertRollbackRequestsAreBounded(cli);
+    }
+
+    [Fact]
+    public async Task Cancelled_CreateBranchAsync_with_checkout_removes_the_branch()
+    {
+        using var repo = TestRepositoryBuilder.Create();
+        repo.WriteFile("a.txt", "1\n").Stage().Commit("c1");
+
+        using var cts = new CancellationTokenSource();
+        var cli = CancelOnCheckout(cts);
+        var ctx = _host.Open(repo.Path, cli);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => ctx.Gateway.CreateBranchAsync(
+            "tmp", "HEAD", checkout: true, cts.Token));
+
+        AssertBranchAbsent(repo.Path, "tmp");
+        AssertRollbackRequestsAreBounded(cli);
+    }
+
+    private InterceptingGitCliService CancelOnCheckout(CancellationTokenSource cts)
+    {
+        var cli = new InterceptingGitCliService(_host.Cli);
+        cli.Intercept = request =>
+        {
+            if (request.Arguments.FirstOrDefault() != "checkout")
+                return null;
+
+            cts.Cancel();
+            return InterceptingGitCliService.Failure(GitErrorKind.Cancelled, -1);
+        };
+        return cli;
+    }
+
+    private static void AssertBranchAbsent(string repoPath, string name)
+    {
+        using var git = new Repository(repoPath);
+        Assert.Null(git.Branches[name]);
+        Assert.Equal("main", git.Head.FriendlyName);
+    }
+
+    private static void AssertRollbackRequestsAreBounded(InterceptingGitCliService cli)
+    {
+        var deletes = cli.Requests.Where(r => r.Arguments.Take(2).SequenceEqual(["branch", "-D"])).ToList();
+        Assert.Single(deletes);
+        Assert.All(deletes, r => Assert.Equal(TimeSpan.FromSeconds(10), r.Timeout));
+    }
+
+    [Fact]
     public async Task Delete_branch_merged_unmerged_force_and_current()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("delete-branch-seed", b =>
