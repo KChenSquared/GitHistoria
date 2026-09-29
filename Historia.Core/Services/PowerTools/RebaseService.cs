@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IRebaseService"/>
 public sealed class RebaseService(IGitCliService cli) : IRebaseService
@@ -22,7 +22,7 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
     private static string Fwd(string p) => p.Replace('\\', '/');
 
     public Task<RebaseSession> BuildSessionAsync(RepositoryContext context, string upstreamRef, CancellationToken ct = default)
-        => context.WithRepositoryAsync(repo => Build(repo, upstreamRef), ct);
+        => BuildSessionInternalAsync(context.RepositoryPath, upstreamRef, ct);
 
     public IReadOnlyList<RebaseValidationIssue> Validate(RebaseSession session)
     {
@@ -37,7 +37,7 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
 
         foreach (var e in entries.Where(e => e.Action == RebaseAction.Reword))
             if (string.IsNullOrWhiteSpace(e.RewordMessage))
-                issues.Add(new($"Reword of {e.CommitId.Sha[..7]} has an empty message — this would abort the rebase.", false));
+                issues.Add(new($"Reword of {e.CommitId.ToShortString(7)} has an empty message — this would abort the rebase.", false));
 
         return issues;
     }
@@ -94,13 +94,15 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
 
         try
         {
-            var result = await cli.RunAsync(new GitCliRequest
+            var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
             {
                 Arguments = args,
                 WorkingDirectory = context.RepositoryPath,
                 ExtraEnvironment = env,
-                Timeout = TimeSpan.FromMinutes(10),
-            }, ct).ConfigureAwait(false);
+                // No wall clock: hooks and large tree updates run long, and a kill midway leaves a
+                // half-applied tree or sequencer and a stale index.lock. The caller's token still cancels it.
+                Timeout = Timeout.InfiniteTimeSpan,
+            }, innerCt), ct).ConfigureAwait(false);
 
             await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
 
@@ -137,11 +139,11 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
 
             if (e.Action == RebaseAction.Drop)
             {
-                todo.Append("# drop ").Append(e.CommitId.Sha).Append(' ').Append(e.MessageShort).Append('\n');
+                todo.Append("# drop ").Append(e.CommitId.ToString()).Append(' ').Append(e.MessageShort).Append('\n');
                 continue;
             }
 
-            todo.Append(verb).Append(' ').Append(e.CommitId.Sha).Append(' ').Append(e.MessageShort).Append('\n');
+            todo.Append(verb).Append(' ').Append(e.CommitId.ToString()).Append(' ').Append(e.MessageShort).Append('\n');
 
             if (e.Action is RebaseAction.Reword or RebaseAction.Squash)
                 messages.Add(e.RewordMessage ?? e.MessageShort);
@@ -153,39 +155,108 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
         File.WriteAllText(Path.Combine(dir, "msg-cursor"), "0");
     }
 
-    private static RebaseSession Build(Repository repo, string upstreamRef)
+    private async Task<RebaseSession> BuildSessionInternalAsync(string repositoryPath, string upstreamRef, CancellationToken ct)
     {
-        var upstream = repo.Lookup<Commit>(upstreamRef) ?? (repo.Branches[upstreamRef]?.Tip)
-            ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"'{upstreamRef}' not found.");
-        var head = repo.Head;
-        if (head.Tip is null)
+        var upstreamResult = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-parse", "--verify", "-q", $"{upstreamRef}^{{commit}}"],
+            WorkingDirectory = repositoryPath,
+        }, ct).ConfigureAwait(false);
+
+        if (!upstreamResult.IsSuccess || !GitObjectId.TryParse(upstreamResult.StandardOutput.Trim(), out var ontoCommitId))
+            throw new HistoriaGitException(GitErrorKind.RefNotFound, $"'{upstreamRef}' not found.");
+
+        var headResult = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-parse", "--verify", "-q", "HEAD"],
+            WorkingDirectory = repositoryPath,
+        }, ct).ConfigureAwait(false);
+
+        if (!headResult.IsSuccess)
             throw new HistoriaGitException(GitErrorKind.Unknown, "HEAD has no commits to rebase.");
 
-        var filter = new CommitFilter
+        var branchResult = await cli.RunAsync(new GitCliRequest
         {
-            SortBy = CommitSortStrategies.Topological | CommitSortStrategies.Time,
-            IncludeReachableFrom = head.Tip,
-            ExcludeReachableFrom = upstream,
-        };
+            Arguments = ["symbolic-ref", "--short", "-q", "HEAD"],
+            WorkingDirectory = repositoryPath,
+        }, ct).ConfigureAwait(false);
 
-        var entries = repo.Commits.QueryBy(filter)
-            .Reverse() // oldest first
-            .Select(c => new RebaseEntry
-            {
-                CommitId = c.Id,
-                MessageShort = c.MessageShort,
-                AuthorName = c.Author.Name,
-                AuthorEmail = c.Author.Email,
-            })
-            .ToList();
+        var sourceBranchName = branchResult.IsSuccess
+            ? branchResult.StandardOutput.Trim()
+            : "(no branch)";
+
+        // Trap: log.showSignature=true prints verification text ahead of a signed commit's
+        // record; the parser would skip that commit and the todo would silently drop it.
+        var logResult = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments =
+            [
+                "log",
+                "--no-show-signature",
+                "--reverse",
+                "--date-order",
+                "-z",
+                "--format=%H%x00%s%x00%an%x00%ae%x00",
+                $"{upstreamRef}..HEAD",
+            ],
+            WorkingDirectory = repositoryPath,
+            RawStandardOutput = true,
+        }, ct).ConfigureAwait(false);
+
+        if (!logResult.IsSuccess)
+            throw HistoriaGitException.FromCli(logResult, "Rebase query commits");
+
+        var entries = ParseRebaseEntries(logResult.StandardOutput);
 
         return new RebaseSession
         {
-            OntoCommitId = upstream.Id,
+            OntoCommitId = ontoCommitId,
             OntoRefName = upstreamRef,
             UpstreamRefName = upstreamRef,
-            SourceBranchName = head.FriendlyName,
+            SourceBranchName = sourceBranchName,
             Entries = entries,
         };
+    }
+
+    internal static List<RebaseEntry> ParseRebaseEntries(string stdout)
+    {
+        if (string.IsNullOrEmpty(stdout))
+            return [];
+
+        var fields = stdout.Split('\0');
+        var entries = new List<RebaseEntry>();
+        for (var i = 0; i + 4 <= fields.Length; )
+        {
+            var shaStr = fields[i].TrimStart('\r', '\n');
+            if (string.IsNullOrWhiteSpace(shaStr))
+            {
+                i++;
+                continue;
+            }
+
+            if (!GitObjectId.TryParse(shaStr, out var id))
+            {
+                i++;
+                continue;
+            }
+
+            var subject = fields[i + 1];
+            var authorName = fields[i + 2];
+            var authorEmail = fields[i + 3];
+
+            entries.Add(new RebaseEntry
+            {
+                CommitId = id,
+                MessageShort = subject,
+                AuthorName = authorName,
+                AuthorEmail = authorEmail,
+            });
+
+            i += 4;
+            if (i < fields.Length && fields[i].Length == 0)
+                i++;
+        }
+
+        return entries;
     }
 }

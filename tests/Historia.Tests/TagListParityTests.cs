@@ -39,14 +39,26 @@ public sealed class TagListParityTests : IAsyncDisposable
         await _host.DisposeAsync();
     }
 
-    private LibGit2Service Lib => _host.Provider.GetRequiredService<LibGit2Service>();
-
     [Fact]
     public async Task Cli_tags_equal_libgit2_tags()
     {
         await using var ctx = _host.Open(_repo.Path);
 
-        var expected = (await ctx.WithRepositoryAsync(Lib.ProjectTags))
+        using var repo = new Repository(_repo.Path);
+        var expected = repo.Tags
+            .Select(tag =>
+            {
+                var target = tag.PeeledTarget as Commit;
+                return new TagInfo
+                {
+                    Name = tag.FriendlyName,
+                    TargetCommitId = (target?.Id ?? tag.Target.Id).ToGitObjectId(),
+                    IsAnnotated = tag.IsAnnotated,
+                    Message = tag.Annotation?.Message,
+                    TaggerName = tag.Annotation?.Tagger?.Name,
+                    TaggerWhen = tag.Annotation?.Tagger?.When,
+                };
+            })
             .OrderBy(t => t.Name, StringComparer.Ordinal)
             .ToList();
         var actual = await ctx.Gateway.GetTagsAsync();
@@ -63,57 +75,5 @@ public sealed class TagListParityTests : IAsyncDisposable
         Assert.Contains(actual, t => t.Name == "annotated-tree");
         Assert.Contains(actual, t => t.Name == "nested");
         Assert.Equal("subject\r\n\r\nbody\rwith a lone CR\r\n", actual.Single(t => t.Name == "crlf-message").Message);
-    }
-
-    [Fact]
-    public async Task GetTagsAsync_does_not_enter_the_repo_gate_when_git_is_present()
-    {
-        await using var ctx = _host.Open(_repo.Path);
-
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = ctx.WithRepositoryAsync(_ =>
-        {
-            entered.SetResult();
-            release.Task.Wait();
-            return 0;
-        });
-        await entered.Task;
-        try
-        {
-            var tags = ctx.Gateway.GetTagsAsync();
-            Assert.Same(tags, await Task.WhenAny(tags, Task.Delay(TimeSpan.FromSeconds(20))));
-            Assert.NotEmpty(await tags);
-        }
-        finally
-        {
-            release.SetResult();
-        }
-    }
-
-    [Fact]
-    public async Task GetTagsAsync_uses_libgit2_when_git_is_missing()
-    {
-        await using var ctx = _host.Open(_repo.Path);
-        var gateway = new GitGateway(
-            ctx,
-            Lib,
-            new NoGitCli(),
-            _host.Provider.GetRequiredService<IRepoLayoutService>(),
-            _host.Provider.GetRequiredService<ICredentialVaultService>());
-
-        var expected = await ctx.WithRepositoryAsync(Lib.ProjectTags);
-        Assert.Equal(expected, await gateway.GetTagsAsync());
-    }
-
-    private sealed class NoGitCli : IGitCliService
-    {
-        public bool IsGitAvailable => false;
-
-        public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default) =>
-            throw new InvalidOperationException("git is missing — nothing may run it");
-
-        public Task<GitCliResult> RunAsync(GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default) =>
-            throw new InvalidOperationException("git is missing — nothing may run it");
     }
 }

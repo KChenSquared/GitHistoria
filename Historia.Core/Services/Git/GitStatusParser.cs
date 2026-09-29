@@ -2,11 +2,35 @@ namespace Historia.Services.Git;
 
 /// <summary>
 /// Parses git status --porcelain=v2 -z output into staged, unstaged, untracked, and conflicted entries,
-/// and pairs pure worktree moves by blob hash outside the repository gate.
+/// and pairs pure worktree moves by blob hash.
 /// </summary>
 internal static class GitStatusParser
 {
     public const string EmptyBlobHash = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+    public const string EmptyBlobSha256Hash = "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813";
+
+    private static readonly GitObjectId EmptyBlobSha1Id = GitObjectId.Parse(EmptyBlobHash);
+    private static readonly GitObjectId EmptyBlobSha256Id = GitObjectId.Parse(EmptyBlobSha256Hash);
+
+    public static bool IsEmptyBlobHash(string? hash) =>
+        string.Equals(hash, EmptyBlobHash, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(hash, EmptyBlobSha256Hash, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsEmptyBlobHash(GitObjectId id) =>
+        id == EmptyBlobSha1Id || id == EmptyBlobSha256Id;
+
+    public static GitObjectId? ParseId(string? s) =>
+        s is { Length: 40 or 64 } && GitObjectId.TryParse(s, out var id) && !id.IsZero ? id : null;
+
+    public static GitObjectId? ParseOid(string? s) => ParseId(s);
+
+    public static GitObjectId ParseIdOrZero(string? s) =>
+        s is { Length: 40 or 64 } && GitObjectId.TryParse(s, out var id)
+            ? (id.IsZero ? GitObjectId.Zero : id)
+            : GitObjectId.Zero;
+
+    public static bool IsZeroOid(string? s) =>
+        s is { Length: 40 or 64 } && GitObjectId.TryParse(s, out var id) && id.IsZero;
 
     public sealed record ParsedStatus
     {
@@ -17,12 +41,14 @@ internal static class GitStatusParser
         public required int AheadBy { get; init; }
         public required int BehindBy { get; init; }
         public required IReadOnlyList<WorktreeDeletion> WorktreeDeletions { get; init; }
+        public GitObjectId? HeadCommitId { get; init; }
         public bool IsDirty => Staged.Count + Unstaged.Count + Untracked.Count + Conflicted.Count > 0;
     }
 
     public sealed record WorktreeDeletion(string Path, string Mode, string IndexHash)
     {
         public bool IsRegularFile => Mode is "100644" or "100755";
+        public GitObjectId? IndexId => GitStatusParser.ParseId(IndexHash);
     }
 
     public static ParsedStatus Parse(string porcelainV2Z)
@@ -32,6 +58,7 @@ internal static class GitStatusParser
         var untracked = new List<FileStatusEntry>();
         var conflicted = new List<FileStatusEntry>();
         var worktreeDeletions = new List<WorktreeDeletion>();
+        GitObjectId? headCommitId = null;
         var aheadBy = 0;
         var behindBy = 0;
 
@@ -46,6 +73,7 @@ internal static class GitStatusParser
                 AheadBy = aheadBy,
                 BehindBy = behindBy,
                 WorktreeDeletions = worktreeDeletions,
+                HeadCommitId = null,
             };
         }
 
@@ -59,7 +87,13 @@ internal static class GitStatusParser
 
             if (token.StartsWith('#'))
             {
-                if (token.StartsWith("# branch.ab "))
+                if (token.StartsWith("# branch.oid "))
+                {
+                    var oidPart = token["# branch.oid ".Length..].Trim();
+                    if (!oidPart.Equals("(initial)", StringComparison.OrdinalIgnoreCase))
+                        headCommitId = ParseId(oidPart);
+                }
+                else if (token.StartsWith("# branch.ab "))
                 {
                     ParseAheadBehind(token.AsSpan("# branch.ab ".Length), out aheadBy, out behindBy);
                 }
@@ -286,6 +320,7 @@ internal static class GitStatusParser
             AheadBy = aheadBy,
             BehindBy = behindBy,
             WorktreeDeletions = worktreeDeletions,
+            HeadCommitId = headCommitId,
         };
     }
 
@@ -315,7 +350,7 @@ internal static class GitStatusParser
         }
 
         var eligibleDeletions = parsed.WorktreeDeletions
-            .Where(d => d.IsRegularFile && !d.IndexHash.Equals(EmptyBlobHash, StringComparison.OrdinalIgnoreCase))
+            .Where(d => d.IsRegularFile && !IsEmptyBlobHash(d.IndexHash) && !IsZeroOid(d.IndexHash))
             .OrderBy(d => d.Path, StringComparer.Ordinal)
             .ToList();
 

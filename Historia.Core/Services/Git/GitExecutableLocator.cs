@@ -1,9 +1,11 @@
-﻿namespace Historia.Services.Git;
+namespace Historia.Services.Git;
 
 /// <inheritdoc cref="IGitExecutableLocator"/>
 public sealed partial class GitExecutableLocator : IGitExecutableLocator
 {
     private readonly object _sync = new();
+    private readonly TaskCompletionSource<GitExecutableInfo> _resolvedTcs =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private GitExecutableInfo _current = GitExecutableInfo.NotFound;
 
     public GitExecutableInfo Current
@@ -11,7 +13,32 @@ public sealed partial class GitExecutableLocator : IGitExecutableLocator
         get { lock (_sync) return _current; }
     }
 
+    public Task<GitExecutableInfo> WhenResolvedAsync(CancellationToken ct = default)
+    {
+        return ct.CanBeCanceled ? WaitWithCancellationAsync(ct) : _resolvedTcs.Task;
+
+        async Task<GitExecutableInfo> WaitWithCancellationAsync(CancellationToken token)
+        {
+            return await _resolvedTcs.Task.WaitAsync(token).ConfigureAwait(false);
+        }
+    }
+
     public async Task<GitExecutableInfo> ResolveAsync(string? userOverridePath, CancellationToken ct = default)
+    {
+        try
+        {
+            return await ResolveCoreAsync(userOverridePath, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Every CLI call awaits the first resolution; a failed one must still release them
+            // (they then fail classified as "git not found") rather than wait forever.
+            _resolvedTcs.TrySetResult(GitExecutableInfo.NotFound with { NotFoundReason = $"Git resolution failed: {ex.Message}" });
+            throw;
+        }
+    }
+
+    private async Task<GitExecutableInfo> ResolveCoreAsync(string? userOverridePath, CancellationToken ct)
     {
         var path = await Task.Run(() => Discover(userOverridePath), ct).ConfigureAwait(false);
         GitExecutableInfo info;
@@ -23,11 +50,29 @@ public sealed partial class GitExecutableLocator : IGitExecutableLocator
         else
         {
             var version = await Task.Run(() => CaptureVersion(path), ct).ConfigureAwait(false);
-            info = new GitExecutableInfo { Found = true, Path = path, Version = version };
+            if (version is null || version < GitExecutableInfo.MinimumVersion)
+            {
+                var reason = version is null
+                    ? $"git.exe at '{path}' did not report a valid version."
+                    : $"Git {version} was found at '{path}', but Git {GitExecutableInfo.MinimumVersion} or newer is required.";
+                info = new GitExecutableInfo
+                {
+                    Found = false,
+                    Path = path,
+                    Version = version,
+                    NotFoundReason = reason,
+                };
+            }
+            else
+            {
+                info = new GitExecutableInfo { Found = true, Path = path, Version = version };
+            }
         }
 
         lock (_sync)
             _current = info;
+
+        _resolvedTcs.TrySetResult(info);
         return info;
     }
 
@@ -118,21 +163,25 @@ public sealed partial class GitExecutableLocator : IGitExecutableLocator
 
             var output = process.StandardOutput.ReadToEnd();
             process.WaitForExit(5000);
-
-            // "git version 2.51.0.windows.2"
-            var match = GitVersionRegex().Match(output);
-            if (!match.Success)
-                return null;
-
-            var major = int.Parse(match.Groups["major"].Value);
-            var minor = int.Parse(match.Groups["minor"].Value);
-            var patch = match.Groups["patch"].Success ? int.Parse(match.Groups["patch"].Value) : 0;
-            return new Version(major, minor, patch);
+            return ParseVersion(output);
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             return null;
         }
+    }
+
+    internal static Version? ParseVersion(string output)
+    {
+        // "git version 2.51.0.windows.2"
+        var match = GitVersionRegex().Match(output);
+        if (!match.Success)
+            return null;
+
+        var major = int.Parse(match.Groups["major"].Value);
+        var minor = int.Parse(match.Groups["minor"].Value);
+        var patch = match.Groups["patch"].Success ? int.Parse(match.Groups["patch"].Value) : 0;
+        return new Version(major, minor, patch);
     }
 
     [GeneratedRegex(@"git version (?<major>\d+)\.(?<minor>\d+)(?:\.(?<patch>\d+))?", RegexOptions.CultureInvariant)]

@@ -152,7 +152,7 @@ public sealed class FileWatcherService : IAsyncDisposable
             var rel = Path.GetRelativePath(gitDir, normalizedFullPath).Replace('\\', '/');
             // Only a few .git entries matter; everything else (objects/**, logs/**) is noise.
             var meaningful = rel is "HEAD" or "index" or "packed-refs" or "MERGE_HEAD" or "REBASE_HEAD"
-                                 or "CHERRY_PICK_HEAD" or "REVERT_HEAD" or "ORIG_HEAD"
+                                 or "CHERRY_PICK_HEAD" or "REVERT_HEAD" or "ORIG_HEAD" or "config"
                              || rel.StartsWith("refs/", StringComparison.Ordinal)
                              || rel.StartsWith("rebase-merge", StringComparison.Ordinal)
                              || rel.StartsWith("rebase-apply", StringComparison.Ordinal);
@@ -264,10 +264,9 @@ public sealed class FileWatcherService : IAsyncDisposable
     internal bool IsLikelyIgnored(string relPath)
     {
         // Cheap synchronous pre-filter for the common build-output offenders only. The
-        // authoritative .gitignore check is LibGit2Sharp's ignore rules, consulted lazily
-        // during the status scan — never here: this runs on the FileSystemWatcher callback
-        // thread, and blocking it on the per-repo async gate (a running walk can hold that
-        // gate for seconds) stalls every later event and can starve the thread pool.
+        // authoritative .gitignore check is handled lazily during the status scan — never here:
+        // this runs on the FileSystemWatcher callback thread, and expensive Git CLI operations
+        // here would stall later filesystem events and can starve the thread pool.
         //
         // node_modules/.vs/.git are near-certain vendor/tooling dirs, always skipped. bin/obj
         // are also skipped, but only where they actually look like build output — beside a

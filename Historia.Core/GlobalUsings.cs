@@ -18,7 +18,6 @@ global using Historia.Services.Theming;
 global using Historia.Services.UI;
 global using Historia.Services.Watching;
 global using Historia.Services.Workspace;
-global using LibGit2Sharp;
 global using Microsoft.Extensions.DependencyInjection;
 global using Microsoft.Win32;
 global using Microsoft.Win32.SafeHandles;
@@ -41,7 +40,6 @@ global using System.Text.Json.Nodes;
 global using System.Text.Json.Serialization;
 global using System.Text.RegularExpressions;
 
-global using CompareOptions = LibGit2Sharp.CompareOptions;
 global using PortaPty = Porta.Pty;
 global using RepositoryStatus = Historia.Models.RepositoryStatus;
 global using Res = Historia.Services.Graph.GraphLayoutState.Reservation;

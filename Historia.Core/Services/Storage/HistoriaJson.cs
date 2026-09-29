@@ -7,7 +7,12 @@ public static class HistoriaJson
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase), new ObjectIdJsonConverter() },
+        Converters =
+        {
+            new JsonStringEnumConverter(JsonNamingPolicy.CamelCase),
+            new NullableGitObjectIdJsonConverter(),
+            new GitObjectIdJsonConverter()
+        },
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 }

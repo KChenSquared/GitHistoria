@@ -34,6 +34,26 @@ public class StashServiceTests
     }
 
     [Fact]
+    public async Task List_is_empty_without_refs_stash_but_other_failures_throw()
+    {
+        await using var host = new MiniHost();
+        using var b = SeededRepo();
+        await using (var clean = host.Open(b.Path))
+            Assert.Empty(await Make(host).ListAsync(clean));
+
+        // With refs/stash present, a failing `log -g` is a real error, not "no stashes".
+        b.WriteFile("f.txt", "dirty\n");
+        b.Git("stash", "push", "-m", "wip");
+        var cli = new InterceptingGitCliService(host.Cli)
+        {
+            Intercept = r => r.Arguments.Contains("-g") ? InterceptingGitCliService.Failure() : null,
+        };
+        await using var ctx = host.Open(b.Path, cli);
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => new StashService(cli).ListAsync(ctx));
+    }
+
+    [Fact]
     public async Task Save_reports_false_when_nothing_to_stash()
     {
         await using var host = new MiniHost();
@@ -137,5 +157,85 @@ public class StashServiceTests
 
         Assert.Contains("from-stash", b.Git("branch", "--list", "from-stash"));
         Assert.Empty(await svc.ListAsync(ctx));
+    }
+
+    [Theory]
+    [InlineData("plain")]
+    [InlineData("untracked")]
+    [InlineData("index-only")]
+    [InlineData("colon-message")]
+    public async Task Stash_list_matches_libgit2_direct_oracle(string scenario)
+    {
+        await using var host = new MiniHost();
+        using var b = TestRepositoryBuilder.FromTemplate($"stash-parity-{scenario}", r =>
+            r.WriteFile("f.txt", "base\n").Stage().Commit("c1"));
+        await using var ctx = host.Open(b.Path);
+        var svc = Make(host);
+
+        switch (scenario)
+        {
+            case "plain":
+                b.WriteFile("f.txt", "plain dirty\n");
+                await svc.SaveAsync(ctx, new StashSaveOptions { Message = "plain stash" });
+                break;
+
+            case "untracked":
+                b.WriteFile("f.txt", "tracked dirty\n");
+                b.WriteFile("untracked.txt", "untracked dirty\n");
+                await svc.SaveAsync(ctx, new StashSaveOptions { Message = "with untracked", IncludeUntracked = true });
+                break;
+
+            case "index-only":
+                b.WriteFile("f.txt", "index dirty\n").Stage("f.txt");
+                await svc.StashStagedAsync(ctx, "index only stash");
+                break;
+
+            case "colon-message":
+                b.WriteFile("f.txt", "colon dirty\n");
+                await svc.SaveAsync(ctx, new StashSaveOptions { Message = "WIP on main: fix: colons: everywhere" });
+                break;
+        }
+
+        var cliEntries = await svc.ListAsync(ctx);
+
+        using var directRepo = new Repository(b.Path);
+        var directEntries = directRepo.Stashes.Select((stash, idx) =>
+        {
+            var commit = stash.WorkTree;
+            var parent = commit.Parents.FirstOrDefault();
+            var fileCount = 0;
+            if (parent is not null)
+            {
+                using var changes = directRepo.Diff.Compare<TreeChanges>(parent.Tree, commit.Tree);
+                fileCount = changes.Count();
+            }
+
+            return new
+            {
+                Index = idx,
+                CommitId = commit.Id.Sha,
+                Message = stash.Message,
+                AuthorName = commit.Author.Name,
+                AuthorEmail = commit.Author.Email,
+                IncludesUntracked = commit.Parents.Count() == 3,
+                FileCount = fileCount,
+            };
+        }).ToList();
+
+        Assert.NotEmpty(cliEntries);
+        Assert.Equal(directEntries.Count, cliEntries.Count);
+        for (var i = 0; i < cliEntries.Count; i++)
+        {
+            var cli = cliEntries[i];
+            var direct = directEntries[i];
+
+            Assert.Equal(direct.Index, cli.Index);
+            Assert.Equal(direct.CommitId, cli.CommitId.ToString());
+            Assert.Equal(direct.Message, cli.Message);
+            Assert.Equal(direct.AuthorName, cli.AuthorName);
+            Assert.Equal(direct.AuthorEmail, cli.AuthorEmail);
+            Assert.Equal(direct.IncludesUntracked, cli.IncludesUntracked);
+            Assert.Equal(direct.FileCount, cli.FileCount);
+        }
     }
 }

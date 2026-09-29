@@ -1,12 +1,13 @@
 namespace Historia.Tests;
-[Trait("tier", "git")]
-[Collection("serial")]
-public class WorkspaceServiceTests : IAsyncDisposable
-{
-    private readonly MiniHost _host = new();
-    private RecentRepositoryService? _recents;
 
-    private WorkspaceService NewWorkspace(
+/// <summary>Shared host and helpers for the <see cref="WorkspaceService"/> suites. Split into
+/// several classes so xunit runs them as parallel collections instead of one long sequence.</summary>
+public abstract class WorkspaceServiceTestBase : IAsyncDisposable
+{
+    protected readonly MiniHost _host = new();
+    protected RecentRepositoryService? _recents;
+
+    protected WorkspaceService NewWorkspace(
         IRepoIdentityService? identity = null,
         IGitCliService? cli = null,
         IServiceProvider? provider = null)
@@ -19,16 +20,57 @@ public class WorkspaceServiceTests : IAsyncDisposable
         return new WorkspaceService(provider, cli, recents, profiles, identity);
     }
 
-    private static string Norm(string p) =>
+    protected static string Norm(string p) =>
         Path.TrimEndingDirectorySeparator(Path.GetFullPath(p)).ToLowerInvariant();
 
-    private static TestRepositoryBuilder Repo(string file) =>
+    protected static TestRepositoryBuilder Repo(string file) =>
         TestRepositoryBuilder.FromTemplate($"ws-repo-{file}", b =>
         {
             b.WriteFile(file, "x\n").Stage();
             b.Commit("c");
         });
 
+    /// <summary>Overrides one service type while delegating everything else to a real provider —
+    /// so <see cref="WorkspaceService"/>'s <c>IGraphLayoutService</c> can be swapped for a
+    /// recording fake without standing up a whole second DI container.</summary>
+    protected sealed class OverrideServiceProvider(IServiceProvider inner, Type overriddenType, object overriddenInstance)
+        : IServiceProvider
+    {
+        public object? GetService(Type serviceType) =>
+            serviceType == overriddenType ? overriddenInstance : inner.GetService(serviceType);
+    }
+
+    /// <summary>A real nested git repo under <paramref name="owner"/>'s working directory —
+    /// enough for <c>Repository.Discover</c> to find it, without needing real
+    /// <c>git submodule add</c> registration (OpenSubmoduleAsync only cares about the on-disk
+    /// working copy, not <c>.gitmodules</c>).</summary>
+    protected static SubmoduleInfo MakeNestedSubmodule(RepositoryContext owner, string relativePath, string fileName)
+    {
+        var fullPath = Path.Combine(owner.RepositoryPath, relativePath);
+        Directory.CreateDirectory(fullPath);
+        LibGit2Sharp.Repository.Init(fullPath);
+        using (var repo = new LibGit2Sharp.Repository(fullPath))
+        {
+            File.WriteAllText(Path.Combine(fullPath, fileName), "x");
+            LibGit2Sharp.Commands.Stage(repo, "*");
+            var sig = new LibGit2Sharp.Signature("Test User", "test@example.com", DateTimeOffset.Now);
+            repo.Commit("c", sig, sig);
+        }
+        return new SubmoduleInfo
+        {
+            Name = relativePath,
+            Path = relativePath,
+            Url = fullPath,
+            Status = SubmoduleStatus.Clean,
+        };
+    }
+
+    public async ValueTask DisposeAsync() => await _host.DisposeAsync();
+}
+
+[Trait("tier", "git")]
+public class WorkspaceServiceTests : WorkspaceServiceTestBase
+{
     /// <summary>
     /// Re-opening an already-open repo raises <see cref="IWorkspaceService.FocusedRepositoryChanged"/>
     /// with the lock released, avoiding deadlock with UI thread marshaling.
@@ -267,6 +309,12 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
+    /// <summary>
+    /// Verifies that restored repositories from session are not touched in the recent list.
+    /// Also guards the dispose path: the restored background tab is still queued when the
+    /// workspace is disposed, which once spun DrainBackgroundInitQueueAsync forever on the
+    /// closed foreground tab and hung DisposeAsync.
+    /// </summary>
     [Fact(Timeout = 30000)]
     public async Task Session_restore_does_not_touch_the_recent_list()
     {
@@ -314,7 +362,11 @@ public class WorkspaceServiceTests : IAsyncDisposable
         Assert.Single(node["linkOwners"]!.AsArray());
         Assert.True(node["linkOwners"]!.AsArray()[0] is null);
     }
+}
 
+[Trait("tier", "git")]
+public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
+{
     // ── Focus-priority interrupt-and-promote ──
 
     [Fact(Timeout = 20000)]
@@ -446,16 +498,6 @@ public class WorkspaceServiceTests : IAsyncDisposable
     }
 
     // ── Headless caching for inactive tabs ──
-
-    /// <summary>Overrides one service type while delegating everything else to a real provider —
-    /// so <see cref="WorkspaceService"/>'s <c>IGraphLayoutService</c> can be swapped for a
-    /// recording fake without standing up a whole second DI container.</summary>
-    private sealed class OverrideServiceProvider(IServiceProvider inner, Type overriddenType, object overriddenInstance)
-        : IServiceProvider
-    {
-        public object? GetService(Type serviceType) =>
-            serviceType == overriddenType ? overriddenInstance : inner.GetService(serviceType);
-    }
 
     private sealed class RecordingGraphLayoutService : IGraphLayoutService
     {
@@ -743,33 +785,12 @@ public class WorkspaceServiceTests : IAsyncDisposable
             try { if (Directory.Exists(target)) Directory.Delete(target, recursive: true); } catch { /* best effort */ }
         }
     }
+}
 
+[Trait("tier", "git")]
+public class WorkspaceSubmoduleTabTests : WorkspaceServiceTestBase
+{
     // ── linked submodule tab groups ──
-
-    /// <summary>A real nested git repo under <paramref name="owner"/>'s working directory —
-    /// enough for <c>Repository.Discover</c> to find it, without needing real
-    /// <c>git submodule add</c> registration (OpenSubmoduleAsync only cares about the on-disk
-    /// working copy, not <c>.gitmodules</c>).</summary>
-    private static SubmoduleInfo MakeNestedSubmodule(RepositoryContext owner, string relativePath, string fileName)
-    {
-        var fullPath = Path.Combine(owner.RepositoryPath, relativePath);
-        Directory.CreateDirectory(fullPath);
-        LibGit2Sharp.Repository.Init(fullPath);
-        using (var repo = new LibGit2Sharp.Repository(fullPath))
-        {
-            File.WriteAllText(Path.Combine(fullPath, fileName), "x");
-            LibGit2Sharp.Commands.Stage(repo, "*");
-            var sig = new LibGit2Sharp.Signature("Test User", "test@example.com", DateTimeOffset.Now);
-            repo.Commit("c", sig, sig);
-        }
-        return new SubmoduleInfo
-        {
-            Name = relativePath,
-            Path = relativePath,
-            Url = fullPath,
-            Status = SubmoduleStatus.Clean,
-        };
-    }
 
     [Fact]
     public async Task OpenSubmoduleAsync_inserts_the_new_tab_immediately_after_the_owners_group()
@@ -826,6 +847,163 @@ public class WorkspaceServiceTests : IAsyncDisposable
         Assert.Equal([owner, child1, child2, other], ws.OpenRepositories);
         await ws.DisposeAsync();
     }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_refuses_an_uninitialized_submodule()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+
+        var emptySubDir = Path.Combine(owner.RepositoryPath, "vendor/empty");
+        Directory.CreateDirectory(emptySubDir);
+
+        var sub = new SubmoduleInfo
+        {
+            Name = "vendor/empty",
+            Path = "vendor/empty",
+            Url = emptySubDir,
+            Status = SubmoduleStatus.Uninitialized,
+        };
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() => ws.OpenSubmoduleAsync(owner, sub));
+        Assert.Equal(GitErrorKind.NotAGitRepository, ex.Kind);
+        Assert.Null(owner.LinkOwner);
+        Assert.Single(ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_links_to_the_root_owner_when_opened_from_a_linked_tab()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var sub1 = MakeNestedSubmodule(owner, "vendor/child", "child.txt");
+        var child = await ws.OpenSubmoduleAsync(owner, sub1);
+
+        var sub2 = MakeNestedSubmodule(child, "sub2", "sub2.txt");
+        var grandchild = await ws.OpenSubmoduleAsync(child, sub2);
+
+        Assert.Same(owner, child.LinkOwner);
+        Assert.Same(owner, grandchild.LinkOwner);
+        Assert.Equal([owner, child, grandchild], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_adopts_and_moves_an_existing_standalone_tab()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        using var otherRepo = Repo("other.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var other = await ws.OpenAsync(otherRepo.Path);
+
+        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
+        var fullSubPath = Path.Combine(owner.RepositoryPath, "vendor/lib");
+        var subTab = await ws.OpenAsync(fullSubPath);
+        // _open: [owner, other, subTab]
+        Assert.Equal([owner, other, subTab], ws.OpenRepositories);
+        Assert.Null(subTab.LinkOwner);
+
+        var adopted = await ws.OpenSubmoduleAsync(owner, sub);
+
+        Assert.Same(subTab, adopted);
+        Assert.Same(owner, subTab.LinkOwner);
+        Assert.Equal([owner, subTab, other], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task OpenSubmoduleAsync_never_relinks_a_group_owner()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+
+        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
+        var fullSubPath = Path.Combine(owner.RepositoryPath, "vendor/lib");
+        var subOwner = await ws.OpenAsync(fullSubPath);
+        var nestedUnderSub = MakeNestedSubmodule(subOwner, "nested", "n.txt");
+        var subChild = await ws.OpenSubmoduleAsync(subOwner, nestedUnderSub);
+        // _open: [owner, subOwner, subChild]
+        Assert.Null(subOwner.LinkOwner);
+        Assert.Same(subOwner, subChild.LinkOwner);
+
+        var result = await ws.OpenSubmoduleAsync(owner, sub);
+
+        Assert.Same(subOwner, result);
+        Assert.Null(subOwner.LinkOwner);
+        Assert.Equal([owner, subOwner, subChild], ws.OpenRepositories);
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task CloseAsync_on_a_group_owner_detaches_its_children_instead_of_closing_them()
+    {
+        var ws = NewWorkspace();
+        using var ownerRepo = Repo("owner.txt");
+        var owner = await ws.OpenAsync(ownerRepo.Path);
+        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
+        var child = await ws.OpenSubmoduleAsync(owner, sub);
+
+        await ws.CloseAsync(owner);
+
+        Assert.Contains(child, ws.OpenRepositories);
+        Assert.Null(child.LinkOwner);
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task RestoreSessionAsync_reestablishes_link_groups_from_a_schemaVersion_3_file()
+    {
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+        var payload = new JsonObject
+        {
+            ["schemaVersion"] = 3,
+            ["paths"] = new JsonArray(r1.Path, r2.Path),
+            ["linkOwners"] = new JsonArray(null, r1.Path),
+            ["focusedPath"] = r1.Path,
+        };
+        File.WriteAllText(AppPaths.SessionFile, payload.ToJsonString());
+
+        var ws = NewWorkspace();
+        await ws.RestoreSessionAsync();
+
+        Assert.Equal(2, ws.OpenRepositories.Count);
+        var owner = ws.OpenRepositories.First(c => Norm(c.RepositoryPath) == Norm(r1.Path));
+        var child = ws.OpenRepositories.First(c => Norm(c.RepositoryPath) == Norm(r2.Path));
+        Assert.Same(owner, child.LinkOwner);
+        await ws.DisposeAsync();
+    }
+
+    [Fact(Timeout = 30000)]
+    public async Task RestoreSessionAsync_reads_a_schemaVersion_2_file_with_every_tab_ungrouped()
+    {
+        using var r1 = Repo("a.txt");
+        using var r2 = Repo("b.txt");
+        File.WriteAllText(AppPaths.SessionFile, new JsonObject
+        {
+            ["schemaVersion"] = 2,
+            ["paths"] = new JsonArray(r1.Path, r2.Path),
+            ["focusedPath"] = r1.Path,
+        }.ToJsonString());
+
+        var ws = NewWorkspace();
+        await ws.RestoreSessionAsync();
+
+        Assert.Equal(2, ws.OpenRepositories.Count);
+        Assert.All(ws.OpenRepositories, c => Assert.Null(c.LinkOwner));
+        await ws.DisposeAsync();
+    }
+}
+
+[Trait("tier", "git")]
+public class WorkspaceTabGroupMoveTests : WorkspaceServiceTestBase
+{
+    // ── linked submodule tab groups: Move ──
 
     [Fact]
     public async Task Move_on_a_group_owner_relocates_the_whole_group_as_one_contiguous_block()
@@ -989,158 +1167,11 @@ public class WorkspaceServiceTests : IAsyncDisposable
         Assert.Equal([a, b], ws.OpenRepositories);
         await ws.DisposeAsync();
     }
+}
 
-    [Fact]
-    public async Task OpenSubmoduleAsync_refuses_an_uninitialized_submodule()
-    {
-        var ws = NewWorkspace();
-        using var ownerRepo = Repo("owner.txt");
-        var owner = await ws.OpenAsync(ownerRepo.Path);
-
-        var emptySubDir = Path.Combine(owner.RepositoryPath, "vendor/empty");
-        Directory.CreateDirectory(emptySubDir);
-
-        var sub = new SubmoduleInfo
-        {
-            Name = "vendor/empty",
-            Path = "vendor/empty",
-            Url = emptySubDir,
-            Status = SubmoduleStatus.Uninitialized,
-        };
-
-        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() => ws.OpenSubmoduleAsync(owner, sub));
-        Assert.Equal(GitErrorKind.NotAGitRepository, ex.Kind);
-        Assert.Null(owner.LinkOwner);
-        Assert.Single(ws.OpenRepositories);
-        await ws.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task OpenSubmoduleAsync_links_to_the_root_owner_when_opened_from_a_linked_tab()
-    {
-        var ws = NewWorkspace();
-        using var ownerRepo = Repo("owner.txt");
-        var owner = await ws.OpenAsync(ownerRepo.Path);
-        var sub1 = MakeNestedSubmodule(owner, "vendor/child", "child.txt");
-        var child = await ws.OpenSubmoduleAsync(owner, sub1);
-
-        var sub2 = MakeNestedSubmodule(child, "sub2", "sub2.txt");
-        var grandchild = await ws.OpenSubmoduleAsync(child, sub2);
-
-        Assert.Same(owner, child.LinkOwner);
-        Assert.Same(owner, grandchild.LinkOwner);
-        Assert.Equal([owner, child, grandchild], ws.OpenRepositories);
-        await ws.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task OpenSubmoduleAsync_adopts_and_moves_an_existing_standalone_tab()
-    {
-        var ws = NewWorkspace();
-        using var ownerRepo = Repo("owner.txt");
-        using var otherRepo = Repo("other.txt");
-        var owner = await ws.OpenAsync(ownerRepo.Path);
-        var other = await ws.OpenAsync(otherRepo.Path);
-
-        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
-        var fullSubPath = Path.Combine(owner.RepositoryPath, "vendor/lib");
-        var subTab = await ws.OpenAsync(fullSubPath);
-        // _open: [owner, other, subTab]
-        Assert.Equal([owner, other, subTab], ws.OpenRepositories);
-        Assert.Null(subTab.LinkOwner);
-
-        var adopted = await ws.OpenSubmoduleAsync(owner, sub);
-
-        Assert.Same(subTab, adopted);
-        Assert.Same(owner, subTab.LinkOwner);
-        Assert.Equal([owner, subTab, other], ws.OpenRepositories);
-        await ws.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task OpenSubmoduleAsync_never_relinks_a_group_owner()
-    {
-        var ws = NewWorkspace();
-        using var ownerRepo = Repo("owner.txt");
-        var owner = await ws.OpenAsync(ownerRepo.Path);
-
-        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
-        var fullSubPath = Path.Combine(owner.RepositoryPath, "vendor/lib");
-        var subOwner = await ws.OpenAsync(fullSubPath);
-        var nestedUnderSub = MakeNestedSubmodule(subOwner, "nested", "n.txt");
-        var subChild = await ws.OpenSubmoduleAsync(subOwner, nestedUnderSub);
-        // _open: [owner, subOwner, subChild]
-        Assert.Null(subOwner.LinkOwner);
-        Assert.Same(subOwner, subChild.LinkOwner);
-
-        var result = await ws.OpenSubmoduleAsync(owner, sub);
-
-        Assert.Same(subOwner, result);
-        Assert.Null(subOwner.LinkOwner);
-        Assert.Equal([owner, subOwner, subChild], ws.OpenRepositories);
-        await ws.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task CloseAsync_on_a_group_owner_detaches_its_children_instead_of_closing_them()
-    {
-        var ws = NewWorkspace();
-        using var ownerRepo = Repo("owner.txt");
-        var owner = await ws.OpenAsync(ownerRepo.Path);
-        var sub = MakeNestedSubmodule(owner, "vendor/lib", "lib.txt");
-        var child = await ws.OpenSubmoduleAsync(owner, sub);
-
-        await ws.CloseAsync(owner);
-
-        Assert.Contains(child, ws.OpenRepositories);
-        Assert.Null(child.LinkOwner);
-        await ws.DisposeAsync();
-    }
-
-    [Fact(Timeout = 30000)]
-    public async Task RestoreSessionAsync_reestablishes_link_groups_from_a_schemaVersion_3_file()
-    {
-        using var r1 = Repo("a.txt");
-        using var r2 = Repo("b.txt");
-        var payload = new JsonObject
-        {
-            ["schemaVersion"] = 3,
-            ["paths"] = new JsonArray(r1.Path, r2.Path),
-            ["linkOwners"] = new JsonArray(null, r1.Path),
-            ["focusedPath"] = r1.Path,
-        };
-        File.WriteAllText(AppPaths.SessionFile, payload.ToJsonString());
-
-        var ws = NewWorkspace();
-        await ws.RestoreSessionAsync();
-
-        Assert.Equal(2, ws.OpenRepositories.Count);
-        var owner = ws.OpenRepositories.First(c => Norm(c.RepositoryPath) == Norm(r1.Path));
-        var child = ws.OpenRepositories.First(c => Norm(c.RepositoryPath) == Norm(r2.Path));
-        Assert.Same(owner, child.LinkOwner);
-        await ws.DisposeAsync();
-    }
-
-    [Fact(Timeout = 30000)]
-    public async Task RestoreSessionAsync_reads_a_schemaVersion_2_file_with_every_tab_ungrouped()
-    {
-        using var r1 = Repo("a.txt");
-        using var r2 = Repo("b.txt");
-        File.WriteAllText(AppPaths.SessionFile, new JsonObject
-        {
-            ["schemaVersion"] = 2,
-            ["paths"] = new JsonArray(r1.Path, r2.Path),
-            ["focusedPath"] = r1.Path,
-        }.ToJsonString());
-
-        var ws = NewWorkspace();
-        await ws.RestoreSessionAsync();
-
-        Assert.Equal(2, ws.OpenRepositories.Count);
-        Assert.All(ws.OpenRepositories, c => Assert.Null(c.LinkOwner));
-        await ws.DisposeAsync();
-    }
-
+[Trait("tier", "git")]
+public class WorkspaceStatusLoadTests : WorkspaceServiceTestBase
+{
     private sealed class StatusInterceptingGitCliService(IGitCliService inner) : IGitCliService
     {
         public bool IsGitAvailable => inner.IsGitAvailable;
@@ -1284,5 +1315,29 @@ public class WorkspaceServiceTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    public async ValueTask DisposeAsync() => await _host.DisposeAsync();
+    [Fact]
+    public async Task OpenAsync_non_repo_path_throws_NotAGitRepository()
+    {
+        var ws = NewWorkspace();
+        var nonRepo = TestScratch.NewDirectory("ws-non-repo-");
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() => ws.OpenAsync(nonRepo));
+        Assert.Equal(GitErrorKind.NotAGitRepository, ex.Kind);
+
+        await ws.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task InitAsync_initializes_and_opens_repository()
+    {
+        var ws = NewWorkspace();
+        var initDir = TestScratch.NewDirectory("ws-init-");
+
+        var ctx = await ws.InitAsync(initDir, "main");
+        Assert.NotNull(ctx);
+        Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(initDir)), Path.TrimEndingDirectorySeparator(ctx.RepositoryPath));
+        Assert.True(Directory.Exists(ctx.GitDirectory));
+
+        await ws.DisposeAsync();
+    }
 }

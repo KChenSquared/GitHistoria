@@ -55,7 +55,6 @@ global using Historia.Services.UI;
 global using Historia.Services.Workspace;
 global using Historia.Theming;
 global using Historia.Views;
-global using LibGit2Sharp;
 global using Microsoft.Extensions.DependencyInjection;
 global using System.Diagnostics;
 global using System.Globalization;

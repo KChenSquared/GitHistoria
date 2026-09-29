@@ -2,29 +2,19 @@ namespace Historia.Services.Git;
 
 /// <summary>
 /// <inheritdoc cref="IGitGateway"/>
-/// Bound to one <see cref="RepositoryContext"/>; routes each operation to LibGit2Sharp or the
-/// Git CLI. LibGit2Sharp is <b>never</b> used for a network operation.
+/// Bound to one <see cref="RepositoryContext"/>; routes each operation to the Git CLI.
 /// </summary>
-public sealed class GitGateway(
+public sealed partial class GitGateway(
     RepositoryContext context,
-    LibGit2Service lib,
     IGitCliService cli,
     IRepoLayoutService repoLayout,
     ICredentialVaultService credentialVault) : IGitGateway
 {
     public string RepositoryPath => context.RepositoryPath;
 
-    // ── Reads ──
-
-    public Task<RepositoryInfo> GetRepositoryInfoAsync(CancellationToken ct = default)
-        => context.WithRepositoryAsync(lib.ProjectInfo, ct);
-
     public async Task<RepositoryStatus> GetStatusAsync(CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-
-        if (!cli.IsGitAvailable)
-            return await context.WithRepositoryAsync(lib.ProjectStatus, ct).ConfigureAwait(false);
 
         if (context.IsBare)
             return RepositoryStatus.Empty with { ComputedAt = DateTimeOffset.Now };
@@ -84,58 +74,6 @@ public sealed class GitGateway(
         return PopulateSizes(status, context.RepositoryPath);
     }
 
-    public Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.ProjectCommits(r, query), ct);
-
-    public Task<CommitDetail> GetCommitDetailAsync(ObjectId id, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.ProjectCommitDetail(r, id), ct);
-
-    public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(ObjectId id, int parentIndex, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.ProjectCommitFiles(r, id, parentIndex), ct);
-
-    public Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default)
-        => context.WithRepositoryAsync(lib.ProjectBranches, ct);
-
-    /// <summary>From the repo's cached ref snapshot — one <c>git for-each-ref</c>, shared with
-    /// the commit graph, and never the repo gate (LibGit2Sharp's tag enumeration held it for
-    /// 9–13 s at chromium's 39k tags, queueing status behind it). LibGit2Sharp only when git.exe
-    /// is missing.</summary>
-    public async Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default)
-    {
-        if (!cli.IsGitAvailable)
-            return await context.WithRepositoryAsync(lib.ProjectTags, ct).ConfigureAwait(false);
-
-        var snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false);
-        return TagProjection.FromSnapshot(snapshot);
-    }
-
-    public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default)
-        => context.WithRepositoryAsync(lib.ProjectRemotes, ct);
-
-    public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.ProjectDiff(r, request), ct);
-
-    public Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default)
-        => context.WithRepositoryAsync(r => lib.CalculateAheadBehind(r, branchCanonicalName), ct);
-
-    public async Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default)
-    {
-        var result = await cli.RunAsync(new GitCliRequest
-        {
-            Arguments = ["rev-list", "--left-right", "--count", $"{local}...{remote}"],
-            WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
-
-        if (!result.IsSuccess)
-            return null;
-
-        var parts = result.StandardOutput.Trim().Split('\t', StringSplitOptions.TrimEntries);
-        if (parts.Length != 2 || !int.TryParse(parts[0], out var ahead) || !int.TryParse(parts[1], out var behind))
-            return null;
-
-        return new AheadBehind(ahead, behind);
-    }
-
     public async Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default)
     {
         var name = await ReadConfigAsync("--local", "user.name", ct).ConfigureAwait(false);
@@ -152,12 +90,6 @@ public sealed class GitGateway(
 
     public async Task<bool> GetGpgSignConfiguredAsync(CancellationToken ct = default)
     {
-        if (!cli.IsGitAvailable)
-        {
-            var v = await context.WithRepositoryAsync(r => r.Config.Get<bool?>("commit.gpgsign")?.Value, ct).ConfigureAwait(false);
-            return v == true;
-        }
-
         // No scope flag → git resolves local over global on its own.
         var result = await cli.RunAsync(new GitCliRequest
         {
@@ -172,12 +104,6 @@ public sealed class GitGateway(
 
     private async Task<string?> ReadConfigAsync(string scope, string key, CancellationToken ct)
     {
-        if (!cli.IsGitAvailable)
-        {
-            var level = scope == "--global" ? ConfigurationLevel.Global : ConfigurationLevel.Local;
-            return await context.WithRepositoryAsync(r => r.Config.Get<string>(key, level)?.Value, ct).ConfigureAwait(false);
-        }
-
         var result = await cli.RunAsync(new GitCliRequest
         {
             Arguments = ["config", scope, "--get", key],
@@ -190,82 +116,6 @@ public sealed class GitGateway(
             : null;
     }
 
-    // ── Working tree mutations ──
-
-    public async Task StageAsync(IReadOnlyList<string> paths, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        await context.WithRepositoryAsync(r => lib.Stage(r, paths), ct).ConfigureAwait(false);
-    }
-
-    public async Task UnstageAsync(IReadOnlyList<string> paths, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-
-        var isUnborn = await context.WithRepositoryAsync(r => r.Info.IsHeadUnborn, ct).ConfigureAwait(false);
-        if (isUnborn)
-        {
-            // No HEAD to reset against — fall back to `git rm --cached`.
-            var args = new List<string> { "rm", "--cached", "--" };
-            args.AddRange(paths);
-            var result = await cli.RunAsync(new GitCliRequest
-            {
-                Arguments = args,
-                WorkingDirectory = context.RepositoryPath,
-            }, ct).ConfigureAwait(false);
-            if (!result.IsSuccess)
-                throw HistoriaGitException.FromCli(result, "Unstage");
-            return;
-        }
-
-        await context.WithRepositoryAsync(r => lib.Unstage(r, paths), ct).ConfigureAwait(false);
-    }
-
-    public async Task DiscardAsync(IReadOnlyList<string> paths, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        await context.WithRepositoryAsync(r => lib.DiscardWorkingTree(r, paths), ct).ConfigureAwait(false);
-    }
-
-    public async Task<ObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-
-        // Signed commits and repos with pre-commit / commit-msg hooks route through the CLI —
-        // LibGit2Sharp invokes neither the GPG agent nor Git hooks.
-        var hasHooks = await context.WithRepositoryAsync(
-            r => LibGit2Service.RepoHasCommitHooks(r.Info.Path), ct).ConfigureAwait(false);
-
-        if (request.Sign || hasHooks)
-        {
-            var args = new List<string> { "commit", "-m", request.Message };
-            if (request.Sign) args.Add("-S");
-            if (request.AmendPreviousCommit) args.Add("--amend");
-            if (request.AllowEmptyCommit) args.Add("--allow-empty");
-            args.Add("--author");
-            args.Add($"{request.AuthorName} <{request.AuthorEmail}>");
-
-            var env = new Dictionary<string, string>
-            {
-                ["GIT_COMMITTER_NAME"] = request.CommitterName ?? request.AuthorName,
-                ["GIT_COMMITTER_EMAIL"] = request.CommitterEmail ?? request.AuthorEmail,
-            };
-
-            var result = await cli.RunAsync(new GitCliRequest
-            {
-                Arguments = args,
-                WorkingDirectory = context.RepositoryPath,
-                ExtraEnvironment = env,
-            }, ct).ConfigureAwait(false);
-            if (!result.IsSuccess)
-                throw HistoriaGitException.FromCli(result, "Commit");
-
-            return await context.WithRepositoryAsync(r => r.Head.Tip!.Id, ct).ConfigureAwait(false);
-        }
-
-        return await context.WithRepositoryAsync(r => lib.Commit(r, request), ct).ConfigureAwait(false);
-    }
-
     public async Task MergeAsync(string refish, bool noFastForward, CancellationToken ct = default)
     {
         using var _ = context.BeginSelfOperation();
@@ -273,11 +123,14 @@ public sealed class GitGateway(
         if (noFastForward) args.Add("--no-ff");
         args.Add(refish);
 
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = args,
             WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
+            // No wall clock: merge runs hooks, and killing it midway leaves a half-updated tree
+            // and a stale index.lock. The caller's token still cancels it.
+            Timeout = Timeout.InfiniteTimeSpan,
+        }, innerCt), ct).ConfigureAwait(false);
 
         if (!result.IsSuccess && result.ErrorKind != GitErrorKind.MergeConflict)
         {
@@ -302,11 +155,14 @@ public sealed class GitGateway(
             _ => "--mixed",
         };
 
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = ["reset", flag, target],
             WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
+            // No wall clock: a --hard reset killed midway leaves a half-updated tree and a
+            // stale index.lock. The caller's token still cancels it.
+            Timeout = Timeout.InfiniteTimeSpan,
+        }, innerCt), ct).ConfigureAwait(false);
 
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, "Reset");
@@ -326,81 +182,16 @@ public sealed class GitGateway(
         return int.TryParse(result.StandardOutput.Trim(), out var n) ? n : 0;
     }
 
-    // ── Ref mutations ──
-
-    public async Task CheckoutAsync(string refName, GitCheckoutOptions options, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        await context.WithRepositoryAsync(r => lib.Checkout(r, refName, options), ct).ConfigureAwait(false);
-    }
-
-    public async Task<BranchInfo> CreateBranchAsync(string name, string startPoint, bool checkout, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        return await context.WithRepositoryAsync(r => lib.CreateBranch(r, name, startPoint, checkout), ct).ConfigureAwait(false);
-    }
-
-    public async Task DeleteBranchAsync(string name, bool force, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        await context.WithRepositoryAsync(r => lib.DeleteBranch(r, name, force), ct).ConfigureAwait(false);
-    }
-
-    public async Task RenameBranchAsync(string oldName, string newName, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        await context.WithRepositoryAsync(r => lib.RenameBranch(r, oldName, newName), ct).ConfigureAwait(false);
-    }
-
     public async Task SetUpstreamAsync(string branchName, string upstreamRef, CancellationToken ct = default)
     {
         using var _ = context.BeginSelfOperation();
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = ["branch", $"--set-upstream-to={upstreamRef}", branchName],
             WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
+        }, innerCt), ct).ConfigureAwait(false);
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, "Set upstream");
-    }
-
-    public async Task<TagInfo> CreateTagAsync(string name, string target, string? message, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        return await context.WithRepositoryAsync(r => lib.CreateTag(r, name, target, message,
-            message is null ? null : BuildTagger(r)), ct).ConfigureAwait(false);
-    }
-
-    public async Task DeleteTagAsync(string name, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        await context.WithRepositoryAsync(r => lib.DeleteTag(r, name), ct).ConfigureAwait(false);
-    }
-
-    // ── Remotes ──
-
-    public async Task AddRemoteAsync(string name, string url, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        await context.WithRepositoryAsync(r => lib.AddRemote(r, name, url), ct).ConfigureAwait(false);
-    }
-
-    public async Task RemoveRemoteAsync(string name, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        await context.WithRepositoryAsync(r => lib.RemoveRemote(r, name), ct).ConfigureAwait(false);
-    }
-
-    public async Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        await context.WithRepositoryAsync(r => lib.SetRemoteUrl(r, name, url), ct).ConfigureAwait(false);
-    }
-
-    public async Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default)
-    {
-        using var _ = context.BeginSelfOperation();
-        return await context.WithRepositoryAsync(r => lib.RenameRemote(r, oldName, newName), ct).ConfigureAwait(false);
     }
 
     // ── Network (always CLI) ──
@@ -416,7 +207,7 @@ public sealed class GitGateway(
             // no-op, since the transport plan was decided before it could apply. One
             // remote failing to route doesn't stop the others; the last failure (if any) is what
             // the caller sees, matching git's own "try every remote, report failures" behaviour.
-            var remotes = await context.WithRepositoryAsync(lib.ProjectRemotes, ct).ConfigureAwait(false);
+            var remotes = await context.RemoteConfig.GetRemotesAsync(ct).ConfigureAwait(false);
             HistoriaGitException? lastError = null;
             foreach (var r in remotes)
             {
@@ -445,6 +236,10 @@ public sealed class GitGateway(
         await RunNetworkAsync(args, "Fetch", remote, progress, ct, options.Background).ConfigureAwait(false);
     }
 
+    // Deliberately not wrapped in WithWriteLockAsync: pull can raise an interactive askpass
+    // credential prompt mid-process. Holding the write lock while the user sits at the prompt
+    // would block all other git write operations on the repository. Any concurrency collision
+    // with another write surfaces naturally as Git's own index lock error.
     public async Task PullAsync(string remote, string branch, GitPullOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default)
     {
         var args = new List<string> { "pull", "--progress" };
@@ -488,7 +283,7 @@ public sealed class GitGateway(
         string? remoteUrl = null;
         if (remote is not null)
         {
-            var remotes = await context.WithRepositoryAsync(lib.ProjectRemotes, ct).ConfigureAwait(false);
+            var remotes = await context.RemoteConfig.GetRemotesAsync(ct).ConfigureAwait(false);
             remoteUrl = remotes.FirstOrDefault(r => r.Name == remote)?.Url;
         }
 
@@ -625,13 +420,6 @@ public sealed class GitGateway(
     private static bool HostMatches(string host, string domain) =>
         string.Equals(host, domain, StringComparison.OrdinalIgnoreCase)
         || host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase);
-
-    private static Signature BuildTagger(Repository repo)
-    {
-        var name = repo.Config.Get<string>("user.name")?.Value ?? "Historia";
-        var email = repo.Config.Get<string>("user.email")?.Value ?? "Historia@localhost";
-        return new Signature(name, email, DateTimeOffset.Now);
-    }
 
     private static RepositoryStatus PopulateSizes(RepositoryStatus status, string repoPath)
     {

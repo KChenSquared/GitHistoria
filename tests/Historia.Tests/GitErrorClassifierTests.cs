@@ -23,6 +23,7 @@ public class GitErrorClassifierTests
     [InlineData("error: Your local changes to the following files would be overwritten by checkout:", GitErrorKind.UncommittedChanges)]
     [InlineData("fatal: Unable to create '/repo/.git/index.lock': File exists.", GitErrorKind.LockedIndex)]
     [InlineData("fatal: not a git repository (or any of the parent directories): .git", GitErrorKind.NotAGitRepository)]
+    [InlineData("fatal: detected dubious ownership in repository at '/repo'\nTo add an exception for this directory, call:\n\tgit config --global --add safe.directory /repo", GitErrorKind.UnsafeRepository)]
     [InlineData("This repository is configured for Git LFS but 'git-lfs' was not found on your path.", GitErrorKind.LfsMissing)]
     [InlineData("fatal: refusing to merge unrelated histories", GitErrorKind.UnrelatedHistories)]
     public void Classify_maps_known_stderr(string stderr, GitErrorKind expected)
@@ -47,4 +48,12 @@ public class GitErrorClassifierTests
     [Fact]
     public void Exit_zero_with_no_stderr_is_none()
         => Assert.Equal(GitErrorKind.None, GitErrorClassifier.Classify(0, ""));
+
+    [Fact]
+    public void Unsafe_repository_message_names_path_and_safe_directory_command()
+    {
+        var msg = GitErrorClassifier.FormatUnsafeRepositoryMessage("/path/to/repo");
+        Assert.Contains("/path/to/repo", msg);
+        Assert.Contains("git config --global --add safe.directory", msg);
+    }
 }

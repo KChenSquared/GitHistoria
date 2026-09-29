@@ -1,4 +1,4 @@
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 
 /// <summary>The Graph column draws each lane's vertical pieces as merged runs, one line per
 /// run rather than one per row per lane. Drawing per row again produces no error, only
@@ -142,7 +142,6 @@ public sealed class GraphLaneRunDrawTests
         var locator = new GitExecutableLocator();
         locator.ResolveAsync(null).GetAwaiter().GetResult();
         sc.AddSingleton<IGitExecutableLocator>(locator);
-        sc.AddSingleton<LibGit2Service>();
         sc.AddSingleton<IBackgroundWorkGate, BackgroundWorkGate>();
         sc.AddSingleton<IGraphLayoutService, GraphLayoutService>();
         sc.AddSingleton<IRepoStateCache, RepoStateCache>();

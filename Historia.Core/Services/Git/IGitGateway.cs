@@ -1,9 +1,8 @@
 namespace Historia.Services.Git;
 
 /// <summary>
-/// The only Git surface the UI and higher-level services talk to. Decides per
-/// operation whether to use LibGit2Sharp (fast, in-process, no network) or the Git CLI
-/// (canonical semantics, credential-aware, network-capable) per the routing table.
+/// The only Git surface the UI and higher-level services talk to. Routes all Git operations
+/// through the Git CLI (canonical semantics, credential-aware, network-capable).
 /// One instance per repository tab, owned by <c>RepositoryContext</c>.
 /// </summary>
 public interface IGitGateway
@@ -14,23 +13,14 @@ public interface IGitGateway
     Task<RepositoryInfo> GetRepositoryInfoAsync(CancellationToken ct = default);
     Task<RepositoryStatus> GetStatusAsync(CancellationToken ct = default);
 
-    /// <summary>
-    /// Paged linear commit history. Retained as the paged-history API surface — the
-    /// underlying <c>LibGit2Service.ProjectCommits</c> is still covered by tests.
-    /// </summary>
-    Task<IReadOnlyList<CommitSummary>> GetCommitsAsync(CommitQuery query, CancellationToken ct = default);
-    Task<CommitDetail> GetCommitDetailAsync(ObjectId id, CancellationToken ct = default);
-    Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(ObjectId id, int parentIndex, CancellationToken ct = default);
+    Task<CommitDetail> GetCommitDetailAsync(GitObjectId id, CancellationToken ct = default);
+    Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default);
     Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default);
     Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default);
 
-    /// <summary>Ahead/behind of a local branch versus its upstream, computed lazily per visible row.</summary>
-    Task<AheadBehind?> GetAheadBehindAsync(string branchCanonicalName, CancellationToken ct = default);
-
-    /// <summary>Ahead/behind between any two refs via <c>git rev-list --left-right --count</c>
-    /// (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c>).
+    /// <summary>Ahead/behind between any two refs via <c>git rev-list --left-right --count</c>.
     /// Returns <see langword="null"/> when either ref cannot be resolved, e.g. a branch with no
     /// upstream — that is an ordinary case for a caller asking "is this ahead?", not an error.</summary>
     Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default);
@@ -51,7 +41,7 @@ public interface IGitGateway
     Task StageAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
     Task UnstageAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
     Task DiscardAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
-    Task<ObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default);
+    Task<GitObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default);
 
     /// <summary>Merges <paramref name="refish"/> into the current branch (CLI-routed). Conflicts surface as <see cref="Models.GitErrorKind.MergeConflict"/>.</summary>
     Task MergeAsync(string refish, bool noFastForward, CancellationToken ct = default);
@@ -61,7 +51,7 @@ public interface IGitGateway
 
     /// <summary>Commits reachable from <paramref name="target"/>..HEAD — i.e. how many commits
     /// would leave the branch if it were reset to <paramref name="target"/> — via
-    /// <c>git rev-list --count</c> (CLI-routed, not libgit2's <c>CalculateHistoryDivergence</c>).</summary>
+    /// <c>git rev-list --count</c>.</summary>
     Task<int> CountCommitsLeavingAsync(string target, CancellationToken ct = default);
 
     // ── Ref mutations ──
@@ -79,7 +69,7 @@ public interface IGitGateway
     Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default);
 
     /// <summary>Renames a remote's alias. A config + refspec edit, never a network call.
-    /// Returns the non-default fetch refspecs libgit2 could not rewrite automatically,
+    /// Returns the non-default fetch refspecs git could not rewrite automatically,
     /// if any — the caller should surface those to the user rather than drop them silently.</summary>
     Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default);
 

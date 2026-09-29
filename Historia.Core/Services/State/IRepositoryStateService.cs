@@ -1,8 +1,8 @@
 namespace Historia.Services.State;
 
 public sealed record StatusChangedEventArgs(RepositoryStatus Status);
-public sealed record SelectionChangedEventArgs(ObjectId? CommitId);
-public sealed record RevealCommitEventArgs(ObjectId CommitId);
+public sealed record SelectionChangedEventArgs(GitObjectId? CommitId);
+public sealed record RevealCommitEventArgs(GitObjectId CommitId);
 public sealed record RefsChangedEventArgs(
     IReadOnlyList<BranchInfo> Branches,
     IReadOnlyList<TagInfo> Tags,
@@ -30,7 +30,7 @@ public interface IRepositoryStateService
     IReadOnlyList<BranchInfo> Branches { get; }
     IReadOnlyList<TagInfo> Tags { get; }
     IReadOnlyList<RemoteInfo> Remotes { get; }
-    ObjectId? SelectedCommitId { get; }
+    GitObjectId? SelectedCommitId { get; }
     IReadOnlyList<string> SelectedPaths { get; }
     GitProfile? ActiveProfile { get; }
     OperationState PendingOperation { get; }
@@ -50,7 +50,7 @@ public interface IRepositoryStateService
     // ── Mutations: safe to call from any thread ──
     void SetKeepConflictResolverOpen(bool keep);
     void SetSelectedConflictPath(string? path);
-    void SetSelectedCommit(ObjectId? id);
+    void SetSelectedCommit(GitObjectId? id);
     void SetSelectedPaths(IReadOnlyList<string> paths);
 
     /// <summary>
@@ -58,7 +58,7 @@ public interface IRepositoryStateService
     /// Selection is a separate concern — call <see cref="SetSelectedCommit"/> too.
     /// A no-op consumer is fine; the graph is the only listener.
     /// </summary>
-    void RequestRevealCommit(ObjectId id);
+    void RequestRevealCommit(GitObjectId id);
 
     /// <summary>Opens or closes the center diff. Idempotent; safe to call from any thread.</summary>
     void SetOpenDiff(DiffRequest? request);

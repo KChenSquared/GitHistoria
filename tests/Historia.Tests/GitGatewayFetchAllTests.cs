@@ -28,7 +28,6 @@ public sealed class GitGatewayFetchAllTests : IAsyncDisposable
 
     private GitGateway MakeGateway(RepositoryContext ctx, IGitCliService cli) => new(
         ctx,
-        _host.Provider.GetRequiredService<LibGit2Service>(),
         cli,
         _host.Provider.GetRequiredService<IRepoLayoutService>(),
         _host.Provider.GetRequiredService<ICredentialVaultService>());

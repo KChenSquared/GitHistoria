@@ -162,16 +162,20 @@ public class LaneRunBuilderTests
             var actual = new Dictionary<(int Lane, int Half), int>();
             foreach (var run in runs)
             {
-                Assert.True(run.StartHalf < run.EndHalf, $"frame {frame}: empty run {run}");
+                if (run.StartHalf >= run.EndHalf)
+                    Assert.Fail($"frame {frame}: empty run {run}");
                 for (var h = run.StartHalf; h < run.EndHalf; h++)
-                    Assert.True(actual.TryAdd((run.Lane, h), run.ColorIndex), $"frame {frame}: overlapping runs at lane {run.Lane} half {h}");
+                    if (!actual.TryAdd((run.Lane, h), run.ColorIndex))
+                        Assert.Fail($"frame {frame}: overlapping runs at lane {run.Lane} half {h}");
             }
             Assert.Equal(expected.OrderBy(kv => kv.Key), actual.OrderBy(kv => kv.Key));
 
+            // Failure messages are built only on failure: formatting one per pair of runs is what
+            // made this test take half a minute.
             foreach (var a in runs)
                 foreach (var b in runs)
-                    Assert.False(a.Lane == b.Lane && a.ColorIndex == b.ColorIndex && a.EndHalf == b.StartHalf,
-                        $"frame {frame}: runs {a} and {b} touch but were not merged");
+                    if (a.Lane == b.Lane && a.ColorIndex == b.ColorIndex && a.EndHalf == b.StartHalf)
+                        Assert.Fail($"frame {frame}: runs {a} and {b} touch but were not merged");
         }
     }
 

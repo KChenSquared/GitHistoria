@@ -35,10 +35,10 @@ public sealed class GraphCliQueryShapeTests : IAsyncDisposable
         return ctx;
     }
 
-    private static List<ObjectId> Ids(GraphLayoutResult r) =>
+    private static List<GitObjectId> Ids(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
-    private static ObjectId Id(string sha) => new(sha.Trim());
+    private static GitObjectId Id(string sha) => GitObjectId.Parse(sha.Trim());
 
     /// <summary>main: c1 ← c2 (HEAD); feature: c2 ← f1; other: c1 ← o1.</summary>
     private (TestRepositoryBuilder Repo, string C1, string C2, string F1, string O1) ThreeBranches()
@@ -84,7 +84,7 @@ public sealed class GraphCliQueryShapeTests : IAsyncDisposable
             SelectedRefs = ["refs/heads/feature"],
         });
 
-        Assert.Equal(new HashSet<ObjectId> { Id(f1), Id(c2), Id(c1) }, Ids(result).ToHashSet());
+        Assert.Equal(new HashSet<GitObjectId> { Id(f1), Id(c2), Id(c1) }, Ids(result).ToHashSet());
         Assert.DoesNotContain(Id(o1), Ids(result));
     }
 
@@ -258,6 +258,8 @@ public sealed class GraphCliQueryShapeTests : IAsyncDisposable
         public bool Missing { get; set; } = true;
         public GitExecutableInfo Current => Missing ? GitExecutableInfo.NotFound : real.Current;
         public Task<GitExecutableInfo> ResolveAsync(string? userOverridePath, CancellationToken ct = default) =>
+            Task.FromResult(Current);
+        public Task<GitExecutableInfo> WhenResolvedAsync(CancellationToken ct = default) =>
             Task.FromResult(Current);
     }
 

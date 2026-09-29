@@ -5,7 +5,7 @@ public class DagLayoutEngineTests
 {
     private readonly DagLayoutEngine _engine = new();
 
-    private static ObjectId Sha(int n) => new(n.ToString("x40"));
+    private static GitObjectId Sha(int n) => GitObjectId.Parse(n.ToString("x40"));
 
     private static CommitMetadata Meta(int n, int parentCount) => new()
     {
@@ -23,8 +23,8 @@ public class DagLayoutEngineTests
         new(Sha(id), parents.Select(Sha).ToList(), Meta(id, parents.Length));
 
     private GraphLayoutResult Compute(IReadOnlyList<RawCommit> commits, int maxRows = 1000,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? deco = null,
-        Func<ObjectId, ObjectId, bool>? isAncestor = null)
+        IReadOnlyDictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>? deco = null,
+        Func<GitObjectId, GitObjectId, bool>? isAncestor = null)
         => _engine.Compute(commits, deco, maxRows, isAncestor: isAncestor);
 
     /// <summary>2: Segments/Elbows are no longer flat arrays on <see cref="GraphLayout"/>
@@ -42,13 +42,13 @@ public class DagLayoutEngineTests
 
     /// <summary>An ancestry oracle over a synthetic commit list — <c>f(a, b)</c> is true when
     /// <c>a</c> is an ancestor of (or equal to) <c>b</c>, walking parent links.</summary>
-    private static Func<ObjectId, ObjectId, bool> AncestryOf(IReadOnlyList<RawCommit> commits)
+    private static Func<GitObjectId, GitObjectId, bool> AncestryOf(IReadOnlyList<RawCommit> commits)
     {
         var byId = commits.ToDictionary(c => c.Id);
         return (a, b) =>
         {
-            var seen = new HashSet<ObjectId>();
-            var stack = new Stack<ObjectId>();
+            var seen = new HashSet<GitObjectId>();
+            var stack = new Stack<GitObjectId>();
             stack.Push(b);
             while (stack.Count > 0)
             {
@@ -235,7 +235,7 @@ public class DagLayoutEngineTests
     public void Decorations_attach_to_the_right_rows_including_multiple_on_one_commit()
     {
         var commits = new[] { C(3, 2), C(2, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(3)] = [new(DecorationType.Head, "HEAD"), new(DecorationType.LocalBranch, "main")],
             [Sha(1)] = [new(DecorationType.Tag, "v1.0")],
@@ -254,7 +254,7 @@ public class DagLayoutEngineTests
     public void Branch_decoration_seeds_a_stable_lane_color()
     {
         var commits = new[] { C(2, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(2)] = [new(DecorationType.LocalBranch, "feature/auth")],
         };
@@ -390,7 +390,7 @@ public class DagLayoutEngineTests
         // NEWEST, so it — not the older branch — stays collinear with the shared mainline on
         // lane 0. No HEAD badge and no oracle: the plain base rule applies.
         var commits = new[] { C(21, 20), C(20, 10), C(12, 10), C(10, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(21)] = [new(DecorationType.LocalBranch, "v9.2-fixes2")],
             [Sha(12)] = [new(DecorationType.LocalBranch, "v9.1-relogo")],
@@ -422,7 +422,7 @@ public class DagLayoutEngineTests
         // main (tip 30, checked out) is the base both feature branches were built on:
         //   feat-b: 30 → 60   (newest)      feat-a: 30 → 50
         var commits = new[] { C(60, 30), C(50, 40), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(60)] = [new(DecorationType.LocalBranch, "feat-b")],
             [Sha(50)] = [new(DecorationType.LocalBranch, "feat-a")],
@@ -450,7 +450,7 @@ public class DagLayoutEngineTests
         // main (tip 20, checked out) is the base of feat-a (20 → 30 → 40) only. feat-c (1 → 70 →
         // 80) is newer and shares nothing with main past the root.
         var commits = new[] { C(80, 70), C(70, 1), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(80)] = [new(DecorationType.LocalBranch, "feat-c")],
             [Sha(40)] = [new(DecorationType.LocalBranch, "feat-a")],
@@ -476,7 +476,7 @@ public class DagLayoutEngineTests
         // Three branches off the shared root, sharing nothing else. main (tip 20) is checked out
         // and is an ancestor of neither newer tip.
         var commits = new[] { C(60, 50), C(50, 1), C(40, 30), C(30, 1), C(20, 10), C(10, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(60)] = [new(DecorationType.LocalBranch, "feat-y")],
             [Sha(40)] = [new(DecorationType.LocalBranch, "feat-x")],
@@ -502,7 +502,7 @@ public class DagLayoutEngineTests
         // oracle argument at all, this graph (identical to the "ancestor of no newer tip" case
         // above) must reach the SAME conclusion, not the old "skip" behavior.
         var commits = new[] { C(60, 50), C(50, 1), C(40, 30), C(30, 1), C(20, 10), C(10, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(60)] = [new(DecorationType.LocalBranch, "feat-y")],
             [Sha(40)] = [new(DecorationType.LocalBranch, "feat-x")],
@@ -533,7 +533,7 @@ public class DagLayoutEngineTests
         for (var trial = 0; trial < 30; trial++)
         {
             var commits = RandomTopoDag(rng, count: 20 + rng.Next(60));
-            var rowById = new Dictionary<ObjectId, int>();
+            var rowById = new Dictionary<GitObjectId, int>();
             for (var i = 0; i < commits.Count; i++)
                 rowById[commits[i].Id] = i;
             var brute = AncestryOf(commits);
@@ -581,7 +581,7 @@ public class DagLayoutEngineTests
     public void Checked_out_branch_exception_keeps_extension_identical_to_a_full_recomputation()
     {
         var commits = new[] { C(80, 70), C(70, 1), C(40, 30), C(30, 20), C(20, 10), C(10, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(80)] = [new(DecorationType.LocalBranch, "feat-c")],
             [Sha(40)] = [new(DecorationType.LocalBranch, "feat-a")],
@@ -601,7 +601,7 @@ public class DagLayoutEngineTests
     public void Single_branch_tip_window_is_unaffected_by_the_tip_priority_pass()
     {
         var commits = new[] { C(5, 4), C(4, 3), C(3, 2), C(2, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(5)] = [new(DecorationType.LocalBranch, "main")],
         };
@@ -624,7 +624,7 @@ public class DagLayoutEngineTests
         list.Insert(20, C(48, 75));                  // far-1   → row 20
         list.Insert(22, C(47, 74));                  // far-2   → row 22
         list.Insert(25, C(46, 73));                  // far-3   → row 25
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(100)] = [new(DecorationType.LocalBranch, "main")],
             [Sha(50)] = [new(DecorationType.LocalBranch, "near-a")],
@@ -638,8 +638,8 @@ public class DagLayoutEngineTests
 
         // Only the trunk + the two near-HEAD tips reserve a lane; the three far tips do not.
         Assert.Equal(
-            new[] { Sha(49), Sha(50), Sha(100) }.OrderBy(x => x.Sha),
-            r.State.TipTargetLane.Keys.OrderBy(x => x.Sha));
+            new[] { Sha(49), Sha(50), Sha(100) }.OrderBy(x => x.ToString()),
+            r.State.TipTargetLane.Keys.OrderBy(x => x.ToString()));
 
         // The far tips pack into the lanes freed by the near branches merging back — far-1/2/3 on
         // lanes 1/2/3 (3 genuinely-concurrent branches), total 4 lanes. Before the fix all six
@@ -660,7 +660,7 @@ public class DagLayoutEngineTests
     public void Tip_priority_pass_keeps_extension_identical_to_a_full_recomputation()
     {
         var commits = new[] { C(21, 20), C(20, 10), C(12, 10), C(10, 1), C(1) };
-        var deco = new Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
             [Sha(21)] = [new(DecorationType.LocalBranch, "v9.2-fixes2")],
             [Sha(12)] = [new(DecorationType.LocalBranch, "v9.1-relogo")],
@@ -698,7 +698,7 @@ public class DagLayoutEngineTests
 
     /// <summary>Decorates the chain so several lanes carry branch refs and one commit carries
     /// two — the case that used to let ref-enumeration order flip a lane's seed.</summary>
-    private static Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> BranchDecorations() =>
+    private static Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> BranchDecorations() =>
         new()
         {
             [Sha(90)] = [new(DecorationType.LocalBranch, "zeta"), new(DecorationType.LocalBranch, "main")],
@@ -728,7 +728,7 @@ public class DagLayoutEngineTests
     public void Lane_colour_does_not_depend_on_decoration_order_on_the_birth_commit()
     {
         var commits = new[] { C(2, 1), C(1) };
-        Dictionary<ObjectId, IReadOnlyList<GraphDecorationInput>> Deco(params string[] labels) =>
+        Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> Deco(params string[] labels) =>
             new() { [Sha(2)] = labels.Select(l => new GraphDecorationInput(DecorationType.LocalBranch, l)).ToArray() };
 
         var ab = Compute(commits, deco: Deco("main", "feature/auth"));
@@ -749,7 +749,7 @@ public class DagLayoutEngineTests
         var r1 = Compute(commits);
         var r2 = Compute(commits);
         Assert.Equal(r1.Layout.Rows.Select(x => x.ColorIndex), r2.Layout.Rows.Select(x => x.ColorIndex));
-        Assert.Equal((int)(StableHash.Fnv1a(Sha(3).Sha) % LanePalette.Size), r1.Layout.Rows[0].ColorIndex);
+        Assert.Equal((int)(StableHash.Fnv1a(Sha(3).ToString()) % LanePalette.Size), r1.Layout.Rows[0].ColorIndex);
     }
 
     [Fact]
@@ -943,8 +943,8 @@ public class DagLayoutEngineTests
     {
         var list = new List<RawCommit>();
         for (var i = 0; i < tips; i++)
-            list.Add(new RawCommit(Sha(1000 + i), new List<ObjectId> { Sha(1) }, Meta(1000 + i, 1)));
-        list.Add(new RawCommit(Sha(1), new List<ObjectId>(), Meta(1, 0)));
+            list.Add(new RawCommit(Sha(1000 + i), new List<GitObjectId> { Sha(1) }, Meta(1000 + i, 1)));
+        list.Add(new RawCommit(Sha(1), new List<GitObjectId>(), Meta(1, 0)));
         return list;
     }
 
@@ -968,18 +968,9 @@ public class DagLayoutEngineTests
 
     // ── Canonicalized commit ids ──
 
-    /// <summary>A commit reachable from two children (a merge convergence, or here just two
-    /// independent tips landing on the same ancestor) is referenced by a SEPARATELY-parsed
-    /// <see cref="ObjectId"/> instance from each caller — its own <c>RawCommit.Id</c>, and each
-    /// child's own <c>ParentIds</c> entry for it (<c>Sha(n)</c> here always allocates fresh,
-    /// mirroring how the real walk parses ids independently per record). Once laid out, the row's
-    /// entry in <c>RowByCommitId</c> must key on WHICHEVER instance a reservation already
-    /// interned first — not hold yet another separately-parsed copy of the same SHA.</summary>
     [Fact]
-    public void RowByCommitId_keys_on_the_same_ObjectId_instance_a_reservation_already_interned()
+    public void RowByCommitId_keys_on_the_commit_ids()
     {
-        // 10 and 11 both point at 5 as their parent — two independently-parsed ObjectId
-        // instances for "5", neither of which is 5's own RawCommit.Id (a third instance).
         var commits = new List<RawCommit>
         {
             C(11, 5),
@@ -990,16 +981,10 @@ public class DagLayoutEngineTests
         var result = Compute(commits);
         var row5 = result.Layout.RowByCommitId[Sha(5)];
 
-        var storedKey = ((IReadOnlyDictionary<ObjectId, int>)result.Layout.RowByCommitId)
+        var storedKey = ((IReadOnlyDictionary<GitObjectId, int>)result.Layout.RowByCommitId)
             .Keys.Single(k => k.Equals(Sha(5)));
 
-        var childReservationInstances = new[] { commits[0].ParentIds[0], commits[1].ParentIds[0] };
-        Assert.Contains(childReservationInstances, parentInstance => ReferenceEquals(parentInstance, storedKey));
-
-        // And it did NOT fall back to row 5's own separately-parsed RawCommit.Id.
-        Assert.False(ReferenceEquals(commits[2].Id, storedKey));
-
-        // Sanity: the layout itself is unaffected — same row assignment either way.
+        Assert.Equal(Sha(5), storedKey);
         Assert.Equal(2, row5);
     }
 

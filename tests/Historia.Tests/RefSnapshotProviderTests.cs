@@ -49,7 +49,8 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
         await using var ctx = _host.Open(_repo.Path);
         var snapshot = await ctx.RefSnapshots.GetAsync();
 
-        var expected = await ctx.WithRepositoryAsync(repo => repo.Refs
+        using var repo = new Repository(ctx.RepositoryPath);
+        var expected = repo.Refs
             .Select(r => (Ref: r, Direct: r.ResolveToDirectReference()))
             .Where(x => x.Direct?.TargetIdentifier is not null)
             .Select(x =>
@@ -61,10 +62,10 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
                 return (Name: x.Ref.CanonicalName, Target: target, Peeled: peeled?.Sha);
             })
             .OrderBy(x => x.Name, StringComparer.Ordinal)
-            .ToList());
+            .ToList();
 
         var actual = snapshot.Refs
-            .Select(r => (Name: r.CanonicalName, Target: r.Target!.Sha, Peeled: r.PeeledCommit?.Sha))
+            .Select(r => (Name: r.CanonicalName, Target: r.Target!.Value.ToString(), Peeled: r.PeeledCommit?.ToString()))
             .ToList();
 
         Assert.Equal(expected, actual);
@@ -81,7 +82,7 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
         var snapshot = await ctx.RefSnapshots.GetAsync();
 
         Assert.Equal("refs/heads/main", snapshot.HeadSymref);
-        Assert.Equal(new ObjectId(_repo.HeadSha), snapshot.HeadTarget);
+        Assert.Equal(new GitObjectId(_repo.HeadSha), snapshot.HeadTarget);
         Assert.False(snapshot.IsHeadDetached);
 
         var annotated = snapshot.Find("refs/tags/annotated")!;
@@ -93,7 +94,7 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
         _repo.Git("checkout", "-q", "--detach", "HEAD~1");
         var detached = await ctx.RefSnapshots.GetAsync();
         Assert.True(detached.IsHeadDetached);
-        Assert.Equal(new ObjectId(_repo.HeadSha), detached.HeadTarget);
+        Assert.Equal(new GitObjectId(_repo.HeadSha), detached.HeadTarget);
     }
 
     [Fact]
@@ -116,7 +117,9 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
         _repo.Git("branch", "added-later", "HEAD~1");
         var after = await ctx.RefSnapshots.GetAsync();
         Assert.NotNull(after.Find("refs/heads/added-later"));
-        Assert.Equal(2, ctx.RefSnapshots.ScanCountForTesting);
+        // At least one rescan: the context's file watcher also sees the write, and its refresh
+        // can scan the refs mid-write too when the machine is busy.
+        Assert.True(ctx.RefSnapshots.ScanCountForTesting >= 2);
     }
 
     /// <summary>Counts <c>for-each-ref</c> runs that overlap, and holds each one open a while so

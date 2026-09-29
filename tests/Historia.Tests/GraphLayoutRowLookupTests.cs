@@ -18,7 +18,7 @@ public class GraphLayoutRowLookupTests
 {
     private readonly DagLayoutEngine _engine = new();
 
-    private static ObjectId Sha(int n) => new(n.ToString("x40"));
+    private static GitObjectId Sha(int n) => GitObjectId.Parse(n.ToString("x40"));
 
     private static CommitMetadata Meta(int n, int parentCount) => new()
     {
@@ -38,7 +38,7 @@ public class GraphLayoutRowLookupTests
         var list = new List<RawCommit>(count);
         for (var n = 0; n < count; n++)
         {
-            IReadOnlyList<ObjectId> parents = n + 1 < count
+            IReadOnlyList<GitObjectId> parents = n + 1 < count
                 ? [Sha(n + 1)]
                 : [];
             list.Add(new RawCommit(Sha(n), parents, Meta(n, parents.Count)));

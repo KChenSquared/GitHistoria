@@ -93,7 +93,7 @@ public sealed class RebaseEditorView : UserControl
             Grid.SetColumn(action, 1);
             row.Children.Add(action);
 
-            var sha = Text(e.CommitId.Sha[..8], "ColorTextMuted", 11);
+            var sha = Text(e.CommitId.ToShortString(8), "ColorTextMuted", 11);
             Grid.SetColumn(sha, 2);
             row.Children.Add(sha);
 

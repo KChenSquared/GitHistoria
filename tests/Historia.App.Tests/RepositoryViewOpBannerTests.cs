@@ -1,4 +1,4 @@
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public class RepositoryViewOpBannerTests : IDisposable
@@ -32,7 +32,6 @@ public class RepositoryViewOpBannerTests : IDisposable
         sc.AddSingleton<IRepoIdentityService, RepoIdentityService>();
         sc.AddSingleton<ICredentialVaultService, ConflictResolverViewTests.FakeVault>();
         sc.AddSingleton<IUiDispatcher, Historia.Platform.UiDispatcher>();
-        sc.AddSingleton<LibGit2Service>();
         sc.AddSingleton<IBackgroundWorkGate, BackgroundWorkGate>();
         sc.AddSingleton<IRepoStateCache, RepoStateCache>();
         sc.AddSingleton<IGraphLayoutService, GraphLayoutService>();

@@ -12,7 +12,7 @@ public sealed class CommitDateDisplayTests : IAsyncDisposable
 
     private static GraphQuery Q => new() { RefScope = GraphRefScope.AllRefs };
 
-    private static List<ObjectId> RowIds(GraphLayoutResult r) =>
+    private static List<GitObjectId> RowIds(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
     [Fact]

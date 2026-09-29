@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>What the user chose in Settings &gt; Appearance.</summary>
 public enum ThemeMode
@@ -129,6 +129,12 @@ public enum GitErrorKind
     /// a stalled credential helper or a hung network op is never reported as an opaque
     /// <see cref="Unknown"/> failure with no stderr to classify.</summary>
     TimedOut,
+
+    /// <summary>
+    /// Git refused the repository due to safe.directory ownership checks ("detected dubious ownership").
+    /// Surfaces an actionable message with the command to allow the repository.
+    /// </summary>
+    UnsafeRepository,
 
     Unknown,
 }

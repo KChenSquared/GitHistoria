@@ -6,11 +6,8 @@ namespace Historia.Tests;
 /// stops — no resume, no re-prime that skips rows, no disk write — until the next compute
 /// rebuilds from row 0. Without this, the graph showed rows from two walks and the old walk key's
 /// on-disk store received the new walk's rows.
-/// Serial: the headless-reorder case sets the process-wide
-/// <see cref="GraphLayoutService.TestReorderBatchObserved"/> seam.
 /// </summary>
 [Trait("tier", "git")]
-[Collection("serial")]
 public sealed class GraphWalkSupersedeTests : IAsyncDisposable
 {
     private readonly StateDir _state = new();
@@ -46,11 +43,11 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
 
     /// <summary>A commit no earlier walk saw, on a new branch — it sorts first by date, so a
     /// walk over the new tips starts with it.</summary>
-    private static ObjectId AddSideTip(TestRepositoryBuilder repo, string branch)
+    private static GitObjectId AddSideTip(TestRepositoryBuilder repo, string branch)
     {
         var side = repo.Git("commit-tree", "HEAD~5^{tree}", "-p", "HEAD~5", "-m", branch).Trim();
         repo.Git("update-ref", $"refs/heads/{branch}", side);
-        return new ObjectId(side);
+        return new GitObjectId(side);
     }
 
     private static object GetCache(GraphLayoutService svc, RepositoryContext ctx)
@@ -67,7 +64,7 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
     private static int TotalWalked(object cache) =>
         Get<int>(cache, "SpilledRows") + ((System.Collections.ICollection)cache.GetType().GetProperty("Commits")!.GetValue(cache)!).Count;
 
-    private static List<ObjectId> Ids(GraphLayoutResult r) =>
+    private static List<GitObjectId> Ids(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
     private static async Task<long> CurrentWalkKeyAsync(RepositoryContext ctx, GraphQuery query)
@@ -200,11 +197,10 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
         // The compute reads those refs, then waits on the gate; the tips move meanwhile.
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = ctx.WithRepositoryAsync(_ =>
+        _ = GraphLayoutService.GetGateFor(ctx).ExecuteAsync(async () =>
         {
             entered.SetResult();
-            release.Task.Wait();
-            return 0;
+            await release.Task;
         });
         await entered.Task;
         Task<GraphLayoutResult> compute;
@@ -236,16 +232,15 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
     private static SemaphoreSlim WalkLock(object cache) =>
         (SemaphoreSlim)cache.GetType().GetField("WalkLock")!.GetValue(cache)!;
 
-    /// <summary>Holds the repo gate until <see cref="IAsyncDisposable.DisposeAsync"/>.</summary>
+    /// <summary>Holds the graph prepare gate until <see cref="IAsyncDisposable.DisposeAsync"/>.</summary>
     private static async Task<IAsyncDisposable> HoldGateAsync(RepositoryContext ctx)
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var held = ctx.WithRepositoryAsync(_ =>
+        var held = GraphLayoutService.GetGateFor(ctx).ExecuteAsync(async () =>
         {
             entered.SetResult();
-            release.Task.Wait();
-            return 0;
+            await release.Task;
         });
         await entered.Task;
         return new GateHold(release, held);

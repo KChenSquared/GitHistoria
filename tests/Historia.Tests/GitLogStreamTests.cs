@@ -36,7 +36,7 @@ public sealed class GitLogStreamTests
 
         var raw = GitLogStream.ParseRecord(record);
 
-        Assert.Equal(new ObjectId(Sha(1)), raw.Id);
+        Assert.Equal(GitObjectId.Parse(Sha(1)), raw.Id);
         Assert.Empty(raw.ParentIds);
         Assert.Equal(0, raw.Metadata.ParentCount);
         Assert.Equal("root commit", raw.Metadata.MessageShort);
@@ -53,8 +53,8 @@ public sealed class GitLogStreamTests
         var raw = GitLogStream.ParseRecord(record);
 
         Assert.Equal(2, raw.ParentIds.Count);
-        Assert.Equal(new ObjectId(Sha(1)), raw.ParentIds[0]);
-        Assert.Equal(new ObjectId(Sha(2)), raw.ParentIds[1]);
+        Assert.Equal(GitObjectId.Parse(Sha(1)), raw.ParentIds[0]);
+        Assert.Equal(GitObjectId.Parse(Sha(2)), raw.ParentIds[1]);
         Assert.Equal(2, raw.Metadata.ParentCount);
     }
 

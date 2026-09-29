@@ -19,8 +19,7 @@ public sealed class TestScratchTests
             var dir = TestScratch.NewDirectory("unit-test-");
             Assert.StartsWith(custom, dir, StringComparison.OrdinalIgnoreCase);
             Assert.True(Directory.Exists(dir));
-            Directory.Delete(dir);
-            if (Directory.Exists(custom)) Directory.Delete(custom);
+            if (Directory.Exists(custom)) Directory.Delete(custom, recursive: true);
         }
         finally
         {

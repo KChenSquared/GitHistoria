@@ -1,4 +1,4 @@
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 [Trait("tier", "ui")]
 
 public class RepoSettingsIdentityTests : IDisposable
@@ -22,7 +22,6 @@ public class RepoSettingsIdentityTests : IDisposable
         sc.AddSingleton<IRepoLayoutService>(_layoutService);
         sc.AddSingleton<IProfileService>(_profileService);
         sc.AddSingleton<IWorkspaceService>(_workspaceService);
-        sc.AddSingleton<LibGit2Service>();
         var locator = new GitExecutableLocator();
         locator.ResolveAsync(null).GetAwaiter().GetResult();
         sc.AddSingleton<IGitExecutableLocator>(locator);

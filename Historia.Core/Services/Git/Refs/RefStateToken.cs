@@ -26,6 +26,7 @@ public static class RefStateToken
         void Feed(string s) => h = StableHash.Fnv1a64Step(h, s);
 
         FeedFile(Feed, "packed-refs", Path.Combine(commonDir, "packed-refs"), withCreation: true);
+        FeedFile(Feed, "config", Path.Combine(commonDir, "config"), withCreation: false);
         FeedTree(Feed, "common:", Path.Combine(commonDir, "refs"));
         if (!PathsEqual(gitDir, commonDir))
             FeedTree(Feed, "worktree:", Path.Combine(gitDir, "refs"));

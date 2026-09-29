@@ -73,7 +73,7 @@ public sealed partial class PatchService(IGitCliService cli) : IPatchService
             throw new HistoriaGitException(GitErrorKind.Unknown, $"Patch cannot be applied: {check.FailureReason}");
 
         using var _ = context.BeginSelfOperation();
-        var result = await RunApplyAsync(context, patch, target, reverse, check: false, ct).ConfigureAwait(false);
+        var result = await context.WithWriteLockAsync(innerCt => RunApplyAsync(context, patch, target, reverse, check: false, innerCt), ct).ConfigureAwait(false);
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, "Apply patch");
     }

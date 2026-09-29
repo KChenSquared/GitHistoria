@@ -21,7 +21,6 @@ public sealed class MiniHost : IAsyncDisposable
         var sc = new ServiceCollection();
         sc.AddSingleton<ISettingsService>(Settings);
         sc.AddSingleton<IRepoLayoutService, RepoLayoutService>();
-        sc.AddSingleton<LibGit2Service>();
         sc.AddSingleton<IGitExecutableLocator>(SharedLocator.Value);
         sc.AddSingleton<IGitCliService, GitCliService>();
         sc.AddSingleton<ICredentialVaultService, FakeVault>();
@@ -30,8 +29,29 @@ public sealed class MiniHost : IAsyncDisposable
 
     public RepositoryContext Open(string path) => RepositoryContext.Open(path, Provider);
 
+    private readonly List<ServiceProvider> _extraProviders = [];
+
+    /// <summary>Opens <paramref name="path"/> with <paramref name="cli"/> in place of the real
+    /// CLI; the provider behind it is disposed with this host.</summary>
+    public RepositoryContext Open(string path, IGitCliService cli)
+    {
+        var sc = new ServiceCollection();
+        sc.AddSingleton<ISettingsService>(Settings);
+        sc.AddSingleton<IRepoLayoutService, RepoLayoutService>();
+        sc.AddSingleton<IGitExecutableLocator>(SharedLocator.Value);
+        sc.AddSingleton(cli);
+        sc.AddSingleton<ICredentialVaultService, FakeVault>();
+        var provider = sc.BuildServiceProvider();
+        _extraProviders.Add(provider);
+        return RepositoryContext.Open(path, provider);
+    }
+
+    public IGitCliService Cli => Provider.GetRequiredService<IGitCliService>();
+
     public async ValueTask DisposeAsync()
     {
+        foreach (var provider in _extraProviders)
+            await provider.DisposeAsync();
         await Provider.DisposeAsync();
         await Settings.DisposeAsync();
         _state.Dispose();

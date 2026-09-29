@@ -1,4 +1,4 @@
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 [Trait("tier", "ui")]
 
 /// <summary>UI half: a submodule-linked tab renders shorter and without its own leading
@@ -57,7 +57,6 @@ public sealed class AppBandLinkedTabsTests : IAsyncDisposable
         var locator = new GitExecutableLocator();
         locator.ResolveAsync(null).GetAwaiter().GetResult();
         sc.AddSingleton<IGitExecutableLocator>(locator);
-        sc.AddSingleton<LibGit2Service>();
         sc.AddSingleton<IBackgroundWorkGate, BackgroundWorkGate>();
         sc.AddSingleton<IGraphLayoutService, GraphLayoutService>();
         sc.AddSingleton<IRepoStateCache, RepoStateCache>();

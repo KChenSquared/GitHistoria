@@ -32,11 +32,11 @@ public sealed partial class CommitGraphControl
 
     // ── Context menus ──
 
-    private void ShowCommitContextMenu(ObjectId id)
+    private void ShowCommitContextMenu(GitObjectId id)
     {
         if (_context is not { } ctx)
             return;
-        var sha = id.Sha;
+        var sha = id.ToString();
         var shortSha = sha[..7];
         var items = new List<Control>
         {
@@ -159,7 +159,7 @@ public sealed partial class CommitGraphControl
         var items = new List<Control>();
 
         // The pill's own commit — for "Create branch/tag here" on a branch or tag label.
-        ObjectId? pillId = _layout is { } lay && deco.RowIndex >= 0 && deco.RowIndex < lay.Layout.Commits.Count
+        GitObjectId? pillId = _layout is { } lay && deco.RowIndex >= 0 && deco.RowIndex < lay.Layout.Commits.Count
             ? lay.Layout.Commits[deco.RowIndex].Id
             : null;
 
@@ -212,10 +212,10 @@ public sealed partial class CommitGraphControl
         if (pillId is { } bid &&
             deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch or DecorationType.Tag)
         {
-            var shortSha = bid.Sha[..7];
+            var shortSha = bid.ToShortString(7);
             if (items.Count > 0) items.Add(new Separator());
-            items.Add(MenuLeaf("Create branch here…", () => PromptCreateBranch(ctx, bid.Sha, shortSha)));
-            items.Add(MenuLeaf("Create tag here…", () => PromptCreateTag(ctx, bid.Sha, shortSha)));
+            items.Add(MenuLeaf("Create branch here…", () => PromptCreateBranch(ctx, bid.ToString(), shortSha)));
+            items.Add(MenuLeaf("Create tag here…", () => PromptCreateTag(ctx, bid.ToString(), shortSha)));
         }
 
         // "Copy branch name" — the one common-denominator item the pill menu still lacked.
@@ -309,7 +309,7 @@ public sealed partial class CommitGraphControl
     private static string TruncateBranchLabelForMenu(string name) =>
         name.Length <= MenuNameMaxChars ? name : name[..(MenuNameMaxChars - 1)] + "…";
 
-    private void ShowDropIntentMenu(ObjectId commitId, string shortSha, string branchLabel)
+    private void ShowDropIntentMenu(GitObjectId commitId, string shortSha, string branchLabel)
     {
         if (_context is not { } ctx)
             return;
@@ -317,8 +317,8 @@ public sealed partial class CommitGraphControl
         {
             new MenuItem { Header = $"Drop {shortSha} → {branchLabel}", IsEnabled = false },
             new Separator(),
-            MenuLeaf($"Merge {shortSha} into current branch", () => MergeAsync(ctx, commitId.Sha, shortSha)),
-            MenuLeaf("Reset current branch to this commit (mixed)", () => ResetAsync(ctx, commitId.Sha, GitResetMode.Mixed, shortSha)),
+            MenuLeaf($"Merge {shortSha} into current branch", () => MergeAsync(ctx, commitId.ToString(), shortSha)),
+            MenuLeaf("Reset current branch to this commit (mixed)", () => ResetAsync(ctx, commitId.ToString(), GitResetMode.Mixed, shortSha)),
             MenuLeaf($"Cherry-pick {shortSha} onto current branch", () => CherryPickAsync([commitId])),
             MenuLeaf($"Rebase current branch onto {branchLabel}", () => _nav.RequestNavigate($"rebase?onto={Uri.EscapeDataString(branchLabel)}")),
         };
@@ -361,11 +361,11 @@ public sealed partial class CommitGraphControl
         await Guard(() => ctx.Gateway.ResetAsync(sha, mode, ctx.Lifetime), ctx, "Reset");
     }
 
-    private async Task CherryPickAsync(IReadOnlyList<ObjectId> ids)
+    private async Task CherryPickAsync(IReadOnlyList<GitObjectId> ids)
     {
         if (_context is not { } ctx)
             return;
-        var isMerge = ids.Count == 1 && await ctx.WithRepositoryAsync(r => r.Lookup<Commit>(ids[0])?.Parents.Count() > 1, ctx.Lifetime);
+        var isMerge = ids.Count == 1 && await CommitMergeDetection.IsMergeAsync(_layout, _layoutQuery, ctx.Gateway, ids[0], ctx.Lifetime);
         var mainline = isMerge ? 1 : (int?)null;
         if (!await _dialogs.ConfirmAsync("Cherry-pick",
                 $"Cherry-pick {ids.Count} commit(s) onto {_state?.CurrentBranch?.Name ?? "the current branch"}?"
@@ -384,11 +384,11 @@ public sealed partial class CommitGraphControl
         }
     }
 
-    private async Task RevertAsync(IReadOnlyList<ObjectId> ids)
+    private async Task RevertAsync(IReadOnlyList<GitObjectId> ids)
     {
         if (_context is not { } ctx)
             return;
-        var isMerge = ids.Count == 1 && await ctx.WithRepositoryAsync(r => r.Lookup<Commit>(ids[0])?.Parents.Count() > 1, ctx.Lifetime);
+        var isMerge = ids.Count == 1 && await CommitMergeDetection.IsMergeAsync(_layout, _layoutQuery, ctx.Gateway, ids[0], ctx.Lifetime);
         if (!await _dialogs.ConfirmAsync("Revert", $"Revert {ids.Count} commit(s)?" + (isMerge ? " (merge commit — mainline parent 1)" : "")))
             return;
         try
@@ -436,7 +436,7 @@ public sealed partial class CommitGraphControl
 
     /// <summary>Copies the full commit message (subject + body). Uses the message-body cache
     /// when warm, else fetches the detail once.</summary>
-    private void CopyCommitMessage(ObjectId id)
+    private void CopyCommitMessage(GitObjectId id)
     {
         // _msgBodyCache holds the body only; combine with the subject.
         if (TryGetCachedBody(id, out var body))
@@ -464,13 +464,13 @@ public sealed partial class CommitGraphControl
         });
     }
 
-    private string FindSubject(ObjectId id)
+    private string FindSubject(GitObjectId id)
     {
         if (_layout is { } lay && lay.Layout.RowByCommitId.TryGetValue(id, out var row)
             && row >= 0 && row < lay.Layout.Commits.Count)
         {
             return lay.Layout.Commits[row].MessageShort;
         }
-        return id.Sha[..7];
+        return id.ToShortString(7);
     }
 }

@@ -8,7 +8,7 @@ public sealed record BranchInfo
     public required string CanonicalName { get; init; }
     public required bool IsRemote { get; init; }
     public required bool IsCurrent { get; init; }
-    public ObjectId? TipCommitId { get; init; }
+    public GitObjectId? TipCommitId { get; init; }
 
     /// <summary>The owning remote's name for a remote-tracking branch (e.g. "origin", or
     /// "team/infra" — a remote name may itself contain a slash). Null for a local branch.
@@ -28,7 +28,7 @@ public sealed record BranchInfo
 public sealed record TagInfo
 {
     public required string Name { get; init; }
-    public required ObjectId TargetCommitId { get; init; }
+    public required GitObjectId TargetCommitId { get; init; }
     public required bool IsAnnotated { get; init; }
     public string? Message { get; init; }
     public string? TaggerName { get; init; }

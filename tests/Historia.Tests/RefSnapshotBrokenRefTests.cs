@@ -94,7 +94,7 @@ public sealed class RefSnapshotBrokenRefTests : IAsyncDisposable
             return;
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
 
-        List<ObjectId> before;
+        List<GitObjectId> before;
         long keyBefore;
         await using (var ctx = _host.Open(_repo.Path))
         {
@@ -154,7 +154,7 @@ public sealed class RefSnapshotBrokenRefTests : IAsyncDisposable
         return (long)state[3]!;
     }
 
-    private static List<ObjectId> Ids(GraphLayoutResult r) =>
+    private static List<GitObjectId> Ids(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
     [Fact]
@@ -164,7 +164,7 @@ public sealed class RefSnapshotBrokenRefTests : IAsyncDisposable
             return; // git.exe not discoverable — the CLI walk never engages
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
 
-        List<ObjectId> before;
+        List<GitObjectId> before;
         long keyBefore;
         await using (var ctx = _host.Open(_repo.Path))
         {

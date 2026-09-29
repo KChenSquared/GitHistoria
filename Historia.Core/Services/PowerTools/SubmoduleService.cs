@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="ISubmoduleService"/>
 public sealed partial class SubmoduleService(IGitCliService cli) : ISubmoduleService
@@ -28,7 +28,7 @@ public sealed partial class SubmoduleService(IGitCliService cli) : ISubmoduleSer
                 Name = path,
                 Path = path,
                 Url = urls.GetValueOrDefault(path, ""),
-                HeadCommitId = LibGit2Sharp.ObjectId.TryParse(sha, out var id) ? id : null,
+                HeadCommitId = GitObjectId.TryParse(sha, out var id) ? id : null,
                 RegisteredCommitId = null,
                 Status = flag switch
                 {
@@ -67,8 +67,11 @@ public sealed partial class SubmoduleService(IGitCliService cli) : ISubmoduleSer
     public async Task RemoveAsync(RepositoryContext context, SubmoduleInfo submodule, CancellationToken ct = default)
     {
         using var _ = context.BeginSelfOperation();
-        await Expect(context, ["submodule", "deinit", "-f", "--", submodule.Path], "Deinit submodule", ct).ConfigureAwait(false);
-        await Expect(context, ["rm", "-f", "--", submodule.Path], "Remove submodule", ct).ConfigureAwait(false);
+        await context.WithWriteLockAsync(async innerCt =>
+        {
+            await Expect(context, ["submodule", "deinit", "-f", "--", submodule.Path], "Deinit submodule", innerCt).ConfigureAwait(false);
+            await Expect(context, ["rm", "-f", "--", submodule.Path], "Remove submodule", innerCt).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
 
         TryDeleteModuleDir(Path.Combine(context.GitDirectory, "modules", submodule.Name));
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);

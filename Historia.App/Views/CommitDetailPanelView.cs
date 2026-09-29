@@ -7,7 +7,7 @@ namespace Historia.Views;
 public sealed class CommitDetailPanelView : UserControl, IDisposable
 {
     private readonly RepositoryContext _ctx;
-    private ObjectId _id;
+    private GitObjectId _id;
     private readonly INotificationService _notifications;
     private readonly ISettingsService _settings;
     private readonly Historia.Services.UI.IExternalLauncher _launcher;
@@ -52,7 +52,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     internal Border AuthorRuleForTesting => _authorRule;
     internal TextBlock FilesLabelForTesting => _filesLabel;
 
-    public CommitDetailPanelView(IServiceProvider sp, RepositoryContext ctx, ObjectId id)
+    public CommitDetailPanelView(IServiceProvider sp, RepositoryContext ctx, GitObjectId id)
     {
         _ctx = ctx;
         _id = id;
@@ -154,7 +154,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         QueueLoad();
     }
 
-    public void SetCommit(ObjectId id)
+    public void SetCommit(GitObjectId id)
     {
         if (_id == id)
             return;
@@ -238,12 +238,12 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         row.Children.Add(author);
         _authorText = author;
 
-        var hash = Text(detail.Id.Sha[..10], "ColorAccent", 14);
+        var hash = Text(detail.Id.ToShortString(10), "ColorAccent", 14);
         hash.VerticalAlignment = VerticalAlignment.Center;
         hash.TextDecorations = TextDecorations.Underline;
         hash.Cursor = new Cursor(StandardCursorType.Hand);
         ToolTip.SetTip(hash, "Click to copy full commit hash");
-        var fullSha = detail.Id.Sha;
+        var fullSha = detail.Id.ToString();
         hash.PointerPressed += (_, _) =>
             _ = TopLevel.GetTopLevel(hash)?.Clipboard?.SetTextAsync(fullSha);
         Grid.SetColumn(hash, 1);
@@ -285,7 +285,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
         {
             foreach (var pid in detail.ParentIds)
             {
-                var parentSha = pid.Sha;
+                var parentSha = pid.ToString();
                 var shortSha = parentSha.Length >= 10 ? parentSha[..10] : parentSha;
                 var hash = Text(shortSha, "ColorText", 12);
                 hash.TextDecorations = TextDecorations.Underline;

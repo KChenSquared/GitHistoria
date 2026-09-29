@@ -9,7 +9,7 @@ public class PatchServiceTests
     private static FileDiff UnstagedDiff(string repoPath, string file)
     {
         using var repo = new Repository(repoPath);
-        return new LibGit2Service().ProjectDiff(repo, new DiffRequest { Source = DiffSource.UnstagedChanges, Path = file });
+        return repo.ProjectDiff(new DiffRequest { Source = DiffSource.UnstagedChanges, Path = file });
     }
 
     [Fact]
@@ -125,7 +125,7 @@ public class PatchServiceTests
     private static FileDiff StagedDiff(string repoPath, string file)
     {
         using var repo = new Repository(repoPath);
-        return new LibGit2Service().ProjectDiff(repo, new DiffRequest { Source = DiffSource.StagedChanges, Path = file });
+        return repo.ProjectDiff(new DiffRequest { Source = DiffSource.StagedChanges, Path = file });
     }
 
     [Fact]
@@ -431,7 +431,7 @@ public class PatchServiceTests
         var svc = Make(host);
 
         using var repo = new Repository(b.Path);
-        var diff = new LibGit2Service().ProjectDiff(repo, new DiffRequest
+        var diff = repo.ProjectDiff(new DiffRequest
         {
             Source = DiffSource.UnstagedChanges,
             Path = "f.txt",
@@ -462,7 +462,7 @@ public class PatchServiceTests
         var svc = Make(host);
 
         using var repo = new Repository(b.Path);
-        var stagedDiff = new LibGit2Service().ProjectDiff(repo, new DiffRequest
+        var stagedDiff = repo.ProjectDiff(new DiffRequest
         {
             Source = DiffSource.StagedChanges,
             Path = "f.txt",
@@ -555,22 +555,21 @@ public class PatchServiceTests
         var svc = Make(host);
 
         using var repo = new Repository(b.Path);
-        var libgit2 = new LibGit2Service();
 
         // 1. Modified
-        var diffMod = libgit2.ProjectDiff(repo, new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "mod.txt" });
+        var diffMod = repo.ProjectDiff(new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "mod.txt" });
         var patchMod = svc.GeneratePatch(diffMod, PatchScope.WholeFile);
         var checkMod = await svc.CheckAsync(ctx, patchMod, PatchTarget.StagingArea, reverse: false);
         Assert.True(checkMod.CanApply, $"Modified check failed: {checkMod.FailureReason}\nPatch:\n{patchMod}");
 
         // 2. Deleted
-        var diffDel = libgit2.ProjectDiff(repo, new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "del.txt" });
+        var diffDel = repo.ProjectDiff(new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "del.txt" });
         var patchDel = svc.GeneratePatch(diffDel, PatchScope.WholeFile);
         var checkDel = await svc.CheckAsync(ctx, patchDel, PatchTarget.StagingArea, reverse: false);
         Assert.True(checkDel.CanApply, $"Deleted check failed: {checkDel.FailureReason}\nPatch:\n{patchDel}");
 
         // 3. Added (untracked)
-        var diffAdd = libgit2.ProjectDiff(repo, new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "add.txt" });
+        var diffAdd = repo.ProjectDiff(new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "add.txt" });
         var patchAdd = svc.GeneratePatch(diffAdd, PatchScope.WholeFile);
         var checkAdd = await svc.CheckAsync(ctx, patchAdd, PatchTarget.StagingArea, reverse: false);
         Assert.True(checkAdd.CanApply, $"Added check failed: {checkAdd.FailureReason}\nPatch:\n{patchAdd}");

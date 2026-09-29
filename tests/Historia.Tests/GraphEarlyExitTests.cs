@@ -73,8 +73,11 @@ public sealed class GraphEarlyExitTests : IAsyncDisposable
         var scansBefore = GraphLayoutService.RefScanCountForTesting(ctx.RepositoryPath);
 
         // Exactly what the crawler's step sees once the spill's pull landed: want <= have.
-        var prep = await ctx.WithRepositoryAsync(repo => prepareWalk.Invoke(null,
-            [repo, ctx.RepositoryPath, new GraphQuery { RefScope = GraphRefScope.AllRefs }, 1_500, null, cache, snapshot, false, walkCache])!);
+        var cli = new GitCliService(_host.Locator);
+        var task = (Task)prepareWalk.Invoke(null,
+            [ctx.RepositoryPath, new GraphQuery { RefScope = GraphRefScope.AllRefs }, 1_500, null, cache, snapshot, false, walkCache, ctx.RemoteConfig, cli, CancellationToken.None])!;
+        await task;
+        var prep = task.GetType().GetProperty("Result")!.GetValue(task)!;
 
         Assert.Equal("Done", Get<object>(prep, "Kind").ToString());
         Assert.Equal(0L, Get<long>(prep, "Fingerprint"));
@@ -110,7 +113,7 @@ public sealed class GraphEarlyExitTests : IAsyncDisposable
 
         Assert.Equal(2_600, Get<int>(cache, "LiveWalkPos"));
 
-        var walked = Get<System.Collections.IList>(cache, "Commits").Cast<RawCommit>().Select(c => c.Id.Sha).ToList();
+        var walked = Get<System.Collections.IList>(cache, "Commits").Cast<RawCommit>().Select(c => c.Id.ToString()).ToList();
         var expected = _repo.Git("rev-list", "--date-order", "main")
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Take(2_600)

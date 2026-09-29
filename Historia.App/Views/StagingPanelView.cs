@@ -741,7 +741,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             var upstream = _ctx.State.CurrentBranch?.UpstreamName;
             if (upstream is not null && _status.AheadBy == 0)
             {
-                var headSha = _ctx.State.CurrentBranch?.TipCommitId?.Sha;
+                var headSha = _ctx.State.CurrentBranch?.TipCommitId?.ToString();
                 var shortSha = headSha is { Length: >= 7 } ? headSha[..7] : headSha ?? "HEAD";
                 if (!await _dialogs.ConfirmDestructiveAsync("Amend a pushed commit",
                         $"Amend {shortSha}, which is already on {upstream}? This rewrites " +

@@ -66,9 +66,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     private static readonly TimeSpan GraphPriorityTimeout = TimeSpan.FromSeconds(8);
 
     // the FOCUSED tab's graph control WILL paint — wait for that, not a short guess,
-    // before its identity resolution + RefreshAllAsync take the repo gate. 8s was far too short
-    // on a big repo (linux first paint alone is tens of seconds), so identity/refresh jumped the
-    // gate mid-first-walk and stalled it for ~60s. This ceiling is only a stuck-guard.
+    // before its identity resolution + RefreshAllAsync run. 8s was far too short
+    // on a big repo (linux first paint alone is tens of seconds), so identity/refresh
+    // ran mid-first-walk and stalled it for ~60s. This ceiling is only a stuck-guard.
     private static readonly TimeSpan GraphFirstPaintCeiling = TimeSpan.FromSeconds(120);
 
     /// <summary>
@@ -120,12 +120,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
     public async Task<RepositoryContext> OpenAsync(string path, CancellationToken ct = default)
     {
-        var discovered = await Task.Run(() => Repository.Discover(path), ct).ConfigureAwait(false)
-            ?? throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
-                $"No Git repository was found at or above '{path}'.");
+        var discovered = await RepositoryDiscovery.DiscoverAsync(path, _cli, ct).ConfigureAwait(false);
 
         // Duplicate-open guard: focus the existing tab rather than racing on the index lock.
-        var normalizedGitDir = NormalizeDir(discovered);
+        var normalizedGitDir = NormalizeDir(discovered.GitDirectory);
         RepositoryContext? existing;
         lock (_sync)
         {
@@ -233,12 +231,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
     private async Task<InitOutcome> InitializeContextCoreAsync(RepositoryContext context, bool foreground, CancellationToken attemptToken)
     {
-        // Let the graph control's own first walk for this context claim the repo's single-access
-        // gate uncontended. Without this, identity resolution below (and RefreshAllAsync after
-        // it) starts within a few hundred ms of the tab opening and can hold that gate for
-        // seconds on a large repo -- observed: 3+s of the graph's fingerprint+load work sitting
-        // in the queue behind it, on a repo where the graph's own paint takes barely over a
-        // second once it actually gets a turn. the focused tab's graph WILL paint, so
+        // Let the graph control's own first walk for this context proceed
+        // uncontended. Without this, identity resolution below (and RefreshAllAsync after
+        // it) starts within a few hundred ms of the tab opening and can compete for CPU/IO
+        // on a large repo. The focused tab's graph WILL paint, so
         // wait for that (large stuck-guard ceiling); a background force-init has no graph
         // attached, so only the short ceiling applies. Task.WhenAny never throws or propagates
         // either branch's outcome, so no try/catch is needed here.
@@ -346,29 +342,31 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     {
         Directory.CreateDirectory(path);
 
-        if (_cli.IsGitAvailable)
+        var args = new List<string> { "init" };
+        if (!string.IsNullOrWhiteSpace(initialBranch))
         {
-            var args = new List<string> { "init" };
-            if (!string.IsNullOrWhiteSpace(initialBranch))
-            {
-                args.Add("-b");
-                args.Add(initialBranch);
-            }
-
-            args.Add(path);
-            var result = await _cli.RunAsync(new GitCliRequest
-            {
-                Arguments = args,
-                WorkingDirectory = Path.GetDirectoryName(path.TrimEnd(Path.DirectorySeparatorChar)) ?? path,
-            }, ct).ConfigureAwait(false);
-
-            if (!result.IsSuccess)
-                throw HistoriaGitException.FromCli(result, "Initialize repository");
+            args.Add("-b");
+            args.Add(initialBranch);
         }
-        else
+
+        args.Add(path);
+        var result = await _cli.RunAsync(new GitCliRequest
         {
-            await Task.Run(() => Repository.Init(path), ct).ConfigureAwait(false);
+            Arguments = args,
+            WorkingDirectory = Path.GetDirectoryName(path.TrimEnd(Path.DirectorySeparatorChar)) ?? path,
+        }, ct).ConfigureAwait(false);
+
+        // IsGitAvailable is only meaningful once RunAsync has waited for git to be located.
+        if (!result.IsSuccess && !_cli.IsGitAvailable)
+        {
+            throw new HistoriaGitException(
+                GitErrorKind.Unknown,
+                $"Git is required to initialize a repository. Install Git {GitExecutableInfo.MinimumVersion} or newer, or set its path in Settings.",
+                result.StandardError);
         }
+
+        if (!result.IsSuccess)
+            throw HistoriaGitException.FromCli(result, "Initialize repository");
 
         return await OpenAsync(path, ct).ConfigureAwait(false);
     }
@@ -495,11 +493,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                 $"Submodule '{submodule.Name}' isn't initialized. Use Init & update first.");
         }
 
-        var discovered = await Task.Run(() => Repository.Discover(submodulePath), ct).ConfigureAwait(false)
-            ?? throw new HistoriaGitException(GitErrorKind.NotAGitRepository,
-                $"No Git repository was found at or above '{submodulePath}'.");
+        var discovered = await RepositoryDiscovery.DiscoverAsync(submodulePath, _cli, ct).ConfigureAwait(false);
 
-        var normalizedGitDir = NormalizeDir(discovered);
+        var normalizedGitDir = NormalizeDir(discovered.GitDirectory);
         bool orderChanged = false;
         RepositoryContext? existing;
         lock (_sync)
@@ -738,8 +734,8 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         var focusTarget = existing ?? paths.FirstOrDefault(System.IO.Directory.Exists);
         _restoredFocusPath = focusTarget;
         // Trim a trailing separator before GetFileName: RepositoryPath (the source of both
-        // "paths" and "focusedPath" once persisted) is libgit2's WorkingDirectory, which always
-        // ends in one, and GetFileName returns "" for a path ending in a separator.
+        // "paths" and "focusedPath" once persisted) may end in a separator,
+        // and GetFileName returns "" for a path ending in a separator.
         var focusTargetName = focusTarget is null
             ? "(none)"
             : System.IO.Path.GetFileName(focusTarget.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
@@ -795,7 +791,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                     {
                         var ownerPath = linkOwnerPaths[i];
                         if (ownerPath is null) continue;
-                        // Raw session-file paths don't share libgit2's normalized RepositoryPath
+                        // Raw session-file paths don't share normalized RepositoryPath
                         // formatting (trailing separator, casing), so compare normalized forms —
                         // the same helper OpenAsync's own duplicate-open check uses.
                         var childKey = NormalizeDir(paths[i]);
@@ -811,7 +807,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         finally
         {
             // Any prefetched repo that wasn't consumed (due to cancellation, duplicates, or
-            // error) must be disposed so its native libgit2 handles and file watchers don't leak.
+            // error) must be disposed so its background resources and file watchers don't leak.
             foreach (var unconsumed in prefetches.Values)
             {
                 _ = unconsumed.ContinueWith(async t =>
@@ -949,6 +945,11 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             {
                 if (_bgQueue.Count == 0) { _bgInitPumpIdle = true; return; }
                 foreground = _foregroundInit;
+                // A closed foreground tab (or every tab, after DisposeAsync) will never finish
+                // loading, and its cancelled Lifetime makes the wait below return instantly —
+                // waiting on it would spin this loop forever. Treat it as no foreground.
+                if (foreground is not null && !_open.Contains(foreground))
+                    foreground = null;
                 next = SelectNextBackgroundItemLocked();
                 foregroundChanged = _foregroundChanged.Task;
             }

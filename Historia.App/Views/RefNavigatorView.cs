@@ -671,7 +671,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
 
     /// <summary>Renames a remote's alias from the sidebar. Rejects an empty/unchanged name
     /// or a collision with an existing remote before calling git — a caller-side check is
-    /// friendlier than letting libgit2 throw for the common mistakes. Surfaces any fetch
+    /// friendlier than letting git throw for the common mistakes. Surfaces any fetch
     /// refspecs the rename could not rewrite automatically as a warning, per the
     /// <c>RenameRemoteAsync</c> contract.</summary>
     private async Task RenameRemoteAsync(string oldName)
@@ -767,7 +767,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             CopyName: b.Name,
             TrackingRef: b.Name,
             IsLocal: !isRemote,
-            TipSha: b.TipCommitId?.Sha,
+            TipSha: b.TipCommitId?.ToString(),
             CurrentBranch: ctx.State.CurrentBranch?.Name,
             CounterpartRef: counterpartRef,
             RemoteAlias: remoteAlias);
@@ -794,11 +794,11 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         row.ContextMenu = menu;
     }
 
-    private void Select(LibGit2Sharp.ObjectId? id)
+    private void Select(GitObjectId? id)
     {
         if (id is null || _repo is null) return;
         _repo.State.SetSelectedCommit(id);
-        _repo.State.RequestRevealCommit(id);
+        _repo.State.RequestRevealCommit(id.Value);
     }
 
     private async Task CheckoutAsync(BranchInfo b, bool isRemote)

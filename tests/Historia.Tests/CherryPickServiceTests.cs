@@ -31,7 +31,7 @@ public class CherryPickServiceTests
         var (repo, a, _, _) = Fixture();
         await using var ctx = host.Open(repo.Path);
 
-        await Make(host).CherryPickAsync(ctx, [new LibGit2Sharp.ObjectId(a)]);
+        await Make(host).CherryPickAsync(ctx, [GitObjectId.Parse(a)]);
 
         Assert.True(File.Exists(Path.Combine(repo.Path, "a.txt")));
         Assert.Contains("add a", repo.Git("log", "--oneline", "-1"));
@@ -44,7 +44,7 @@ public class CherryPickServiceTests
         var (repo, a, bb, c) = Fixture();
         await using var ctx = host.Open(repo.Path);
 
-        await Make(host).CherryPickAsync(ctx, [new(a), new(bb), new(c)]);
+        await Make(host).CherryPickAsync(ctx, [GitObjectId.Parse(a), GitObjectId.Parse(bb), GitObjectId.Parse(c)]);
 
         var log = repo.Git("log", "--oneline", "-3");
         var lines = log.Trim().Split('\n');
@@ -65,7 +65,7 @@ public class CherryPickServiceTests
         var bad = repo.HeadSha;
         await using var ctx = host.Open(repo.Path);
 
-        await Make(host).RevertAsync(ctx, [new LibGit2Sharp.ObjectId(bad)]);
+        await Make(host).RevertAsync(ctx, [GitObjectId.Parse(bad)]);
 
         Assert.Contains("remove-me", (await File.ReadAllTextAsync(Path.Combine(repo.Path, "f.txt"))));
     }
@@ -79,7 +79,7 @@ public class CherryPickServiceTests
         var svc = Make(host);
         var before = repo.Git("rev-parse", "HEAD").Trim();
 
-        await svc.CherryPickAsync(ctx, [new LibGit2Sharp.ObjectId(a)]);
+        await svc.CherryPickAsync(ctx, [GitObjectId.Parse(a)]);
         Assert.NotEqual(before, repo.Git("rev-parse", "HEAD").Trim());
 
         await svc.UndoToOrigHeadAsync(ctx);

@@ -165,4 +165,106 @@ public class GitCliServiceTests
         Assert.Same(run, await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(30))));
         Assert.Equal(GitErrorKind.TimedOut, (await run).ErrorKind);
     }
+
+    [Fact]
+    public async Task RunAsync_before_resolution_waits_for_resolution_then_runs()
+    {
+        var locator = new DelayedLocator();
+        var cli = new GitCliService(locator);
+
+        using var repo = TestRepositoryBuilder.FromTemplate("git-cli-seed", r =>
+            r.WriteFile("seed", "x").Stage().Commit("seed"));
+
+        var runTask = cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["status", "--porcelain"],
+            WorkingDirectory = repo.Path,
+        });
+
+        // The task should be waiting for locator resolution.
+        Assert.False(runTask.IsCompleted);
+
+        // Now resolve git using the real locator.
+        var realLocator = new GitExecutableLocator();
+        var resolved = await realLocator.ResolveAsync(null);
+        locator.Complete(resolved);
+
+        var result = await runTask;
+        Assert.True(result.IsSuccess);
+    }
+
+    [Fact]
+    public async Task RunAsync_fails_classified_when_resolution_finds_no_git()
+    {
+        var locator = new DelayedLocator();
+        var cli = new GitCliService(locator);
+        locator.Complete(GitExecutableInfo.NotFound);
+
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["status"],
+            WorkingDirectory = Path.GetTempPath(),
+        });
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(-1, result.ExitCode);
+        Assert.Equal(GitErrorKind.Unknown, result.ErrorKind);
+        Assert.Contains("not found", result.StandardError);
+    }
+
+    [Fact]
+    public async Task Output_budget_stops_the_process_and_flags_it()
+    {
+        var cli = await MakeAsync();
+        using var repo = TestRepositoryBuilder.FromTemplate("linear-3000", b => b.LinearHistory(3_000));
+
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["log", "--all", "-p"],
+            WorkingDirectory = repo.Path,
+            MaxStandardOutputBytes = 1_000,
+        });
+
+        Assert.True(result.OutputTruncated);
+        Assert.True(result.StandardOutput.Length <= 5_000);
+        Assert.Equal(GitErrorKind.None, result.ErrorKind);
+    }
+
+    [Fact]
+    public async Task Output_budget_stops_the_process_and_flags_it_in_raw_mode()
+    {
+        var cli = await MakeAsync();
+        using var repo = TestRepositoryBuilder.FromTemplate("linear-3000", b => b.LinearHistory(3_000));
+
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["log", "--all", "-p"],
+            WorkingDirectory = repo.Path,
+            RawStandardOutput = true,
+            MaxStandardOutputBytes = 1_000,
+        });
+
+        Assert.True(result.OutputTruncated);
+        Assert.NotNull(result.StandardOutputBytes);
+        Assert.True(result.StandardOutputBytes.Length <= 1_000);
+        Assert.Equal(GitErrorKind.None, result.ErrorKind);
+    }
+
+    private sealed class DelayedLocator : IGitExecutableLocator
+    {
+        private readonly TaskCompletionSource<GitExecutableInfo> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private GitExecutableInfo _current = GitExecutableInfo.NotFound;
+
+        public GitExecutableInfo Current => _current;
+
+        public Task<GitExecutableInfo> ResolveAsync(string? userOverridePath, CancellationToken ct = default) => _tcs.Task;
+
+        public Task<GitExecutableInfo> WhenResolvedAsync(CancellationToken ct = default) => _tcs.Task;
+
+        public void Complete(GitExecutableInfo info)
+        {
+            _current = info;
+            _tcs.TrySetResult(info);
+        }
+    }
 }

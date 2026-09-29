@@ -11,7 +11,6 @@ public sealed class GitGatewayDivergenceTests : IAsyncDisposable
 
     private GitGateway MakeGateway(RepositoryContext ctx) => new(
         ctx,
-        _host.Provider.GetRequiredService<LibGit2Service>(),
         _host.Provider.GetRequiredService<IGitCliService>(),
         _host.Provider.GetRequiredService<IRepoLayoutService>(),
         _host.Provider.GetRequiredService<ICredentialVaultService>());

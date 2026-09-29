@@ -1,0 +1,311 @@
+namespace Historia.Tests;
+
+public sealed class GraphPrepareGateTests : IAsyncDisposable
+{
+    private readonly MiniHost _host = new();
+
+    public async ValueTask DisposeAsync()
+    {
+        await _host.DisposeAsync();
+    }
+
+    /// <summary>Waits until the gate sees exactly these queued callers. A fixed sleep here let a
+    /// busy thread pool start the foreground task only after the holder released.</summary>
+    private static async Task WaitForWaiters(GraphPrepareGate gate, int foreground, int background)
+    {
+        while (gate.WaitersForTesting != (foreground, background))
+            await Task.Delay(5);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Foreground_beats_background_crawl_and_spill()
+    {
+        var gate = new GraphPrepareGate("test");
+        var holdTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var holdTask = gate.ExecuteAsync(async () =>
+        {
+            holdEntered.SetResult();
+            await holdTcs.Task;
+        });
+        await holdEntered.Task;
+
+        var executionOrder = new List<string>();
+
+        var spillStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var spillTask = Task.Run(async () =>
+        {
+            spillStarted.SetResult();
+            await gate.ExecuteSpillAsync(() =>
+            {
+                lock (executionOrder) executionOrder.Add("spill");
+            });
+        });
+        await spillStarted.Task;
+
+        var bgStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bgTask = Task.Run(async () =>
+        {
+            bgStarted.SetResult();
+            await gate.ExecuteBackgroundAsync(() =>
+            {
+                lock (executionOrder) executionOrder.Add("background");
+            });
+        });
+        await bgStarted.Task;
+        await WaitForWaiters(gate, foreground: 0, background: 1);
+
+        var fgStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fgTask = Task.Run(async () =>
+        {
+            fgStarted.SetResult();
+            await gate.ExecuteAsync(() =>
+            {
+                lock (executionOrder) executionOrder.Add("foreground");
+            });
+        });
+        await fgStarted.Task;
+        await WaitForWaiters(gate, foreground: 1, background: 1);
+
+        holdTcs.SetResult();
+        await Task.WhenAll(holdTask, fgTask, bgTask, spillTask);
+
+        Assert.Equal(["foreground", "background", "spill"], executionOrder);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Background_crawl_yields_to_queued_foreground()
+    {
+        var gate = new GraphPrepareGate("test");
+        var holdTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var holdTask = gate.ExecuteAsync(async () =>
+        {
+            holdEntered.SetResult();
+            await holdTcs.Task;
+        });
+        await holdEntered.Task;
+
+        var order = new List<string>();
+
+        var bgTask = Task.Run(async () =>
+        {
+            await gate.ExecuteBackgroundAsync(() =>
+            {
+                lock (order) order.Add("background");
+            });
+        });
+
+        await WaitForWaiters(gate, foreground: 0, background: 1);
+
+        var fgTask = Task.Run(async () =>
+        {
+            await gate.ExecuteAsync(() =>
+            {
+                lock (order) order.Add("foreground");
+            });
+        });
+
+        await WaitForWaiters(gate, foreground: 1, background: 1);
+
+        holdTcs.SetResult();
+        await Task.WhenAll(holdTask, fgTask, bgTask);
+
+        Assert.Equal(["foreground", "background"], order);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Spill_yields_to_both_foreground_and_crawl()
+    {
+        var gate = new GraphPrepareGate("test");
+        var holdTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var holdTask = gate.ExecuteAsync(async () =>
+        {
+            holdEntered.SetResult();
+            await holdTcs.Task;
+        });
+        await holdEntered.Task;
+
+        var order = new List<string>();
+
+        var spillTask = Task.Run(async () =>
+        {
+            await gate.ExecuteSpillAsync(() =>
+            {
+                lock (order) order.Add("spill");
+            });
+        });
+
+        await Task.Delay(40);
+
+        var bgTask = Task.Run(async () =>
+        {
+            await gate.ExecuteBackgroundAsync(() =>
+            {
+                lock (order) order.Add("background");
+            });
+        });
+
+        await WaitForWaiters(gate, foreground: 0, background: 1);
+
+        var fgTask = Task.Run(async () =>
+        {
+            await gate.ExecuteAsync(() =>
+            {
+                lock (order) order.Add("foreground");
+            });
+        });
+
+        await WaitForWaiters(gate, foreground: 1, background: 1);
+
+        holdTcs.SetResult();
+        await Task.WhenAll(holdTask, fgTask, bgTask, spillTask);
+
+        Assert.Equal(["foreground", "background", "spill"], order);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Max_yield_bound_does_not_starve_forever()
+    {
+        var gate = new GraphPrepareGate("test")
+        {
+            MaxYield = TimeSpan.FromMilliseconds(80)
+        };
+
+        var holdTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var holdTask = gate.ExecuteAsync(async () =>
+        {
+            holdEntered.SetResult();
+            await holdTcs.Task;
+        });
+        await holdEntered.Task;
+
+        var spillRan = false;
+        var spillTask = Task.Run(async () =>
+        {
+            await gate.ExecuteSpillAsync(() =>
+            {
+                spillRan = true;
+            });
+        });
+
+        await Task.Delay(30);
+
+        var fgHoldTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fgEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fgTask = Task.Run(async () =>
+        {
+            await gate.ExecuteAsync(async () =>
+            {
+                fgEntered.SetResult();
+                await fgHoldTcs.Task;
+            });
+        });
+
+        holdTcs.SetResult();
+        await fgEntered.Task;
+
+        var fgWaiterCts = new CancellationTokenSource();
+        var fg2Task = Task.Run(async () =>
+        {
+            try
+            {
+                await gate.ExecuteAsync(async () =>
+                {
+                    await Task.Delay(1000, fgWaiterCts.Token);
+                }, fgWaiterCts.Token);
+            }
+            catch (OperationCanceledException) { }
+        });
+
+        await Task.Delay(150);
+
+        fgHoldTcs.SetResult();
+        fgWaiterCts.Cancel();
+        await spillTask;
+        Assert.True(spillRan);
+        await fgTask;
+        await fg2Task;
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Cancellation_releases_the_gate_slot()
+    {
+        var gate = new GraphPrepareGate("test");
+        var holdTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var holdTask = gate.ExecuteAsync(async () =>
+        {
+            holdEntered.SetResult();
+            await holdTcs.Task;
+        });
+        await holdEntered.Task;
+
+        using var cts = new CancellationTokenSource();
+        var canceledTask = Task.Run(async () =>
+        {
+            await gate.ExecuteAsync(() => 42, cts.Token);
+        });
+
+        await Task.Delay(50);
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledTask);
+
+        holdTcs.SetResult();
+        await holdTask;
+
+        var result = await gate.ExecuteAsync(() => 123);
+        Assert.Equal(123, result);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Replaced_RepoCache_on_the_same_context_shares_the_gate()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("gate-share", b =>
+        {
+            b.WriteFile("f.txt", "1\n").Stage();
+            b.Commit("c1");
+        });
+        await using var ctx = _host.Open(repo.Path);
+
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
+        var q1 = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeRemoteBranches = false };
+        var q2 = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeRemoteBranches = true };
+
+        // 1. Initial query populates RepoCache 1 for ctx.
+        var r1 = await svc.ComputeLayoutAsync(ctx, q1, maxRows: 100);
+        Assert.NotNull(r1);
+
+        // 2. Obtain the gate and hold it.
+        var gate = GraphLayoutService.GetGateFor(ctx);
+        var holdEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holdTask = gate.ExecuteAsync(async () =>
+        {
+            holdEntered.SetResult();
+            await holdTcs.Task;
+        });
+        await holdEntered.Task;
+
+        // 3. Query change triggers GetOrResetCache (replacing the RepoCache for ctx).
+        // The new RepoCache's prepare walk must wait on the same gate that is currently held.
+        var q2Task = Task.Run(() => svc.ComputeLayoutAsync(ctx, q2, maxRows: 100));
+        await Task.Delay(300);
+        Assert.False(q2Task.IsCompleted);
+
+        // 4. Release the gate and verify the new cache's prepare completes successfully.
+        holdTcs.SetResult();
+        await holdTask;
+
+        var r2 = await q2Task;
+        Assert.NotNull(r2);
+    }
+}

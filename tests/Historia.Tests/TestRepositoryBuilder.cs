@@ -7,46 +7,8 @@ namespace Historia.Tests;
 /// </summary>
 public sealed class TestRepositoryBuilder : IDisposable
 {
+    // Templates live under the run's scratch folder, which TestScratch deletes on exit.
     private static readonly ConcurrentDictionary<string, Lazy<string>> Templates = new();
-    private static readonly ConcurrentBag<string> CreatedTemplates = new();
-    private static readonly Lazy<bool> UnloadHook = new(() =>
-    {
-        AssemblyLoadContext.Default.Unloading += _ => CleanupTemplates();
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => CleanupTemplates();
-        return true;
-    });
-
-    private static void CleanupTemplates()
-    {
-        foreach (var dir in CreatedTemplates)
-        {
-            try
-            {
-                if (Directory.Exists(dir))
-                {
-                    ClearReadOnly(new DirectoryInfo(dir));
-                    Directory.Delete(dir, recursive: true);
-                }
-            }
-            catch
-            {
-                // best-effort cleanup on shutdown
-            }
-        }
-    }
-
-    private static void ClearReadOnly(DirectoryInfo dir)
-    {
-        try
-        {
-            foreach (var file in dir.EnumerateFiles("*", SearchOption.AllDirectories))
-            {
-                if ((file.Attributes & FileAttributes.ReadOnly) != 0)
-                    file.Attributes &= ~FileAttributes.ReadOnly;
-            }
-        }
-        catch { }
-    }
 
     public string Path { get; }
 
@@ -66,12 +28,9 @@ public sealed class TestRepositoryBuilder : IDisposable
     /// </summary>
     public static TestRepositoryBuilder FromTemplate(string key, Action<TestRepositoryBuilder> build)
     {
-        _ = UnloadHook.Value;
         var templateDir = Templates.GetOrAdd(key, k => new Lazy<string>(() =>
         {
-            var tplDir = System.IO.Path.Combine(TestScratch.Root, "historia-tpl-" + Sanitize(k) + "-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(tplDir);
-            CreatedTemplates.Add(tplDir);
+            var tplDir = TestScratch.NewDirectory("historia-tpl-" + Sanitize(k) + "-");
             var builder = new TestRepositoryBuilder(tplDir);
             builder.InitRepo();
             build(builder);
@@ -199,6 +158,31 @@ public sealed class TestRepositoryBuilder : IDisposable
         };
         Git(env, "commit", "-m", message, "--no-gpg-sign");
         return ResolveHeadSha();
+    }
+
+    /// <summary>Commits the index with a forged SSH <c>gpgsig</c> header and turns on
+    /// <c>log.showSignature</c>. Verification fails without any signing tool, and git then
+    /// prints "No signature" on stdout ahead of the commit's formatted record.</summary>
+    public string CommitWithForgedSignature(string message)
+    {
+        var tree = Git("write-tree").Trim();
+        var parent = Git("rev-parse", "--verify", "-q", "HEAD").Trim();
+        var body = new StringBuilder()
+            .Append("tree ").Append(tree).Append('\n')
+            .Append("parent ").Append(parent).Append('\n')
+            .Append("author Test User <test@example.com> 1700000000 +0000\n")
+            .Append("committer Test User <test@example.com> 1700000000 +0000\n")
+            .Append("gpgsig -----BEGIN SSH SIGNATURE-----\n U1NIU0lH\n -----END SSH SIGNATURE-----\n")
+            .Append('\n').Append(message).Append('\n')
+            .ToString();
+        var objectFile = System.IO.Path.Combine(Path, ".git", "forged-commit.txt");
+        File.WriteAllText(objectFile, body);
+        var sha = Git("hash-object", "-t", "commit", "-w", objectFile).Trim();
+        File.Delete(objectFile);
+        Git("reset", "--soft", sha);
+        Git("config", "gpg.format", "ssh");
+        Git("config", "log.showSignature", "true");
+        return sha;
     }
 
     public string HeadSha => ResolveHeadSha();

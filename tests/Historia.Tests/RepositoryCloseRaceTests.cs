@@ -19,36 +19,10 @@ public sealed class RepositoryCloseRaceTests : IAsyncDisposable
         });
         var ctx = _host.Open(repo.Path);
 
-        var gateHeld = new ManualResetEventSlim(false);
-        var releaseGate = new ManualResetEventSlim(false);
+        var d1 = ctx.DisposeAsync().AsTask();
+        var d2 = ctx.DisposeAsync().AsTask();
 
-        var holdTask = Task.Run(async () =>
-        {
-            await ctx.WithRepositoryAsync(r =>
-            {
-                gateHeld.Set();
-                releaseGate.Wait(TimeSpan.FromSeconds(15));
-                return 0;
-            });
-        });
-
-        gateHeld.Wait(TimeSpan.FromSeconds(5));
-
-        try
-        {
-            var d1 = ctx.DisposeAsync().AsTask();
-            var d2 = ctx.DisposeAsync().AsTask();
-
-            releaseGate.Set();
-            await holdTask;
-
-            await Task.WhenAll(d1, d2);
-        }
-        finally
-        {
-            releaseGate.Set();
-            await holdTask;
-        }
+        await Task.WhenAll(d1, d2);
     }
 
     [Fact]
@@ -65,7 +39,7 @@ public sealed class RepositoryCloseRaceTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Closing_a_tab_twice_while_the_gate_is_held_raises_no_exception()
+    public async Task Closing_a_tab_twice_concurrently_raises_no_exception()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("close-race-seed-3", r =>
         {
@@ -90,35 +64,15 @@ public sealed class RepositoryCloseRaceTests : IAsyncDisposable
         };
         TaskScheduler.UnobservedTaskException += unobservedHandler;
 
-        var gateHeld = new ManualResetEventSlim(false);
-        var releaseGate = new ManualResetEventSlim(false);
-
-        var holdTask = Task.Run(async () =>
-        {
-            await ctx.WithRepositoryAsync(r =>
-            {
-                gateHeld.Set();
-                releaseGate.Wait(TimeSpan.FromSeconds(15));
-                return 0;
-            });
-        });
-
-        gateHeld.Wait(TimeSpan.FromSeconds(5));
-
         try
         {
             var c1 = ws.CloseAsync(ctx);
             var c2 = ws.CloseAsync(ctx);
 
-            releaseGate.Set();
-            await holdTask;
-
             await Task.WhenAll(c1, c2);
         }
         finally
         {
-            releaseGate.Set();
-            await holdTask;
             TaskScheduler.UnobservedTaskException -= unobservedHandler;
         }
 

@@ -100,8 +100,8 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
         }
 
         GitCliProcessSetup.ComposeEnvironment(psi, profile, extraEnvironment: null);
-        // Graph rows must name the same commit objects the rest of Historia reads through
-        // libgit2 (details, diffs, decorations), and libgit2 ignores replace refs entirely.
+        // Graph rows must name real commit objects consistently across details, diffs, and decorations;
+        // ignore replace refs entirely.
         psi.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
         if (filtered)
             psi.Environment["GIT_LITERAL_PATHSPECS"] = "1";
@@ -218,10 +218,10 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
         if (parts.Length < 7)
             throw new FormatException($"expected 7 fields, got {parts.Length}");
 
-        var id = new ObjectId(parts[0]);
+        var id = GitObjectId.Parse(parts[0]);
         var parentIds = parts[1].Length == 0
-            ? Array.Empty<ObjectId>()
-            : parts[1].Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(s => new ObjectId(s)).ToArray();
+            ? Array.Empty<GitObjectId>()
+            : parts[1].Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(s => GitObjectId.Parse(s)).ToArray();
 
         var authorWhen = DateTimeOffset.Parse(parts[2], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
         var commitWhen = DateTimeOffset.Parse(parts[3], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);

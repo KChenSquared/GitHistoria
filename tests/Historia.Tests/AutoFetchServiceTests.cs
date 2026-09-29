@@ -3,7 +3,6 @@ namespace Historia.Tests;
 /// <summary>AF6 — the auto-fetch schedule, over a real <see cref="WorkspaceService"/> with
 /// tiny temp repos, a manual delay pump, and a fake host (no real git fetch or graph paint).</summary>
 [Trait("tier", "git")]
-[Collection("serial")]
 public sealed class AutoFetchServiceTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();

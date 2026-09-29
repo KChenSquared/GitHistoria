@@ -102,7 +102,8 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
         var tips = (string[])state[2]!;
         var walkKey = (long)state[3]!;
 
-        var expected = await ctx.WithRepositoryAsync(r => LibGit2Tips(r, query));
+        using var libgitRepo = new Repository(ctx.RepositoryPath);
+        var expected = LibGit2Tips(libgitRepo, query);
         var computeWalkKey = typeof(GraphLayoutService).GetMethod("ComputeWalkKey", PrivateStatic)!;
 
         Assert.NotEmpty(expected);
@@ -114,11 +115,10 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = ctx.WithRepositoryAsync(_ =>
+        _ = GraphLayoutService.GetGateFor(ctx).ExecuteAsync(async () =>
         {
             entered.SetResult();
-            release.Task.Wait();
-            return 0;
+            await release.Task;
         });
         await entered.Task;
         return release;
@@ -176,7 +176,7 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
         Assert.Equal(2_500, Get<int>(GetCache(svc, ctx), "LiveWalkPos"));
     }
 
-    private static List<ObjectId> Ids(GraphLayoutResult r) =>
+    private static List<GitObjectId> Ids(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
     [Fact]
@@ -202,7 +202,7 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
         // The rows the old walk already produced still extend the old layout, and nothing else.
         var ids = Ids(extended);
         Assert.Equal(ids.Count, ids.Distinct().Count());
-        Assert.DoesNotContain(new ObjectId(side), ids);
+        Assert.DoesNotContain(GitObjectId.Parse(side), ids);
         Assert.Equal(Ids(initial), ids.Take(initial.Layout.RowCount));
     }
 

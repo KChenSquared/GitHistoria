@@ -53,7 +53,7 @@ public sealed class GraphRefFailureTests : IAsyncDisposable
             : [];
     }
 
-    private static List<ObjectId> Ids(GraphLayoutResult r) =>
+    private static List<GitObjectId> Ids(GraphLayoutResult r) =>
         Enumerable.Range(0, r.Layout.RowCount).Select(i => r.Layout.Commits[i].Id).ToList();
 
     [Fact]
@@ -154,11 +154,10 @@ public sealed class GraphRefFailureTests : IAsyncDisposable
 
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _ = ctx.WithRepositoryAsync(_ =>
+        _ = GraphLayoutService.GetGateFor(ctx).ExecuteAsync(async () =>
         {
             entered.SetResult();
-            release.Task.Wait();
-            return 0;
+            await release.Task;
         });
         await entered.Task;
 

@@ -16,7 +16,7 @@ public sealed class GraphStoreLiveReaderTests : IDisposable
 
     public void Dispose() => _state.Dispose();
 
-    private static ObjectId Oid(int i) => new(i.ToString("x40"));
+    private static GitObjectId Oid(int i) => new(i.ToString("x40"));
 
     private static RawCommit Commit(int i, params int[] parents) => new(
         Oid(i),

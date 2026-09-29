@@ -12,7 +12,7 @@ public class GraphRowWindowTests
 
     private readonly DagLayoutEngine _engine = new();
 
-    private static ObjectId Sha(int n) => new(n.ToString("x40"));
+    private static GitObjectId Sha(int n) => GitObjectId.Parse(n.ToString("x40"));
 
     private static CommitMetadata Meta(int n, int parentCount) => new()
     {

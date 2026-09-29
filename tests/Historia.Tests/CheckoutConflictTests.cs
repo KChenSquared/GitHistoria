@@ -27,11 +27,11 @@ public sealed class CheckoutConflictTests : IAsyncDisposable
         var info = await ctx.Gateway.CreateBranchAsync("branch-at-head", headSha, checkout: true);
 
         Assert.True(info.IsCurrent);
-        await ctx.WithRepositoryAsync(r =>
+        using (var r = new Repository(ctx.RepositoryPath))
         {
             Assert.Equal("branch-at-head", r.Head.FriendlyName);
             Assert.Equal(headSha, r.Head.Tip.Sha);
-        });
+        }
     }
 
     [Fact]
@@ -66,12 +66,12 @@ public sealed class CheckoutConflictTests : IAsyncDisposable
         await Assert.ThrowsAsync<HistoriaGitException>(
             () => ctx.Gateway.CreateBranchAsync("orphan-check", c1, checkout: true));
 
-        await ctx.WithRepositoryAsync(r =>
+        using (var r = new Repository(ctx.RepositoryPath))
         {
             Assert.Null(r.Branches["orphan-check"]);
             Assert.Equal("main", r.Head.FriendlyName);
             Assert.Equal(c2, r.Head.Tip.Sha);
-        });
+        }
         Assert.Equal("c2 edited\n", File.ReadAllText(Path.Combine(repo.Path, "other.txt")));
     }
 
@@ -92,11 +92,11 @@ public sealed class CheckoutConflictTests : IAsyncDisposable
 
         var info = await ctx.Gateway.CreateBranchAsync("retry-branch", c1, checkout: true);
         Assert.True(info.IsCurrent);
-        await ctx.WithRepositoryAsync(r =>
+        using (var r = new Repository(ctx.RepositoryPath))
         {
             Assert.Equal("retry-branch", r.Head.FriendlyName);
             Assert.Equal(c1, r.Head.Tip.Sha);
-        });
+        }
     }
 
     [Fact]
@@ -117,11 +117,11 @@ public sealed class CheckoutConflictTests : IAsyncDisposable
         Assert.Contains("other.txt", ex.Message);
         Assert.NotNull(ex.Details);
         Assert.Contains("other.txt", ex.Details);
-        await ctx.WithRepositoryAsync(r =>
+        using (var r = new Repository(ctx.RepositoryPath))
         {
             Assert.Equal("main", r.Head.FriendlyName);
             Assert.Equal(c2, r.Head.Tip.Sha);
-        });
+        }
     }
 
     [Fact]
@@ -176,11 +176,11 @@ public sealed class CheckoutConflictTests : IAsyncDisposable
         var info = await ctx.Gateway.CreateBranchAsync("non-conflicting", c1, checkout: true);
 
         Assert.True(info.IsCurrent);
-        await ctx.WithRepositoryAsync(r =>
+        using (var r = new Repository(ctx.RepositoryPath))
         {
             Assert.Equal("non-conflicting", r.Head.FriendlyName);
             Assert.Equal(c1, r.Head.Tip.Sha);
-        });
+        }
         Assert.Equal("same edited\n", File.ReadAllText(Path.Combine(repo.Path, "a.txt")));
     }
 }

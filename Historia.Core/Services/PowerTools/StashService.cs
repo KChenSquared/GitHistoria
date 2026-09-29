@@ -1,10 +1,10 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IStashService"/>
 public sealed class StashService(IGitCliService cli) : IStashService
 {
     public Task<IReadOnlyList<StashEntry>> ListAsync(RepositoryContext context, CancellationToken ct = default)
-        => context.WithRepositoryAsync(Project, ct);
+        => ListStashesAsync(context.RepositoryPath, ct);
 
     public async Task<bool> SaveAsync(RepositoryContext context, StashSaveOptions options, CancellationToken ct = default)
     {
@@ -26,7 +26,14 @@ public sealed class StashService(IGitCliService cli) : IStashService
             args.AddRange(options.Paths);
         }
 
-        var result = await cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, ct)
+        // No wall clock: hooks and large tree updates run long, and a kill midway leaves a
+        // half-updated tree and a stale index.lock. The caller's token still cancels it.
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
+        {
+            Arguments = args,
+            WorkingDirectory = context.RepositoryPath,
+            Timeout = Timeout.InfiniteTimeSpan,
+        }, innerCt), ct)
             .ConfigureAwait(false);
 
         if (result.StandardOutput.Contains("No local changes to save", StringComparison.OrdinalIgnoreCase)
@@ -50,7 +57,12 @@ public sealed class StashService(IGitCliService cli) : IStashService
             args.Add(message);
         }
 
-        var result = await cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, ct)
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
+        {
+            Arguments = args,
+            WorkingDirectory = context.RepositoryPath,
+            Timeout = Timeout.InfiniteTimeSpan,
+        }, innerCt), ct)
             .ConfigureAwait(false);
 
         // Nothing staged → git prints one of these and exits non-zero; treat as a no-op.
@@ -65,38 +77,38 @@ public sealed class StashService(IGitCliService cli) : IStashService
         return true;
     }
 
-    public Task ApplyAndDropAsync(RepositoryContext context, ObjectId commitId, CancellationToken ct = default)
+    public Task ApplyAndDropAsync(RepositoryContext context, GitObjectId commitId, CancellationToken ct = default)
         => MutateAsync(context, commitId, "pop", extra: null, ct);
 
-    public Task ApplyAsync(RepositoryContext context, ObjectId commitId, bool restoreIndex, CancellationToken ct = default)
+    public Task ApplyAsync(RepositoryContext context, GitObjectId commitId, bool restoreIndex, CancellationToken ct = default)
         => MutateAsync(context, commitId, "apply", extra: restoreIndex ? "--index" : null, ct);
 
-    public Task DropAsync(RepositoryContext context, ObjectId commitId, CancellationToken ct = default)
+    public Task DropAsync(RepositoryContext context, GitObjectId commitId, CancellationToken ct = default)
         => MutateAsync(context, commitId, "drop", extra: null, ct);
 
-    public Task BranchFromAsync(RepositoryContext context, ObjectId commitId, string branchName, CancellationToken ct = default)
+    public Task BranchFromAsync(RepositoryContext context, GitObjectId commitId, string branchName, CancellationToken ct = default)
         => MutateAsync(context, commitId, "branch", extra: branchName, ct, branchNameFirst: true);
 
     public async Task ClearAsync(RepositoryContext context, CancellationToken ct = default)
     {
         using var _ = context.BeginSelfOperation();
-        var result = await cli.RunAsync(new GitCliRequest
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
         {
             Arguments = ["stash", "clear"],
             WorkingDirectory = context.RepositoryPath,
-        }, ct).ConfigureAwait(false);
+        }, innerCt), ct).ConfigureAwait(false);
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, "Stash clear");
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
     }
 
-    private async Task MutateAsync(RepositoryContext context, ObjectId commitId, string verb, string? extra,
+    private async Task MutateAsync(RepositoryContext context, GitObjectId commitId, string verb, string? extra,
         CancellationToken ct, bool branchNameFirst = false)
     {
         using var _ = context.BeginSelfOperation();
 
         // protocol: re-list, find the entry by commit id, act on its CURRENT index.
-        var current = await context.WithRepositoryAsync(Project, ct).ConfigureAwait(false);
+        var current = await ListStashesAsync(context.RepositoryPath, ct).ConfigureAwait(false);
         var entry = current.FirstOrDefault(e => e.CommitId == commitId)
                     ?? throw new HistoriaGitException(GitErrorKind.RefNotFound,
                         "The stash list changed — refresh the stash panel and try again.");
@@ -114,7 +126,12 @@ public sealed class StashService(IGitCliService cli) : IStashService
             args.Add(stashRef);
         }
 
-        var result = await cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = context.RepositoryPath }, ct)
+        var result = await context.WithWriteLockAsync(innerCt => cli.RunAsync(new GitCliRequest
+        {
+            Arguments = args,
+            WorkingDirectory = context.RepositoryPath,
+            Timeout = Timeout.InfiniteTimeSpan,
+        }, innerCt), ct)
             .ConfigureAwait(false);
 
         // A conflicting pop/apply leaves the working tree with markers and the entry intact.
@@ -124,29 +141,119 @@ public sealed class StashService(IGitCliService cli) : IStashService
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
     }
 
-    private static IReadOnlyList<StashEntry> Project(Repository repo)
+    private async Task<IReadOnlyList<StashEntry>> ListStashesAsync(string repositoryPath, CancellationToken ct)
     {
-        var result = new List<StashEntry>();
-        var i = 0;
-        foreach (var stash in repo.Stashes)
+        var result = await cli.RunAsync(new GitCliRequest
         {
-            var commit = stash.WorkTree;
-            var includesUntracked = commit.Parents.Count() == 3; // HEAD, index, [untracked tree]
-            result.Add(new StashEntry
+            Arguments =
+            [
+                "log",
+                "-g",
+                "--no-show-signature",
+                "--no-renames",
+                "--diff-merges=first-parent",
+                "--name-only",
+                "-z",
+                "--format=__HISTORIA_STASH__%x00%H%x00%P%x00%an%x00%ae%x00%aI%x00%gs%x00",
+                "refs/stash",
+            ],
+            WorkingDirectory = repositoryPath,
+            RawStandardOutput = true,
+        }, ct).ConfigureAwait(false);
+
+        if (!result.IsSuccess)
+        {
+            // Only a missing refs/stash means "no stashes"; any other failure is a real error.
+            if (result.ErrorKind != GitErrorKind.Cancelled && !await StashRefExistsAsync(repositoryPath, ct).ConfigureAwait(false))
+                return [];
+            throw HistoriaGitException.FromCli(result, "List stashes");
+        }
+
+        return ParseStashLog(result.StandardOutput);
+    }
+
+    /// <summary>True unless <c>rev-parse</c> reports refs/stash missing (exit 1 under
+    /// <c>--verify -q</c>); an inconclusive probe counts as present so the caller surfaces the
+    /// original failure.</summary>
+    private async Task<bool> StashRefExistsAsync(string repositoryPath, CancellationToken ct)
+    {
+        var probe = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["rev-parse", "--verify", "-q", "refs/stash"],
+            WorkingDirectory = repositoryPath,
+        }, ct).ConfigureAwait(false);
+        return probe.ExitCode != 1;
+    }
+
+    internal static IReadOnlyList<StashEntry> ParseStashLog(string stdout)
+    {
+        if (string.IsNullOrEmpty(stdout))
+            return [];
+
+        var parts = stdout.Split('\0');
+        var entries = new List<StashEntry>();
+        var index = 0;
+        var i = 0;
+
+        while (i < parts.Length)
+        {
+            if (parts[i] != "__HISTORIA_STASH__")
             {
-                Index = i++,
-                CommitId = commit.Id,
-                Message = stash.Message,
-                AuthorName = commit.Author.Name,
-                AuthorEmail = commit.Author.Email,
-                CreatedAt = commit.Author.When,
-                BranchName = ExtractBranch(stash.Message),
+                i++;
+                continue;
+            }
+
+            if (i + 6 >= parts.Length)
+                break;
+
+            var commitSha = parts[i + 1].Trim();
+            if (!GitObjectId.TryParse(commitSha, out var commitId))
+            {
+                i++;
+                continue;
+            }
+
+            var parentStr = parts[i + 2].Trim();
+            var parentCount = string.IsNullOrEmpty(parentStr)
+                ? 0
+                : parentStr.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+            var includesUntracked = parentCount == 3;
+
+            var authorName = parts[i + 3];
+            var authorEmail = parts[i + 4];
+            var createdAt = DateTimeOffset.TryParse(parts[i + 5], CultureInfo.InvariantCulture, DateTimeStyles.None, out var dto)
+                ? dto
+                : DateTimeOffset.UtcNow;
+            var message = parts[i + 6];
+
+            i += 7;
+            if (i < parts.Length && parts[i].Length == 0)
+                i++;
+
+            var fileCount = 0;
+            while (i < parts.Length && parts[i] != "__HISTORIA_STASH__")
+            {
+                var p = parts[i].TrimStart('\r', '\n');
+                if (p.Length > 0)
+                    fileCount++;
+                i++;
+            }
+
+            entries.Add(new StashEntry
+            {
+                Index = index++,
+                CommitId = commitId,
+                Message = message,
+                AuthorName = authorName,
+                AuthorEmail = authorEmail,
+                CreatedAt = createdAt,
+                BranchName = ExtractBranch(message),
                 IncludesUntracked = includesUntracked,
-                FileCount = CountFiles(repo, commit),
+                FileCount = fileCount,
             });
         }
 
-        return result;
+        return entries;
     }
 
     private static string ExtractBranch(string message)
@@ -160,14 +267,5 @@ public sealed class StashService(IGitCliService cli) : IStashService
             return "";
         var colon = message.IndexOf(':', start);
         return colon > start ? message[start..colon].Trim() : "";
-    }
-
-    private static int CountFiles(Repository repo, Commit stashCommit)
-    {
-        var parent = stashCommit.Parents.FirstOrDefault();
-        if (parent is null)
-            return 0;
-        using var changes = repo.Diff.Compare<TreeChanges>(parent.Tree, stashCommit.Tree);
-        return changes.Count();
     }
 }

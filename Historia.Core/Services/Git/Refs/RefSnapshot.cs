@@ -8,21 +8,23 @@ namespace Historia.Services.Git;
 /// </summary>
 public sealed record RefEntry(
     string CanonicalName,
-    ObjectId? Target,
+    GitObjectId? Target,
     string ObjectType,
-    ObjectId? Peeled,
+    GitObjectId? Peeled,
     string? PeeledType,
     string? SymrefTarget,
     string? TaggerName,
     DateTimeOffset? TaggerWhen,
     string? Message)
 {
+    public string? Upstream { get; init; }
+
     public bool IsAnnotatedTag => ObjectType == "tag";
 
     /// <summary>The commit this ref reaches — its own target when that is a commit, else the
     /// peeled target of an annotated tag when that is a commit; null for a ref that reaches a
     /// tree or blob (e.g. linux's <c>v2.6.11-tree</c>).</summary>
-    public ObjectId? PeeledCommit =>
+    public GitObjectId? PeeledCommit =>
         ObjectType == "commit" ? Target
         : PeeledType == "commit" ? Peeled
         : null;
@@ -30,16 +32,15 @@ public sealed record RefEntry(
 
 /// <summary>
 /// Every ref of one repository at one moment, read with a single <c>git for-each-ref</c> — the
-/// source the commit graph (fingerprint, tip set, decorations) and the tag list read instead of
-/// enumerating refs through LibGit2Sharp, which costs ~7× as much on a repo with tens of
-/// thousands of tags. Immutable; <see cref="RefSnapshotProvider"/> hands out the same instance
+/// source the commit graph (fingerprint, tip set, decorations) and the tag list read.
+/// Immutable; <see cref="RefSnapshotProvider"/> hands out the same instance
 /// until <see cref="Token"/> no longer matches the files on disk.
 /// </summary>
 public sealed class RefSnapshot
 {
     private readonly Dictionary<string, RefEntry> _byName;
 
-    public RefSnapshot(IReadOnlyList<RefEntry> refs, long token, string? headSymref, ObjectId? headTarget)
+    public RefSnapshot(IReadOnlyList<RefEntry> refs, long token, string? headSymref, GitObjectId? headTarget)
     {
         Refs = refs;
         Token = token;
@@ -61,7 +62,7 @@ public sealed class RefSnapshot
     public string? HeadSymref { get; }
 
     /// <summary>The object HEAD resolves to; null when HEAD is unborn.</summary>
-    public ObjectId? HeadTarget { get; }
+    public GitObjectId? HeadTarget { get; }
 
     public bool IsHeadDetached => HeadSymref is null && HeadTarget is not null;
 

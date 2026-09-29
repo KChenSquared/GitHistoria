@@ -4,7 +4,7 @@ namespace Historia.Services.Graph;
 /// Pure C# DAG layout algorithm. Converts a topologically ordered commit stream
 /// (children before parents) into visual rows, lanes, and edges in three conceptual passes:
 /// ordered walk → greedy lane assignment + edge emission → stable compaction + color.
-/// No LibGit2Sharp object is retained; input is <see cref="RawCommit"/> records.
+/// Input is <see cref="RawCommit"/> records.
 /// </summary>
 public sealed class DagLayoutEngine
 {
@@ -20,12 +20,12 @@ public sealed class DagLayoutEngine
     /// plain newest-tip-wins order stands until the verified recompute.</param>
     public GraphLayoutResult Compute(
         IReadOnlyList<RawCommit> commits,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
+        IReadOnlyDictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
         int maxRows,
         int maxLanes = int.MaxValue,
         CancellationToken ct = default,
         bool retainCommits = true,
-        Func<ObjectId, ObjectId, bool>? isAncestor = null)
+        Func<GitObjectId, GitObjectId, bool>? isAncestor = null)
     {
         var state = new GraphLayoutState { MaxLanes = Math.Max(2, maxLanes), RetainCommits = retainCommits };
         SeedTipPriority(state, commits, decorations, isAncestor);
@@ -42,7 +42,7 @@ public sealed class DagLayoutEngine
     public GraphLayoutResult Extend(
         GraphLayoutResult previous,
         IReadOnlyList<RawCommit> nextCommits,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
+        IReadOnlyDictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
         int additionalRows,
         CancellationToken ct = default)
     {
@@ -54,7 +54,7 @@ public sealed class DagLayoutEngine
     private static void Consume(
         GraphLayoutState s,
         IReadOnlyList<RawCommit> commits,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
+        IReadOnlyDictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
         int rowCeiling,
         CancellationToken ct)
     {
@@ -171,10 +171,7 @@ public sealed class DagLayoutEngine
             });
             if (s.RetainCommits)
                 s.Commits.Add(commit.Metadata);
-            // Reuse whatever instance a child's reservation already interned for this
-            // SHA (the common case — a parent's reservation exists before the parent's own row
-            // does, in a topo walk) instead of keeping commit.Id's own freshly-parsed copy too.
-            s.RowByCommitId[Intern(s, commit.Id)] = row;
+            s.RowByCommitId[commit.Id] = row;
 
             if (deco is not null)
                 foreach (var x in deco)
@@ -569,21 +566,21 @@ public sealed class DagLayoutEngine
     private static void SeedTipPriority(
         GraphLayoutState s,
         IReadOnlyList<RawCommit> commits,
-        IReadOnlyDictionary<ObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
-        Func<ObjectId, ObjectId, bool>? isAncestor)
+        IReadOnlyDictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>? decorations,
+        Func<GitObjectId, GitObjectId, bool>? isAncestor)
     {
         if (decorations is null || decorations.Count == 0 || commits.Count < 2)
             return;
 
         var limit = Math.Min(commits.Count, TipPriorityScanHorizon);
 
-        var hasChild = new HashSet<ObjectId>();
+        var hasChild = new HashSet<GitObjectId>();
         for (var i = 0; i < limit; i++)
             foreach (var p in commits[i].ParentIds)
                 hasChild.Add(p);
 
         var tips = new List<RawCommit>();
-        var tipRow = new Dictionary<ObjectId, int>();
+        var tipRow = new Dictionary<GitObjectId, int>();
         for (var i = 0; i < limit; i++)
         {
             var c = commits[i];
@@ -604,7 +601,7 @@ public sealed class DagLayoutEngine
         static int ByNewest(RawCommit a, RawCommit b)
         {
             var t = b.Metadata.CommitWhen.CompareTo(a.Metadata.CommitWhen);
-            return t != 0 ? t : string.CompareOrdinal(a.Id.Sha, b.Id.Sha);
+            return t != 0 ? t : a.Id.CompareTo(b.Id);
         }
         tips.Sort(ByNewest);
 
@@ -622,18 +619,17 @@ public sealed class DagLayoutEngine
 
         if (head is { } h && !tips[0].Id.Equals(h.Id))
         {
-            // The libgit2 CalculateHistoryDivergence oracle is
-            // retired everywhere — every real caller now passes isAncestor: null and gets the
-            // exact in-window check below for free (no repo access, no gate). The parameter stays
+            // Every real caller passes isAncestor: null and gets the
+            // exact in-window check below for free (no repo access). The parameter stays
             // only so tests can inject a stand-in oracle against a synthetic DAG.
-            Dictionary<ObjectId, int>? rowById = null;
+            Dictionary<GitObjectId, int>? rowById = null;
             if (isAncestor is null)
             {
-                rowById = new Dictionary<ObjectId, int>(limit);
+                rowById = new Dictionary<GitObjectId, int>(limit);
                 for (var i = 0; i < limit; i++)
                     rowById[commits[i].Id] = i;
             }
-            bool Ancestor(ObjectId a, ObjectId b) =>
+            bool Ancestor(GitObjectId a, GitObjectId b) =>
                 isAncestor is not null ? isAncestor(a, b) : IsAncestorInWindow(commits, rowById!, a, b);
 
             // The tips strictly newer than HEAD are the front run of the sorted list.
@@ -694,8 +690,7 @@ public sealed class DagLayoutEngine
     }
 
     /// <summary>
-    /// Exact in-window ancestry check that answers the same question the
-    /// retired libgit2 oracle did — <c>isAncestor(a, b)</c> is true when commit <paramref
+    /// Exact in-window ancestry check — <c>isAncestor(a, b)</c> is true when commit <paramref
     /// name="h"/> is an ancestor of (or equal to) <paramref name="t"/> — using ONLY the already
     /// scanned topo-ordered prefix (<paramref name="commits"/>[0, <see cref="TipPriorityScanHorizon"/>)),
     /// with no repo access.
@@ -712,14 +707,14 @@ public sealed class DagLayoutEngine
     /// possible — the only effect is which branch holds the trunk lane.</para>
     /// </summary>
     private static bool IsAncestorInWindow(
-        IReadOnlyList<RawCommit> commits, IReadOnlyDictionary<ObjectId, int> rowById, ObjectId h, ObjectId t)
+        IReadOnlyList<RawCommit> commits, IReadOnlyDictionary<GitObjectId, int> rowById, GitObjectId h, GitObjectId t)
     {
         if (h.Equals(t))
             return true;
         if (!rowById.TryGetValue(t, out var rowT) || !rowById.TryGetValue(h, out var rowH) || rowT > rowH)
             return false;
 
-        var marked = new HashSet<ObjectId> { t };
+        var marked = new HashSet<GitObjectId> { t };
         for (var i = rowT; i <= rowH; i++)
         {
             if (!marked.Contains(commits[i].Id))
@@ -769,9 +764,8 @@ public sealed class DagLayoutEngine
         return c;
     }
 
-    private static void AddReservation(GraphLayoutState s, ObjectId parent, Res res)
+    private static void AddReservation(GraphLayoutState s, GitObjectId parent, Res res)
     {
-        parent = Intern(s, parent);
         if (!s.Reservations.TryGetValue(parent, out var list))
             s.Reservations[parent] = list = [];
         list.Add(res);
@@ -779,19 +773,7 @@ public sealed class DagLayoutEngine
             s.ReservedLaneCount[res.RawLane] = s.ReservedLaneCount.GetValueOrDefault(res.RawLane) + 1;
     }
 
-    /// <summary>Returns the one canonical <see cref="ObjectId"/> instance for this
-    /// SHA — the first instance ever seen for it, whether that was as a reservation key or a row.
-    /// Every later reference to the same commit reuses it instead of holding its own separately
-    /// parsed copy.</summary>
-    private static ObjectId Intern(GraphLayoutState s, ObjectId id)
-    {
-        if (s.InternedIds.TryGetValue(id, out var canonical))
-            return canonical;
-        s.InternedIds[id] = id;
-        return id;
-    }
-
-    private static void RemoveReservationsFor(GraphLayoutState s, ObjectId id, List<Res> removed)
+    private static void RemoveReservationsFor(GraphLayoutState s, GitObjectId id, List<Res> removed)
     {
         foreach (var res in removed)
             if (res.RawLane >= 0)
@@ -808,7 +790,7 @@ public sealed class DagLayoutEngine
     // ── Color assignment ──
 
     private static int ResolveColor(GraphLayoutState s, int compactedLane,
-        IReadOnlyList<GraphDecorationInput>? deco, ObjectId birthCommit)
+        IReadOnlyList<GraphDecorationInput>? deco, GitObjectId birthCommit)
     {
         if (s.LaneColor.TryGetValue(compactedLane, out var existing))
             return existing;
@@ -825,7 +807,7 @@ public sealed class DagLayoutEngine
             .Select(x => x.Label)
             .OrderBy(l => l, StringComparer.Ordinal)
             .FirstOrDefault();
-        var laneKey = branch ?? birthCommit.Sha;
+        var laneKey = branch ?? birthCommit.ToString();
         s.LaneKey[compactedLane] = laneKey;
 
         var seed = (int)(StableHash.Fnv1a(laneKey) % LanePalette.Size);

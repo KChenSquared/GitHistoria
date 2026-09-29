@@ -211,7 +211,6 @@ public sealed class App : Application
         services.AddSingleton<SyntaxThemeHost>();
         services.AddSingleton<IGitExecutableLocator, GitExecutableLocator>();
         services.AddSingleton<IGitCliService, GitCliService>();
-        services.AddSingleton<LibGit2Service>();
         services.AddSingleton<IBackgroundWorkGate, BackgroundWorkGate>();
         services.AddSingleton<Historia.Services.Graph.IGraphLayoutService, Historia.Services.Graph.GraphLayoutService>();
         services.AddSingleton<IRepoStateCache, RepoStateCache>();
@@ -304,11 +303,10 @@ public sealed class App : Application
         var notifications = Services.GetRequiredService<INotificationService>();
         var settings = Services.GetRequiredService<ISettingsService>();
 
-        // Resolving the git executable and restoring session tabs run concurrently because
-        // the restore path never touches IGitExecutableLocator — it only needs libgit2, via
-        // RepositoryContext.Open. Restoring the focused tab is what starts its commit-graph walk
-        // (CommitGraphControl.Bind → ComputeLayoutAsync); running them concurrently lets the
-        // graph walk for an already-known tab start immediately.
+        // Resolving the git executable and restoring session tabs run concurrently; CLI operations
+        // wait for git resolution via IGitCliService.WhenResolvedAsync. Restoring the focused tab
+        // is what starts its commit-graph walk (CommitGraphControl.Bind → ComputeLayoutAsync);
+        // running them concurrently lets tab restoration start immediately.
         var resolveGit = ResolveGitAsync(locator, settings, notifications);
         var restoreTabs = settings.Current.RestoreSessionTabs
             ? RestoreSessionTabsAsync(Services.GetRequiredService<IWorkspaceService>(), notifications)
@@ -331,15 +329,15 @@ public sealed class App : Application
         {
             var git = await locator.ResolveAsync(settings.Current.GitExecutablePath).ConfigureAwait(false);
             Historia.Diagnostics.PerfLog.Mark($"Git resolution complete: found={git.Found}, path={git.Path}");
+            // The locator reports a git below the version floor as not found; its reason names
+            // the found and required versions.
             if (!git.Found)
             {
+                var reason = git.Path is not null && git.NotFoundReason is { } r
+                    ? r
+                    : "Git was not found on this system.";
                 notifications.Publish(NotificationSeverity.Warning,
-                    "Git was not found on this system. Network and history operations are disabled until it is installed or its path is set in Settings.");
-            }
-            else if (!git.MeetsMinimumVersion)
-            {
-                notifications.Publish(NotificationSeverity.Warning,
-                    $"Git {git.Version} was detected. Historia needs at least Git 2.35; some operations may not work.");
+                    $"{reason} Network and history operations are disabled until a supported git is installed or its path is set in Settings.");
             }
         }
         catch (Exception ex)

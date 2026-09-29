@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>
 /// Result of a single Git CLI invocation. Raw stderr is carried but never surfaced
@@ -16,6 +16,10 @@ public sealed record GitCliResult(
     /// <summary>Stdout exactly as git wrote it — set only for a
     /// <see cref="GitCliRequest.RawStandardOutput"/> request, null otherwise.</summary>
     public byte[]? StandardOutputBytes { get; init; }
+
+    /// <summary>True when stdout exceeded <see cref="GitCliRequest.MaxStandardOutputBytes"/>,
+    /// stopping the read and terminating the process tree early.</summary>
+    public bool OutputTruncated { get; init; }
 }
 
 /// <summary>
@@ -49,6 +53,10 @@ public sealed record GitCliRequest
     /// <see cref="StreamOutput"/> or a stdout line callback.</summary>
     public bool RawStandardOutput { get; init; }
 
+    /// <summary>Maximum bytes of stdout to buffer before stopping the read, killing the process
+    /// tree, and flagging <see cref="GitCliResult.OutputTruncated"/>. Null means unlimited.</summary>
+    public long? MaxStandardOutputBytes { get; init; }
+
     /// <summary>When set, written to the process's stdin and then closed (e.g. a patch for <c>git apply -</c>).</summary>
     public string? StandardInput { get; init; }
 
@@ -80,9 +88,14 @@ public sealed record GitExecutableInfo
     public required bool Found { get; init; }
     public string? Path { get; init; }
     public Version? Version { get; init; }
+    public string? NotFoundReason { get; init; }
 
-    /// <summary>Minimum supported version is 2.35.</summary>
-    public bool MeetsMinimumVersion => Version is not null && Version >= new Version(2, 35);
+    /// <summary>
+    /// Minimum supported version is 2.35, the release that introduced <c>stash push --staged</c>
+    /// and <c>checkout --conflict=zdiff3</c>.
+    /// </summary>
+    public static readonly Version MinimumVersion = new(2, 35);
+    public bool MeetsMinimumVersion => Version is not null && Version >= MinimumVersion;
 
     public static GitExecutableInfo NotFound { get; } = new() { Found = false };
 }

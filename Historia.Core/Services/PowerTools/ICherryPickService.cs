@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.PowerTools;
+namespace Historia.Services.PowerTools;
 
 /// <summary>
 /// Cherry-pick and revert of one commit or an ordered set. Commits must be passed
@@ -8,10 +8,10 @@
 /// </summary>
 public interface ICherryPickService
 {
-    Task CherryPickAsync(RepositoryContext context, IReadOnlyList<ObjectId> oldestFirst,
+    Task CherryPickAsync(RepositoryContext context, IReadOnlyList<GitObjectId> oldestFirst,
         bool noCommit = false, int? mainline = null, CancellationToken ct = default);
 
-    Task RevertAsync(RepositoryContext context, IReadOnlyList<ObjectId> oldestFirst,
+    Task RevertAsync(RepositoryContext context, IReadOnlyList<GitObjectId> oldestFirst,
         int? mainline = null, CancellationToken ct = default);
 
     /// <summary>The HEAD recorded before the last history-rewriting op this session, for "Undo".</summary>

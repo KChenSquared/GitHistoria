@@ -1,4 +1,4 @@
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public class DiffViewStagingTests : IDisposable
@@ -177,7 +177,6 @@ public class DiffViewStagingTests : IDisposable
         sc.AddSingleton(_syntaxHost);
         sc.AddSingleton<IRepoLayoutService>(new FakeLayoutService());
         sc.AddSingleton<ICredentialVaultService>(new FakeVault());
-        sc.AddSingleton<LibGit2Service>();
 
         var locator = new GitExecutableLocator();
         locator.ResolveAsync(null).GetAwaiter().GetResult();
@@ -267,7 +266,7 @@ public class DiffViewStagingTests : IDisposable
     public async Task Commit_diff_exposes_no_staging_actions()
     {
         using var repo = new LibGit2Sharp.Repository(_repoDir);
-        var headId = repo.Head.Tip.Id;
+        var headId = repo.Head.Tip.Id.ToGitObjectId();
         var req = new DiffRequest { Source = DiffSource.Commit, CommitId = headId, Path = "test.txt" };
         var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
         var presenter = await WaitForPresenterAsync(view);
@@ -418,7 +417,7 @@ public class DiffViewStagingTests : IDisposable
     public async Task Commit_diff_has_no_row_buttons_or_menu_items()
     {
         using var repo = new LibGit2Sharp.Repository(_repoDir);
-        var headId = repo.Head.Tip.Id;
+        var headId = repo.Head.Tip.Id.ToGitObjectId();
         var window = new Window { Width = 800, Height = 600 };
         var req = new DiffRequest { Source = DiffSource.Commit, CommitId = headId, Path = "test.txt" };
         var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
@@ -612,7 +611,7 @@ public class DiffViewStagingTests : IDisposable
         for (var i = 0; i < 50; i++)
         {
             Dispatcher.UIThread.RunJobs();
-            if (view.PresenterForTesting is TextBlock tb)
+            if (view.PresenterForTesting is TextBlock tb && tb.Text != "Loading diff...")
             {
                 return tb;
             }
