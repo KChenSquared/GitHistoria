@@ -72,10 +72,15 @@ public sealed class GitGatewayWorkingTreeTests : IAsyncDisposable
         Assert.Equal("orig nested", (await File.ReadAllTextAsync(Path.Combine(repo.Path, "sub/nested.txt"))).Trim());
     }
 
+    // 1500 paths of ~85 chars is five times the 25 000-character chunk size (and the Windows
+    // argv limit); each file costs several milliseconds of filesystem work on a scanned disk,
+    // so a larger count only slows the suite.
+    private const int PathCount = 1500;
+
     [Fact]
-    public async Task Stage_and_discard_5000_paths_with_long_names()
+    public async Task Stage_and_discard_paths_past_the_argv_limit_with_long_names()
     {
-        using var repo = TestRepositoryBuilder.FromTemplate("gw-5000-paths", r =>
+        using var repo = TestRepositoryBuilder.FromTemplate("gw-many-paths", r =>
         {
             r.WriteFile("init.txt", "root\n").Stage().Commit("root");
         });
@@ -83,8 +88,8 @@ public sealed class GitGatewayWorkingTreeTests : IAsyncDisposable
         var dir = Path.Combine(repo.Path, "nested_folder_with_a_fairly_long_name");
         Directory.CreateDirectory(dir);
 
-        var paths = new List<string>(5000);
-        for (var i = 0; i < 5000; i++)
+        var paths = new List<string>(PathCount);
+        for (var i = 0; i < PathCount; i++)
         {
             var relativePath = $"nested_folder_with_a_fairly_long_name/test_file_item_with_long_name_{i:D5}.txt";
             paths.Add(relativePath);
@@ -93,26 +98,26 @@ public sealed class GitGatewayWorkingTreeTests : IAsyncDisposable
 
         var ctx = _host.Open(repo.Path);
 
-        // 1. Stage all 5000 paths (argv length would exceed limit; stdin pathspec works)
+        // 1. Stage every path (argv length would exceed limit; stdin pathspec works)
         await ctx.Gateway.StageAsync(paths);
         var status = await ctx.Gateway.GetStatusAsync();
-        Assert.Equal(5000, status.Staged.Count);
+        Assert.Equal(PathCount, status.Staged.Count);
 
         // 2. Commit them to HEAD
         await ctx.Gateway.CommitAsync(new CommitRequest
         {
-            Message = "commit 5000 files",
+            Message = "commit many files",
             AuthorName = "Dev",
             AuthorEmail = "dev@example.com",
         });
 
         // 3. Modify them in the working tree
-        for (var i = 0; i < 5000; i++)
+        for (var i = 0; i < PathCount; i++)
         {
             File.WriteAllText(Path.Combine(repo.Path, paths[i]), "modified\n");
         }
 
-        // 4. Discard all 5000 paths (exercises git ls-tree chunking over argv limit and restore from HEAD)
+        // 4. Discard every path (exercises git ls-tree chunking over argv limit and restore from HEAD)
         await ctx.Gateway.DiscardAsync(paths);
         var statusAfter = await ctx.Gateway.GetStatusAsync();
         Assert.False(statusAfter.IsDirty);
@@ -243,5 +248,61 @@ public sealed class GitGatewayWorkingTreeTests : IAsyncDisposable
         Assert.Equal("signed commit", commitReq.StandardInput);
         Assert.Equal("Committer", commitReq.ExtraEnvironment?["GIT_COMMITTER_NAME"]);
         Assert.Equal("committer@example.com", commitReq.ExtraEnvironment?["GIT_COMMITTER_EMAIL"]);
+    }
+
+    [Theory]
+    [InlineData("ls-tree", GitErrorKind.TimedOut, -1)]
+    [InlineData("ls-tree", GitErrorKind.Unknown, 128)]
+    [InlineData("rev-parse", GitErrorKind.TimedOut, -1)]
+    [InlineData("rev-parse", GitErrorKind.Cancelled, -1)]
+    public async Task Discard_stops_without_deleting_when_a_probe_fails(string failingCommand, GitErrorKind kind, int exitCode)
+    {
+        // Rule 00: a failed probe read as "unborn" or "not in HEAD" would recycle tracked files.
+        using var repo = TestRepositoryBuilder.FromTemplate("gw-discard-probe-seed", r =>
+            r.WriteFile("tracked.txt", "original\n").Stage().Commit("init"));
+        var trackedPath = Path.Combine(repo.Path, "tracked.txt");
+        await File.WriteAllTextAsync(trackedPath, "modified\n");
+
+        var armed = false; // discovery runs rev-parse too; fail only the discard's own probes
+        var spy = new InterceptingGitCliService(_host.Cli)
+        {
+            Intercept = req => armed && req.Arguments.Contains(failingCommand)
+                ? new GitCliResult(exitCode, "", "", kind, TimeSpan.Zero)
+                : null,
+        };
+        var ctx = _host.Open(repo.Path, spy);
+        armed = true;
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => ctx.Gateway.DiscardAsync(["tracked.txt"]));
+
+        Assert.True(File.Exists(trackedPath));
+        Assert.Equal("modified\n", await File.ReadAllTextAsync(trackedPath));
+        Assert.DoesNotContain(spy.Requests, r => r.Arguments.Contains("rm") || r.Arguments.Contains("restore"));
+    }
+
+    [Fact]
+    public async Task Work_tree_writes_have_no_wall_clock_timeout()
+    {
+        // A checkout/commit/merge/reset killed by the 30 s default leaves a half-updated tree
+        // and a stale index.lock.
+        using var repo = TestRepositoryBuilder.FromTemplate("gw-timeout-seed", r =>
+            r.WriteFile("a.txt", "1\n").Stage().Commit("init"));
+        var spy = new InterceptingGitCliService(_host.Cli);
+        var ctx = _host.Open(repo.Path, spy);
+
+        await ctx.Gateway.CreateBranchAsync("side", "HEAD", checkout: true);
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "a.txt"), "2\n");
+        await ctx.Gateway.StageAsync(["a.txt"]);
+        await ctx.Gateway.CommitAsync(new CommitRequest { Message = "two", AuthorName = "A", AuthorEmail = "a@example.com" });
+        await ctx.Gateway.CheckoutAsync("main", new GitCheckoutOptions());
+        await ctx.Gateway.MergeAsync("side", noFastForward: false);
+        await ctx.Gateway.ResetAsync("HEAD~1", GitResetMode.Hard);
+
+        foreach (var verb in new[] { "checkout", "commit", "merge", "reset" })
+        {
+            var requests = spy.Requests.Where(r => r.Arguments.Contains(verb)).ToList();
+            Assert.NotEmpty(requests);
+            Assert.All(requests, r => Assert.Equal(Timeout.InfiniteTimeSpan, r.Timeout));
+        }
     }
 }

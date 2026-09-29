@@ -50,6 +50,9 @@ public sealed partial class GitGateway
                 WorkingDirectory = context.RepositoryPath,
             }, innerCt).ConfigureAwait(false);
 
+            if (!headCheck.IsSuccess && !IsUnbornHeadProbe(headCheck))
+                throw HistoriaGitException.FromCli(headCheck, "Unstage");
+
             var normalizedPaths = paths.Select(p => p.Replace('\\', '/')).ToList();
             var stdin = string.Join('\0', normalizedPaths) + '\0';
 
@@ -98,15 +101,26 @@ public sealed partial class GitGateway
                 WorkingDirectory = context.RepositoryPath,
             }, innerCt).ConfigureAwait(false);
 
+            // Every probe below must succeed before anything is deleted. A failed probe
+            // (cancelled, timed out) read as "unborn" or "not in HEAD" would send tracked files to
+            // the Recycle Bin instead of restoring them.
+            if (!headCheck.IsSuccess && !IsUnbornHeadProbe(headCheck))
+                throw HistoriaGitException.FromCli(headCheck, "Discard");
+
             if (!headCheck.IsSuccess)
             {
-                await cli.RunAsync(new GitCliRequest
+                var unbornRm = await cli.RunAsync(new GitCliRequest
                 {
                     Arguments = ["rm", "--cached", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"],
                     WorkingDirectory = context.RepositoryPath,
                     StandardInput = string.Join('\0', paths.Select(p => p.Replace('\\', '/'))) + '\0',
                     ExtraEnvironment = LiteralPathspecEnv,
+                    Timeout = TimeSpan.FromMinutes(5),
                 }, innerCt).ConfigureAwait(false);
+
+                if (!unbornRm.IsSuccess)
+                    throw HistoriaGitException.FromCli(unbornRm, "Discard");
+                innerCt.ThrowIfCancellationRequested();
 
                 foreach (var path in paths)
                 {
@@ -128,7 +142,10 @@ public sealed partial class GitGateway
                     WorkingDirectory = context.RepositoryPath,
                 }, innerCt).ConfigureAwait(false);
 
-                if (treeResult.IsSuccess && !string.IsNullOrEmpty(treeResult.StandardOutput))
+                if (!treeResult.IsSuccess)
+                    throw HistoriaGitException.FromCli(treeResult, "Discard");
+
+                if (!string.IsNullOrEmpty(treeResult.StandardOutput))
                 {
                     var names = treeResult.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
                     foreach (var name in names)
@@ -164,7 +181,7 @@ public sealed partial class GitGateway
 
             if (notInHead.Count > 0)
             {
-                await cli.RunAsync(new GitCliRequest
+                var rmResult = await cli.RunAsync(new GitCliRequest
                 {
                     Arguments = ["rm", "--cached", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"],
                     WorkingDirectory = context.RepositoryPath,
@@ -172,6 +189,10 @@ public sealed partial class GitGateway
                     ExtraEnvironment = LiteralPathspecEnv,
                     Timeout = TimeSpan.FromMinutes(5),
                 }, innerCt).ConfigureAwait(false);
+
+                if (!rmResult.IsSuccess)
+                    throw HistoriaGitException.FromCli(rmResult, "Discard");
+                innerCt.ThrowIfCancellationRequested();
 
                 foreach (var path in notInHead)
                 {
@@ -206,6 +227,9 @@ public sealed partial class GitGateway
                 WorkingDirectory = context.RepositoryPath,
                 StandardInput = request.Message ?? "",
                 ExtraEnvironment = env,
+                // No wall clock: hooks (lint, tests) and a signing passphrase prompt can take
+                // minutes. The caller's token still cancels it.
+                Timeout = Timeout.InfiniteTimeSpan,
             }, innerCt).ConfigureAwait(false);
 
             if (!result.IsSuccess)
@@ -265,6 +289,7 @@ public sealed partial class GitGateway
             {
                 Arguments = args,
                 WorkingDirectory = context.RepositoryPath,
+                ExtraEnvironment = LiteralPathspecEnv,
             }, ct).ConfigureAwait(false);
 
             if (result.IsSuccess && !string.IsNullOrEmpty(result.StandardOutput))
@@ -308,6 +333,12 @@ public sealed partial class GitGateway
         if (currentChunk.Count > 0)
             yield return currentChunk;
     }
+
+    /// <summary><c>rev-parse --verify -q HEAD</c> exits 1 on an unborn HEAD; cancellation,
+    /// timeouts and a broken repository report differently.</summary>
+    private static bool IsUnbornHeadProbe(GitCliResult headCheck) =>
+        headCheck.ExitCode == 1
+        && headCheck.ErrorKind is not (GitErrorKind.Cancelled or GitErrorKind.TimedOut);
 
     private static bool IsIgnoredAdviceOnly(string stderr)
     {

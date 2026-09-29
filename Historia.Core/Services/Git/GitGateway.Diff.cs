@@ -73,6 +73,7 @@ public sealed partial class GitGateway
                             Arguments = ["ls-files", "-z", "--", path],
                             WorkingDirectory = context.RepositoryPath,
                             Timeout = TimeSpan.FromSeconds(10),
+                            ExtraEnvironment = LiteralPathspecEnv,
                         }, ct).ConfigureAwait(false);
 
                         if (lsResult.IsSuccess && string.IsNullOrEmpty(lsResult.StandardOutput))
@@ -149,6 +150,8 @@ public sealed partial class GitGateway
             RawStandardOutput = true,
             MaxStandardOutputBytes = maxBytes,
             Timeout = TimeSpan.FromSeconds(30),
+            // Paths come from status and may hold glob characters or a leading ":".
+            ExtraEnvironment = LiteralPathspecEnv,
         }, ct).ConfigureAwait(false);
     }
 
@@ -312,6 +315,7 @@ public sealed partial class GitGateway
             Arguments = numstatArgs,
             WorkingDirectory = context.RepositoryPath,
             Timeout = TimeSpan.FromSeconds(30),
+            ExtraEnvironment = LiteralPathspecEnv,
         }, ct).ConfigureAwait(false);
 
         if (numstatResult.ExitCode != 0 && numstatResult.ExitCode != 1)

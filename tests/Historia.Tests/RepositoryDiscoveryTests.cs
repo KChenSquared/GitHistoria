@@ -22,6 +22,36 @@ public sealed class RepositoryDiscoveryTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task DiscoverAsync_started_before_git_resolution_waits_and_succeeds()
+    {
+        // Session restore opens tabs while git is still being located.
+        using var repo = TestRepositoryBuilder.FromTemplate("disc-wt", r =>
+            r.WriteFile("file.txt", "content").Stage().Commit("c1"));
+        var locator = new DelayedLocator();
+        var cli = new GitCliService(locator);
+
+        var discover = RepositoryDiscovery.DiscoverAsync(repo.Path, cli);
+        Assert.False(discover.IsCompleted);
+
+        locator.Complete(await new GitExecutableLocator().ResolveAsync(null));
+        var disc = await discover;
+
+        Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(repo.Path)), disc.RepositoryPath);
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_without_git_reports_git_as_required()
+    {
+        var locator = new DelayedLocator();
+        locator.Complete(GitExecutableInfo.NotFound);
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() =>
+            RepositoryDiscovery.DiscoverAsync(Path.GetTempPath(), new GitCliService(locator)));
+
+        Assert.Contains("Git is required", ex.Message);
+    }
+
+    [Fact]
     public async Task DiscoverAsync_subdirectory_resolves_to_working_tree_root()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("disc-sub", r =>
@@ -154,5 +184,23 @@ public sealed class RepositoryDiscoveryTests : IAsyncDisposable
 
         Assert.False(disc.IsBare);
         Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(repo.Path)), disc.RepositoryPath);
+    }
+
+    private sealed class DelayedLocator : IGitExecutableLocator
+    {
+        private readonly TaskCompletionSource<GitExecutableInfo> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private GitExecutableInfo _current = GitExecutableInfo.NotFound;
+
+        public GitExecutableInfo Current => _current;
+
+        public Task<GitExecutableInfo> ResolveAsync(string? userOverridePath, CancellationToken ct = default) => _tcs.Task;
+
+        public Task<GitExecutableInfo> WhenResolvedAsync(CancellationToken ct = default) => _tcs.Task;
+
+        public void Complete(GitExecutableInfo info)
+        {
+            _current = info;
+            _tcs.TrySetResult(info);
+        }
     }
 }

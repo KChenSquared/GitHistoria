@@ -66,6 +66,10 @@ public sealed partial class GitGateway
         {
             Arguments = args,
             WorkingDirectory = context.RepositoryPath,
+            // No wall clock: a large checkout (or an LFS smudge download) routinely passes the
+            // 30 s default, and a checkout killed midway leaves a half-updated tree and a stale
+            // index.lock. The caller's token still cancels it.
+            Timeout = Timeout.InfiniteTimeSpan,
         }, ct).ConfigureAwait(false);
 
         if (result.IsSuccess)

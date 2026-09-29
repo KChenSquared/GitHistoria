@@ -342,13 +342,6 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     {
         Directory.CreateDirectory(path);
 
-        if (!_cli.IsGitAvailable)
-        {
-            throw new HistoriaGitException(
-                GitErrorKind.Unknown,
-                "Git is required to initialize a repository. Install Git 2.31 or newer, or set its path in Settings.");
-        }
-
         var args = new List<string> { "init" };
         if (!string.IsNullOrWhiteSpace(initialBranch))
         {
@@ -362,6 +355,15 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             Arguments = args,
             WorkingDirectory = Path.GetDirectoryName(path.TrimEnd(Path.DirectorySeparatorChar)) ?? path,
         }, ct).ConfigureAwait(false);
+
+        // IsGitAvailable is only meaningful once RunAsync has waited for git to be located.
+        if (!result.IsSuccess && !_cli.IsGitAvailable)
+        {
+            throw new HistoriaGitException(
+                GitErrorKind.Unknown,
+                "Git is required to initialize a repository. Install Git 2.31 or newer, or set its path in Settings.",
+                result.StandardError);
+        }
 
         if (!result.IsSuccess)
             throw HistoriaGitException.FromCli(result, "Initialize repository");

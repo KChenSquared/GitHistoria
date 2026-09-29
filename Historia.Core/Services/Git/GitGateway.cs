@@ -127,6 +127,9 @@ public sealed partial class GitGateway(
         {
             Arguments = args,
             WorkingDirectory = context.RepositoryPath,
+            // No wall clock: merge runs hooks, and killing it midway leaves a half-updated tree
+            // and a stale index.lock. The caller's token still cancels it.
+            Timeout = Timeout.InfiniteTimeSpan,
         }, innerCt), ct).ConfigureAwait(false);
 
         if (!result.IsSuccess && result.ErrorKind != GitErrorKind.MergeConflict)
@@ -156,6 +159,9 @@ public sealed partial class GitGateway(
         {
             Arguments = ["reset", flag, target],
             WorkingDirectory = context.RepositoryPath,
+            // No wall clock: a --hard reset killed midway leaves a half-updated tree and a
+            // stale index.lock. The caller's token still cancels it.
+            Timeout = Timeout.InfiniteTimeSpan,
         }, innerCt), ct).ConfigureAwait(false);
 
         if (!result.IsSuccess)

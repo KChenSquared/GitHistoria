@@ -26,13 +26,6 @@ public static class RepositoryDiscovery
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ArgumentNullException.ThrowIfNull(cli);
 
-        if (!cli.IsGitAvailable)
-        {
-            throw new HistoriaGitException(
-                GitErrorKind.Unknown,
-                "Git is required to open a repository. Install Git 2.31 or newer, or set its path in Settings.");
-        }
-
         var workingDir = Directory.Exists(path) ? path : (File.Exists(path) ? (Path.GetDirectoryName(path) ?? path) : path);
         var validCwd = Directory.Exists(workingDir)
             ? workingDir
@@ -44,9 +37,25 @@ public static class RepositoryDiscovery
             WorkingDirectory = validCwd,
         };
 
+        // Checked only after RunAsync: it waits for git to be located, and tabs restored at
+        // startup open while that is still running, when IsGitAvailable still reads false.
         var result = await cli.RunAsync(revParseRequest, ct).ConfigureAwait(false);
         if (!result.IsSuccess)
         {
+            if (!cli.IsGitAvailable)
+            {
+                throw new HistoriaGitException(
+                    GitErrorKind.Unknown,
+                    "Git is required to open a repository. Install Git 2.31 or newer, or set its path in Settings.",
+                    result.StandardError);
+            }
+
+            if (result.ErrorKind == GitErrorKind.Cancelled)
+                throw new OperationCanceledException(ct);
+
+            if (result.ErrorKind == GitErrorKind.TimedOut)
+                throw HistoriaGitException.FromCli(result, "Open repository");
+
             if (result.ErrorKind == GitErrorKind.UnsafeRepository)
             {
                 throw new HistoriaGitException(

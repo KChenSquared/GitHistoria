@@ -71,6 +71,27 @@ public sealed class FileDiffCliParityTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Path_with_glob_characters_diffs_only_that_file()
+    {
+        // As a pathspec, "a[1].txt" would also match "a1.txt".
+        using var repo = TestRepositoryBuilder.FromTemplate("diff-glob-path", b =>
+        {
+            b.WriteFile("a[1].txt", "glob\n");
+            b.WriteFile("a1.txt", "plain\n");
+            b.Stage().Commit("initial");
+            b.WriteFile("a[1].txt", "glob changed\n");
+            b.WriteFile("a1.txt", "plain changed\n");
+        });
+
+        await using var ctx = _host.Open(repo.Path);
+        var actual = await ctx.Gateway.GetFileDiffAsync(
+            new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "a[1].txt" });
+
+        Assert.Contains("glob changed", actual.RawPatch);
+        Assert.DoesNotContain("plain changed", actual.RawPatch);
+    }
+
+    [Fact]
     public async Task Add_staged_and_unstaged_parity()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("diff-add-parity", b =>
