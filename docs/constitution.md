@@ -120,7 +120,7 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
 **0.4 — Assume the baseline, but verify it — never silently repair it.** Anything outside the
    package is detected at startup and, when absent, reported with an actionable message naming
    what is missing and how to get it. The app still starts where it can. Never a crash, never a
-   silent download. Applies to `git.exe` (minimum version 2.31) and the .NET Desktop Runtime.
+   silent download. Applies to `git.exe` (minimum version 2.35) and the .NET Desktop Runtime.
    Dubious repository ownership (`UnsafeRepository`) is reported with an actionable message
    giving the `safe.directory` command; Historia never writes `safe.directory` automatically.
    *(§I-6.2.3, §V2-10.3)*

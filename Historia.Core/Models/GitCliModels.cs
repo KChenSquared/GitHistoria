@@ -90,8 +90,11 @@ public sealed record GitExecutableInfo
     public Version? Version { get; init; }
     public string? NotFoundReason { get; init; }
 
-    /// <summary>Minimum supported version is 2.31.</summary>
-    public static readonly Version MinimumVersion = new(2, 31);
+    /// <summary>
+    /// Minimum supported version is 2.35, the release that introduced <c>stash push --staged</c>
+    /// and <c>checkout --conflict=zdiff3</c>.
+    /// </summary>
+    public static readonly Version MinimumVersion = new(2, 35);
     public bool MeetsMinimumVersion => Version is not null && Version >= MinimumVersion;
 
     public static GitExecutableInfo NotFound { get; } = new() { Found = false };

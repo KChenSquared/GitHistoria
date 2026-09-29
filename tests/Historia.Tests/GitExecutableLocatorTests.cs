@@ -15,9 +15,9 @@ public class GitExecutableLocatorTests
     }
 
     [Fact]
-    public void Git_version_floor_2_31_rejects_older_and_accepts_newer()
+    public void Git_version_floor_2_35_rejects_older_and_accepts_newer()
     {
-        var older = GitExecutableLocator.ParseVersion("git version 2.30.9");
+        var older = GitExecutableLocator.ParseVersion("git version 2.34.8");
         var newer = GitExecutableLocator.ParseVersion("git version 2.51.0.windows.2");
 
         Assert.NotNull(older);
@@ -35,8 +35,8 @@ public class GitExecutableLocatorTests
         };
         Assert.False(olderInfo.Found);
         Assert.False(olderInfo.MeetsMinimumVersion);
-        Assert.Contains("2.30.9", olderInfo.NotFoundReason);
-        Assert.Contains("2.31", olderInfo.NotFoundReason);
+        Assert.Contains("2.34.8", olderInfo.NotFoundReason);
+        Assert.Contains("2.35", olderInfo.NotFoundReason);
 
         var newerInfo = new GitExecutableInfo
         {
@@ -46,6 +46,24 @@ public class GitExecutableLocatorTests
         };
         Assert.True(newerInfo.Found);
         Assert.True(newerInfo.MeetsMinimumVersion);
+    }
+
+    [Fact]
+    public void ParseVersion_2_34_is_below_minimum()
+    {
+        var version = GitExecutableLocator.ParseVersion("git version 2.34.1");
+
+        Assert.NotNull(version);
+        Assert.True(version < GitExecutableInfo.MinimumVersion);
+    }
+
+    [Fact]
+    public void ParseVersion_2_35_meets_minimum()
+    {
+        var version = GitExecutableLocator.ParseVersion("git version 2.35.0.windows.1");
+
+        Assert.NotNull(version);
+        Assert.True(version >= GitExecutableInfo.MinimumVersion);
     }
 
     [Fact]

@@ -46,7 +46,7 @@ public static class RepositoryDiscovery
             {
                 throw new HistoriaGitException(
                     GitErrorKind.Unknown,
-                    "Git is required to open a repository. Install Git 2.31 or newer, or set its path in Settings.",
+                    $"Git is required to open a repository. Install Git {GitExecutableInfo.MinimumVersion} or newer, or set its path in Settings.",
                     result.StandardError);
             }
 
