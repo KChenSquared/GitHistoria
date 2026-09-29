@@ -6,11 +6,8 @@ namespace Historia.Tests;
 /// stops — no resume, no re-prime that skips rows, no disk write — until the next compute
 /// rebuilds from row 0. Without this, the graph showed rows from two walks and the old walk key's
 /// on-disk store received the new walk's rows.
-/// Serial: the headless-reorder case sets the process-wide
-/// <see cref="GraphLayoutService.TestReorderBatchObserved"/> seam.
 /// </summary>
 [Trait("tier", "git")]
-[Collection("serial")]
 public sealed class GraphWalkSupersedeTests : IAsyncDisposable
 {
     private readonly StateDir _state = new();

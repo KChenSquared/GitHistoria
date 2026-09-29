@@ -1,26 +1,9 @@
 namespace Historia.Tests;
 [Trait("tier", "git")]
-// Serialized: sets process-wide GIT_CONFIG_* variables that every concurrently spawned git child inherits.
-[Collection("serial")]
-public class SubmoduleServiceTests : IDisposable
+public class SubmoduleServiceTests
 {
     private static SubmoduleService Make(MiniHost host)
-        => new((IGitCliService)host.Provider.GetService(typeof(IGitCliService))!);
-
-    public SubmoduleServiceTests()
-    {
-        // Allow local-path submodules for the test (blocked by default since CVE-2022-39253).
-        Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", "1");
-        Environment.SetEnvironmentVariable("GIT_CONFIG_KEY_0", "protocol.file.allow");
-        Environment.SetEnvironmentVariable("GIT_CONFIG_VALUE_0", "always");
-    }
-
-    public void Dispose()
-    {
-        Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", null);
-        Environment.SetEnvironmentVariable("GIT_CONFIG_KEY_0", null);
-        Environment.SetEnvironmentVariable("GIT_CONFIG_VALUE_0", null);
-    }
+        => new(new FileProtocolGitCli(host.Cli));
 
     [Fact]
     public async Task Add_lists_the_submodule_and_remove_deletes_it_and_its_cached_module()

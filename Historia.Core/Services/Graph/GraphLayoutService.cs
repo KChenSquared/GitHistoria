@@ -38,7 +38,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// <see cref="RunHeadlessReorderAsync"/> with that batch's own row count (never a running
     /// total) — lets a test assert resident memory during a reorder never exceeds one batch. No-op
     /// (left null) outside tests.</summary>
-    internal static Action<int>? TestReorderBatchObserved;
+    private static readonly AsyncLocal<Action<int>?> _testReorderBatchObserved = new();
+    internal static Action<int>? TestReorderBatchObserved
+    {
+        get => _testReorderBatchObserved.Value;
+        set => _testReorderBatchObserved.Value = value;
+    }
 
     /// <summary>Test seams: override <see cref="GraphMetaSplice.MinRowsToConsider"/>
     /// / <see cref="GraphMetaSplice.MaxOldParentRow"/> for <see cref="TryHeadlessSpliceAsync"/> —
@@ -52,7 +57,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
         get => _testSpliceMinRowsOverride.Value;
         set => _testSpliceMinRowsOverride.Value = value;
     }
-    internal static int? TestSpliceMaxOldParentRowOverride;
+    private static readonly AsyncLocal<int?> _testSpliceMaxOldParentRowOverride = new();
+    internal static int? TestSpliceMaxOldParentRowOverride
+    {
+        get => _testSpliceMaxOldParentRowOverride.Value;
+        set => _testSpliceMaxOldParentRowOverride.Value = value;
+    }
 
     /// <summary>Test seam: substitutes for the header's real <c>LastFullWalkMs</c>
     /// (guard 4's baseline) in <see cref="TryHeadlessSpliceAsync"/>. A tiny fixture repo's own
@@ -71,7 +81,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// (both produce <c>OrderVersion &gt; 0</c> with the right row/record counts), a test needs
     /// this to tell "the splice path ran" apart from "it fell back to the ordinary reorder". Null
     /// outside tests.</summary>
-    internal static Action<int, int>? TestSpliceCommitted;
+    private static readonly AsyncLocal<Action<int, int>?> _testSpliceCommitted = new();
+    internal static Action<int, int>? TestSpliceCommitted
+    {
+        get => _testSpliceCommitted.Value;
+        set => _testSpliceCommitted.Value = value;
+    }
 
     /// <summary>Test seam: how many full ref scans (fingerprint + tip resolution) have run per
     /// repository path. A scan costs seconds on a repo with tens of thousands of refs, so tests

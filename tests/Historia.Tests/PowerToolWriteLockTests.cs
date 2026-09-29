@@ -6,23 +6,8 @@ namespace Historia.Tests;
 /// colliding with index.lock.
 /// </summary>
 [Trait("tier", "git")]
-[Collection("serial")]
-public sealed class PowerToolWriteLockTests : IDisposable
+public sealed class PowerToolWriteLockTests
 {
-    public PowerToolWriteLockTests()
-    {
-        Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", "1");
-        Environment.SetEnvironmentVariable("GIT_CONFIG_KEY_0", "protocol.file.allow");
-        Environment.SetEnvironmentVariable("GIT_CONFIG_VALUE_0", "always");
-    }
-
-    public void Dispose()
-    {
-        Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", null);
-        Environment.SetEnvironmentVariable("GIT_CONFIG_KEY_0", null);
-        Environment.SetEnvironmentVariable("GIT_CONFIG_VALUE_0", null);
-    }
-
     [Fact(Timeout = 20000)]
     public async Task Stash_holds_write_lock_and_concurrent_stage_waits()
     {
@@ -200,13 +185,14 @@ public sealed class PowerToolWriteLockTests : IDisposable
             r.Git("config", "protocol.file.allow", "always");
         });
 
-        var setupSvc = new SubmoduleService(host.Cli);
+        var fileCli = new FileProtocolGitCli(host.Cli);
+        var setupSvc = new SubmoduleService(fileCli);
         await using (var setupCtx = host.Open(outer.Path))
         {
             await setupSvc.AddAsync(setupCtx, inner.Path.Replace('\\', '/'), "vendor/lib");
         }
 
-        var blockingCli = new BlockingGitCliService(host.Cli, req => req.Arguments.Count > 0 && req.Arguments[0] == "submodule" && req.Arguments.Contains("deinit"));
+        var blockingCli = new BlockingGitCliService(fileCli, req => req.Arguments.Count > 0 && req.Arguments[0] == "submodule" && req.Arguments.Contains("deinit"));
         await using var ctx = host.Open(outer.Path, blockingCli);
         var svc = new SubmoduleService(blockingCli);
 
