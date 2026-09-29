@@ -9,6 +9,14 @@ public sealed class GraphPrepareGateTests : IAsyncDisposable
         await _host.DisposeAsync();
     }
 
+    /// <summary>Waits until the gate sees exactly these queued callers. A fixed sleep here let a
+    /// busy thread pool start the foreground task only after the holder released.</summary>
+    private static async Task WaitForWaiters(GraphPrepareGate gate, int foreground, int background)
+    {
+        while (gate.WaitersForTesting != (foreground, background))
+            await Task.Delay(5);
+    }
+
     [Fact(Timeout = 10000)]
     public async Task Foreground_beats_background_crawl_and_spill()
     {
@@ -46,8 +54,7 @@ public sealed class GraphPrepareGateTests : IAsyncDisposable
             });
         });
         await bgStarted.Task;
-
-        await Task.Delay(50);
+        await WaitForWaiters(gate, foreground: 0, background: 1);
 
         var fgStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var fgTask = Task.Run(async () =>
@@ -59,7 +66,7 @@ public sealed class GraphPrepareGateTests : IAsyncDisposable
             });
         });
         await fgStarted.Task;
-        await Task.Delay(50);
+        await WaitForWaiters(gate, foreground: 1, background: 1);
 
         holdTcs.SetResult();
         await Task.WhenAll(holdTask, fgTask, bgTask, spillTask);
@@ -91,7 +98,7 @@ public sealed class GraphPrepareGateTests : IAsyncDisposable
             });
         });
 
-        await Task.Delay(50);
+        await WaitForWaiters(gate, foreground: 0, background: 1);
 
         var fgTask = Task.Run(async () =>
         {
@@ -101,7 +108,7 @@ public sealed class GraphPrepareGateTests : IAsyncDisposable
             });
         });
 
-        await Task.Delay(50);
+        await WaitForWaiters(gate, foreground: 1, background: 1);
 
         holdTcs.SetResult();
         await Task.WhenAll(holdTask, fgTask, bgTask);
@@ -143,7 +150,7 @@ public sealed class GraphPrepareGateTests : IAsyncDisposable
             });
         });
 
-        await Task.Delay(40);
+        await WaitForWaiters(gate, foreground: 0, background: 1);
 
         var fgTask = Task.Run(async () =>
         {
@@ -153,7 +160,7 @@ public sealed class GraphPrepareGateTests : IAsyncDisposable
             });
         });
 
-        await Task.Delay(40);
+        await WaitForWaiters(gate, foreground: 1, background: 1);
 
         holdTcs.SetResult();
         await Task.WhenAll(holdTask, fgTask, bgTask, spillTask);

@@ -117,7 +117,9 @@ public sealed class RefSnapshotProviderTests : IAsyncDisposable
         _repo.Git("branch", "added-later", "HEAD~1");
         var after = await ctx.RefSnapshots.GetAsync();
         Assert.NotNull(after.Find("refs/heads/added-later"));
-        Assert.Equal(2, ctx.RefSnapshots.ScanCountForTesting);
+        // At least one rescan: the context's file watcher also sees the write, and its refresh
+        // can scan the refs mid-write too when the machine is busy.
+        Assert.True(ctx.RefSnapshots.ScanCountForTesting >= 2);
     }
 
     /// <summary>Counts <c>for-each-ref</c> runs that overlap, and holds each one open a while so

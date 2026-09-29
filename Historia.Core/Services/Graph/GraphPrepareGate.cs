@@ -17,6 +17,10 @@ public sealed class GraphPrepareGate(string displayName = "")
     private volatile string? _activeHolder;
     private volatile string? _lastHolder;
 
+    /// <summary>Test seam: foreground and background callers currently queued for the gate.</summary>
+    internal (int Foreground, int Background) WaitersForTesting =>
+        (Volatile.Read(ref _foregroundWaiters), Volatile.Read(ref _backgroundWaiters));
+
     /// <summary>
     /// Longest a background or spill caller will keep yielding to higher priority work
     /// before taking its turn. Defaults to 3 seconds.
