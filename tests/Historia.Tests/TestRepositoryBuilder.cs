@@ -7,46 +7,8 @@ namespace Historia.Tests;
 /// </summary>
 public sealed class TestRepositoryBuilder : IDisposable
 {
+    // Templates live under the run's scratch folder, which TestScratch deletes on exit.
     private static readonly ConcurrentDictionary<string, Lazy<string>> Templates = new();
-    private static readonly ConcurrentBag<string> CreatedTemplates = new();
-    private static readonly Lazy<bool> UnloadHook = new(() =>
-    {
-        AssemblyLoadContext.Default.Unloading += _ => CleanupTemplates();
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => CleanupTemplates();
-        return true;
-    });
-
-    private static void CleanupTemplates()
-    {
-        foreach (var dir in CreatedTemplates)
-        {
-            try
-            {
-                if (Directory.Exists(dir))
-                {
-                    ClearReadOnly(new DirectoryInfo(dir));
-                    Directory.Delete(dir, recursive: true);
-                }
-            }
-            catch
-            {
-                // best-effort cleanup on shutdown
-            }
-        }
-    }
-
-    private static void ClearReadOnly(DirectoryInfo dir)
-    {
-        try
-        {
-            foreach (var file in dir.EnumerateFiles("*", SearchOption.AllDirectories))
-            {
-                if ((file.Attributes & FileAttributes.ReadOnly) != 0)
-                    file.Attributes &= ~FileAttributes.ReadOnly;
-            }
-        }
-        catch { }
-    }
 
     public string Path { get; }
 
@@ -66,12 +28,9 @@ public sealed class TestRepositoryBuilder : IDisposable
     /// </summary>
     public static TestRepositoryBuilder FromTemplate(string key, Action<TestRepositoryBuilder> build)
     {
-        _ = UnloadHook.Value;
         var templateDir = Templates.GetOrAdd(key, k => new Lazy<string>(() =>
         {
-            var tplDir = System.IO.Path.Combine(TestScratch.Root, "historia-tpl-" + Sanitize(k) + "-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(tplDir);
-            CreatedTemplates.Add(tplDir);
+            var tplDir = TestScratch.NewDirectory("historia-tpl-" + Sanitize(k) + "-");
             var builder = new TestRepositoryBuilder(tplDir);
             builder.InitRepo();
             build(builder);
