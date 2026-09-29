@@ -602,9 +602,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
             case SpillOutcome.Adopted:
                 cache.MetaStore ??= GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, rowCount);
                 cache.MetaStore?.SetCount(rowCount);
-                AdoptDurableStore(cache, rowCount);
+                // Drop only the resident rows the open store can serve: a reordered store's count
+                // does not grow in place, and rows past it would be unreadable once gone from memory.
+                var servable = Math.Min(rowCount, cache.MetaStore?.Count ?? 0);
+                AdoptDurableStore(cache, servable);
                 var probe = GraphMetaStore.Probe(repoPath, cache.WalkKey, includeRemotes);
-                if (probe is { Ok: true, Exhausted: true })
+                if (probe is { Ok: true, Exhausted: true } && cache.MetaStore?.Count >= probe.RowCount)
                 {
                     cache.MetaComplete = true;
                     cache.Exhausted = true;
