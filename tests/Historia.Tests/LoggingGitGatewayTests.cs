@@ -4,27 +4,24 @@ namespace Historia.Tests;
 public sealed class LoggingGitGatewayTests : IDisposable
 {
     private readonly StateDir _dir = new();
-
-    public LoggingGitGatewayTests()
-    {
-        AppLog.Enabled = false;
-        AppLog.ResetForTesting();
-    }
+    private AppLog.AppLogSession? _session;
 
     public void Dispose()
     {
-        AppLog.Enabled = false;
-        AppLog.ResetForTesting();
+        _session?.Dispose();
         _dir.Dispose();
     }
 
-    /// <summary>Disables logging first — the session writer now holds the file open for the
-    /// whole session (no more open/close per line), so the handle must be closed
-    /// before a second reader can open the same file.</summary>
+    /// <summary>Logs this test's flow only, so the suite can run in parallel without turning on
+    /// the process-wide log for every other test.</summary>
+    private void StartLogging() => _session = AppLog.StartSessionForTesting(_dir.Path);
+
+    /// <summary>Closes the session writer first — it holds the file open for the whole session,
+    /// so the handle must be closed before a second reader can open the same file.</summary>
     private string SessionText()
     {
-        AppLog.Enabled = false;
-        return File.ReadAllText(Directory.GetFiles(AppPaths.LogsDirectory, "dev-*.log").Single());
+        _session!.Dispose();
+        return File.ReadAllText(_session.SessionPath);
     }
 
     [Fact]
@@ -56,7 +53,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     [Fact]
     public async Task Logs_the_operation_with_arguments_and_outcome()
     {
-        AppLog.Enabled = true;
+        StartLogging();
         var gw = new LoggingGitGateway(new FakeGateway { Branches = [Branch("main")] }, @"C:\repos\demo");
 
         await gw.GetBranchesAsync();
@@ -69,7 +66,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     [Fact]
     public async Task Logs_a_failed_operation()
     {
-        AppLog.Enabled = true;
+        StartLogging();
         var gw = new LoggingGitGateway(
             new FakeGateway { CheckoutThrows = new InvalidOperationException("nope") }, @"C:\repos\demo");
 
@@ -84,7 +81,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     [Fact]
     public async Task CountCommitsLeavingAsync_delegates_and_logs_the_count()
     {
-        AppLog.Enabled = true;
+        StartLogging();
         var gw = new LoggingGitGateway(new FakeGateway { CountCommitsLeavingResult = 3 }, @"C:\repos\demo");
 
         var n = await gw.CountCommitsLeavingAsync("origin/main");
@@ -98,7 +95,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     [Fact]
     public async Task GetDivergenceAsync_logs_arguments_and_outcome()
     {
-        AppLog.Enabled = true;
+        StartLogging();
         var gw = new LoggingGitGateway(new FakeGateway { DivergenceResult = new AheadBehind(2, 1) }, @"C:\repos\demo");
 
         var ab = await gw.GetDivergenceAsync("refs/heads/main", "refs/remotes/origin/main");
@@ -112,7 +109,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     [Fact]
     public async Task RenameRemoteAsync_logs_arguments_and_outcome()
     {
-        AppLog.Enabled = true;
+        StartLogging();
         var gw = new LoggingGitGateway(new FakeGateway { RenameRemoteResult = ["+refs/heads/*:refs/custom/*"] }, @"C:\repos\demo");
 
         var untouched = await gw.RenameRemoteAsync("origin", "upstream");

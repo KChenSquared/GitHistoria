@@ -193,7 +193,8 @@ public sealed class AppPathsTests : IDisposable
 
     public void Dispose()
     {
-        AppPaths.OverrideProcessForTesting(null);
+        // Hand the rest of the run back its isolated state directory.
+        AppPaths.OverrideProcessForTesting(TestStateIsolation.StateDirectory);
         AppPaths.OverrideForTesting(null);
         try { Directory.Delete(_root, recursive: true); } catch { /* ignore */ }
     }

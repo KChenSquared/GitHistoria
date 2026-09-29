@@ -107,40 +107,31 @@ public class CloneServiceTests : IAsyncDisposable
     public async Task Cancel_before_completion_is_logged_when_dev_log_enabled()
     {
         using var dir = new StateDir();
-        AppLog.Enabled = false;
-        AppLog.ResetForTesting();
-        try
-        {
-            AppLog.Enabled = true;
+        // Flow-local: the process-wide log would also capture every test running in parallel.
+        using var session = AppLog.StartSessionForTesting(dir.Path);
 
-            var fakeWs = new ScriptedWorkspaceService();
-            var autoFetch = new FakeAutoFetchService();
-            var nav = new NavigationBus();
-            var notifications = new NotificationService();
-            var cli = _host.Provider.GetRequiredService<IGitCliService>();
-            var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
-            var identity = new RepoIdentityService(cli);
+        var fakeWs = new ScriptedWorkspaceService();
+        var autoFetch = new FakeAutoFetchService();
+        var nav = new NavigationBus();
+        var notifications = new NotificationService();
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
+        var identity = new RepoIdentityService(cli);
 
-            var service = new CloneService(fakeWs, profiles, identity, notifications, nav, autoFetch);
+        var service = new CloneService(fakeWs, profiles, identity, notifications, nav, autoFetch);
 
-            var request = new CloneRequest("https://example.com/repo.git", "C:/repo", new Historia.Services.Workspace.CloneOptions(), null);
-            var startTask = service.StartAsync(request);
+        var request = new CloneRequest("https://example.com/repo.git", "C:/repo", new Historia.Services.Workspace.CloneOptions(), null);
+        var startTask = service.StartAsync(request);
 
-            Assert.True(service.IsRunning);
-            service.Cancel();
+        Assert.True(service.IsRunning);
+        service.Cancel();
 
-            await startTask;
+        await startTask;
 
-            AppLog.Enabled = false; // close the session writer before reading the file back
-            var text = File.ReadAllText(Directory.GetFiles(AppPaths.LogsDirectory, "dev-*.log").Single());
-            Assert.Contains("[declined]", text);
-            Assert.Contains("Clone cancelled: https://example.com/repo.git", text);
-        }
-        finally
-        {
-            AppLog.Enabled = false;
-            AppLog.ResetForTesting();
-        }
+        session.Dispose(); // close the session writer before reading the file back
+        var text = File.ReadAllText(session.SessionPath);
+        Assert.Contains("[declined]", text);
+        Assert.Contains("Clone cancelled: https://example.com/repo.git", text);
     }
 
     [Fact]

@@ -190,8 +190,8 @@ public sealed class RepositoryWriteLockTests : IAsyncDisposable
     [Fact]
     public async Task PerfLog_records_wait_and_hold_marks()
     {
-        var prevEnabled = PerfLog.Enabled;
-        PerfLog.Enabled = true;
+        // Flow-local: setting PerfLog.Enabled would turn on perf logging for every parallel test.
+        PerfLog.OverrideEnabledForTesting(true);
         try
         {
             using var repo = TestRepositoryBuilder.FromTemplate("write-lock-seed", b =>
@@ -215,7 +215,7 @@ public sealed class RepositoryWriteLockTests : IAsyncDisposable
         }
         finally
         {
-            PerfLog.Enabled = prevEnabled;
+            PerfLog.OverrideEnabledForTesting(null);
         }
     }
 }
