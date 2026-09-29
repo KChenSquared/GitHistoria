@@ -58,14 +58,103 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task When_git_cli_is_unavailable_generates_explicit_guid()
+    public async Task When_git_cli_is_unavailable_throws_and_caches_nothing()
     {
         var svc = new RepoIdentityService(new NoGitCli());
         await using var ctx = _host.Open(_repo.Path);
 
+        await Assert.ThrowsAsync<HistoriaGitException>(() => svc.ResolveAsync(ctx));
+
+        Assert.Null(ctx.IdentityKey);
+    }
+
+    private static bool IsRepoIdWrite(GitCliRequest r) =>
+        r.Arguments.Contains("config") && r.Arguments.Contains("Historia.repoId")
+        && !r.Arguments.Contains("--get");
+
+    private static bool IsRootProbe(GitCliRequest r) => r.Arguments.Count > 0 && r.Arguments[0] == "rev-list";
+
+    private static bool IsRepoIdRead(GitCliRequest r) =>
+        r.Arguments.Contains("config") && r.Arguments.Contains("--get") && r.Arguments.Contains("Historia.repoId");
+
+    [Fact]
+    public async Task Cancelled_root_probe_throws_and_caches_nothing()
+    {
+        var cli = new InterceptingGitCliService(_host.Provider.GetRequiredService<IGitCliService>())
+        {
+            Intercept = r => IsRootProbe(r) ? InterceptingGitCliService.Failure(GitErrorKind.Cancelled, exitCode: -1) : null,
+        };
+        var svc = new RepoIdentityService(cli);
+        await using var ctx = _host.Open(_repo.Path);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => svc.ResolveAsync(ctx));
+
+        Assert.Null(ctx.IdentityKey);
+        Assert.DoesNotContain(cli.Requests, IsRepoIdWrite);
+    }
+
+    [Fact]
+    public async Task Timed_out_root_probe_throws_and_writes_nothing()
+    {
+        var cli = new InterceptingGitCliService(_host.Provider.GetRequiredService<IGitCliService>())
+        {
+            Intercept = r => IsRootProbe(r) ? InterceptingGitCliService.Failure(GitErrorKind.TimedOut, exitCode: -1) : null,
+        };
+        var svc = new RepoIdentityService(cli);
+        await using var ctx = _host.Open(_repo.Path);
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() => svc.ResolveAsync(ctx));
+
+        Assert.Equal(GitErrorKind.TimedOut, ex.Kind);
+        Assert.Null(ctx.IdentityKey);
+        Assert.DoesNotContain(cli.Requests, IsRepoIdWrite);
+    }
+
+    [Fact]
+    public async Task Failed_repo_id_read_throws()
+    {
+        var cli = new InterceptingGitCliService(_host.Provider.GetRequiredService<IGitCliService>())
+        {
+            Intercept = r => IsRepoIdRead(r) ? InterceptingGitCliService.Failure(exitCode: 128) : null,
+        };
+        var svc = new RepoIdentityService(cli);
+        await using var ctx = _host.Open(_repo.Path);
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => svc.ResolveAsync(ctx));
+
+        Assert.Null(ctx.IdentityKey);
+        Assert.DoesNotContain(cli.Requests, IsRootProbe);
+    }
+
+    [Fact]
+    public async Task Rootless_repo_persists_and_caches_guid()
+    {
+        using var empty = TestRepositoryBuilder.Create();
+        var cli = _host.Provider.GetRequiredService<IGitCliService>();
+        var svc = new RepoIdentityService(cli);
+        await using var ctx = _host.Open(empty.Path);
+
         var key = await svc.ResolveAsync(ctx);
 
         Assert.True(Guid.TryParseExact(key.Value, "N", out _));
+        Assert.Equal(key, ctx.IdentityKey);
+        Assert.Equal(key.Value, empty.Git("config", "--local", "--get", "Historia.repoId").Trim());
+    }
+
+    [Fact]
+    public async Task Failed_repo_id_write_caches_nothing()
+    {
+        using var empty = TestRepositoryBuilder.Create();
+        var cli = new InterceptingGitCliService(_host.Provider.GetRequiredService<IGitCliService>())
+        {
+            Intercept = r => IsRepoIdWrite(r) ? InterceptingGitCliService.Failure() : null,
+        };
+        var svc = new RepoIdentityService(cli);
+        await using var ctx = _host.Open(empty.Path);
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => svc.ResolveAsync(ctx));
+
+        Assert.Null(ctx.IdentityKey);
     }
 
     // ── The CLI path must ignore `git replace` grafts ──
