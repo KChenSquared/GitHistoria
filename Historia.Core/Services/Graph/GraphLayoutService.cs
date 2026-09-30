@@ -1466,6 +1466,59 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
     }
 
+    /// <summary>What <see cref="GetCacheStateForTesting"/> reports: the counters that must agree with
+    /// each other (a foreground cache with a live walk has <c>TotalWalked == LiveWalkPos</c>) and
+    /// the identity of the store the cache holds.</summary>
+    internal sealed record CacheStateForTesting(
+        int TotalWalked, int SpilledRows, int LiveWalkPos, bool HasLiveWalk, long WalkKey,
+        bool Exhausted, bool MetaComplete, bool WalkHalted, string? MetaStoreGeneration, int? MetaStoreCount);
+
+    /// <summary>A read-only view of one context's cache for the concurrency harness. Every lock is
+    /// tried with a zero timeout, in the documented lock order, and any that is busy makes the
+    /// whole read return null — it never blocks a walk, a spill or a teardown and never mutates.
+    /// Null too when the context has no cache.</summary>
+    internal CacheStateForTesting? GetCacheStateForTesting(RepositoryContext context)
+    {
+        RepoCache? cache;
+        if (!Monitor.TryEnter(_sync, 0))
+            return null;
+        try { _caches.TryGetValue(context, out cache); }
+        finally { Monitor.Exit(_sync); }
+        if (cache is null)
+            return null;
+
+        if (!cache.WalkLock.Wait(0))
+            return null;
+        try
+        {
+            if (!Monitor.TryEnter(cache.SpillSync, 0))
+                return null;
+            try
+            {
+                if (!Monitor.TryEnter(cache, 0))
+                    return null;
+                try
+                {
+                    var store = cache.MetaStore;
+                    return new CacheStateForTesting(
+                        TotalWalked: cache.SpilledRows + cache.Commits.Count,
+                        SpilledRows: cache.SpilledRows,
+                        LiveWalkPos: cache.LiveWalkPos,
+                        HasLiveWalk: cache.LiveWalk is not null,
+                        WalkKey: cache.WalkKey,
+                        Exhausted: cache.Exhausted,
+                        MetaComplete: cache.MetaComplete,
+                        WalkHalted: cache.WalkHalted,
+                        MetaStoreGeneration: store?.Generation,
+                        MetaStoreCount: store?.Count);
+                }
+                finally { Monitor.Exit(cache); }
+            }
+            finally { Monitor.Exit(cache.SpillSync); }
+        }
+        finally { cache.WalkLock.Release(); }
+    }
+
     /// <inheritdoc/>
     public async Task Hibernate(RepositoryContext context)
     {
