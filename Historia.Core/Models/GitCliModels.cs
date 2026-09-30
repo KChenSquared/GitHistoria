@@ -91,10 +91,11 @@ public sealed record GitExecutableInfo
     public string? NotFoundReason { get; init; }
 
     /// <summary>
-    /// Minimum supported version is 2.35, the release that introduced <c>stash push --staged</c>
-    /// and <c>checkout --conflict=zdiff3</c>.
+    /// Minimum supported version is 2.46, the release where an empty <c>remote.&lt;name&gt;.url</c>
+    /// clears the URL list, which per-invocation transport routing relies on. It also covers
+    /// <c>stash push --staged</c> and <c>checkout --conflict=zdiff3</c> (2.35).
     /// </summary>
-    public static readonly Version MinimumVersion = new(2, 35);
+    public static readonly Version MinimumVersion = new(2, 46);
     public bool MeetsMinimumVersion => Version is not null && Version >= MinimumVersion;
 
     public static GitExecutableInfo NotFound { get; } = new() { Found = false };

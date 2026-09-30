@@ -120,7 +120,11 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
 **0.4 — Assume the baseline, but verify it — never silently repair it.** Anything outside the
    package is detected at startup and, when absent, reported with an actionable message naming
    what is missing and how to get it. The app still starts where it can. Never a crash, never a
-   silent download. Applies to `git.exe` (minimum version 2.35) and the .NET Desktop Runtime.
+   silent download. Applies to `git.exe` (at the minimum version the README's Requirements
+   section names) and the .NET Desktop Runtime.
+   A feature that needs a newer Git than the checked minimum raises the minimum in the same
+   change: the version checker (`GitExecutableInfo.MinimumVersion` and its tests), the README's
+   Requirements section, and every other file that states the minimum.
    Dubious repository ownership (`UnsafeRepository`) is reported with an actionable message
    giving the `safe.directory` command; Historia never writes `safe.directory` automatically.
    *(§I-6.2.3, §V2-10.3)*

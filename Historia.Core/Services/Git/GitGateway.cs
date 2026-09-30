@@ -275,6 +275,17 @@ public sealed partial class GitGateway(
     public Task PruneRemoteAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct = default)
         => RunNetworkAsync(["remote", "prune", name], "Prune", name, progress, ct);
 
+    /// <summary>Prefixes <paramref name="args"/> with a per-invocation override that makes
+    /// <paramref name="url"/> the remote's only URL. remote.&lt;name&gt;.url is multi-valued, so a
+    /// bare <c>-c</c> value would be appended to the stored one: fetch and prune would keep using
+    /// the stored URL, and push would go to both. The empty value first clears the list, which
+    /// Git supports from 2.46 (<see cref="GitExecutableInfo.MinimumVersion"/>).</summary>
+    internal static IReadOnlyList<string> WithRemoteUrlOverride(string remote, string url, IReadOnlyList<string> args)
+    {
+        var key = $"remote.{remote}.url";
+        return new[] { "-c", $"{key}=", "-c", $"{key}={url}" }.Concat(args).ToList();
+    }
+
     // SSH connect timeout for a routing attempt so an SSH-unreachable host (port 22
     // blocked) fails fast instead of stalling on the OS TCP timeout before the fallback.
     private const int SshConnectTimeoutSeconds = 10;
@@ -309,7 +320,7 @@ public sealed partial class GitGateway(
 
             // Per-invocation only — the stored remote.<name>.url in .git/config is never rewritten.
             var attemptArgs = remote is not null && effectiveUrl is not null && !string.Equals(effectiveUrl, remoteUrl, StringComparison.Ordinal)
-                ? (IReadOnlyList<string>)new[] { "-c", $"remote.{remote}.url={effectiveUrl}" }.Concat(args).ToList()
+                ? WithRemoteUrlOverride(remote, effectiveUrl, args)
                 : args;
 
             var env = transport switch
