@@ -157,6 +157,106 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
         Assert.Null(ctx.IdentityKey);
     }
 
+    // ── One resolve per tab, however many callers overlap ──
+
+    /// <summary>Makes overlapping callers' root probes meet, the window a real open hits when the
+    /// tab's init and a network action resolve at once. A single shared probe never meets a partner,
+    /// so the wait is short.</summary>
+    private sealed class OverlapCli(IGitCliService inner) : IGitCliService
+    {
+        private readonly Barrier _barrier = new(2);
+        public bool IsGitAvailable => inner.IsGitAvailable;
+
+        public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default)
+            => RunAsync(request, progress: null, onStdoutLine: null, ct);
+
+        public async Task<GitCliResult> RunAsync(
+            GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default)
+        {
+            if (IsRootProbe(request))
+                await Task.Run(() => _barrier.SignalAndWait(TimeSpan.FromMilliseconds(500)), ct);
+            return await inner.RunAsync(request, progress, onStdoutLine, ct);
+        }
+    }
+
+    /// <summary>Holds the root probe until released.</summary>
+    private sealed class GatedCli(IGitCliService inner) : IGitCliService
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool IsGitAvailable => inner.IsGitAvailable;
+
+        public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default)
+            => RunAsync(request, progress: null, onStdoutLine: null, ct);
+
+        public async Task<GitCliResult> RunAsync(
+            GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default)
+        {
+            if (IsRootProbe(request))
+            {
+                Entered.TrySetResult();
+                await Release.Task;
+            }
+            return await inner.RunAsync(request, progress, onStdoutLine, ct);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Overlapping_resolves_on_an_empty_repo_agree_and_match_git_config()
+    {
+        using var empty = TestRepositoryBuilder.Create();
+        var svc = new RepoIdentityService(new OverlapCli(_host.Provider.GetRequiredService<IGitCliService>()));
+        await using var ctx = _host.Open(empty.Path);
+
+        var keys = await Task.WhenAll(svc.ResolveAsync(ctx), svc.ResolveAsync(ctx));
+
+        Assert.Equal(keys[0], keys[1]);
+        Assert.Equal(keys[0], ctx.IdentityKey);
+        Assert.Equal(keys[0].Value, empty.Git("config", "--local", "--get", "Historia.repoId").Trim());
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task A_caller_that_gives_up_does_not_cancel_the_resolve_for_others()
+    {
+        var cli = new GatedCli(_host.Provider.GetRequiredService<IGitCliService>());
+        var svc = new RepoIdentityService(cli);
+        await using var ctx = _host.Open(_repo.Path);
+
+        using var giveUp = new CancellationTokenSource();
+        var impatient = svc.ResolveAsync(ctx, giveUp.Token);
+        await cli.Entered.Task;
+        var patient = svc.ResolveAsync(ctx);
+
+        giveUp.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => impatient);
+        Assert.False(patient.IsCompleted);
+
+        cli.Release.SetResult();
+        Assert.Equal(RepoIdentityKey.FromRootCommit(ExpectedSmallestRoot()), await patient);
+        Assert.Equal(await patient, ctx.IdentityKey);
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task A_failed_resolve_is_retried_by_the_next_call()
+    {
+        var failing = true;
+        var cli = new InterceptingGitCliService(_host.Provider.GetRequiredService<IGitCliService>())
+        {
+            Intercept = r => failing && IsRootProbe(r) ? InterceptingGitCliService.Failure(exitCode: 128) : null,
+        };
+        var svc = new RepoIdentityService(cli);
+        await using var ctx = _host.Open(_repo.Path);
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => svc.ResolveAsync(ctx));
+        Assert.Null(ctx.IdentityKey);
+
+        failing = false;
+        var key = await svc.ResolveAsync(ctx);
+
+        Assert.Equal(RepoIdentityKey.FromRootCommit(ExpectedSmallestRoot()), key);
+        Assert.Equal(key, ctx.IdentityKey);
+    }
+
     // ── The CLI path must ignore `git replace` grafts ──
 
     [Fact(Timeout = 20000)]

@@ -3,7 +3,61 @@ namespace Historia.Services.Profiles;
 /// <inheritdoc cref="IRepoIdentityService"/>
 public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityService
 {
+    // One resolve per context at a time. Five call sites can overlap on a freshly opened tab; on a
+    // repo with no root commit each would generate and persist its own id, and the caller that
+    // lost the race would act on a key that was never stored.
+    private readonly object _inFlightLock = new();
+    private readonly ConditionalWeakTable<RepositoryContext, Task<RepoIdentityKey>> _inFlight = new();
+
     public async Task<RepoIdentityKey> ResolveAsync(RepositoryContext context, CancellationToken ct = default)
+    {
+        if (context.IdentityKey is { } cached)
+            return cached;
+
+        Task<RepoIdentityKey> shared;
+        lock (_inFlightLock)
+        {
+            if (!_inFlight.TryGetValue(context, out shared!))
+            {
+                // Runs on the tab's own lifetime, not on this caller's token: another caller may be
+                // waiting on the same resolve, so one caller giving up must not cancel it.
+                shared = Task.Run(() => ResolveCoreAsync(context, context.Lifetime));
+                _inFlight.Add(context, shared);
+                var started = shared;
+                _ = started.ContinueWith(t =>
+                {
+                    _ = t.Exception; // observed here even when every caller has given up
+                    ForgetIfFailed(context, t);
+                }, TaskScheduler.Default);
+            }
+        }
+
+        try
+        {
+            return await shared.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Dropped before this caller rethrows, so the very next call already starts afresh.
+            ForgetIfFailed(context, shared);
+            throw;
+        }
+    }
+
+    /// <summary>A failed or cancelled resolve is never remembered: the next call retries. A resolve
+    /// still running, or one that succeeded, stays.</summary>
+    private void ForgetIfFailed(RepositoryContext context, Task<RepoIdentityKey> task)
+    {
+        if (!task.IsCompleted || task.IsCompletedSuccessfully)
+            return;
+        lock (_inFlightLock)
+        {
+            if (_inFlight.TryGetValue(context, out var current) && ReferenceEquals(current, task))
+                _inFlight.Remove(context);
+        }
+    }
+
+    private async Task<RepoIdentityKey> ResolveCoreAsync(RepositoryContext context, CancellationToken ct)
     {
         if (context.IdentityKey is { } cached)
             return cached;
@@ -30,8 +84,11 @@ public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityServi
 
         // 3. The probe succeeded and found no reachable root (empty repo, or every root grafted
         //    away): generate and persist a GUID. The key is cached only once the write landed.
+        //    The write itself is not cancelled by a tab close: killing `git config` mid-write could
+        //    leave the config half-written. A tab that closed before the write starts skips it.
         var newId = Guid.NewGuid();
-        await WriteRepoIdAsync(context, newId, ct).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+        await WriteRepoIdAsync(context, newId, CancellationToken.None).ConfigureAwait(false);
         var explicitKey = RepoIdentityKey.FromExplicitId(newId);
         context.IdentityKey = explicitKey;
         return explicitKey;
