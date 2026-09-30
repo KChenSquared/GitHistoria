@@ -40,6 +40,11 @@ public sealed record RemoteInfo
     public required string Name { get; init; }
     public required string Url { get; init; }
     public string? PushUrl { get; init; }
+
+    /// <summary>True when a push URL separate from the fetch URL is configured. LibGit2Sharp
+    /// reports the fetch URL as <see cref="PushUrl"/> when none is set, so equality means there
+    /// is no separate push URL.</summary>
+    public bool HasDistinctPushUrl => PushUrl is { } p && !string.Equals(p, Url, StringComparison.Ordinal);
 }
 
 /// <summary>Detached-HEAD is a first-class state.</summary>
