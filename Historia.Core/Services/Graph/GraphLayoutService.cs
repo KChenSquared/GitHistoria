@@ -516,7 +516,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     AdoptDurableStore(cache, warm.Count);
                 }
 
-                if (gateOpen && cache.WalkKey != 0 && !cache.WalkHalted && rowCount > cache.SpilledRows)
+                // A queued or running headless job for this tab is a second writer on the same
+                // store; this write stands aside and the background spill writes these rows after
+                // waiting that job out. The layout is served from what is already on disk.
+                if (gateOpen && cache.WalkKey != 0 && !cache.WalkHalted && rowCount > cache.SpilledRows
+                    && !(_backgroundWriter?.HasInactiveJob(context) ?? false))
                 {
                     // Outcome is deliberately unobserved here: Appended/Adopted both leave
                     // cache.MetaStore ready to serve below; a Conflict leaves it null, and the
