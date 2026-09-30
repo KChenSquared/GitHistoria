@@ -73,8 +73,18 @@ public interface IGitGateway
     /// if any — the caller should surface those to the user rather than drop them silently.</summary>
     Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default);
 
+    /// <summary>Sets a remote's separate push URL, or removes it when <paramref name="pushUrl"/>
+    /// is <see langword="null"/> so pushes go to the fetch URL again. A config edit, never a
+    /// network call; clearing a push URL that is not set succeeds.</summary>
+    Task SetRemotePushUrlAsync(string name, string? pushUrl, CancellationToken ct = default);
+
     // ── Network (always CLI; never background in SSH-Only mode) ──
     Task FetchAsync(string remote, GitFetchOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default);
     Task PullAsync(string remote, string branch, GitPullOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default);
     Task PushAsync(string remote, PushSpec spec, IProgress<GitProgress>? progress, CancellationToken ct = default);
+
+    /// <summary>Deletes the remote-tracking branches of <paramref name="name"/> whose branch no
+    /// longer exists on the remote. Destructive — a pruned ref can be the last pointer to
+    /// commits — so callers confirm first.</summary>
+    Task PruneRemoteAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct = default);
 }

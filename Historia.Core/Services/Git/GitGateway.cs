@@ -272,6 +272,9 @@ public sealed partial class GitGateway(
         await RunNetworkAsync(args, "Push", remote, progress, ct).ConfigureAwait(false);
     }
 
+    public Task PruneRemoteAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct = default)
+        => RunNetworkAsync(["remote", "prune", name], "Prune", name, progress, ct);
+
     // SSH connect timeout for a routing attempt so an SSH-unreachable host (port 22
     // blocked) fails fast instead of stalling on the OS TCP timeout before the fallback.
     private const int SshConnectTimeoutSeconds = 10;

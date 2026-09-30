@@ -50,9 +50,11 @@ public sealed class BranchMenuDivergenceTests
         public Task RemoveRemoteAsync(string name, CancellationToken ct = default) => No<Task>();
         public Task SetRemoteUrlAsync(string name, string url, CancellationToken ct = default) => No<Task>();
         public Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default) => No<Task<IReadOnlyList<string>>>();
+        public Task SetRemotePushUrlAsync(string name, string? pushUrl, CancellationToken ct = default) => No<Task>();
         public Task FetchAsync(string remote, GitFetchOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();
         public Task PullAsync(string remote, string branch, GitPullOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();
         public Task PushAsync(string remote, PushSpec spec, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();
+        public Task PruneRemoteAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();
     }
 
     private sealed class CapturingActionBus : IRepoActionBus

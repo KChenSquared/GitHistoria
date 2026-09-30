@@ -121,6 +121,32 @@ public sealed class LoggingGitGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task SetRemotePushUrlAsync_logs_arguments()
+    {
+        StartLogging();
+        var gw = new LoggingGitGateway(new FakeGateway(), @"C:\repos\demo");
+
+        await gw.SetRemotePushUrlAsync("origin", "ssh://push.example/o/r.git");
+        await gw.SetRemotePushUrlAsync("origin", null);
+
+        var text = SessionText();
+        Assert.Contains("SetRemotePushUrlAsync(origin, ssh://push.example/o/r.git)", text);
+        Assert.Contains("SetRemotePushUrlAsync(origin, <clear>)", text);
+    }
+
+    [Fact]
+    public async Task PruneRemoteAsync_logs_outcome()
+    {
+        StartLogging();
+        var gw = new LoggingGitGateway(new FakeGateway(), @"C:\repos\demo");
+
+        await gw.PruneRemoteAsync("origin", progress: null);
+
+        var text = SessionText();
+        Assert.Contains("[demo] PruneRemoteAsync(origin)", text);
+    }
+
+    [Fact]
     public async Task Pure_passthrough_when_logging_is_disabled()
     {
         var inner = new FakeGateway { Branches = [Branch("main")] };
@@ -196,6 +222,8 @@ public sealed class LoggingGitGatewayTests : IDisposable
         public IReadOnlyList<string>? RenameRemoteResult { get; set; }
         public Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default)
             => RenameRemoteResult is { } r ? Task.FromResult(r) : No<Task<IReadOnlyList<string>>>();
+        public Task SetRemotePushUrlAsync(string name, string? pushUrl, CancellationToken ct = default) => Task.CompletedTask;
+        public Task PruneRemoteAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct = default) => Task.CompletedTask;
         public Task FetchAsync(string remote, GitFetchOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();
         public Task PullAsync(string remote, string branch, GitPullOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();
         public Task PushAsync(string remote, PushSpec spec, IProgress<GitProgress>? progress, CancellationToken ct = default) => No<Task>();

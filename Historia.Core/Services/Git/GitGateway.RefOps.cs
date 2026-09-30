@@ -408,6 +408,30 @@ public sealed partial class GitGateway
         }, ct).ConfigureAwait(false);
     }
 
+    // `git config --unset-all` exits 5 when the key is absent, which for a clear means the
+    // push URL is already gone.
+    private const int GitConfigKeyAbsentExitCode = 5;
+
+    public async Task SetRemotePushUrlAsync(string name, string? pushUrl, CancellationToken ct = default)
+    {
+        using var _ = context.BeginSelfOperation();
+
+        await context.WithWriteLockAsync(async innerCt =>
+        {
+            var result = await cli.RunAsync(new GitCliRequest
+            {
+                Arguments = pushUrl is null
+                    ? ["config", "--unset-all", $"remote.{name}.pushurl"]
+                    : ["remote", "set-url", "--push", name, pushUrl],
+                WorkingDirectory = context.RepositoryPath,
+            }, innerCt).ConfigureAwait(false);
+
+            var alreadyClear = pushUrl is null && result.ExitCode == GitConfigKeyAbsentExitCode;
+            if (!result.IsSuccess && !alreadyClear)
+                throw HistoriaGitException.FromCli(result, "Set push url");
+        }, ct).ConfigureAwait(false);
+    }
+
     private static IReadOnlyList<string> ParseUnupdatedRefspecs(string stderr)
     {
         if (string.IsNullOrWhiteSpace(stderr))
