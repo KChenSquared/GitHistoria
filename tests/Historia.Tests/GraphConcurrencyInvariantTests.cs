@@ -10,7 +10,7 @@ namespace Historia.Tests;
 [Trait("tier", "git")]
 public sealed class GraphConcurrencyInvariantTests(ITestOutputHelper output)
 {
-    private static readonly TimeSpan Activity = TimeSpan.FromMilliseconds(1500);
+    private static readonly TimeSpan Activity = TimeSpan.FromMilliseconds(600);
 
     private static int? PinnedSeed() =>
         int.TryParse(Environment.GetEnvironmentVariable("HISTORIA_CONCURRENCY_SEED"), out var seed) ? seed : null;
@@ -18,7 +18,7 @@ public sealed class GraphConcurrencyInvariantTests(ITestOutputHelper output)
     public static IEnumerable<object[]> FixedSeeds() =>
         PinnedSeed() is { } pinned ? [[pinned]] : [[1], [2], [3], [4], [5], [6]];
 
-    [Theory(Timeout = 120_000, Skip = "every seed fails I1: a window read while the cache's store is gone is misaligned")]
+    [Theory(Timeout = 120_000)]
     [MemberData(nameof(FixedSeeds))]
     public async Task Fixed_seeds_hold_every_invariant(int seed)
     {

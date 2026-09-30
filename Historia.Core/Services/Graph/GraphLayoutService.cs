@@ -756,9 +756,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     /// <summary>Result of <see cref="ReadWindow"/>: <see cref="Complete"/> is false only when the
-    /// on-disk store returned fewer rows than the disk portion of the request promised — never
-    /// when the window simply ran off the end of everything walked so far (that is a normal,
-    /// expected shortfall, not a fault).</summary>
+    /// disk portion of the request could not be served — the cache holds no store, or the store
+    /// returned fewer rows than it promised — never when the window simply ran off the end of
+    /// everything walked so far (that is a normal, expected shortfall, not a fault).</summary>
     private readonly record struct WindowRead(List<RawCommit> Rows, bool Complete);
 
     /// <summary>Reads absolute rows [<paramref name="start"/>, <paramref name="start"/>
@@ -785,8 +785,15 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 return new WindowRead([], Complete: true);
 
             var result = new List<RawCommit>(want);
-            if (start < spilledRows && cache.MetaStore is { } store)
+            if (start < spilledRows)
             {
+                // Trap: with the store gone (dropped on a conflict with another writer, or torn down
+                // by a tab switch) this used to skip the disk part and still report a complete
+                // window, so the layout was built from the resident rows alone — painted row 0 was
+                // the walk's row `spilledRows`. Rows that live on disk cannot be served without the
+                // store; say so.
+                if (cache.MetaStore is not { } store)
+                    return new WindowRead(result, Complete: false);
                 var diskCount = Math.Min(want, spilledRows - start);
                 var diskRows = store.ReadRawRange(start, diskCount);
                 result.AddRange(diskRows);
