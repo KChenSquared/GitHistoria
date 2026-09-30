@@ -380,28 +380,41 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // reset the cache (force: true) and re-walk once; if the retry is itself short (a fresh
         // cache has no disk store yet to fail, so this should not recur), proceed with whatever
         // came back rather than loop.
-        var read = ReadWindow(cache, 0, maxRows + WalkOverscan);
-        if (!read.Complete)
+        GraphLayoutResult swapped;
+        for (var attempt = 0; ; attempt++)
         {
+            var read = ReadWindow(cache, 0, maxRows + WalkOverscan);
+            if (!read.Complete)
+            {
+                cache = GetOrResetCache(context, query, force: true);
+                await EnsureWalkedAsync(context, query, cache, maxRows + WalkOverscan, ct).ConfigureAwait(false);
+                read = ReadWindow(cache, 0, maxRows + WalkOverscan);
+            }
+            var input = read.Rows;
+
+            // The trunk pre-pass's ancestry check needs no repo handle: DagLayoutEngine.SeedTipPriority
+            // answers it with an exact in-window walk over the already-fetched commit prefix
+            // (isAncestor: null below), so Compute runs fully in memory.
+            GraphLayoutResult result;
+            using (Diagnostics.PerfLog.Scope("engine.Compute"))
+                result = _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct, retainCommits: !spill);
+
+            result = result with { Fingerprint = cache.Fingerprint };
+            _layoutOwners.AddOrUpdate(result.State, cache);
+
+            if (!spill)
+                return result;
+            swapped = SpillAndSwap(context, cache, query.IncludeRemoteBranches, result);
+
+            // Trap: the store can be dropped between the read above and the swap (another writer
+            // reset it), leaving rows that live only on disk. The layout then names rows it has no
+            // commits for, and painting it reads past the end of the store. Build it again from a
+            // fresh walk; the second pass has no store to lose.
+            if (swapped.Layout.Commits.Count >= swapped.Layout.RowCount || attempt > 0)
+                break;
             cache = GetOrResetCache(context, query, force: true);
             await EnsureWalkedAsync(context, query, cache, maxRows + WalkOverscan, ct).ConfigureAwait(false);
-            read = ReadWindow(cache, 0, maxRows + WalkOverscan);
         }
-        var input = read.Rows;
-
-        // The trunk pre-pass's ancestry check needs no repo handle: DagLayoutEngine.SeedTipPriority
-        // answers it with an exact in-window walk over the already-fetched commit prefix
-        // (isAncestor: null below), so Compute runs fully in memory.
-        GraphLayoutResult result;
-        using (Diagnostics.PerfLog.Scope("engine.Compute"))
-            result = _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct, retainCommits: !spill);
-
-        result = result with { Fingerprint = cache.Fingerprint };
-        _layoutOwners.AddOrUpdate(result.State, cache);
-
-        if (!spill)
-            return result;
-        var swapped = SpillAndSwap(context, cache, query.IncludeRemoteBranches, result);
         if (cache.Exhausted && cache.MetaComplete)
             await RetireLiveWalkAsync(cache).ConfigureAwait(false);
         MaybeStartBackgroundSpill(context, cache, query);
