@@ -69,7 +69,8 @@ internal sealed class GraphInvariantChecker
         if (real.Length != real.Distinct(StringComparer.Ordinal).Count())
         {
             var dup = real.GroupBy(x => x).First(g => g.Count() > 1).Key;
-            Violation("I1", $"{where}: a painted layout of {ids.Length} rows holds {dup[..8]} twice");
+            var at = string.Join(", ", ids.Select((id, i) => (id, i)).Where(t => t.id == dup).Select(t => t.i));
+            Violation("I1", $"{where}: a painted layout of {ids.Length} rows holds {dup[..8]} twice (rows {at})");
             return;
         }
         if (!MatchesAReference(ids))
@@ -691,7 +692,7 @@ internal sealed class GraphConcurrencyHarness : IAsyncDisposable
         var violations = _checker.Violations;
         if (violations.Count > 0)
             throw new Xunit.Sdk.XunitException(
-                $"seed={_seed}\n{string.Join('\n', violations)}\n--- last 50 actions ---\n{string.Join('\n', _log.TakeLast(50))}");
+                $"seed={_seed}\n{string.Join('\n', violations)}\n--- last {_log.Count} actions ---\n{string.Join('\n', _log)}");
     }
 
     /// <summary>Everything stops writing, then the store is read back once (I3) and held layouts

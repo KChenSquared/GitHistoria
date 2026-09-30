@@ -2062,7 +2062,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             else if (exhausted)
                 cache.DisposeLiveWalk();
 
-            AppendWalked(cache, delta);
+            AppendWalked(cache, delta, prep.Have);
             Diagnostics.PerfLog.Mark($"Walk loop (cli) read {delta.Count} commits (pos {cache.LiveWalkPos}, exhausted={exhausted})");
             return new WalkResult([], prep.Decorations, exhausted, prep.Fingerprint, prep.DecosFresh,
                 WalkKey: prep.WalkKey, CarriesRefState: false);
@@ -2139,7 +2139,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
             else if (exhausted)
                 cache.DisposeLiveWalk();
-            AppendWalked(cache, delta);
+            AppendWalked(cache, delta, have);
             Diagnostics.PerfLog.Mark($"walk resumed (cli) +{delta.Count} (pos {cache.LiveWalkPos}, exhausted={exhausted})");
             return new WalkResult([], cache.Decorations, exhausted, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey, CarriesRefState: false);
         }
@@ -2152,13 +2152,24 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// <summary>Appends a pull's rows to the pending buffer while the caller still holds
     /// <see cref="RepoCache.WalkLock"/>, so two pulls in a row can never land in the buffer in the
     /// opposite order to the one they were read from the stream in.</summary>
-    private static void AppendWalked(RepoCache cache, List<RawCommit> delta)
+    private static void AppendWalked(RepoCache cache, List<RawCommit> delta, int firstRow)
     {
         if (delta.Count == 0)
             return;
         lock (cache)
-            cache.Commits.AddRange(delta);
+        {
+            // Trap: the pull ran off every lock, sized from the rows held when it began. Another
+            // writer's rows adopted meanwhile (SpilledRows jumped) already cover the front of the
+            // pull; appending it whole put those rows in the buffer twice.
+            var held = WalkedRowsAlreadyHeld(cache.SpilledRows + cache.Commits.Count, firstRow, delta.Count);
+            cache.Commits.AddRange(held == 0 ? delta : delta.Skip(held));
+        }
     }
+
+    /// <summary>How many leading rows of a pull that starts at absolute row <paramref name="firstRow"/>
+    /// the cache already holds when <paramref name="rowsHeld"/> rows are held by now.</summary>
+    internal static int WalkedRowsAlreadyHeld(int rowsHeld, int firstRow, int pulled)
+        => Math.Clamp(rowsHeld - firstRow, 0, pulled);
 
     private const int RetireWalkLockTimeoutMs = 5_000;
 

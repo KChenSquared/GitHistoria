@@ -144,4 +144,13 @@ public sealed class GraphAdoptedResumeTests : IAsyncDisposable
         using var store = DiskCommitStore.Open(repo.Path, probe.RowCount, probe.RecordCount, probe.OrderVersion);
         Assert.Equal(expected, Enumerable.Range(0, store.Count).Select(i => store.ReadRaw(i).Id).ToList());
     }
+
+    [Theory]
+    [InlineData(100, 100, 50, 0)]   // nothing adopted meanwhile: the whole pull is new
+    [InlineData(130, 100, 50, 30)]  // another writer's rows covered the front of the pull
+    [InlineData(150, 100, 50, 50)]  // ... exactly the whole pull
+    [InlineData(400, 100, 50, 50)]  // ... and far past it
+    [InlineData(90, 100, 50, 0)]    // never negative
+    public void A_pull_drops_the_rows_the_cache_came_to_hold_while_it_ran(int held, int firstRow, int pulled, int expected)
+        => Assert.Equal(expected, GraphLayoutService.WalkedRowsAlreadyHeld(held, firstRow, pulled));
 }
