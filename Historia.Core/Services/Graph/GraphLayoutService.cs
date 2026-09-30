@@ -375,13 +375,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // frame paints commits/lanes with no decorations for that one moment.
         if (GraphWalkCache.Supports(query))
         {
-            var probe = GraphMetaStore.ProbeAny(context.RepositoryPath, query.IncludeRemoteBranches);
-            if (probe.Ok)
+            var probe = GraphMetaStore.ProbeExisting(context.RepositoryPath, query.IncludeRemoteBranches);
+            if (probe is { Ok: true, RowCount: > 0 })
             {
                 DiskCommitStore? store = null;
                 try
                 {
-                    store = DiskCommitStore.Open(context.RepositoryPath, probe.RowCount);
+                    // Open through the header's record count and order version: a headless reorder
+                    // appends new records and writes an order file, and an identity-order open
+                    // would put those records last and lose their edge to the old tip.
+                    store = DiskCommitStore.Open(context.RepositoryPath, probe.RowCount, probe.RecordCount, probe.OrderVersion);
                     var take = Math.Min(maxRows, store.Count);
                     if (take > 0)
                     {
@@ -1977,12 +1980,18 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // here because every pull appends its rows before releasing WalkLock (AppendWalked).
             // Not LiveWalkPos: the reorder pass clears cache.Commits after every batch and asks
             // for batchRows each time, i.e. relative to what the cache holds, not to the stream.
-            var need = prep.WantCount - TotalWalked(cache);
+            var have = TotalWalked(cache);
+            var need = prep.WantCount - have;
             if (need <= 0)
                 return new WalkResult([], cache.Decorations, Exhausted: false, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey, CarriesRefState: false);
 
+            // Trap: resuming with skip: 0 after another writer's rows were adopted (SpilledRows
+            // jumped past LiveWalkPos) re-appended rows the store already held, and the next spill
+            // wrote them to disk a second time. Rows below `have` are already in the cache, so the
+            // stream discards them. The reorder pass clears cache.Commits per batch, so its `have`
+            // is 0 and nothing is skipped there.
             var delta = new List<RawCommit>(Math.Min(need, 8192));
-            var exhausted = PumpCommits(live, delta, skip: 0, want: need, cache, ct);
+            var exhausted = PumpCommits(live, delta, skip: have, want: need, cache, ct);
             if (live is GitLogStream { Failed: true } failed)
             {
                 MarkWalkFailed(context, cache, failed.FailureReason ?? "git log failed");
