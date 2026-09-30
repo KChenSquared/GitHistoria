@@ -177,12 +177,14 @@ internal sealed class GraphConcurrencyHarness : IAsyncDisposable
     private int _branchCounter;
     private int _commitCounter;
     private readonly int[] _actionCounts = new int[6];
+    private string _timing = "";
 
     private GraphConcurrencyHarness(int seed, TimeSpan activity, ITestOutputHelper? output)
     {
         _seed = seed;
         _activity = activity;
         _output = output;
+
     }
 
     public static async Task<GraphConcurrencyHarness> CreateAsync(int seed, TimeSpan activity, ITestOutputHelper? output)
@@ -658,6 +660,7 @@ internal sealed class GraphConcurrencyHarness : IAsyncDisposable
             };
             await Task.Delay(_activity);
             _stopping = true;
+            var stoppedAt = _clock.ElapsedMilliseconds;
 
             var all = Task.WhenAll(actors);
             if (await Task.WhenAny(all, Task.Delay(LivenessBound)) != all)
@@ -665,7 +668,9 @@ internal sealed class GraphConcurrencyHarness : IAsyncDisposable
             else if (all.IsFaulted)
                 _checker.Violation("I5", $"an actor faulted: {all.Exception!.GetBaseException().Message}");
 
+            var joinedAt = _clock.ElapsedMilliseconds;
             await Quiesce();
+            _timing = $"stop at {stoppedAt} ms, actors joined at {joinedAt} ms, quiesced at {_clock.ElapsedMilliseconds} ms";
         }
         finally
         {
@@ -681,7 +686,7 @@ internal sealed class GraphConcurrencyHarness : IAsyncDisposable
 
         _output?.WriteLine(
             $"seed={_seed} activity={_activity.TotalMilliseconds:0} ms actions foreground/headless/refs/tabs/readers/foreign="
-            + string.Join('/', _actionCounts) + $" layouts checked={_checker.LayoutsChecked} references={_referenceRows.Count}");
+            + string.Join('/', _actionCounts) + $" layouts checked={_checker.LayoutsChecked} references={_referenceRows.Count}; {_timing}");
 
         var violations = _checker.Violations;
         if (violations.Count > 0)
