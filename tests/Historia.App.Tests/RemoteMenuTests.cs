@@ -154,6 +154,7 @@ public sealed class RemoteMenuTests
         Assert.Contains("65 remote-tracking branches", effect);
         Assert.Contains("origin/", effect);
         Assert.Contains("lose their upstream", effect);
+        Assert.Contains("become unreferenced locally", effect);
         Assert.DoesNotContain("Are you sure", effect);
     }
 

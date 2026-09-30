@@ -73,9 +73,9 @@ internal static class RemoteMenu
             _ => $"Its {trackingBranchCount} remote-tracking branches ({name}/…) are deleted too.",
         };
         return $"Delete remote '{name}' ({url})? Its configuration is removed. {branches} " +
-               "Local branches that track it lose their upstream. Commits that only its " +
-               "remote-tracking branches reach stay reachable only through your local branches and " +
-               "tags. Nothing on the server is changed.";
+               "Local branches that track it lose their upstream. Commits reachable only from its " +
+               "remote-tracking branches become unreferenced locally; anything your local branches " +
+               "or tags reach is kept. Nothing on the server is changed.";
     }
 
     private static async Task RefreshAsync(RepositoryContext ctx)
