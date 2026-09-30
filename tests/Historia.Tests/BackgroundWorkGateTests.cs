@@ -102,6 +102,26 @@ public sealed class BackgroundWorkGateTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Focused_tracks_the_focused_context()
+    {
+        var ws = new FakeWorkspace();
+        var gate = new BackgroundWorkGate(ws);
+        Assert.Null(gate.Focused);
+
+        await using var ctx1 = _host.Open(_repo.Path);
+        await using var ctx2 = _host.Open(_repo.Path);
+
+        ws.SetFocused(ctx1);
+        Assert.Same(ctx1, gate.Focused);
+
+        ws.SetFocused(ctx2);
+        Assert.Same(ctx2, gate.Focused);
+
+        ws.SetFocused(null);
+        Assert.Null(gate.Focused);
+    }
+
+    [Fact]
     public async Task A_waiter_is_released_when_the_gate_opens()
     {
         var ws = new FakeWorkspace();

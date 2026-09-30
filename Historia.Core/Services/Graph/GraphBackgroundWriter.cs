@@ -152,6 +152,14 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
         }
     }
 
+    /// <summary>True while an inactive-tab job for <paramref name="context"/> is queued or
+    /// running.</summary>
+    internal bool HasInactiveJob(RepositoryContext context)
+    {
+        lock (_sync)
+            return _inactiveJobs.TryGetValue(context.Id, out var jobs) && jobs.Count > 0;
+    }
+
     /// <summary>Cancels <paramref name="context"/>'s queued or running inactive job(s)
     /// and returns a task that completes once every one of them has actually exited. A no-op (a
     /// completed task) if there is none.</summary>
@@ -194,7 +202,16 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
                 // headless walk here never makes the active tab's own commit-graph write (which
                 // only ever needs _serial, and briefly) wait behind it.
                 await _headlessSerial.WaitAsync(cts.Token).ConfigureAwait(false);
-                try { await work(cts.Token).ConfigureAwait(false); }
+                try
+                {
+                    // Focus only requests this job's cancellation, and a job can be queued after
+                    // that request ran, so the tab may have gained focus while the job waited. The
+                    // focused tab's own foreground spill is the one writer for its store.
+                    if (ReferenceEquals(gate?.Focused, context))
+                        Diagnostics.PerfLog.Mark($"headless cache skipped: tab is focused ({context.DisplayName})");
+                    else
+                        await work(cts.Token).ConfigureAwait(false);
+                }
                 finally { _headlessSerial.Release(); }
             }
             catch (OperationCanceledException)

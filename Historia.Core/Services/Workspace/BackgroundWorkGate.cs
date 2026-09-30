@@ -24,6 +24,10 @@ public interface IBackgroundWorkGate
     /// <paramref name="context"/> is not the tab currently being waited on (a stale report from a
     /// focus that has since moved on).</summary>
     void ReportGraphSettled(RepositoryContext context);
+
+    /// <summary>The context whose load the gate is waiting on, or last opened for; null when no
+    /// tab is focused. A gate that doesn't track focus reports null.</summary>
+    RepositoryContext? Focused => null;
 }
 
 /// <inheritdoc cref="IBackgroundWorkGate"/>
@@ -53,6 +57,8 @@ public sealed class BackgroundWorkGate : IBackgroundWorkGate, IDisposable
     }
 
     public bool IsOpen { get { lock (_sync) return _open; } }
+
+    public RepositoryContext? Focused { get { lock (_sync) return _pending; } }
 
     public Task WaitUntilOpenAsync(CancellationToken ct = default)
     {
