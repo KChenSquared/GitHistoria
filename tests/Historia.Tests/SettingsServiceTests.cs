@@ -361,5 +361,35 @@ public class SettingsServiceTests : IDisposable
         Assert.True(SettingsService.Load().Current.ShowAuthorDate);
     }
 
+    [Fact]
+    public async Task Racing_updates_leave_the_newest_snapshot_pending()
+    {
+        const int rounds = 3_000;
+        var svc = SettingsService.Load();
+        var writer = typeof(SettingsService).GetField("_writer", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(svc)!;
+        var pendingOf = typeof(AtomicFileWriter).GetProperty("PendingContentForTesting", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        var inversions = 0;
+        using var barrier = new Barrier(2);
+        for (var r = 0; r < rounds; r++)
+        {
+            async Task Bump()
+            {
+                barrier.SignalAndWait();
+                await svc.UpdateAsync(s => s with { DiffContextLines = s.DiffContextLines + 1 });
+            }
+            await Task.WhenAll(Task.Run(Bump), Task.Run(Bump));
+
+            // A debounce that fired between rounds already put a snapshot on disk; nothing to compare.
+            if (pendingOf.GetValue(writer) is not string pending)
+                continue;
+            var queued = JsonSerializer.Deserialize<AppSettings>(pending, HistoriaJson.Options)!;
+            if (queued.DiffContextLines != svc.Current.DiffContextLines)
+                inversions++;
+        }
+
+        Assert.Equal(0, inversions);
+    }
+
     public void Dispose() => _state.Dispose();
 }

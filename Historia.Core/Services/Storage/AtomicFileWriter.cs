@@ -15,6 +15,7 @@ public sealed class AtomicFileWriter : IAsyncDisposable
     private readonly object _pendingLock = new();
 
     private string? _pendingContent;
+    private long _lastQueuedSequence;
     private CancellationTokenSource? _debounceCts;
     private Task _debounceTask = Task.CompletedTask;
 
@@ -69,14 +70,46 @@ public sealed class AtomicFileWriter : IAsyncDisposable
     public void QueueWrite(string content)
     {
         lock (_pendingLock)
+            QueuePendingLocked(content);
+    }
+
+    /// <summary>
+    /// Queues a debounced write of a snapshot numbered <paramref name="sequence"/>. A snapshot
+    /// numbered no higher than the newest one already queued is dropped, so a slow caller can never
+    /// replace a newer snapshot with an older one.
+    /// <para>Trap: a caller that took its snapshot under its own lock but published it after
+    /// releasing that lock let two racing changes queue their snapshots in the opposite order, and
+    /// the older one was then the one debounced to disk and flushed at shutdown. The caller takes
+    /// <paramref name="sequence"/> in the same critical section as the snapshot (so the numbers
+    /// follow the order the snapshots were taken in) and serializes and calls this after releasing
+    /// its lock: queuing cancels a <see cref="CancellationTokenSource"/>, which is never done under a
+    /// caller's lock.</para>
+    /// </summary>
+    public void QueueWrite(string content, long sequence)
+    {
+        lock (_pendingLock)
         {
-            _pendingContent = content;
-            _debounceCts?.Cancel();
-            _debounceCts?.Dispose();
-            _debounceCts = new CancellationTokenSource();
-            var token = _debounceCts.Token;
-            _debounceTask = RunDebouncedAsync(token);
+            if (sequence <= _lastQueuedSequence)
+                return;
+            _lastQueuedSequence = sequence;
+            QueuePendingLocked(content);
         }
+    }
+
+    /// <summary>The payload waiting for its debounce or flush, for tests.</summary>
+    internal string? PendingContentForTesting
+    {
+        get { lock (_pendingLock) return _pendingContent; }
+    }
+
+    private void QueuePendingLocked(string content)
+    {
+        _pendingContent = content;
+        _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
+        _debounceCts = new CancellationTokenSource();
+        var token = _debounceCts.Token;
+        _debounceTask = RunDebouncedAsync(token);
     }
 
     /// <summary>Flushes any pending debounced write synchronously with respect to completion.</summary>

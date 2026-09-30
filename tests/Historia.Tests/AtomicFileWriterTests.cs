@@ -62,6 +62,50 @@ public class AtomicFileWriterTests : IDisposable
         Assert.Contains(final, payloads); // exactly one writer's full payload, never a mix
     }
 
+    [Fact]
+    public async Task An_older_sequence_never_replaces_a_newer_pending_payload()
+    {
+        var path = Path.Combine(_dir, "seq.json");
+        await using var writer = new AtomicFileWriter(path);
+
+        writer.QueueWrite("newest", sequence: 5);
+        writer.QueueWrite("older", sequence: 3);
+        Assert.Equal("newest", writer.PendingContentForTesting);
+
+        writer.QueueWrite("same number again", sequence: 5);
+        Assert.Equal("newest", writer.PendingContentForTesting);
+
+        await writer.FlushAsync();
+        Assert.Equal("newest", await File.ReadAllTextAsync(path));
+
+        // Even once the newest payload has reached disk, an older one is still refused.
+        writer.QueueWrite("late and stale", sequence: 4);
+        Assert.Null(writer.PendingContentForTesting);
+        await writer.FlushAsync();
+        Assert.Equal("newest", await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
+    public async Task A_newer_sequence_restarts_the_debounce()
+    {
+        var path = Path.Combine(_dir, "debounce.json");
+        await using var writer = new AtomicFileWriter(path);
+
+        writer.QueueWrite("first", sequence: 1);
+        await Task.Delay(150);
+        var secondQueuedAt = Stopwatch.StartNew();
+        writer.QueueWrite("second", sequence: 2);
+        await Task.Delay(100);
+
+        // The 250 ms window restarted at the second queue, so the first one's deadline (100 ms
+        // ago) has passed without a write. Skipped when a loaded machine stretched the delay.
+        if (secondQueuedAt.ElapsedMilliseconds < 200)
+            Assert.False(File.Exists(path), "the debounce did not restart");
+
+        await writer.FlushAsync();
+        Assert.Equal("second", await File.ReadAllTextAsync(path));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_dir, true); } catch { /* ignore */ }
