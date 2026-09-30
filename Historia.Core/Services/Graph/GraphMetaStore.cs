@@ -125,6 +125,13 @@ internal sealed class GraphMetaStore
         /// no <see cref="Version"/> bump.</summary>
         public long LastFullWalkMs { get; set; }
 
+        /// <summary>Names one incarnation of the store's files. <see cref="GraphMetaWriter.Reset"/>
+        /// mints a new one, appends and reorders keep the current one, so a reader that recorded it
+        /// at open can tell the files it holds have since been replaced. Additive: a header written
+        /// before this field existed reads as <c>""</c>, and a matching key is then all a reader has
+        /// to go on.</summary>
+        public string Generation { get; set; } = "";
+
         private int _hashSize;
 
         /// <summary>Byte length of object ids in this store (20 for SHA-1, 32 for SHA-256).</summary>
@@ -145,31 +152,75 @@ internal sealed class GraphMetaStore
     public static DiskCommitStore? TryOpen(
         string repoPath, long fingerprint, bool includeRemoteBranches, int wantCount)
     {
+        // A reset between reading the header and opening the files would pair one incarnation's
+        // header with another's files. The header is read again once the files are open and must
+        // still name the same incarnation; one retry rides out a reset that lands mid-open.
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            DiskCommitStore? store = null;
+            try
+            {
+                var hdr = ReadHeader(repoPath);
+                if (hdr is null
+                    || hdr.Version != Version
+                    || hdr.Fingerprint != fingerprint
+                    || hdr.IncludeRemoteBranches != includeRemoteBranches
+                    || hdr.WalkEngine != GraphWalkCache.CliWalkMarker)
+                    return null;
+                if (!hdr.Exhausted && hdr.RowCount < wantCount)
+                    return null;
+
+                var hashSize = hdr.HashSize == 0 ? 20 : hdr.HashSize;
+                if (hashSize != 20 && hashSize != 32)
+                    return null;
+
+                store = DiskCommitStore.Open(
+                    repoPath, hdr.RowCount, hdr.RecordCount, hdr.OrderVersion, hashSize, hdr.Generation);
+
+                var again = ReadHeader(repoPath);
+                if (again is not null
+                    && again.Fingerprint == hdr.Fingerprint
+                    && again.Generation == hdr.Generation
+                    && again.OrderVersion == hdr.OrderVersion)
+                    return store;
+            }
+            catch
+            {
+                // fall through: the files or the header moved under this open
+            }
+            store?.Dispose();
+        }
+        return null;
+    }
+
+    private static Header? ReadHeader(string repoPath)
+    {
+        var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
+        if (!File.Exists(hdrPath))
+            return null;
+        return JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
+    }
+
+    /// <summary>Header-only probe of the store's identity: the walk key, incarnation and order
+    /// version a reader would pin by opening it now. Like <see cref="ProbeExisting"/> it does not
+    /// check the fingerprint against anything.</summary>
+    public static (bool Ok, long WalkKey, string Generation, int OrderVersion, int RowCount) ProbeGeneration(
+        string repoPath, bool includeRemoteBranches)
+    {
         try
         {
-            var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
-            if (!File.Exists(hdrPath))
-                return null;
-
-            var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
-            if (hdr is null
-                || hdr.Version != Version
-                || hdr.Fingerprint != fingerprint
-                || hdr.IncludeRemoteBranches != includeRemoteBranches
+            var hdr = ReadHeader(repoPath);
+            if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
                 || hdr.WalkEngine != GraphWalkCache.CliWalkMarker)
-                return null;
-            if (!hdr.Exhausted && hdr.RowCount < wantCount)
-                return null;
-
+                return (false, 0, "", 0, 0);
             var hashSize = hdr.HashSize == 0 ? 20 : hdr.HashSize;
             if (hashSize != 20 && hashSize != 32)
-                return null;
-
-            return DiskCommitStore.Open(repoPath, hdr.RowCount, hdr.RecordCount, hdr.OrderVersion, hashSize);
+                return (false, 0, "", 0, 0);
+            return (true, hdr.Fingerprint, hdr.Generation, hdr.OrderVersion, hdr.RowCount);
         }
         catch
         {
-            return null;
+            return (false, 0, "", 0, 0);
         }
     }
 
@@ -426,7 +477,34 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     private readonly string _tips = GraphCachePaths.File(repoPath, GraphMetaStore.TipsExt);
     private int _hashSize;
 
+    // The incarnation this writer last wrote or saw on disk; written into every header. Guarded by
+    // this repo's GraphCacheLocks lock.
+    private string _generation = "";
+
     public int HashSize => _hashSize > 0 ? _hashSize : EnsureHashSize();
+
+    /// <summary>The store incarnation this writer last wrote or saw under its walk key — what a
+    /// reader opened on the same files reports as <see cref="DiskCommitStore.Generation"/>. A
+    /// reader whose generation differs holds files that have since been replaced.</summary>
+    public string Generation
+    {
+        get
+        {
+            lock (GraphCacheLocks.For(repoPath))
+                return _generation;
+        }
+    }
+
+    /// <summary>Adopts the incarnation of the header on disk when it belongs to
+    /// <paramref name="walkKey"/>: another writer may have reset the store and come back to this
+    /// key, and a header written with a stale incarnation would make readers of the new files
+    /// think they were replaced. Caller holds this repo's <see cref="GraphCacheLocks"/> lock.</summary>
+    private void AdoptHeaderGeneration(long walkKey)
+    {
+        var probe = GraphMetaStore.ProbeGeneration(repoPath, includeRemoteBranches);
+        if (probe.Ok && probe.WalkKey == walkKey)
+            _generation = probe.Generation;
+    }
 
     /// <summary>
     /// Retires every sibling file for this repository so a from-row-0 re-spill starts the store
@@ -455,6 +533,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             if (!Directory.Exists(cacheDir))
             {
                 Directory.CreateDirectory(cacheDir);
+                _generation = Guid.NewGuid().ToString("N");
                 return true;
             }
 
@@ -503,11 +582,14 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
 
             RetireOrderFiles(cacheDir, stem);
 
-            return !File.Exists(_hdr)
+            var cleared = !File.Exists(_hdr)
                 && !File.Exists(_dat)
                 && !File.Exists(_idx)
                 && !File.Exists(_search)
                 && !File.Exists(_tips);
+            if (cleared)
+                _generation = Guid.NewGuid().ToString("N");
+            return cleared;
         }
         catch
         {
@@ -730,6 +812,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 WalkEngine = GraphWalkCache.CliWalkMarker,
                 LastFullWalkMs = lastFullWalkMs,
                 HashSize = hashSize,
+                Generation = _generation,
             };
             var tmp = $"{_hdr}.{Guid.NewGuid():N}.tmp";
             File.WriteAllBytes(tmp, JsonSerializer.SerializeToUtf8Bytes(hdr, GraphMetaStore.Json));
@@ -874,6 +957,8 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             var existingHashSize = EnsureHashSize();
             if (matchesKey && existingHashSize > 0 && rowHashSize > 0 && existingHashSize != rowHashSize)
                 matchesKey = false;
+            if (matchesKey)
+                AdoptHeaderGeneration(fingerprint);
 
             if (!matchesKey)
             {
@@ -965,6 +1050,9 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 || probe.OrderVersion != expectedOldOrderVersion || probe.RecordCount != expectedOldRecordCount)
                 return false;
 
+            // The reorder rewrites the header under a new walk key but keeps the store's files, so
+            // readers of them keep the incarnation the old header named.
+            AdoptHeaderGeneration(expectedOldWalkKey);
             var newOrderVersion = expectedOldOrderVersion + 1;
             if (!WriteOrder(newOrderVersion, order))
                 return false;
@@ -1011,8 +1099,12 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
 {
     private const int DecodeCacheCap = 8192;
 
-    private readonly string _repoPath;
+    // Every file this reader touches is held as a handle opened together at Open, on the
+    // incarnation the header named then. Reading by path instead would follow a reset onto a
+    // different store's files while the offsets and records already read belong to the old one.
     private readonly SafeFileHandle _dat;
+    private readonly SafeFileHandle _idx;
+    private readonly SafeFileHandle? _search;   // null when the store has no search file
     private long[] _offsets;            // [record] -> start byte in .dat
     private long _datLength;
     private int _count;                 // row count (== record count until the first reorder)
@@ -1051,16 +1143,28 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         ParentCount = 0,
     };
 
-    private DiskCommitStore(string repoPath, SafeFileHandle dat, long[] offsets, long datLength, int count, int[]? order, int hashSize)
+    private DiskCommitStore(
+        SafeFileHandle dat, SafeFileHandle idx, SafeFileHandle? search, long[] offsets, long datLength, int count,
+        int[]? order, int orderVersion, string generation, int hashSize)
     {
-        _repoPath = repoPath;
         _dat = dat;
+        _idx = idx;
+        _search = search;
         _offsets = offsets;
         _datLength = datLength;
         _count = count;
         _order = order;
+        OrderVersion = orderVersion;
+        Generation = generation;
         _hashSize = hashSize > 0 ? hashSize : 20;
     }
+
+    /// <summary>The store incarnation these files belong to (<see cref="GraphMetaStore.Header.Generation"/>
+    /// at open; <c>""</c> for a store written before generations existed).</summary>
+    public string Generation { get; }
+
+    /// <summary>The order version this store was opened with; <c>0</c> is the identity order.</summary>
+    public int OrderVersion { get; }
 
     /// <summary>Opens a store at the IDENTITY order — row <c>i</c> IS record <c>i</c>. Every
     /// caller, and the only shape <see cref="SetCount"/>
@@ -1073,8 +1177,16 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     public static DiskCommitStore Open(string repoPath, int rowCount, int recordCount, int orderVersion) => Open(repoPath, rowCount, recordCount, orderVersion, hashSize: 0);
 
     public static DiskCommitStore Open(string repoPath, int rowCount, int recordCount, int orderVersion, int hashSize)
+        => Open(repoPath, rowCount, recordCount, orderVersion, hashSize, generation: null);
+
+    /// <summary>Opens the store and records the incarnation it belongs to. <paramref name="generation"/>
+    /// is the header's incarnation the caller already read; <c>null</c> reads the header here, before
+    /// any file is opened — so a reset that lands afterwards makes this store look older than the
+    /// files, never newer.</summary>
+    internal static DiskCommitStore Open(
+        string repoPath, int rowCount, int recordCount, int orderVersion, int hashSize, string? generation)
     {
-        if (hashSize <= 0)
+        if (hashSize <= 0 || generation is null)
         {
             var hdrPath = GraphCachePaths.File(repoPath, GraphMetaStore.HdrExt);
             if (File.Exists(hdrPath))
@@ -1082,8 +1194,10 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                 try
                 {
                     var hdr = JsonSerializer.Deserialize<GraphMetaStore.Header>(GraphMetaStore.ReadAllBytesShared(hdrPath), GraphMetaStore.Json);
-                    if (hdr is not null && hdr.HashSize > 0)
+                    if (hdr is not null && hdr.HashSize > 0 && hashSize <= 0)
                         hashSize = hdr.HashSize;
+                    if (hdr is not null)
+                        generation ??= hdr.Generation;
                 }
                 catch { }
             }
@@ -1091,19 +1205,36 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                 hashSize = 20;
         }
 
+        const FileShare share = FileShare.ReadWrite | FileShare.Delete;
         var datPath = GraphCachePaths.File(repoPath, GraphMetaStore.DatExt);
         var idxPath = GraphCachePaths.File(repoPath, GraphMetaStore.IdxExt);
-        var offsets = ReadOffsets(idxPath, recordCount);
-        var dat = File.OpenHandle(datPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        var len = RandomAccess.GetLength(dat);
-        int[]? order = null;
-        if (orderVersion > 0)
+        var searchPath = GraphCachePaths.File(repoPath, GraphMetaStore.SearchExt);
+        SafeFileHandle? dat = null, idx = null, search = null;
+        try
         {
-            var orderPath = GraphMetaStore.OrderFile(repoPath, orderVersion);
-            order = ReadOrder(orderPath, rowCount);
+            dat = File.OpenHandle(datPath, FileMode.Open, FileAccess.Read, share);
+            idx = File.OpenHandle(idxPath, FileMode.Open, FileAccess.Read, share);
+            try { search = File.OpenHandle(searchPath, FileMode.Open, FileAccess.Read, share); }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { }
+
+            var offsets = ReadOffsets(idx, 0, recordCount);
+            var len = RandomAccess.GetLength(dat);
+            int[]? order = null;
+            if (orderVersion > 0)
+            {
+                var orderPath = GraphMetaStore.OrderFile(repoPath, orderVersion);
+                order = ReadOrder(orderPath, rowCount);
+            }
+            var count = order is not null ? Math.Min(rowCount, order.Length) : Math.Min(rowCount, offsets.Length);
+            return new DiskCommitStore(dat, idx, search, offsets, len, count, order, orderVersion, generation ?? "", hashSize);
         }
-        var count = order is not null ? Math.Min(rowCount, order.Length) : Math.Min(rowCount, offsets.Length);
-        return new DiskCommitStore(repoPath, dat, offsets, len, count, order, hashSize);
+        catch
+        {
+            dat?.Dispose();
+            idx?.Dispose();
+            search?.Dispose();
+            throw;
+        }
     }
 
     private static int[] ReadOrder(string orderPath, int rowCount)
@@ -1127,7 +1258,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         {
             if (_closed || _order is not null || rowCount <= _count)
                 return;
-            var tail = ReadOffsetsFrom(GraphCachePaths.File(_repoPath, GraphMetaStore.IdxExt), _offsets.Length, rowCount);
+            var tail = ReadOffsets(_idx, _offsets.Length, rowCount);
             if (tail.Length > 0)
             {
                 var merged = new long[_offsets.Length + tail.Length];
@@ -1379,41 +1510,75 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     public IReadOnlyList<int> Search(string term)
     {
         var t = term.Trim().ToLowerInvariant();
-        if (t.Length == 0 || _closed)
+        if (t.Length == 0 || _search is null)
             return [];
-
-        Dictionary<int, int>? recordToRow = null;
-        if (_order is not null)
-        {
-            recordToRow = new Dictionary<int, int>(_order.Length);
-            for (var row = 0; row < _order.Length; row++)
-                recordToRow[_order[row]] = row;
-        }
+        // A lease keeps the handle open for the whole scan, however long a concurrent tab switch
+        // or re-walk takes to release the store's owner.
+        if (AddRef() is null)
+            return [];
 
         var hits = new List<int>();
         try
         {
-            var path = GraphCachePaths.File(_repoPath, GraphMetaStore.SearchExt);
-            using var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete), Encoding.UTF8);
-            var record = -1;
-            string? line;
-            while ((line = reader.ReadLine()) is not null)
+            Dictionary<int, int>? recordToRow = null;
+            if (_order is not null)
             {
-                record++;
-                if (record >= RecordCount)
-                    break;
-                var sep = line.IndexOf(GraphMetaStore.Sep);
-                if (sep < 0)
-                    continue;
-                var sha = line.AsSpan(0, sep);
-                var rest = line.AsSpan(sep + 1);
-                if (!rest.Contains(t, StringComparison.Ordinal) && !sha.StartsWith(t, StringComparison.Ordinal))
-                    continue;
+                recordToRow = new Dictionary<int, int>(_order.Length);
+                for (var row = 0; row < _order.Length; row++)
+                    recordToRow[_order[row]] = row;
+            }
 
-                if (recordToRow is null)
-                    hits.Add(record);
-                else if (recordToRow.TryGetValue(record, out var row))
-                    hits.Add(row);
+            var recordCount = RecordCount;
+            var record = -1;
+            var stop = false;
+
+            // Scans the handle's own file, so a store opened before a reset keeps searching its own
+            // rows. Lines end at a '\n' byte, which never occurs inside a multi-byte UTF-8
+            // sequence, so lines are cut before decoding; an unterminated tail is a line still
+            // being appended and is left alone.
+            var chunk = new byte[1 << 16];
+            var pending = new byte[1 << 16];
+            var pendingLen = 0;
+            long offset = 0;
+            while (!stop)
+            {
+                var n = RandomAccess.Read(_search, chunk, offset);
+                if (n <= 0)
+                    break;
+                offset += n;
+                if (pendingLen + n > pending.Length)
+                    Array.Resize(ref pending, Math.Max(pending.Length * 2, pendingLen + n));
+                Buffer.BlockCopy(chunk, 0, pending, pendingLen, n);
+                pendingLen += n;
+
+                var start = 0;
+                int nl;
+                while (!stop && (nl = Array.IndexOf(pending, (byte)'\n', start, pendingLen - start)) >= 0)
+                {
+                    record++;
+                    if (record >= recordCount)
+                    {
+                        stop = true;
+                        break;
+                    }
+                    var line = Encoding.UTF8.GetString(pending, start, nl - start);
+                    start = nl + 1;
+
+                    var sep = line.IndexOf(GraphMetaStore.Sep);
+                    if (sep < 0)
+                        continue;
+                    var sha = line.AsSpan(0, sep);
+                    var rest = line.AsSpan(sep + 1);
+                    if (!rest.Contains(t, StringComparison.Ordinal) && !sha.StartsWith(t, StringComparison.Ordinal))
+                        continue;
+
+                    if (recordToRow is null)
+                        hits.Add(record);
+                    else if (recordToRow.TryGetValue(record, out var row))
+                        hits.Add(row);
+                }
+                pendingLen -= start;
+                Buffer.BlockCopy(pending, start, pending, 0, pendingLen);
             }
             if (recordToRow is not null)
                 hits.Sort();
@@ -1421,6 +1586,10 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         catch
         {
             return hits;
+        }
+        finally
+        {
+            Dispose();
         }
         return hits;
     }
@@ -1454,37 +1623,30 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
                 _closed = true;
         }
         if (close)
+        {
             _dat.Dispose();
+            _idx.Dispose();
+            _search?.Dispose();
+        }
     }
 
     // ── internals ──
 
-    private static long[] ReadOffsets(string idxPath, int rowCount)
+    /// <summary>Reads the offsets of records [<paramref name="fromRecord"/>, <paramref name="recordCount"/>)
+    /// through <paramref name="idx"/> — the whole table at open, or just the tail appended since
+    /// the caller last read it. Reads only what the handle's own file holds.</summary>
+    private static long[] ReadOffsets(SafeFileHandle idx, int fromRecord, int recordCount)
     {
-        var bytes = GraphMetaStore.ReadAllBytesShared(idxPath);
-        var n = Math.Min(rowCount, bytes.Length / 8);
-        var offsets = new long[n];
-        for (var i = 0; i < n; i++)
-            offsets[i] = BitConverter.ToInt64(bytes, i * 8);
-        return offsets;
-    }
-
-    /// <summary>Reads only the offsets for rows [<paramref name="fromRow"/>,
-    /// <paramref name="rowCount"/>) — the tail appended since the caller last read this file —
-    /// instead of <see cref="ReadOffsets"/>'s whole-file read.</summary>
-    private static long[] ReadOffsetsFrom(string idxPath, int fromRow, int rowCount)
-    {
-        using var fs = new FileStream(idxPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        var startByte = (long)fromRow * 8;
-        if (startByte >= fs.Length)
+        var startByte = (long)fromRecord * 8;
+        var length = RandomAccess.GetLength(idx);
+        if (recordCount <= fromRecord || startByte >= length)
             return [];
-        fs.Position = startByte;
-        var wantBytes = (int)Math.Min(fs.Length - startByte, (long)(rowCount - fromRow) * 8);
+        var wantBytes = (int)Math.Min(length - startByte, (long)(recordCount - fromRecord) * 8);
         var buf = new byte[wantBytes];
         var readTotal = 0;
         while (readTotal < buf.Length)
         {
-            var r = fs.Read(buf, readTotal, buf.Length - readTotal);
+            var r = RandomAccess.Read(idx, buf.AsSpan(readTotal), startByte + readTotal);
             if (r <= 0)
                 break;
             readTotal += r;
@@ -1526,28 +1688,43 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     {
         using var ms = new MemoryStream(record.ToArray(), writable: false);
         using var br = new BinaryReader(ms, new UTF8Encoding(false));
-        var sha = br.ReadBytes(hashSize);
-        var id = new GitObjectId(sha);
-        var msg = br.ReadString();
-        var author = br.ReadString();
-        var email = br.ReadString();
-        var authorWhen = ReadWhen(br);
-        var commitWhen = ReadWhen(br);
-        var parentCount = br.ReadInt32();
-        var parents = new GitObjectId[parentCount];
-        for (var i = 0; i < parentCount; i++)
-            parents[i] = new GitObjectId(br.ReadBytes(hashSize));
-        var meta = new CommitMetadata
+        // Trap: a record read at the wrong offset (an index and a data file from different store
+        // incarnations) used to throw ArgumentException from the id constructor, which no reader
+        // catches; a garbage parent count could also allocate an absurd array. Every way a record
+        // can fail to parse is reported as InvalidDataException, the one fault the readers and the
+        // graph render already treat as "serve a stub".
+        try
         {
-            Id = id,
-            MessageShort = msg,
-            AuthorName = author,
-            AuthorEmail = email,
-            AuthorWhen = authorWhen,
-            CommitWhen = commitWhen,
-            ParentCount = parentCount,
-        };
-        return (meta, parents);
+            var sha = br.ReadBytes(hashSize);
+            var id = new GitObjectId(sha);
+            var msg = br.ReadString();
+            var author = br.ReadString();
+            var email = br.ReadString();
+            var authorWhen = ReadWhen(br);
+            var commitWhen = ReadWhen(br);
+            var parentCount = br.ReadInt32();
+            var remaining = ms.Length - ms.Position;
+            if (parentCount < 0 || parentCount > remaining / hashSize)
+                throw new InvalidDataException("graph meta record has an impossible parent count");
+            var parents = new GitObjectId[parentCount];
+            for (var i = 0; i < parentCount; i++)
+                parents[i] = new GitObjectId(br.ReadBytes(hashSize));
+            var meta = new CommitMetadata
+            {
+                Id = id,
+                MessageShort = msg,
+                AuthorName = author,
+                AuthorEmail = email,
+                AuthorWhen = authorWhen,
+                CommitWhen = commitWhen,
+                ParentCount = parentCount,
+            };
+            return (meta, parents);
+        }
+        catch (Exception ex) when (ex is ArgumentException or OverflowException or EndOfStreamException or FormatException)
+        {
+            throw new InvalidDataException("graph meta record does not parse", ex);
+        }
     }
 
     private static DateTimeOffset ReadWhen(BinaryReader br)
