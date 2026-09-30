@@ -41,6 +41,17 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
     private readonly AtomicFileWriter _bindingsWriter;
     private readonly object _sync = new();
 
+    // Serializes Create/Update/Delete for their whole duration, vault calls included: each of them
+    // reads the profile list, awaits the vault, and only then writes back, so two overlapping ones
+    // validated against the same stale list and could leave a token for a profile that no longer
+    // exists. Not reentrant: Import calls Create and does not take it itself.
+    private readonly SemaphoreSlim _mutation = new(1, 1);
+
+    // Numbers the snapshots handed to the writers, taken under _sync with the snapshot itself, so
+    // the writer can drop one that arrives after a newer one.
+    private long _profilesSequence;
+    private long _bindingsSequence;
+
     private readonly List<GitProfile> _profiles = [];
     private readonly List<ProfileUsageState> _usage = [];
     private readonly Dictionary<string, BindingDto> _bindings = new(StringComparer.Ordinal);
@@ -156,6 +167,23 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
 
     public async Task<GitProfile> CreateProfileAsync(GitProfileCreateRequest request, CancellationToken ct = default)
     {
+        GitProfile profile;
+        await _mutation.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            profile = await CreateCoreAsync(request, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _mutation.Release();
+        }
+
+        RaiseProfilesChanged();
+        return profile;
+    }
+
+    private async Task<GitProfile> CreateCoreAsync(GitProfileCreateRequest request, CancellationToken ct)
+    {
         List<GitProfile> snapshot;
         lock (_sync) snapshot = _profiles.ToList();
 
@@ -194,11 +222,27 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
         // it — creating a profile never makes it the default.
         _ = isFirst;
 
-        RaiseProfilesChanged();
         return profile;
     }
 
     public async Task<GitProfile> UpdateProfileAsync(Guid id, GitProfileUpdateRequest request, CancellationToken ct = default)
+    {
+        GitProfile updated;
+        await _mutation.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            updated = await UpdateCoreAsync(id, request, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _mutation.Release();
+        }
+
+        RaiseProfilesChanged();
+        return updated;
+    }
+
+    private async Task<GitProfile> UpdateCoreAsync(Guid id, GitProfileUpdateRequest request, CancellationToken ct)
     {
         GitProfile current;
         List<GitProfile> snapshot;
@@ -231,18 +275,46 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
             BitbucketTokenRef = await ApplyTokenChangeAsync(id, RemoteHost.Bitbucket, request.BitbucketToken, current.BitbucketTokenRef, ct).ConfigureAwait(false),
         };
 
+        bool stillThere;
         lock (_sync)
         {
             var idx = _profiles.FindIndex(p => p.Id == id);
-            if (idx >= 0) _profiles[idx] = updated;
+            stillThere = idx >= 0;
+            if (stillThere)
+                _profiles[idx] = updated;
+        }
+
+        if (!stillThere)
+        {
+            // Gone while the vault was being written: remove what this call stored so no token
+            // outlives its profile, and report the failure rather than a profile that isn't there.
+            await DeleteAllTokensAsync(updated, CancellationToken.None).ConfigureAwait(false);
+            throw new ProfileValidationException("Profile not found.");
         }
 
         PersistProfiles();
-        RaiseProfilesChanged();
         return updated;
     }
 
     public async Task<ProfileDeleteResult> DeleteProfileAsync(Guid id, CancellationToken ct = default)
+    {
+        ProfileDeleteResult result;
+        await _mutation.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            result = await DeleteCoreAsync(id, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _mutation.Release();
+        }
+
+        if (result is ProfileDeleteResult.Deleted or ProfileDeleteResult.DeletedClearedDefault)
+            RaiseProfilesChanged();
+        return result;
+    }
+
+    private async Task<ProfileDeleteResult> DeleteCoreAsync(Guid id, CancellationToken ct)
     {
         GitProfile? profile;
         bool wasDefault;
@@ -277,8 +349,6 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
         // again. No other profile is auto-promoted.
         if (wasDefault)
             await _settings.UpdateAsync(s => s with { DefaultProfileId = null }, ct).ConfigureAwait(false);
-
-        RaiseProfilesChanged();
 
         return wasDefault ? ProfileDeleteResult.DeletedClearedDefault : ProfileDeleteResult.Deleted;
     }
@@ -691,17 +761,25 @@ public sealed class ProfileService : IProfileService, IAsyncDisposable
     private void PersistProfiles()
     {
         ProfilesFile file;
+        long sequence;
         lock (_sync)
+        {
             file = new ProfilesFile { Profiles = _profiles.ToList(), Usage = _usage.ToList() };
-        _profilesWriter.QueueWrite(JsonSerializer.Serialize(file, HistoriaJson.Options));
+            sequence = ++_profilesSequence;
+        }
+        _profilesWriter.QueueWrite(JsonSerializer.Serialize(file, HistoriaJson.Options), sequence);
     }
 
     private void PersistBindings()
     {
         BindingsFile file;
+        long sequence;
         lock (_sync)
+        {
             file = new BindingsFile { Bindings = new Dictionary<string, BindingDto>(_bindings, StringComparer.Ordinal) };
-        _bindingsWriter.QueueWrite(JsonSerializer.Serialize(file, HistoriaJson.Options));
+            sequence = ++_bindingsSequence;
+        }
+        _bindingsWriter.QueueWrite(JsonSerializer.Serialize(file, HistoriaJson.Options), sequence);
     }
 
     private void RaiseProfilesChanged() => ProfilesChanged?.Invoke(this, EventArgs.Empty);

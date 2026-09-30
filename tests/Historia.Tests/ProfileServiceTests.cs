@@ -158,6 +158,156 @@ public class ProfileServiceTests : IDisposable
         Assert.Equal("ghp_abc123", await _profiles.GetTokenAsync(p.Id, RemoteHost.GitHub));
     }
 
+    // ── Profile edits run one at a time and persist newest-last ──
+
+    /// <summary>A vault whose first store can be held mid-call, standing in for a slow Credential
+    /// Manager write.</summary>
+    private sealed class GatedVault : ICredentialVaultService
+    {
+        private readonly ConcurrentDictionary<string, string> _store = new();
+        public bool Hold { get; set; }
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Count => _store.Count;
+
+        public async Task StoreTokenAsync(string key, string token, CancellationToken ct = default)
+        {
+            if (Hold)
+            {
+                Entered.TrySetResult();
+                await Release.Task.ConfigureAwait(false);
+            }
+            _store[key] = token;
+        }
+
+        public Task<string?> RetrieveTokenAsync(string key, CancellationToken ct = default)
+            => Task.FromResult(_store.GetValueOrDefault(key));
+
+        public Task DeleteTokenAsync(string key, CancellationToken ct = default)
+        {
+            _store.TryRemove(key, out _);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Update_racing_delete_leaves_no_token_in_the_vault()
+    {
+        var vault = new GatedVault();
+        var profiles = new ProfileService(_settings, vault, new NoGitCli());
+        var p = await profiles.CreateProfileAsync(new GitProfileCreateRequest
+        {
+            DisplayName = "Work", GitUserName = "Work", GitUserEmail = "w@example.com",
+        });
+
+        vault.Hold = true;
+        var update = profiles.UpdateProfileAsync(p.Id, new GitProfileUpdateRequest { GitHubToken = "secret-token" });
+        await vault.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var delete = profiles.DeleteProfileAsync(p.Id);
+        await Task.Delay(50); // long enough for an unserialized delete to run to completion
+        vault.Release.SetResult();
+
+        try { await update; }
+        catch (ProfileValidationException ex) { Assert.Equal("Profile not found.", ex.Message); }
+        var result = await delete;
+
+        Assert.Equal(ProfileDeleteResult.Deleted, result);
+        Assert.Null(profiles.GetProfileById(p.Id));
+        Assert.Equal(0, vault.Count);
+        await profiles.DisposeAsync();
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Concurrent_creates_with_the_same_name_admit_one()
+    {
+        var vault = new GatedVault();
+        var profiles = new ProfileService(_settings, vault, new NoGitCli());
+        GitProfileCreateRequest Request() => new()
+        {
+            DisplayName = "Same", GitUserName = "Same", GitUserEmail = "s@example.com", GitHubToken = "token",
+        };
+
+        vault.Hold = true;
+        var first = profiles.CreateProfileAsync(Request());
+        await vault.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        vault.Hold = false;
+        var second = profiles.CreateProfileAsync(Request());
+        await Task.Delay(50);
+        vault.Release.SetResult();
+
+        var outcomes = await Task.WhenAll(Settle(first), Settle(second));
+
+        Assert.Equal(1, outcomes.Count(ok => ok));
+        Assert.Equal(2, profiles.GetAllProfiles().Count); // the global profile and one "Same"
+        await profiles.DisposeAsync();
+
+        static async Task<bool> Settle(Task<GitProfile> create)
+        {
+            try { await create; return true; }
+            catch (ProfileValidationException) { return false; }
+        }
+    }
+
+    [Fact]
+    public async Task Racing_binds_leave_the_newest_bindings_pending()
+    {
+        const int rounds = 1_000;
+        var key = RepoIdentityKey.FromRootCommit("abc123abc123abc123abc123abc123abc123abcd");
+        var writer = typeof(ProfileService).GetField("_bindingsWriter", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(_profiles)!;
+        var pendingOf = typeof(AtomicFileWriter).GetProperty("PendingContentForTesting", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var idA = Guid.NewGuid();
+        var idB = Guid.NewGuid();
+
+        var inversions = 0;
+        using var barrier = new Barrier(2);
+        for (var r = 0; r < rounds; r++)
+        {
+            async Task Bind(Guid id)
+            {
+                barrier.SignalAndWait();
+                await _profiles.BindProfileToRepositoryAsync(key, "C:/repos/x", id);
+            }
+            await Task.WhenAll(Task.Run(() => Bind(idA)), Task.Run(() => Bind(idB)));
+
+            // A debounce that fired between rounds already put a snapshot on disk; nothing to compare.
+            if (pendingOf.GetValue(writer) is not string pending)
+                continue;
+            using var doc = JsonDocument.Parse(pending);
+            var queued = doc.RootElement.GetProperty("bindings").GetProperty(key.Value).GetProperty("profileId").GetGuid();
+            if (queued != _profiles.GetAllRepoBindings()[key].ProfileId)
+                inversions++;
+        }
+
+        Assert.Equal(0, inversions);
+    }
+
+    [Fact]
+    public async Task Import_still_creates_every_profile()
+    {
+        await Create("Personal");
+        await Create("Work", "w@example.com");
+        var file = Path.Combine(_state.Path, "profiles-export.json");
+        await _profiles.ExportProfilesAsync(file, includeTokens: false, password: null);
+
+        // The export carries the synthesized global profile too, which has no identity here and
+        // would fail import validation; this test is about the profiles a user created.
+        var bundle = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(file))!;
+        var entries = bundle["profiles"]!.AsArray();
+        for (var i = entries.Count - 1; i >= 0; i--)
+            if (entries[i]!["profile"]!["isGlobal"]?.GetValue<bool>() == true)
+                entries.RemoveAt(i);
+        Assert.Equal(2, entries.Count);
+        await File.WriteAllTextAsync(file, bundle.ToJsonString());
+        var before = _profiles.GetAllProfiles().Count;
+
+        await _profiles.ImportProfilesAsync(file, password: null);
+
+        var after = _profiles.GetAllProfiles();
+        Assert.Equal(before + 2, after.Count);
+        Assert.Equal(after.Count, after.Select(p => p.DisplayName.ToLowerInvariant()).Distinct().Count());
+    }
+
     public void Dispose()
     {
         _profiles.DisposeAsync().AsTask().GetAwaiter().GetResult();
