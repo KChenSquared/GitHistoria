@@ -145,7 +145,15 @@ public sealed class CenterPaneController : IDisposable
         if (isSessionActive || hasUnsaved)
         {
             var resolver = _conflictHost.GetOrCreate(_activeCtx);
-            if (!ReferenceEquals(_centerHost.Content, resolver))
+            if (resolver is null)
+            {
+                // The tab has closed; there is nothing to resolve in it.
+                if (!ReferenceEquals(_centerHost.Content, _graph))
+                {
+                    _centerHost.Content = _graph;
+                }
+            }
+            else if (!ReferenceEquals(_centerHost.Content, resolver))
             {
                 _centerHost.Content = resolver;
             }

@@ -22,10 +22,20 @@ public sealed class ConflictResolverHost : IDisposable
         }
     }
 
-    public ConflictResolverView GetOrCreate(RepositoryContext ctx)
+    /// <summary>The resolver for <paramref name="ctx"/>, created on first use; null for a tab that
+    /// is closed. A posted content update for a tab that has just closed can arrive after the
+    /// host cleaned up, and creating a resolver then would keep a view (and its file work) alive
+    /// for a repository nobody can reach.</summary>
+    public ConflictResolverView? GetOrCreate(RepositoryContext ctx)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(ctx);
+
+        if (ctx.Lifetime.IsCancellationRequested
+            || (_workspace is not null && !_workspace.OpenRepositories.Contains(ctx)))
+        {
+            return null;
+        }
 
         lock (_lock)
         {
