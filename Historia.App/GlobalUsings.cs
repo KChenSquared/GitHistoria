@@ -42,6 +42,7 @@ global using Historia.Services.Git;
 global using Historia.Services.Git.Helpers;
 global using Historia.Services.Graph;
 global using Historia.Services.Markdown;
+global using Historia.Services.Network;
 global using Historia.Services.Notifications;
 global using Historia.Services.PowerTools;
 global using Historia.Services.Profiles;

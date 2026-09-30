@@ -8,19 +8,17 @@ A high-performance, open-source Windows Git client built with **C# (.NET 10)** a
 
 ## 💡 Why Historia?
 
-I've used GitKraken as my primary Git tool for many years. I love the way it presents the
-commit graph; it's extremely useful for keeping up with my repos. With the rise of agentic
-coding, commits pile up faster than ever across branches and worktrees, and an easy way to
-understand that history matters more than ever. Over time, though, GitKraken became
-extremely sluggish on the repos I work in day to day. Each one has 100k–350k commits, and
-switching between them had become a very poor experience. To add insult to injury, my
-GitKraken renewal was only a month away, and the cost was going to double from what I paid
-last year, then almost double again the year after.
+GitKraken has been my go-to Git client for both work and personal projects for years,
+mainly because its commit graph is so great for staying updated and sometimes to remind me
+what I was doing. Unfortunately, as the repos I worked on grew in size, GitKraken became
+more sluggish. Once they hit that 100k+ commit mark, switching between repos and basic git
+functions was a total headache. To top it off, my subscription renews next month and the
+cost is doubling from last year—plus it's going to jump again the year after.
 
 So I decided to put my Claude and Gemini subscriptions to use and build a free,
-better-performing alternative to the commit graph and the core Git features I rely on.
-The graph keeps the same easy-to-read orthogonal edge routing, but it can render repos
-with hundreds of thousands of commits and scroll through them quickly and smoothly.
+fast alternative to the commit graph I come to rely on. Historia's graph keeps the
+same easy-to-read orthogonal edge routing, but it can render repos with hundreds of
+thousands of commits and scroll through them quickly and smoothly.
 
 **Trade-offs.** Historia loads your entire commit history instead of capping it at the
 most recent few thousand commits. That means memory grows with the size of the repo:
@@ -33,7 +31,7 @@ settings.
 
 ## 🚀 Vision & Mission
 
-Our goal is to create the premier Windows Git GUI that unites:
+My goal is to provide a desktop GUI with a fast and informative graph, available to all users on all repos. It is built around:
 1. **Raw Speed and Responsiveness** — fast launch, zero UI lag, and smooth handling of massive repositories (hundreds of thousands of commits), keeping the full history loaded rather than capping it.
 2. **Feature Completeness & Simplicity** — advanced power tools (interactive rebase\*, line/hunk staging, cherry-pick, submodules, stash management) paired with an intuitive, clean workflow for everyday commits, branching, and conflict resolution.
 3. **Visual Elegance** — vivid, color-coded branch lanes, round commit nodes, branch/tag labels, merge arcs, and visual drag-and-drop actions\* — engineered for high-performance rendering.
@@ -64,6 +62,15 @@ Our goal is to create the premier Windows Git GUI that unites:
 - 🗺️ [**Version Plans**](Historia-DevDocs/versionPlans/) — The active milestone's plan. Older version plans are moved into an offline archive to keep the working set small and prevent context drift; `ComprehensiveDesign/` is the living spec.
 - 🛣️ [**Roadmap**](docs/roadmap.md) — Planned features for upcoming releases.
 - 🤝 [**Contributing Guide**](docs/contributing.md) — Environment setup, coding standards, PR guidelines, and core tenets.
+
+---
+
+## 📋 Requirements
+
+- Windows 10 (1809+) or Windows 11
+- [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download)
+- [Git](https://git-scm.com/downloads) **2.46 or newer**. Historia checks the installed version
+  at startup and reports it if Git is missing or too old.
 
 ---
 

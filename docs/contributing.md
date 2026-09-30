@@ -1,6 +1,6 @@
 # Contributing to Historia
 
-Thank you for your interest in contributing to **Historia**! We are building a blazing-fast, open-source Git client for Windows, and we welcome contributions of all kinds: bug fixes, performance optimizations, new features, documentation improvements, and UI refinements.
+Thank you for your interest in contributing to **Historia**! I am building a blazing-fast, open-source Git client for Windows, and I welcome contributions of all kinds: bug fixes, performance optimizations, new features, documentation improvements, and UI refinements.
 
 ---
 
@@ -124,7 +124,7 @@ Create a feature branch from `main` using the following prefixes:
 - `refactor/scope` — Code refactoring without behavioral changes
 
 ### 2. Commit Messages
-We adhere to [Conventional Commits](https://www.conventionalcommits.org/):
+I adhere to [Conventional Commits](https://www.conventionalcommits.org/):
 ```
 <type>(<scope>): <short summary>
 

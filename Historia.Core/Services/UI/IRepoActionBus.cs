@@ -1,11 +1,13 @@
 namespace Historia.Services.UI;
 
-/// <summary>Network actions the shortcuts bar can request against the focused repository.</summary>
+/// <summary>Network actions requested against the focused repository, from the shortcuts bar
+/// or from menus that target one remote.</summary>
 public enum RepoNetworkAction
 {
     Fetch,
     Pull,
     Push,
+    Prune,
 }
 
 /// <summary>A network action request, optionally targeted at a specific remote/branch pair

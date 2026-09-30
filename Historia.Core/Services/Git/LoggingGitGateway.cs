@@ -154,6 +154,9 @@ public sealed class LoggingGitGateway(IGitGateway inner, string repositoryPath) 
     public Task<IReadOnlyList<string>> RenameRemoteAsync(string oldName, string newName, CancellationToken ct = default)
         => Run($"RenameRemoteAsync({oldName} -> {newName})", () => inner.RenameRemoteAsync(oldName, newName, ct), r => Count(r, "unrewritten refspec(s)"));
 
+    public Task SetRemotePushUrlAsync(string name, string? pushUrl, CancellationToken ct = default)
+        => Run($"SetRemotePushUrlAsync({name}, {pushUrl ?? "<clear>"})", () => inner.SetRemotePushUrlAsync(name, pushUrl, ct));
+
     // ── Network ──
 
     public Task FetchAsync(string remote, GitFetchOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default)
@@ -164,6 +167,9 @@ public sealed class LoggingGitGateway(IGitGateway inner, string repositoryPath) 
 
     public Task PushAsync(string remote, PushSpec spec, IProgress<GitProgress>? progress, CancellationToken ct = default)
         => Run($"PushAsync({remote})", () => inner.PushAsync(remote, spec, progress, ct));
+
+    public Task PruneRemoteAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct = default)
+        => Run($"PruneRemoteAsync({name})", () => inner.PruneRemoteAsync(name, progress, ct));
 
     private static string Short(GitObjectId id) => id.ToShortString(10);
 }

@@ -448,7 +448,8 @@ public sealed class AppBandControl : UserControl, IDisposable
         if (DevMode.Enabled)
             items.Add(MenuLeaf("Developer", () => _nav.RequestNavigate("dev")));
         items.Add(new Separator());
-        items.Add(MenuLeaf("About Historia", () => _nav.RequestNavigate("settings")));
+        var theme = _services.GetRequiredService<Historia.Services.Theming.IThemeService>();
+        items.Add(MenuLeaf("About Historia", () => _ = AboutDialog.ShowAsync(theme)));
         items.Add(MenuLeaf("Exit", () =>
             (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.TryShutdown()));
 

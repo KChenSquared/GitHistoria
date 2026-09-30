@@ -16,6 +16,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private readonly IWorktreeService _worktrees;
     private readonly IRepoStateCache _repoCache;
     private readonly IRepoActionBus _actions;
+    private readonly IExternalLauncher _launcher;
 
     internal readonly StackPanel _root = new();
     private RepositoryContext? _repo;
@@ -104,6 +105,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         _worktrees = sp.GetRequiredService<IWorktreeService>();
         _repoCache = sp.GetRequiredService<IRepoStateCache>();
         _actions = sp.GetRequiredService<IRepoActionBus>();
+        _launcher = sp.GetRequiredService<IExternalLauncher>();
 
         _localFilterBox = CreateFilterBox(() => _localFilterOpen = false);
         _remotesFilterBox = CreateFilterBox(() => _remotesFilterOpen = false);
@@ -337,17 +339,22 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 remoteBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
             }
 
+            // Every configured remote gets a row, including one with no remote-tracking branches
+            // yet. Tracking-branch groups whose alias is no longer configured (stale refs) still
+            // render, without a remote menu.
+            var configured = repo.State.Remotes.ToDictionary(r => r.Name, StringComparer.Ordinal);
             var byRemote = remote
                 .GroupBy(b => b.RemoteName ?? (b.Name.Contains('/') ? b.Name[..b.Name.IndexOf('/')] : "origin"))
-                .OrderBy(g => g.Key, StringComparer.Ordinal);
-            foreach (var g in byRemote)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+            foreach (var alias in configured.Keys.Union(byRemote.Keys, StringComparer.Ordinal).OrderBy(a => a, StringComparer.Ordinal))
             {
-                var key = "remote:" + g.Key;
-                remoteBody.Children.Add(FolderRow(g.Key, key, depth: 0, remoteAlias: g.Key));
-                if (IsOpen(key, depth: 0))
+                var key = "remote:" + alias;
+                configured.TryGetValue(alias, out var info);
+                remoteBody.Children.Add(FolderRow(alias, key, depth: 0, remote: info));
+                if (IsOpen(key, depth: 0) && byRemote.TryGetValue(alias, out var branchesOfRemote))
                 {
-                    var prefix = g.Key + "/";
-                    foreach (var node in RefTree.Build(g, b => b.Name.StartsWith(prefix, StringComparison.Ordinal) ? b.Name[prefix.Length..] : b.Name))
+                    var prefix = alias + "/";
+                    foreach (var node in RefTree.Build(branchesOfRemote, b => b.Name.StartsWith(prefix, StringComparison.Ordinal) ? b.Name[prefix.Length..] : b.Name))
                         AddNode(remoteBody, node, depth: 1, isRemote: true, currentCanonical);
                 }
             }
@@ -630,10 +637,10 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         target.Children.Add(row);
     }
 
-    /// <summary>A collapsible folder row (remote root or path segment). Its label aligns with leaves.</summary>
-    /// <summary><paramref name="remoteAlias"/> is non-null only for a remote's own root folder
-    /// row (never a path-segment folder beneath it) and adds a "Rename remote…" context menu.</summary>
-    private Border FolderRow(string segment, string path, int depth, string? remoteAlias = null)
+    /// <summary>A collapsible folder row (remote root or path segment). Its label aligns with leaves.
+    /// <paramref name="remote"/> is non-null only for a configured remote's own root folder row
+    /// (never a path-segment folder beneath it) and adds the remote context menu.</summary>
+    private Border FolderRow(string segment, string path, int depth, RemoteInfo? remote = null)
     {
         var open = IsOpen(path, depth);
         var caret = Text(open ? "▾" : "▸", "ColorTextMuted", 10);
@@ -656,50 +663,15 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             Rebuild();
         };
 
-        if (remoteAlias is not null)
+        if (remote is not null && _repo is { } ctx)
         {
             b.ContextMenu = new ContextMenu
             {
-                ItemsSource = new Control[]
-                {
-                    MenuLeaf("Rename remote…", () => RenameRemoteAsync(remoteAlias)),
-                },
+                ItemsSource = RemoteMenu.Build(remote, ctx, _dialogs, _notifications, _actions, _launcher,
+                    s => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(s)),
             };
         }
         return b;
-    }
-
-    /// <summary>Renames a remote's alias from the sidebar. Rejects an empty/unchanged name
-    /// or a collision with an existing remote before calling git — a caller-side check is
-    /// friendlier than letting git throw for the common mistakes. Surfaces any fetch
-    /// refspecs the rename could not rewrite automatically as a warning, per the
-    /// <c>RenameRemoteAsync</c> contract.</summary>
-    private async Task RenameRemoteAsync(string oldName)
-    {
-        if (_repo is not { } ctx)
-            return;
-        var newName = await _dialogs.PromptAsync("Rename remote", $"New name for '{oldName}':", oldName);
-        if (string.IsNullOrWhiteSpace(newName) || newName == oldName)
-            return;
-        newName = newName.Trim();
-        if (ctx.State.Remotes.Any(r => string.Equals(r.Name, newName, StringComparison.Ordinal)))
-        {
-            await _dialogs.ShowMessageAsync("Rename remote", $"A remote named '{newName}' already exists.");
-            return;
-        }
-
-        try
-        {
-            var untouched = await ctx.Gateway.RenameRemoteAsync(oldName, newName, ctx.Lifetime);
-            await ctx.State.RefreshAllAsync(ctx.Lifetime);
-            if (untouched.Count > 0)
-                _notifications.Publish(NotificationSeverity.Warning,
-                    $"'{oldName}' renamed to '{newName}', but these fetch refspecs need manual fixing: {string.Join(", ", untouched)}");
-        }
-        catch (Exception ex)
-        {
-            _notifications.Publish(NotificationSeverity.Error, $"Rename remote failed: {ex.Message}", ex.NotificationDetails());
-        }
     }
 
     private Border Leaf(string text, int depth, string fgKey, Action? select, Control? action, bool current = false, string? tooltip = null)

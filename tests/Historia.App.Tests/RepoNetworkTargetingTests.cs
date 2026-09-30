@@ -87,6 +87,17 @@ public sealed class RepoNetworkTargetingTests
     }
 
     [Fact]
+    public void PruneEffect_names_the_remote_and_scope()
+    {
+        var text = RepoNetworkActionRunner.PruneEffect("origin");
+
+        Assert.Contains("'origin/'", text);
+        Assert.Contains("on origin", text);
+        Assert.Contains("local branches are not touched", text);
+        Assert.DoesNotContain("Are you sure", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void TargetHasUpstream_ignores_remote_branches()
     {
         BranchInfo[] branches =
