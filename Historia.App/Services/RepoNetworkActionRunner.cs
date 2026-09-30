@@ -110,6 +110,13 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         return target?.UpstreamName is not null;
     }
 
+    /// <summary>The prune confirmation text: prune deletes remote-tracking refs, which can be the
+    /// last pointer to some commits, so it names the remote and the scope of the deletion.</summary>
+    internal static string PruneEffect(string remote) =>
+        $"Prune deletes every remote-tracking branch under '{remote}/' whose branch no longer exists on {remote}. "
+        + "Commits reachable only from those refs become unreferenced locally. "
+        + "Your local branches are not touched.";
+
     private async Task ExecOpAsync(RepositoryContext repo, RepoNetworkAction op, string remote, string? branch, string? remoteBranch,
         IProgress<GitProgress> progress, CancellationToken ct)
     {
@@ -294,15 +301,32 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         }
         var branch = request.Branch ?? repo.State.CurrentBranch?.Name;
 
+        if (op == RepoNetworkAction.Prune
+            && !await _dialogs.ConfirmDestructiveAsync("Prune remote — destructive", PruneEffect(remote), "Prune"))
+        {
+            AppLog.Write(AppLogLevel.Info, "declined", $"Prune of {remote} declined");
+            return;
+        }
+
         _busy = true;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(repo.Lifetime);
         var ct = _cts.Token;
         var progress = new Progress<GitProgress>(p => ProgressChanged?.Invoke(this, new RepoNetworkProgress(repo, p)));
         ProgressChanged?.Invoke(this, new RepoNetworkProgress(repo, new GitProgress { Phase = $"{op}…" }));
+
+        // Prune is confirmed above, once; the same delegate serves the first attempt and the
+        // Local-config retry so the retry never asks again.
+        Func<Task> execute = op == RepoNetworkAction.Prune
+            ? async () =>
+            {
+                await repo.Gateway.PruneRemoteAsync(remote, progress, ct);
+                _notifications.Publish(NotificationSeverity.Success, $"Pruned {remote}.");
+            }
+            : () => ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct);
         try
         {
             await EnsureActiveProfileFreshAsync(repo);
-            await ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct);
+            await execute();
             await repo.State.RefreshAllAsync(repo.Lifetime);
         }
         catch (OperationCanceledException)
@@ -325,7 +349,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                     var key = repo.IdentityKey ?? await _identity.ResolveAsync(repo, repo.Lifetime);
                     await _profiles.SetLocalConfigForRepositoryAsync(key, repo.RepositoryPath, repo.Lifetime);
                     repo.State.SetActiveProfile(null);
-                    await ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct);
+                    await execute();
                     await repo.State.RefreshAllAsync(repo.Lifetime);
                 }
                 catch (Exception retryEx)
