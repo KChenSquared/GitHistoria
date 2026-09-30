@@ -180,6 +180,10 @@ public sealed class TerminalSession : IDisposable
     {
         lock (_gate)
         {
+            // Dispose tears the emulator down under this gate, so a chunk that was already in
+            // flight when the session closed must not reach it.
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
             _term.Write(s);
             RecomputeDirtyRows_NoLock();
         }
@@ -235,7 +239,9 @@ public sealed class TerminalSession : IDisposable
 
     private void OnPtyExited(int exitCode)
     {
-        if (State is TerminalSessionState.Exited)
+        // The exit callback runs on the pty's own thread and can already be in flight when the
+        // session is disposed; unsubscribing does not recall it.
+        if (Volatile.Read(ref _disposed) != 0 || State is TerminalSessionState.Exited)
             return;
 
         ExitCode = exitCode;
@@ -359,7 +365,10 @@ public sealed class TerminalSession : IDisposable
 
         try { _coalesceTimer.Dispose(); } catch { /* best effort */ }
         try { _pty.Dispose(); } catch { /* best effort */ }
-        try { _term.Dispose(); } catch { /* best effort */ }
+        lock (_gate)
+        {
+            try { _term.Dispose(); } catch { /* best effort */ }
+        }
     }
 
     // ── buffer view ─────────────────────────────────────────────────────────────────────────
