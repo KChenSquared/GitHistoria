@@ -102,6 +102,11 @@ public sealed class App : Application
                     Historia.Diagnostics.PerfLog.Mark(
                         $"desktop.Exit provider.Dispose() THREW after {System.Diagnostics.Stopwatch.GetElapsedTime(disposeStart).TotalMilliseconds:F1}ms: {ex}");
                 }
+
+                // Both logs write from their own background threads; let the last lines land
+                // before the process ends.
+                AppLog.Flush(TimeSpan.FromSeconds(2));
+                Historia.Diagnostics.PerfLog.Flush(TimeSpan.FromSeconds(1));
             };
 
             var splash = ResolveSplash();
@@ -382,6 +387,13 @@ public sealed class App : Application
             {
                 AppLog.Write(AppLogLevel.Error, "unhandled",
                     $"AppDomain.UnhandledException (terminating={args.IsTerminating})", ex);
+                // The process is about to end: the logs write from background threads, so wait
+                // (bounded) for this entry to reach the file.
+                if (args.IsTerminating)
+                {
+                    AppLog.Flush(TimeSpan.FromSeconds(2));
+                    Historia.Diagnostics.PerfLog.Flush(TimeSpan.FromSeconds(1));
+                }
                 TryNotifyFatal(ex);
             }
         };

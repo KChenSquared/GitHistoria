@@ -144,6 +144,21 @@ public sealed class AppLogTests : IDisposable
     }
 
     [Fact]
+    public void Flush_puts_every_written_line_in_the_live_session_file()
+    {
+        AppLog.Enabled = true;
+        for (var i = 0; i < 200; i++)
+            AppLog.Write(AppLogLevel.Info, "test", $"line {i}");
+
+        Assert.True(AppLog.Flush(TimeSpan.FromSeconds(10)));
+        // Still enabled: the session holds the file open, so read with a sharing reader.
+        var lines = QueuedLineWriterTests.ReadShared(AppLog.CurrentLogPath!);
+        var text = string.Join(Environment.NewLine, lines);
+        Assert.Contains("line 0", text);
+        Assert.Contains("line 199", text);
+    }
+
+    [Fact]
     public void Disabling_stops_writes_and_clears_the_current_path()
     {
         AppLog.Enabled = true;
