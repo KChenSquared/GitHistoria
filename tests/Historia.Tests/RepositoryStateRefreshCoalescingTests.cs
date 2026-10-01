@@ -7,6 +7,9 @@ namespace Historia.Tests;
 /// publish before tags finish.
 /// </summary>
 [Trait("tier", "git")]
+// Serialized: one test watches the process-wide UnobservedTaskException, which any concurrently
+// running test can raise.
+[Collection("serial")]
 public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
@@ -271,6 +274,10 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
             await statusProceed.Task.WaitAsync(ct);
             return Historia.Models.RepositoryStatus.Empty;
         };
+
+        // Finalize earlier tests' faulted tasks now, so the check below sees only this test's.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
 
         var ctx = _host.Open(_repo.Path);
         var state = new RepositoryStateService(ctx, gateway: gateway);
