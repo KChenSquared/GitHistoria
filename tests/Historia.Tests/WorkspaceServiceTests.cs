@@ -501,9 +501,24 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
 
     private sealed class RecordingGraphLayoutService : IGraphLayoutService
     {
-        public List<RepositoryContext> Enqueued { get; } = [];
+        private readonly List<(RepositoryContext Context, RepositoryContext? FocusedThen)> _enqueued = [];
 
-        public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query) => Enqueued.Add(context);
+        /// <summary>Reads the workspace's focused tab at each enqueue, so a test can tell which
+        /// focus change's pipeline queued it.</summary>
+        public Func<RepositoryContext?>? Focused { get; set; }
+
+        public List<RepositoryContext> EnqueuedWhileFocused(RepositoryContext focused)
+        {
+            lock (_enqueued)
+                return [.. _enqueued.Where(e => ReferenceEquals(e.FocusedThen, focused)).Select(e => e.Context)];
+        }
+
+        public void EnqueueInactiveTabCaching(RepositoryContext context, GraphQuery query)
+        {
+            var focused = Focused?.Invoke();
+            lock (_enqueued)
+                _enqueued.Add((context, focused));
+        }
         public Task CancelInactiveTabCachingAsync(RepositoryContext context) { Cancelled.Add(context); return Task.CompletedTask; }
         public List<RepositoryContext> Cancelled { get; } = [];
 
@@ -550,6 +565,7 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
         // next one: FocusInternal only requeues an outgoing tab onto WorkspaceService's OWN
         // background-init pump when it's STILL loading, and that pump's own timing is unrelated
         // to what this test cares about (the headless-caching pipeline).
+        fakeGraph.Focused = () => ws.Focused;
         var ctx1 = await ws.OpenAsync(r1.Path);
         ctx1.MarkFirstFullLoadDone();
         var ctx2 = await ws.OpenAsync(r2.Path);
@@ -558,12 +574,17 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
         ctx3.MarkFirstGraphPaintDone();
         ctx3.MarkFirstFullLoadDone();
 
+        // Each focus change runs its own pipeline once focus has been stable for 2 s. On a slow
+        // machine opening r3 takes longer than that, so r2's pipeline also queues r1 — correctly,
+        // and the real writer de-dupes it. Only r3's pipeline is under test here.
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-        while (fakeGraph.Enqueued.Count < 2 && DateTime.UtcNow < deadline)
+        while (fakeGraph.EnqueuedWhileFocused(ctx3).Count < 2 && DateTime.UtcNow < deadline)
             await Task.Delay(100);
 
-        Assert.Equal(2, fakeGraph.Enqueued.Count);
-        Assert.DoesNotContain(fakeGraph.Enqueued, c => Norm(c.RepositoryPath) == Norm(r3.Path));
+        var queued = fakeGraph.EnqueuedWhileFocused(ctx3);
+        Assert.Equal(2, queued.Count);
+        Assert.Contains(ctx1, queued);
+        Assert.Contains(ctx2, queued);
 
         await ws.DisposeAsync();
     }
@@ -1273,7 +1294,9 @@ public class WorkspaceStatusLoadTests : WorkspaceServiceTestBase
         ctx1.MarkFirstGraphPaintDone();
         await ctx1.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(10));
 
-        // Start background init for ctx2
+        // Start background init for ctx2. No graph control paints headlessly, so mark it here or
+        // init waits out the 8 s graph-priority ceiling before status ever starts.
+        ctx2.MarkFirstGraphPaintDone();
         ws.EnsureInitialized(ctx2);
 
         // Wait until status starts for ctx2

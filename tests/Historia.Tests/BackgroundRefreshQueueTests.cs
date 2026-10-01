@@ -41,7 +41,7 @@ public sealed class BackgroundRefreshQueueTests : IAsyncDisposable
             r.Dispose();
     }
 
-    [Fact(Timeout = 15000)]
+    [Fact(Timeout = 60000)]
     public async Task Pump_drains_in_app_band_tab_order_not_enqueue_order()
     {
         var ws = NewWorkspace();
@@ -79,7 +79,7 @@ public sealed class BackgroundRefreshQueueTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    [Fact(Timeout = 15000)]
+    [Fact(Timeout = 60000)]
     public async Task Reordering_tabs_changes_the_drain_order()
     {
         var ws = NewWorkspace();
@@ -118,7 +118,7 @@ public sealed class BackgroundRefreshQueueTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    [Fact(Timeout = 15000)]
+    [Fact(Timeout = 60000)]
     public async Task Interrupted_focused_tab_still_jumps_the_queue()
     {
         var ws = NewWorkspace();
@@ -154,7 +154,7 @@ public sealed class BackgroundRefreshQueueTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    [Fact(Timeout = 15000)]
+    [Fact(Timeout = 60000)]
     public async Task Background_watcher_refresh_waits_for_the_focused_tab()
     {
         var ws = NewWorkspace();
@@ -183,7 +183,7 @@ public sealed class BackgroundRefreshQueueTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
-    [Fact(Timeout = 15000)]
+    [Fact(Timeout = 60000)]
     public async Task Focused_tab_refresh_is_not_queued()
     {
         var ws = NewWorkspace();

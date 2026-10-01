@@ -11,11 +11,10 @@ public enum TerminalSessionState { Starting, Running, Exited, Failed }
 /// frame, not once per chunk — the parser still sees every byte in order.
 /// </para>
 /// <para>
-/// <c>XTerm.Terminal.Write</c> takes a <c>string</c>, so
-/// this class owns one stateful <see cref="Decoder"/> that carries partial-UTF-8 state across
-/// pty chunks — so a character split across two chunks is never mangled.
-/// XTerm.NET 1.2.0 exposes no damage event, so a row-hash diff here synthesises
-/// the dirty-row set for the control.
+/// Pty chunks go to the emulator as raw bytes, and the emulator carries a UTF-8 sequence split
+/// across two chunks itself, so a character on a chunk boundary is never mangled.
+/// XTerm.NET has no damage event (<c>BufferChanged</c> fires only when the active buffer
+/// switches), so a row-hash diff here synthesises the dirty-row set for the control.
 /// </para>
 /// </summary>
 public sealed class TerminalSession : IDisposable
@@ -23,7 +22,6 @@ public sealed class TerminalSession : IDisposable
     private readonly IPtyConnection _pty;
     private readonly IUiDispatcher _dispatcher;
     private readonly XTermLib.Terminal _term;
-    private readonly Decoder _decoder = Encoding.UTF8.GetDecoder();
     private readonly object _gate = new();
     private readonly IUiTimer _coalesceTimer;
 
@@ -90,6 +88,15 @@ public sealed class TerminalSession : IDisposable
             Rows = rows,
             Scrollback = Math.Max(0, scrollbackLines),
             TermName = "xterm-256color",
+            // Historia neither renders nor handles these protocols, so the emulator must not
+            // advertise or answer them.
+            KittyKeyboardEnabled = false,
+            KittyGraphicsEnabled = false,
+            ITerm2ImagesEnabled = false,
+            KittyNotificationsEnabled = false,
+            PointerShapesEnabled = false,
+            ClipboardWriteEnabled = false,
+            ClipboardReadEnabled = false,
         });
 
         _coalesceTimer = _dispatcher.CreateTimer(TimeSpan.FromMilliseconds(16), OnCoalesceTick);
@@ -167,20 +174,25 @@ public sealed class TerminalSession : IDisposable
         if (Volatile.Read(ref _disposed) != 0 || chunk.IsEmpty)
             return;
 
-        var bytes = chunk.Span;
-        var chars = new char[_decoder.GetCharCount(bytes, flush: false)];
-        var n = _decoder.GetChars(bytes, chars, flush: false);
-        if (n == 0)
-            return;
-
-        FeedString(new string(chars, 0, n));
+        lock (_gate)
+        {
+            // Dispose tears the emulator down under this gate, so a chunk that was already in
+            // flight when the session closed must not reach it.
+            if (Volatile.Read(ref _disposed) != 0)
+                return;
+            _term.Write(chunk.Span);
+            RecomputeDirtyRows_NoLock();
+        }
+        MarkBufferDirty();
     }
 
+    // The emulator drops a UTF-8 sequence the last pty chunk left unfinished (it emits U+FFFD)
+    // when a string arrives, so text written here never completes a stale partial sequence.
     private void FeedString(string s)
     {
         lock (_gate)
         {
-            // Dispose tears the emulator down under this gate, so a chunk that was already in
+            // Dispose tears the emulator down under this gate, so text that was already in
             // flight when the session closed must not reach it.
             if (Volatile.Read(ref _disposed) != 0)
                 return;

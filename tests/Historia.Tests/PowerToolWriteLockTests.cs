@@ -8,7 +8,7 @@ namespace Historia.Tests;
 [Trait("tier", "git")]
 public sealed class PowerToolWriteLockTests
 {
-    [Fact(Timeout = 20000)]
+    [Fact(Timeout = 60000)]
     public async Task Stash_holds_write_lock_and_concurrent_stage_waits()
     {
         await using var host = new MiniHost();
@@ -47,7 +47,7 @@ public sealed class PowerToolWriteLockTests
         Assert.Contains(status.Staged, f => f.Path == "stage-concurrent.txt");
     }
 
-    [Fact(Timeout = 20000)]
+    [Fact(Timeout = 60000)]
     public async Task CherryPick_holds_write_lock_and_concurrent_stage_waits()
     {
         await using var host = new MiniHost();
@@ -90,7 +90,7 @@ public sealed class PowerToolWriteLockTests
         Assert.Contains(status.Staged, f => f.Path == "stage-concurrent.txt");
     }
 
-    [Fact(Timeout = 20000)]
+    [Fact(Timeout = 60000)]
     public async Task Rebase_holds_write_lock_and_concurrent_stage_waits()
     {
         await using var host = new MiniHost();
@@ -133,7 +133,7 @@ public sealed class PowerToolWriteLockTests
         Assert.Contains(status.Staged, f => f.Path == "stage-concurrent.txt");
     }
 
-    [Fact(Timeout = 20000)]
+    [Fact(Timeout = 60000)]
     public async Task Conflict_holds_write_lock_and_concurrent_stage_waits()
     {
         await using var host = new MiniHost();
@@ -173,25 +173,24 @@ public sealed class PowerToolWriteLockTests
         Assert.Contains(status.Staged, f => f.Path == "stage-concurrent.txt");
     }
 
-    [Fact(Timeout = 20000)]
+    // `git submodule` is a shell script in Git for Windows: list and deinit each start sh.exe,
+    // which costs seconds and slows sharply when the suite runs in parallel.
+    [Fact(Timeout = 60000)]
     public async Task Submodule_holds_write_lock_and_concurrent_stage_waits()
     {
         await using var host = new MiniHost();
         using var inner = TestRepositoryBuilder.FromTemplate("pt-sub-inner", r =>
             r.WriteFile("lib.txt", "lib\n").Stage().Commit("lib c1"));
+        // The submodule is set up with plain git: only RemoveAsync is under test here, and
+        // SubmoduleServiceTests covers AddAsync.
         using var outer = TestRepositoryBuilder.FromTemplate("pt-sub-outer", r =>
         {
             r.WriteFile("app.txt", "app\n").Stage().Commit("app c1");
-            r.Git("config", "protocol.file.allow", "always");
+            r.Git("-c", "protocol.file.allow=always", "submodule", "add", inner.Path.Replace('\\', '/'), "vendor/lib");
+            r.Commit("add submodule");
         });
 
         var fileCli = new FileProtocolGitCli(host.Cli);
-        var setupSvc = new SubmoduleService(fileCli);
-        await using (var setupCtx = host.Open(outer.Path))
-        {
-            await setupSvc.AddAsync(setupCtx, inner.Path.Replace('\\', '/'), "vendor/lib");
-        }
-
         var blockingCli = new BlockingGitCliService(fileCli, req => req.Arguments.Count > 0 && req.Arguments[0] == "submodule" && req.Arguments.Contains("deinit"));
         await using var ctx = host.Open(outer.Path, blockingCli);
         var svc = new SubmoduleService(blockingCli);
@@ -223,7 +222,7 @@ public sealed class PowerToolWriteLockTests
         Assert.Contains(status.Staged, f => f.Path == "stage-concurrent.txt");
     }
 
-    [Fact(Timeout = 20000)]
+    [Fact(Timeout = 60000)]
     public async Task Worktree_holds_write_lock_and_concurrent_stage_waits()
     {
         await using var host = new MiniHost();
@@ -261,7 +260,7 @@ public sealed class PowerToolWriteLockTests
         Assert.Contains(status.Staged, f => f.Path == "stage-concurrent.txt");
     }
 
-    [Fact(Timeout = 20000)]
+    [Fact(Timeout = 60000)]
     public async Task Patch_holds_write_lock_and_concurrent_stage_waits()
     {
         await using var host = new MiniHost();

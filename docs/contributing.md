@@ -63,22 +63,21 @@ dotnet run
 .\dev\test.ps1 -Tier git
 .\dev\test.ps1 -Tier ui
 
-# Full suite verification (~80 s)
+# Full suite verification (~2-3 min; slower when started right after another run, see design §24.6)
 .\dev\test.ps1 -Tier all
 ```
 
 #### Test Suite Architecture & Parallelism
-- **Parallel Collections:** Test collections run in parallel by default on up to 8 threads.
-- **Serial Collection:** Tests that mutate process-global state, configure ambient environment variables, or contend on global locks must be annotated with `[Collection("serial")]`. The serial collection includes 8 test classes:
+- **Parallel Collections:** Test collections run in parallel on 16 threads (`xunit.runner.json`). Under xunit's default `conservative` algorithm, that caps how many classes run at once, and a class's own tests run one after another.
+- **Slowest First:** `SlowestFirstCollectionOrderer` starts the longest-running classes first, so none of them is admitted late and becomes the run's tail. Re-rank its list from a TRX run (`dotnet test --logger trx`) when one class starts dominating the end of the run.
+- **Serial Collection:** Tests that mutate process-global state, configure ambient environment variables, watch process-wide events such as `TaskScheduler.UnobservedTaskException`, or contend on global locks must be annotated with `[Collection("serial")]`. The serial collection runs alone after every parallel one, so keep it small. It includes 5 test classes:
   1. `AppPathsTests`
   2. `AppLogTests`
-  3. `GitProcessExecutorTests`
-  4. `GlobalGitConfigTests`
-  5. `GitCredentialServiceTests`
-  6. `TerminalTests`
-  7. `RepositoryContextGateTests`
-  8. `SubmoduleServiceTests`
-- **Scratch Root & Fixture Lifecycle:** Disk fixtures are created under `%LOCALAPPDATA%/Historia/TestScratch` via `TestScratch.NewDirectory()`. Directories older than 24 hours are automatically pruned on initialization (`TestScratch.PruneStale()`). Shared repository templates created by `TestRepositoryBuilder.FromTemplate` are tracked in-process and deleted upon process shutdown.
+  3. `TestScratchTests`
+  4. `GraphConcurrencyInvariantTests`
+  5. `RepositoryStateRefreshCoalescingTests`
+- **Timeouts:** A `[Fact(Timeout = ...)]` guards against hangs only. Set it to at least 2x the test's duration under a full parallel run, not its duration alone.
+- **Scratch Root & Fixture Lifecycle:** Disk fixtures are created under a per-run `historia-run-<pid>-*` folder in `%TEMP%` (or `HISTORIA_TEST_TMP`) via `TestScratch.NewDirectory()`. Folders of finished runs, and anything older than 24 hours, are pruned in the background on the next run (`TestScratch.PruneStale()`). Shared repository templates created by `TestRepositoryBuilder.FromTemplate` are tracked in-process and deleted upon process shutdown.
 - **Performance & Timing Assertions:** Per Rule 25, performance tests record timing diagnostics to test output (`ITestOutputHelper`) rather than asserting hard wall-clock ratios (e.g. "must be 5x faster") that can flake under parallel I/O contention.
 
 ---

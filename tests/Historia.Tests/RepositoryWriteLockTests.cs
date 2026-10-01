@@ -14,7 +14,7 @@ public sealed class RepositoryWriteLockTests : IAsyncDisposable
         await _host.DisposeAsync();
     }
 
-    [Fact(Timeout = 10000)]
+    [Fact(Timeout = 30000)]
     public async Task Two_writers_serialize()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("write-lock-seed", b =>
@@ -65,7 +65,7 @@ public sealed class RepositoryWriteLockTests : IAsyncDisposable
         }
     }
 
-    [Fact(Timeout = 10000)]
+    [Fact(Timeout = 30000)]
     public async Task Reader_runs_while_writer_holds_write_lock()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("write-lock-seed", b =>
@@ -115,7 +115,7 @@ public sealed class RepositoryWriteLockTests : IAsyncDisposable
         });
     }
 
-    [Fact(Timeout = 10000)]
+    [Fact(Timeout = 30000)]
     public async Task Tab_close_cancels_waiter()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("write-lock-seed", b =>
