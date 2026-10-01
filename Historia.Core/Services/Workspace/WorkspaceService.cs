@@ -55,6 +55,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
     private AtomicFileWriter? _sessionWriter;
     private AtomicFileWriter SessionWriter => _sessionWriter ??= new AtomicFileWriter(AppPaths.SessionFile);
+    private long _sessionPersistSequence;
     private string? _restoredFocusPath;
 
     // After focusing the restored session's active repo, RestoreSessionAsync pauses
@@ -829,11 +830,13 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             string[] paths;
             string?[] linkOwnerPaths;
             string? focusedPath;
+            long sequence;
             lock (_sync)
             {
                 paths = _open.Select(c => c.RepositoryPath).ToArray();
                 linkOwnerPaths = _open.Select(c => c.LinkOwner?.RepositoryPath).ToArray();
                 focusedPath = _focused?.RepositoryPath;
+                sequence = ++_sessionPersistSequence;
             }
 
             var payload = new JsonObject
@@ -843,7 +846,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                 ["linkOwners"] = new JsonArray([.. linkOwnerPaths.Select(p => p is null ? null : (JsonNode)p)]),
                 ["focusedPath"] = focusedPath,
             };
-            SessionWriter.QueueWrite(payload.ToJsonString());
+            SessionWriter.QueueWrite(payload.ToJsonString(), sequence);
         }
         catch
         {

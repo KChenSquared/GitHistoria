@@ -420,4 +420,118 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
         public void ReportGraphSettled(RepositoryContext context) { }
         public void Open() => _tcs.TrySetResult();
     }
+
+    private sealed class FocusTrackingGate : IBackgroundWorkGate
+    {
+        private readonly TaskCompletionSource _tcs = new();
+        public bool IsOpen => _tcs.Task.IsCompleted;
+        public RepositoryContext? Focused { get; set; }
+        public Task WaitUntilOpenAsync(CancellationToken ct = default) => _tcs.Task.WaitAsync(ct);
+        public void ReportGraphSettled(RepositoryContext context) { }
+        public void Open() => _tcs.TrySetResult();
+    }
+
+    [Fact]
+    public async Task EnqueueInactiveTab_skips_a_job_whose_tab_is_focused_when_it_starts()
+    {
+        var gate = new FocusTrackingGate();
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings, gate);
+        await using var ctx = _host.Open(_repo.Path);
+
+        var ran = false;
+        writer.EnqueueInactiveTab(ctx, ct => { ran = true; return Task.CompletedTask; });
+        gate.Focused = ctx;
+        gate.Open();
+
+        // The job is never cancelled here: it leaves the queue because the start-time focus check
+        // skips it, and a later cancel for the tab has nothing left to wait for.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (writer.HasInactiveJob(ctx) && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+
+        Assert.False(writer.HasInactiveJob(ctx));
+        Assert.False(ran);
+        await writer.CancelInactiveTabAsync(ctx).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task EnqueueInactiveTab_still_runs_for_an_unfocused_tab()
+    {
+        var gate = new FocusTrackingGate();
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings, gate);
+        await using var focused = _host.Open(_repo.Path);
+        await using var other = _host.Open(_repo.Path);
+        gate.Focused = focused;
+        gate.Open();
+
+        var ran = new TaskCompletionSource();
+        writer.EnqueueInactiveTab(other, ct => { ran.SetResult(); return Task.CompletedTask; });
+
+        await ran.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task HasInactiveJob_covers_queued_and_running_then_clears()
+    {
+        var gate = new BlockingGate();
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings, gate);
+        await using var ctx = _host.Open(_repo.Path);
+        Assert.False(writer.HasInactiveJob(ctx));
+
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        writer.EnqueueInactiveTab(ctx, async ct => { started.SetResult(); await release.Task; });
+
+        Assert.True(writer.HasInactiveJob(ctx)); // queued behind a closed gate
+
+        gate.Open();
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(writer.HasInactiveJob(ctx)); // running
+
+        release.SetResult();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (writer.HasInactiveJob(ctx) && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+        Assert.False(writer.HasInactiveJob(ctx));
+    }
+
+    [Fact]
+    public async Task CancelInactiveTab_drops_a_queued_job_without_waiting_for_the_one_running()
+    {
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
+        await using var running = _host.Open(_repo.Path);
+        await using var queued = _host.Open(_repo.Path);
+        await using var after = _host.Open(_repo.Path);
+
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        var runningCancelled = false;
+        writer.EnqueueInactiveTab(running, async ct =>
+        {
+            started.SetResult();
+            await release.Task;
+            runningCancelled = ct.IsCancellationRequested;
+        });
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var queuedRan = false;
+        var afterRan = new TaskCompletionSource();
+        writer.EnqueueInactiveTab(queued, _ => { queuedRan = true; return Task.CompletedTask; });
+        writer.EnqueueInactiveTab(after, _ => { afterRan.SetResult(); return Task.CompletedTask; });
+
+        // Completes while the other tab's job still runs, and the tab no longer counts as having one.
+        await writer.CancelInactiveTabAsync(queued).WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.False(writer.HasInactiveJob(queued));
+        Assert.True(writer.HasInactiveJob(running));
+
+        // A later enqueue for the same tab is not swallowed by the de-dupe.
+        writer.EnqueueInactiveTab(queued, _ => { queuedRan = true; return Task.CompletedTask; });
+        Assert.True(writer.HasInactiveJob(queued));
+        await writer.CancelInactiveTabAsync(queued).WaitAsync(TimeSpan.FromSeconds(1));
+
+        release.SetResult();
+        await afterRan.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(queuedRan);
+        Assert.False(runningCancelled);
+    }
 }

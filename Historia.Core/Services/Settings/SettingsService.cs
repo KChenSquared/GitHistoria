@@ -11,6 +11,7 @@ public sealed class SettingsService : ISettingsService, IAsyncDisposable
     private readonly AtomicFileWriter _writer;
     private readonly object _sync = new();
     private AppSettings _current;
+    private long _persistSequence;
 
     public event EventHandler<SettingsChangedEventArgs>? Changed;
 
@@ -87,6 +88,7 @@ public sealed class SettingsService : ISettingsService, IAsyncDisposable
 
         AppSettings oldSettings;
         AppSettings newSettings;
+        long sequence;
         lock (_sync)
         {
             oldSettings = _current;
@@ -94,9 +96,10 @@ public sealed class SettingsService : ISettingsService, IAsyncDisposable
             if (newSettings == oldSettings)
                 return;
             _current = newSettings;
+            sequence = ++_persistSequence;
         }
 
-        _writer.QueueWrite(Serialize(newSettings));
+        _writer.QueueWrite(Serialize(newSettings), sequence);
         Changed?.Invoke(this, new SettingsChangedEventArgs(oldSettings, newSettings));
         await Task.CompletedTask.ConfigureAwait(false);
     }

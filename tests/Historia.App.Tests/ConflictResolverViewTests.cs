@@ -651,7 +651,7 @@ public class ConflictResolverViewTests : IDisposable
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
 
-        var resolver = _conflictHost.GetOrCreate(_context);
+        var resolver = _conflictHost.GetOrCreate(_context)!;
         await resolver.LoadAsync();
         Dispatcher.UIThread.RunJobs();
 
@@ -853,7 +853,7 @@ public class ConflictResolverViewTests : IDisposable
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
 
-        var resolver = _conflictHost.GetOrCreate(_context);
+        var resolver = _conflictHost.GetOrCreate(_context)!;
         Assert.Equal(0, _syntaxHost.LiveCount);
 
         var window = new Window { Content = resolver };

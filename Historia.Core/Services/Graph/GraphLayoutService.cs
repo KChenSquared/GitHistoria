@@ -168,15 +168,43 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private Task WaitForGateAsync(CancellationToken ct) =>
         _gate?.WaitUntilOpenAsync(ct) ?? Task.CompletedTask;
 
+    /// <summary>
+    /// One repository tab's walk, resident rows and on-disk store handles. Each field names the one
+    /// lock that guards its writes:
+    /// <list type="bullet">
+    /// <item><c>lock (cache)</c> — <see cref="Commits"/>, <see cref="SpilledRows"/>,
+    /// <see cref="Exhausted"/>, <see cref="MetaComplete"/>, <see cref="Decorations"/>,
+    /// <see cref="Fingerprint"/>, <see cref="WalkKey"/>, <see cref="WalkCacheSavedRows"/>.</item>
+    /// <item><see cref="SpillSync"/> — <see cref="MetaStore"/>, <see cref="MetaWriter"/>,
+    /// <see cref="BackgroundSpillRunning"/>.</item>
+    /// <item><see cref="WalkLock"/> — <see cref="LiveWalk"/>, <see cref="LiveWalkPos"/>,
+    /// <see cref="LiveWalkFingerprint"/>, <see cref="LiveWalkSnapshotToken"/>,
+    /// <see cref="WalkFailed"/>, <see cref="WalkSuperseded"/>.</item>
+    /// </list>
+    /// Lock order: the service's <c>_sync</c>, then <see cref="SpillSync"/>, then <c>lock (cache)</c>;
+    /// <see cref="WalkLock"/> is taken before <c>lock (cache)</c>. <c>lock (cache)</c> and a store's
+    /// own lock are leaves: nothing is acquired under them, and <see cref="SpillSync"/> is never
+    /// taken while holding <c>lock (cache)</c>. A <see cref="bool"/> may be read without its lock
+    /// only where a stale value is harmless. Reads that must agree with each other (a row count
+    /// and the buffer it indexes) take the lock.
+    /// </summary>
     private sealed class RepoCache
     {
         /// <summary>The whole query this cache walks — scope, remotes, stashes, path filter and
         /// selected refs — so an extend continues exactly this walk. <see cref="GetOrResetCache"/>
-        /// reuses the cache only for a query of the same shape (<see cref="SameWalkShape"/>).</summary>
+        /// reuses the cache only for a query of the same shape (<see cref="SameWalkShape"/>).
+        /// Immutable.</summary>
         public required GraphQuery Query { get; init; }
         public bool IncludeRemotes => Query.IncludeRemoteBranches;
+
+        /// <summary>Guarded by <c>lock (cache)</c>.</summary>
         public List<RawCommit> Commits { get; } = [];
+
+        /// <summary>Guarded by <c>lock (cache)</c>.</summary>
         public Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> Decorations { get; set; } = [];
+
+        /// <summary>The walk reached its end. Guarded by <c>lock (cache)</c>; only ever set, never
+        /// cleared, so an unlocked read can only be late, not wrong.</summary>
         public bool Exhausted { get; set; }
 
         /// <summary>The walk could not run or continue — git.exe missing, the process failed to
@@ -184,7 +212,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         /// rows were already walked (none, for a failure before the first row) and nothing more
         /// is attempted for this cache: no respawn from the crawler or the spill, no disk write.
         /// <see cref="Forget"/> or a forced reset drops the cache, so a ref change or a reopen
-        /// tries again.</summary>
+        /// tries again. Written under <see cref="WalkLock"/>.</summary>
         public bool WalkFailed { get; set; }
 
         /// <summary>The tip set moved after this cache committed to a walk (<see cref="WalkKey"/>
@@ -192,13 +220,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
         /// doesn't line up with them row for row, so nothing more is walked or written for this
         /// cache — no resume, no re-prime, no spill, no disk save. The next
         /// <see cref="ComputeLayoutAsync"/> (or the RefsChanged recompute's <see cref="Forget"/>)
-        /// replaces it with a fresh walk from row 0. Normal, not a failure.</summary>
+        /// replaces it with a fresh walk from row 0. Normal, not a failure. Written under
+        /// <see cref="WalkLock"/>.</summary>
         public bool WalkSuperseded { get; set; }
 
         /// <summary>Nothing more is walked or written for this cache.</summary>
         public bool WalkHalted => WalkFailed || WalkSuperseded;
 
         // ── disk-backed metadata ──
+
+        /// <summary>Guarded by <c>lock (cache)</c>; published together with <see cref="WalkKey"/>
+        /// and <see cref="Decorations"/> by the step that derived them.</summary>
         public long Fingerprint { get; set; }
 
         /// <summary>3 (3b): the sorted-tip-set key the on-disk store/`.gz`/live-walk
@@ -212,25 +244,43 @@ public sealed class GraphLayoutService : IGraphLayoutService
         /// prime or a <c>Done</c> sets it with <see cref="Fingerprint"/> and the decorations. It is
         /// set ahead of them — before any row is pulled — in two cases: when the cache adopts a
         /// partial on-disk store (whose rows are that key's), and when a headless job starts
-        /// (keyed on the tips it probed, which its writes use).</para></summary>
+        /// (keyed on the tips it probed, which its writes use). Guarded by <c>lock (cache)</c>.</para></summary>
         public long WalkKey { get; set; }
+
+        /// <summary>Rows [0, SpilledRows) are on disk and no longer in <see cref="Commits"/>.
+        /// Guarded by <c>lock (cache)</c>.</summary>
         public int SpilledRows { get; set; }
-        public bool MetaComplete { get; set; }   // the whole history is on disk
+
+        /// <summary>The whole history is on disk. Guarded by <c>lock (cache)</c>.</summary>
+        public bool MetaComplete { get; set; }
+
+        /// <summary>A background spill task owns the spill loop. Guarded by <see cref="SpillSync"/>.</summary>
         public bool BackgroundSpillRunning { get; set; }
+
+        /// <summary>Guarded by <see cref="SpillSync"/>. The one exception is a fresh cache's first
+        /// walk step (a warm-store hit while preparing, and the merge of its result): no spill or
+        /// teardown can be running for a cache whose first step has not returned.</summary>
         public GraphMetaWriter? MetaWriter { get; set; }
+
+        /// <summary>Guarded by <see cref="SpillSync"/>, with the same first-step exception as
+        /// <see cref="MetaWriter"/>. A store whose <see cref="DiskCommitStore.Generation"/> differs
+        /// from <see cref="MetaWriter"/>'s belongs to files another writer has replaced and is
+        /// reopened.</summary>
         public DiskCommitStore? MetaStore { get; set; }
+
         public readonly object SpillSync = new();
         public readonly CancellationTokenSource Cts = new();
 
         /// <summary>The background spill's own Task, so
         /// <see cref="IGraphLayoutService.Hibernate"/> can cancel <see cref="Cts"/> and then await
         /// this before disposing <see cref="LiveWalk"/> — never racing a Dispose against a spill
-        /// chunk that may still be mid-<c>MoveNext</c>.</summary>
+        /// chunk that may still be mid-<c>MoveNext</c>. Set by the caller that claimed
+        /// <see cref="BackgroundSpillRunning"/>; a late read only skips the wait.</summary>
         public Task? BackgroundSpillTask { get; set; }
 
         // row count as of the last queued GraphWalkCache.Save — debounces the .gz
         // rewrite so a long run of small foreground extends (the silent crawler) doesn't
-        // re-snapshot + re-gzip the whole window on every one.
+        // re-snapshot + re-gzip the whole window on every one. Guarded by lock (cache).
         public int WalkCacheSavedRows { get; set; }
 
         // ── resumable walk ──
@@ -239,7 +289,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // background spill all continue this ONE walk instead of respawning from the tips every
         // time. Pulled under WalkLock. Disposed on reset / Forget / exhaustion /
         // failure, and when a tip-set change supersedes the walk (WalkSuperseded) — a walk is
-        // never re-primed over another tip set within one cache.
+        // never re-primed over another tip set within one cache. LiveWalk and the three fields
+        // below it are written under WalkLock; Forget and a forced reset call DropLiveWalk without
+        // it, deliberately (see DropLiveWalk).
         public IEnumerator<RawCommit>? LiveWalk { get; set; }
 
         /// <summary>3 (3b): despite the name (kept so reflection-based tests that poke this
@@ -328,28 +380,41 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // reset the cache (force: true) and re-walk once; if the retry is itself short (a fresh
         // cache has no disk store yet to fail, so this should not recur), proceed with whatever
         // came back rather than loop.
-        var read = ReadWindow(cache, 0, maxRows + WalkOverscan);
-        if (!read.Complete)
+        GraphLayoutResult swapped;
+        for (var attempt = 0; ; attempt++)
         {
+            var read = ReadWindow(cache, 0, maxRows + WalkOverscan);
+            if (!read.Complete)
+            {
+                cache = GetOrResetCache(context, query, force: true);
+                await EnsureWalkedAsync(context, query, cache, maxRows + WalkOverscan, ct).ConfigureAwait(false);
+                read = ReadWindow(cache, 0, maxRows + WalkOverscan);
+            }
+            var input = read.Rows;
+
+            // The trunk pre-pass's ancestry check needs no repo handle: DagLayoutEngine.SeedTipPriority
+            // answers it with an exact in-window walk over the already-fetched commit prefix
+            // (isAncestor: null below), so Compute runs fully in memory.
+            GraphLayoutResult result;
+            using (Diagnostics.PerfLog.Scope("engine.Compute"))
+                result = _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct, retainCommits: !spill);
+
+            result = result with { Fingerprint = cache.Fingerprint };
+            _layoutOwners.AddOrUpdate(result.State, cache);
+
+            if (!spill)
+                return result;
+            swapped = SpillAndSwap(context, cache, query.IncludeRemoteBranches, result);
+
+            // Trap: the store can be dropped between the read above and the swap (another writer
+            // reset it), leaving rows that live only on disk. The layout then names rows it has no
+            // commits for, and painting it reads past the end of the store. Build it again from a
+            // fresh walk; the second pass has no store to lose.
+            if (swapped.Layout.Commits.Count >= swapped.Layout.RowCount || attempt > 0)
+                break;
             cache = GetOrResetCache(context, query, force: true);
             await EnsureWalkedAsync(context, query, cache, maxRows + WalkOverscan, ct).ConfigureAwait(false);
-            read = ReadWindow(cache, 0, maxRows + WalkOverscan);
         }
-        var input = read.Rows;
-
-        // The trunk pre-pass's ancestry check needs no repo handle: DagLayoutEngine.SeedTipPriority
-        // answers it with an exact in-window walk over the already-fetched commit prefix
-        // (isAncestor: null below), so Compute runs fully in memory.
-        GraphLayoutResult result;
-        using (Diagnostics.PerfLog.Scope("engine.Compute"))
-            result = _engine.Compute(input, cache.Decorations, maxRows, query.MaxLanes, ct, retainCommits: !spill);
-
-        result = result with { Fingerprint = cache.Fingerprint };
-        _layoutOwners.AddOrUpdate(result.State, cache);
-
-        if (!spill)
-            return result;
-        var swapped = SpillAndSwap(context, cache, query.IncludeRemoteBranches, result);
         if (cache.Exhausted && cache.MetaComplete)
             await RetireLiveWalkAsync(cache).ConfigureAwait(false);
         MaybeStartBackgroundSpill(context, cache, query);
@@ -375,13 +440,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // frame paints commits/lanes with no decorations for that one moment.
         if (GraphWalkCache.Supports(query))
         {
-            var probe = GraphMetaStore.ProbeAny(context.RepositoryPath, query.IncludeRemoteBranches);
-            if (probe.Ok)
+            var probe = GraphMetaStore.ProbeExisting(context.RepositoryPath, query.IncludeRemoteBranches);
+            if (probe is { Ok: true, RowCount: > 0 })
             {
                 DiskCommitStore? store = null;
                 try
                 {
-                    store = DiskCommitStore.Open(context.RepositoryPath, probe.RowCount);
+                    // Open through the header's record count and order version: a headless reorder
+                    // appends new records and writes an order file, and an identity-order open
+                    // would put those records last and lose their edge to the old tip.
+                    store = DiskCommitStore.Open(context.RepositoryPath, probe.RowCount, probe.RecordCount, probe.OrderVersion);
                     var take = Math.Min(maxRows, store.Count);
                     if (take > 0)
                     {
@@ -513,7 +581,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     AdoptDurableStore(cache, warm.Count);
                 }
 
-                if (gateOpen && cache.WalkKey != 0 && !cache.WalkHalted && rowCount > cache.SpilledRows)
+                // A queued or running headless job for this tab is a second writer on the same
+                // store; this write stands aside and the background spill writes these rows after
+                // waiting that job out. The layout is served from what is already on disk.
+                if (gateOpen && cache.WalkKey != 0 && !cache.WalkHalted && rowCount > cache.SpilledRows
+                    && !(_backgroundWriter?.HasInactiveJob(context) ?? false))
                 {
                     // Outcome is deliberately unobserved here: Appended/Adopted both leave
                     // cache.MetaStore ready to serve below; a Conflict leaves it null, and the
@@ -589,6 +661,18 @@ public sealed class GraphLayoutService : IGraphLayoutService
         cache.MetaWriter ??= new GraphMetaWriter(repoPath, cache.WalkKey, includeRemotes);
 
         var (outcome, rowCount) = cache.MetaWriter.AppendSpillBatch(snap, from, to, exhausted, fullWalkElapsed, sortedTips);
+
+        // Trap: another writer that reset the store and came back to this walk key (flapping tips,
+        // two writers on one tab) left a cache still holding its store from before the reset. The
+        // header matched this key again, appends succeeded, but the held store read retired files
+        // that could never grow, so resident rows were never trimmed. The writer now reports the
+        // incarnation on disk; a store from an older one is dropped and reopened below.
+        if (outcome != SpillOutcome.Conflict && cache.MetaStore is { } held && held.Generation != cache.MetaWriter.Generation)
+        {
+            held.Dispose();
+            cache.MetaStore = null;
+        }
+
         switch (outcome)
         {
             case SpillOutcome.Conflict:
@@ -609,13 +693,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 var probe = GraphMetaStore.Probe(repoPath, cache.WalkKey, includeRemotes);
                 if (probe is { Ok: true, Exhausted: true } && cache.MetaStore?.Count >= probe.RowCount)
                 {
-                    cache.MetaComplete = true;
-                    cache.Exhausted = true;
+                    lock (cache)
+                    {
+                        cache.MetaComplete = true;
+                        cache.Exhausted = true;
+                    }
                 }
                 return outcome;
 
             default:
-                cache.MetaComplete = exhausted;
+                lock (cache)
+                    cache.MetaComplete = exhausted;
                 Diagnostics.PerfLog.Mark($"graph cache write: spill {snap.Count} rows ({repoPath})");
 
                 cache.MetaStore ??= GraphMetaStore.TryOpen(repoPath, cache.WalkKey, includeRemotes, to);
@@ -681,9 +769,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     /// <summary>Result of <see cref="ReadWindow"/>: <see cref="Complete"/> is false only when the
-    /// on-disk store returned fewer rows than the disk portion of the request promised — never
-    /// when the window simply ran off the end of everything walked so far (that is a normal,
-    /// expected shortfall, not a fault).</summary>
+    /// disk portion of the request could not be served — the cache holds no store, or the store
+    /// returned fewer rows than it promised — never when the window simply ran off the end of
+    /// everything walked so far (that is a normal, expected shortfall, not a fault).</summary>
     private readonly record struct WindowRead(List<RawCommit> Rows, bool Complete);
 
     /// <summary>Reads absolute rows [<paramref name="start"/>, <paramref name="start"/>
@@ -710,8 +798,15 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 return new WindowRead([], Complete: true);
 
             var result = new List<RawCommit>(want);
-            if (start < spilledRows && cache.MetaStore is { } store)
+            if (start < spilledRows)
             {
+                // Trap: with the store gone (dropped on a conflict with another writer, or torn down
+                // by a tab switch) this used to skip the disk part and still report a complete
+                // window, so the layout was built from the resident rows alone — painted row 0 was
+                // the walk's row `spilledRows`. Rows that live on disk cannot be served without the
+                // store; say so.
+                if (cache.MetaStore is not { } store)
+                    return new WindowRead(result, Complete: false);
                 var diskCount = Math.Min(want, spilledRows - start);
                 var diskRows = store.ReadRawRange(start, diskCount);
                 result.AddRange(diskRows);
@@ -852,7 +947,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
             catch { /* best-effort background caching */ }
             finally
             {
-                cache.BackgroundSpillRunning = false;
+                lock (cache.SpillSync)
+                    cache.BackgroundSpillRunning = false;
                 // On exhaustion PumpCommits already disposed the walk on the gate; on an
                 // external cancel Forget/reset already DropLiveWalk'd it. This is just a
                 // belt-and-braces no-op for those paths.
@@ -1390,6 +1486,59 @@ public sealed class GraphLayoutService : IGraphLayoutService
         }
     }
 
+    /// <summary>What <see cref="GetCacheStateForTesting"/> reports: the counters that must agree with
+    /// each other (a foreground cache with a live walk has <c>TotalWalked == LiveWalkPos</c>) and
+    /// the identity of the store the cache holds.</summary>
+    internal sealed record CacheStateForTesting(
+        int TotalWalked, int SpilledRows, int LiveWalkPos, bool HasLiveWalk, long WalkKey,
+        bool Exhausted, bool MetaComplete, bool WalkHalted, string? MetaStoreGeneration, int? MetaStoreCount);
+
+    /// <summary>A read-only view of one context's cache for the concurrency harness. Every lock is
+    /// tried with a zero timeout, in the documented lock order, and any that is busy makes the
+    /// whole read return null — it never blocks a walk, a spill or a teardown and never mutates.
+    /// Null too when the context has no cache.</summary>
+    internal CacheStateForTesting? GetCacheStateForTesting(RepositoryContext context)
+    {
+        RepoCache? cache;
+        if (!Monitor.TryEnter(_sync, 0))
+            return null;
+        try { _caches.TryGetValue(context, out cache); }
+        finally { Monitor.Exit(_sync); }
+        if (cache is null)
+            return null;
+
+        if (!cache.WalkLock.Wait(0))
+            return null;
+        try
+        {
+            if (!Monitor.TryEnter(cache.SpillSync, 0))
+                return null;
+            try
+            {
+                if (!Monitor.TryEnter(cache, 0))
+                    return null;
+                try
+                {
+                    var store = cache.MetaStore;
+                    return new CacheStateForTesting(
+                        TotalWalked: cache.SpilledRows + cache.Commits.Count,
+                        SpilledRows: cache.SpilledRows,
+                        LiveWalkPos: cache.LiveWalkPos,
+                        HasLiveWalk: cache.LiveWalk is not null,
+                        WalkKey: cache.WalkKey,
+                        Exhausted: cache.Exhausted,
+                        MetaComplete: cache.MetaComplete,
+                        WalkHalted: cache.WalkHalted,
+                        MetaStoreGeneration: store?.Generation,
+                        MetaStoreCount: store?.Count);
+                }
+                finally { Monitor.Exit(cache); }
+            }
+            finally { Monitor.Exit(cache.SpillSync); }
+        }
+        finally { cache.WalkLock.Release(); }
+    }
+
     /// <inheritdoc/>
     public async Task Hibernate(RepositoryContext context)
     {
@@ -1413,9 +1562,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
             catch { /* timed out or faulted — best effort, DropLiveWalk below is the fallback */ }
         }
 
-        cache.MetaStore?.Dispose();
-        cache.MetaStore = null;
-        cache.MetaWriter = null;
+        // Trap: tearing the store and writer down without SpillSync let a foreground extend that was
+        // already inside SpillRange see them go null mid-call; the resulting NullReferenceException
+        // was swallowed and that frame fell back to the in-memory rebuild. Under SpillSync the
+        // extend finishes with the store and writer it took first.
+        lock (cache.SpillSync)
+        {
+            cache.MetaStore?.Dispose();
+            cache.MetaStore = null;
+            cache.MetaWriter = null;
+        }
 
         if (cache.LiveWalk is { } walk)
         {
@@ -1919,7 +2075,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             else if (exhausted)
                 cache.DisposeLiveWalk();
 
-            AppendWalked(cache, delta);
+            AppendWalked(cache, delta, prep.Have);
             Diagnostics.PerfLog.Mark($"Walk loop (cli) read {delta.Count} commits (pos {cache.LiveWalkPos}, exhausted={exhausted})");
             return new WalkResult([], prep.Decorations, exhausted, prep.Fingerprint, prep.DecosFresh,
                 WalkKey: prep.WalkKey, CarriesRefState: false);
@@ -1977,12 +2133,18 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // here because every pull appends its rows before releasing WalkLock (AppendWalked).
             // Not LiveWalkPos: the reorder pass clears cache.Commits after every batch and asks
             // for batchRows each time, i.e. relative to what the cache holds, not to the stream.
-            var need = prep.WantCount - TotalWalked(cache);
+            var have = TotalWalked(cache);
+            var need = prep.WantCount - have;
             if (need <= 0)
                 return new WalkResult([], cache.Decorations, Exhausted: false, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey, CarriesRefState: false);
 
+            // Trap: resuming with skip: 0 after another writer's rows were adopted (SpilledRows
+            // jumped past LiveWalkPos) re-appended rows the store already held, and the next spill
+            // wrote them to disk a second time. Rows below `have` are already in the cache, so the
+            // stream discards them. The reorder pass clears cache.Commits per batch, so its `have`
+            // is 0 and nothing is skipped there.
             var delta = new List<RawCommit>(Math.Min(need, 8192));
-            var exhausted = PumpCommits(live, delta, skip: 0, want: need, cache, ct);
+            var exhausted = PumpCommits(live, delta, skip: have, want: need, cache, ct);
             if (live is GitLogStream { Failed: true } failed)
             {
                 MarkWalkFailed(context, cache, failed.FailureReason ?? "git log failed");
@@ -1990,7 +2152,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
             else if (exhausted)
                 cache.DisposeLiveWalk();
-            AppendWalked(cache, delta);
+            AppendWalked(cache, delta, have);
             Diagnostics.PerfLog.Mark($"walk resumed (cli) +{delta.Count} (pos {cache.LiveWalkPos}, exhausted={exhausted})");
             return new WalkResult([], cache.Decorations, exhausted, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey, CarriesRefState: false);
         }
@@ -2003,13 +2165,24 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// <summary>Appends a pull's rows to the pending buffer while the caller still holds
     /// <see cref="RepoCache.WalkLock"/>, so two pulls in a row can never land in the buffer in the
     /// opposite order to the one they were read from the stream in.</summary>
-    private static void AppendWalked(RepoCache cache, List<RawCommit> delta)
+    private static void AppendWalked(RepoCache cache, List<RawCommit> delta, int firstRow)
     {
         if (delta.Count == 0)
             return;
         lock (cache)
-            cache.Commits.AddRange(delta);
+        {
+            // Trap: the pull ran off every lock, sized from the rows held when it began. Another
+            // writer's rows adopted meanwhile (SpilledRows jumped) already cover the front of the
+            // pull; appending it whole put those rows in the buffer twice.
+            var held = WalkedRowsAlreadyHeld(cache.SpilledRows + cache.Commits.Count, firstRow, delta.Count);
+            cache.Commits.AddRange(held == 0 ? delta : delta.Skip(held));
+        }
     }
+
+    /// <summary>How many leading rows of a pull that starts at absolute row <paramref name="firstRow"/>
+    /// the cache already holds when <paramref name="rowsHeld"/> rows are held by now.</summary>
+    internal static int WalkedRowsAlreadyHeld(int rowsHeld, int firstRow, int pulled)
+        => Math.Clamp(rowsHeld - firstRow, 0, pulled);
 
     private const int RetireWalkLockTimeoutMs = 5_000;
 

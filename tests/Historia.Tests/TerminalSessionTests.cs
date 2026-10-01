@@ -152,4 +152,65 @@ public class TerminalSessionTests
         pty.EmitOutput("more\r\n");
         Assert.Equal(2, dispatcher.PostCount);
     }
+
+    /// <summary>A pty whose callbacks stay wired after the session unsubscribes — standing in for a
+    /// callback that was already running on the pty's own thread when the session closed.</summary>
+    private sealed class StickyPty : IPtyConnection
+    {
+        private Action<ReadOnlyMemory<byte>>? _output;
+        private Action<int>? _exited;
+
+        public event Action<ReadOnlyMemory<byte>>? OutputReceived { add => _output += value; remove { } }
+        public event Action<int>? Exited { add => _exited += value; remove { } }
+
+        public void Write(ReadOnlySpan<byte> data) { }
+        public void Resize(int columns, int rows) { }
+        public void Kill() { }
+        public void Dispose() { }
+
+        public void EmitOutput(string text) => _output?.Invoke(System.Text.Encoding.UTF8.GetBytes(text));
+        public void EmitExit(int code) => _exited?.Invoke(code);
+    }
+
+    [Fact]
+    public void Exit_after_dispose_is_ignored()
+    {
+        var pty = new StickyPty();
+        var session = new TerminalSession(TerminalOrigin.Home("/home/me"), pty, new ImmediateUiDispatcher(), 80, 24, 1000);
+        var stateChanges = 0;
+        session.StateChanged += (_, _) => stateChanges++;
+        session.Dispose();
+
+        var ex = Record.Exception(() => pty.EmitExit(7));
+
+        Assert.Null(ex);
+        Assert.Equal(TerminalSessionState.Running, session.State);
+        Assert.Equal(0, stateChanges);
+    }
+
+    [Fact]
+    public async Task Output_racing_dispose_never_throws()
+    {
+        for (var i = 0; i < 200; i++)
+        {
+            var pty = new StickyPty();
+            var session = new TerminalSession(TerminalOrigin.Home("/home/me"), pty, new ImmediateUiDispatcher(), 80, 24, 1000);
+            using var ready = new Barrier(2);
+
+            var emitter = Task.Run(() =>
+            {
+                ready.SignalAndWait();
+                for (var n = 0; n < 200; n++)
+                    pty.EmitOutput($"line {n}\r\n");
+            });
+            var closer = Task.Run(() =>
+            {
+                ready.SignalAndWait();
+                Thread.SpinWait(i * 50);
+                session.Dispose();
+            });
+
+            await Task.WhenAll(emitter, closer);
+        }
+    }
 }

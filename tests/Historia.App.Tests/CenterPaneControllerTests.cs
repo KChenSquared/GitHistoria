@@ -188,6 +188,38 @@ public class CenterPaneControllerTests : IDisposable
         Assert.Null(diffView1.PresenterForTesting);
     }
 
+    [AvaloniaFact]
+    public async Task A_closed_context_never_gets_a_resolver()
+    {
+        await Task.Run(async () => await _workspace.CloseAsync(_context));
+
+        Assert.Null(_conflictHost.GetOrCreate(_context));
+        Assert.Null(_conflictHost.TryGet(_context));
+    }
+
+    [AvaloniaFact]
+    public async Task UpdateContent_for_a_closed_context_shows_the_graph()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "some text", DiskHash = "h1" };
+        _fixture.CreateConflict();
+        await _context.State.RefreshStatusAsync();
+
+        var centerHost = new ContentControl();
+        var graph = new Border();
+        using var controller = new CenterPaneController(centerHost, graph, _conflictHost, _workspace, _sp);
+        Dispatcher.UIThread.RunJobs();
+        Assert.IsType<ConflictResolverView>(centerHost.Content);
+
+        // The tab closes, but the controller is still bound to it: a content update posted before
+        // the close (or by a late status event) arrives after it.
+        await Task.Run(async () => await _workspace.CloseAsync(_context));
+        controller.UpdateContent();
+
+        Assert.Same(graph, centerHost.Content);
+        Assert.Null(_conflictHost.GetOrCreate(_context));
+    }
+
     public void Dispose()
     {
         try { _conflictHost.Dispose(); } catch { }

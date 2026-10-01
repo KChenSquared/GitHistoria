@@ -152,26 +152,62 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
         }
     }
 
+    /// <summary>True while an inactive-tab job for <paramref name="context"/> is queued or
+    /// running.</summary>
+    internal bool HasInactiveJob(RepositoryContext context)
+    {
+        lock (_sync)
+            return _inactiveJobs.TryGetValue(context.Id, out var jobs) && jobs.Count > 0;
+    }
+
     /// <summary>Cancels <paramref name="context"/>'s queued or running inactive job(s)
-    /// and returns a task that completes once every one of them has actually exited. A no-op (a
-    /// completed task) if there is none.</summary>
+    /// and returns a task that completes once every one of them has actually exited. A job that
+    /// has not started yet is dropped from the queue at once. A no-op (a completed task) if there
+    /// is none.</summary>
     public Task CancelInactiveTabAsync(RepositoryContext context)
     {
-        List<(CancellationTokenSource Cts, TaskCompletionSource Done)>? jobs;
+        // Trap: a queued job used to stay queued after its cancellation until the drain loop
+        // reached it, which is only after the job running ahead of it (another tab's, possibly
+        // minutes long) finished. Until then the tab counted as having a headless job, so its own
+        // foreground spill stood aside and its background spill waited, and its rows piled up in
+        // memory. Dropping it here is safe: it never started, so it holds nothing.
+        List<(RepositoryContext Context, Func<CancellationToken, Task> Work, CancellationTokenSource Cts, TaskCompletionSource Done)> dropped = [];
+        (CancellationTokenSource Cts, TaskCompletionSource Done)[] running;
         lock (_sync)
-            _inactiveJobs.TryGetValue(context.Id, out jobs);
-        if (jobs is null || jobs.Count == 0)
-            return Task.CompletedTask;
+        {
+            if (!_inactiveJobs.TryGetValue(context.Id, out var jobs) || jobs.Count == 0)
+                return Task.CompletedTask;
 
-        // Snapshot before cancelling: a job's finally block removes its own entry from the live
-        // list under _sync as soon as it exits, so iterating the live list while cancelling could
-        // skip or double-handle an entry.
-        (CancellationTokenSource Cts, TaskCompletionSource Done)[] snapshot;
-        lock (_sync)
-            snapshot = [.. jobs];
-        foreach (var (cts, _) in snapshot)
+            if (_queuedContextIds.Remove(context.Id))
+            {
+                var queued = _inactiveQueue.ToArray();
+                _inactiveQueue.Clear();
+                foreach (var item in queued)
+                {
+                    if (item.Context.Id == context.Id)
+                        dropped.Add(item);
+                    else
+                        _inactiveQueue.Enqueue(item);
+                }
+                foreach (var item in dropped)
+                    jobs.RemoveAll(j => ReferenceEquals(j.Cts, item.Cts));
+            }
+
+            // Snapshot before cancelling: a running job's finally block removes its own entry
+            // from the live list under _sync as soon as it exits.
+            running = [.. jobs];
+            if (jobs.Count == 0)
+                _inactiveJobs.Remove(context.Id);
+        }
+
+        foreach (var item in dropped)
+        {
+            item.Done.TrySetResult();
+            try { item.Cts.Dispose(); } catch { /* best effort */ }
+        }
+        foreach (var (cts, _) in running)
             try { cts.Cancel(); } catch (ObjectDisposedException) { }
-        return Task.WhenAll(snapshot.Select(j => j.Done.Task));
+        return running.Length == 0 ? Task.CompletedTask : Task.WhenAll(running.Select(j => j.Done.Task));
     }
 
     private async Task DrainInactiveQueueAsync()
@@ -194,7 +230,16 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
                 // headless walk here never makes the active tab's own commit-graph write (which
                 // only ever needs _serial, and briefly) wait behind it.
                 await _headlessSerial.WaitAsync(cts.Token).ConfigureAwait(false);
-                try { await work(cts.Token).ConfigureAwait(false); }
+                try
+                {
+                    // Focus only requests this job's cancellation, and a job can be queued after
+                    // that request ran, so the tab may have gained focus while the job waited. The
+                    // focused tab's own foreground spill is the one writer for its store.
+                    if (ReferenceEquals(gate?.Focused, context))
+                        Diagnostics.PerfLog.Mark($"headless cache skipped: tab is focused ({context.DisplayName})");
+                    else
+                        await work(cts.Token).ConfigureAwait(false);
+                }
                 finally { _headlessSerial.Release(); }
             }
             catch (OperationCanceledException)

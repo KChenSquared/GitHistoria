@@ -15,6 +15,7 @@ public sealed class RecentRepositoryService : IRecentRepositoryService, IAsyncDi
     private readonly AtomicFileWriter _writer;
     private readonly object _sync = new();
     private List<RecentEntry> _entries;
+    private long _persistSequence;
 
     public event EventHandler? Changed;
 
@@ -102,9 +103,13 @@ public sealed class RecentRepositoryService : IRecentRepositoryService, IAsyncDi
     private void Persist()
     {
         RecentFile file;
+        long sequence;
         lock (_sync)
+        {
             file = new RecentFile { Items = _entries.ToList() };
-        _writer.QueueWrite(JsonSerializer.Serialize(file, HistoriaJson.Options));
+            sequence = ++_persistSequence;
+        }
+        _writer.QueueWrite(JsonSerializer.Serialize(file, HistoriaJson.Options), sequence);
     }
 
     private static bool SafeExists(string path)
