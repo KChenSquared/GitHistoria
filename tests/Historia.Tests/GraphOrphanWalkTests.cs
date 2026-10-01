@@ -22,6 +22,14 @@ public sealed class GraphOrphanWalkTests : IAsyncDisposable
         _state.Dispose();
     }
 
+    /// <summary>No disk spill: its background pass walks the whole history and disposes the walk
+    /// itself — under load, before the test looks — hiding whether teardown does.</summary>
+    private async Task<GraphLayoutService> NewServiceAsync()
+    {
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = false });
+        return new GraphLayoutService(_host.Settings, _host.Locator);
+    }
+
     private RepositoryContext Open()
     {
         var ctx = _host.Open(_repo.Path);
@@ -46,7 +54,7 @@ public sealed class GraphOrphanWalkTests : IAsyncDisposable
     public async Task Forget_disposes_the_live_walk()
     {
         await using var ctx = Open();
-        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
+        var svc = await NewServiceAsync();
 
         await svc.ComputeLayoutAsync(ctx, AllRefs, maxRows: 200);
         Assert.True(svc.GetCacheStateForTesting(ctx) is { HasLiveWalk: true }, "expected a primed, unfinished walk");
@@ -62,7 +70,7 @@ public sealed class GraphOrphanWalkTests : IAsyncDisposable
     public async Task A_forced_cache_reset_disposes_the_old_walk()
     {
         await using var ctx = Open();
-        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
+        var svc = await NewServiceAsync();
 
         await svc.ComputeLayoutAsync(ctx, AllRefs, maxRows: 200);
         Assert.Equal(1, GitLogStream.LiveCountForTesting(ctx.RepositoryPath));
@@ -80,7 +88,7 @@ public sealed class GraphOrphanWalkTests : IAsyncDisposable
     public async Task Forget_during_a_pull_lets_the_pull_finish_then_disposes()
     {
         await using var ctx = Open();
-        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
+        var svc = await NewServiceAsync();
         var first = await svc.ComputeLayoutAsync(ctx, AllRefs, maxRows: 200);
 
         var extend = Task.Run(() => svc.ExtendLayoutAsync(ctx, first, 3_500));
