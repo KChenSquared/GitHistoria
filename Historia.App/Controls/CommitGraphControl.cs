@@ -1408,6 +1408,10 @@ public sealed partial class CommitGraphControl : Control
 
     internal static TimeSpan StuckGuardCeiling => CrawlStuckGuardCeiling;
 
+    /// <summary>Rows the silent crawl loads before <see cref="RepositoryContext.MarkGraphWarmed"/>
+    /// lets a large working tree's first <c>git status</c> start.</summary>
+    internal const int GraphWarmedRows = 100_000;
+
     internal static async Task<bool> WaitForCrawlGuardAsync(RepositoryContext context, TimeSpan ceiling, CancellationToken ct)
     {
         var ceilingTask = Task.Delay(ceiling, ct);
@@ -1443,6 +1447,8 @@ public sealed partial class CommitGraphControl : Control
                 var cap = Volatile.Read(ref _crawlTarget);
                 if (_layout is not { } current || current.Layout.IsComplete)
                     break;
+                if (current.Layout.RowCount >= GraphWarmedRows)
+                    context.MarkGraphWarmed();
                 if (current.Layout.RowCount >= cap)
                     break; // reached the silent pre-load ceiling — deeper history loads on scroll
 
@@ -1477,6 +1483,8 @@ public sealed partial class CommitGraphControl : Control
         finally
         {
             Interlocked.Exchange(ref _crawlRunning, 0);
+            // However the crawl ended, the status it was keeping off the disk may run now.
+            context.MarkGraphWarmed();
         }
     }
 

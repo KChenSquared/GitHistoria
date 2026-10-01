@@ -35,6 +35,14 @@ public sealed class FileWatcherService : IAsyncDisposable
     public bool IsDegraded { get; private set; }
     public string? DegradedReason { get; private set; }
 
+    /// <summary>Git tracks at least <see cref="LargeTreeFileThreshold"/> files here: the working
+    /// tree is not watched, and a cold <c>git status</c> reads so many files that other git work
+    /// on the same disk slows down while it runs.</summary>
+    public bool IsLargeWorkingTree { get; private set; }
+
+    /// <summary>Test seam: a fixture can't reach the tracked-file threshold.</summary>
+    internal void TreatAsLargeWorkingTreeForTesting() => IsLargeWorkingTree = true;
+
     public FileWatcherService(
         RepositoryContext context,
         IRepositoryStateService state,
@@ -85,6 +93,7 @@ public sealed class FileWatcherService : IAsyncDisposable
         var workDir = NormalizePath(_context.RepositoryPath);
         if (Directory.Exists(workDir) && TrackedFileCount(gitDir) >= LargeTreeFileThreshold)
         {
+            IsLargeWorkingTree = true;
             EnterDegradedMode("Repository working tree is very large. Watching .git only; working tree uses refresh-on-focus.");
             return;
         }

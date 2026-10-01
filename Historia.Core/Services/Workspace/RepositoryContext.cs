@@ -27,6 +27,20 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// <summary>Idempotent -- safe to call once per attempt or not at all.</summary>
     public void MarkFirstGraphPaintDone() => _firstGraphPaint.TrySetResult();
 
+    // Signalled once the graph's silent crawl has loaded its first stretch of history, or stopped
+    // short of it. On a large working tree WorkspaceService holds the tab's first git status until
+    // then: a cold status there reads every file, and each crawl step it overlapped ran several
+    // times slower.
+    private readonly TaskCompletionSource _graphWarmed =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once the graph's silent crawl has warmed up (or stopped). Never faults;
+    /// a caller with no graph control attached applies its own timeout.</summary>
+    public Task GraphWarmed => _graphWarmed.Task;
+
+    /// <summary>Idempotent.</summary>
+    public void MarkGraphWarmed() => _graphWarmed.TrySetResult();
+
     // signalled once this tab is "fully loaded" -- identity resolved and the first full
     // state refresh (branches, graph, changes) has completed. IAutoFetchService waits on this
     // before its [InitialFetch] / [AutoFetch] loop touches the repo. Like FirstGraphPaint it

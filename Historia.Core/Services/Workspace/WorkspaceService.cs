@@ -77,6 +77,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // ran mid-first-walk and stalled it for ~60s. This ceiling is only a stuck-guard.
     private static readonly TimeSpan GraphFirstPaintCeiling = TimeSpan.FromSeconds(120);
 
+    // A large working tree's first status waits for the graph's crawl to warm up; this is only a
+    // stuck-guard for a tab with no graph attached or a crawl that never reports.
+    private static readonly TimeSpan StatusAfterGraphCeiling = TimeSpan.FromSeconds(60);
+
     /// <summary>
     /// Default query for repository tabs. Must match <c>CommitGraphControl._query</c>'s default.
     /// Used by clone precache and inactive-tab background caching so the store matches the tab's first walk.
@@ -955,13 +959,29 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     /// <summary>A focused tab's refresh runs at once, but only while the tab keeps focus: a cold
     /// status on a huge working tree can take tens of seconds and must not compete with the tab
     /// the user moved on to. When focus leaves mid-refresh, the refresh is abandoned and finished
-    /// from the background queue instead — the caller still waits for it.</summary>
+    /// from the background queue instead — the caller still waits for it.
+    /// <para>On a large working tree, status also waits until the graph's crawl has warmed up
+    /// (<see cref="RepositoryContext.GraphWarmed"/>, at most <see cref="StatusAfterGraphCeiling"/>):
+    /// a cold status there read every file for ~40 s and slowed each crawl step 5–9×. Refs refresh
+    /// at once.</para></summary>
     private async Task RefreshFocusedAsync(RepositoryContext context, bool full, CancellationToken focus, CancellationToken ct)
     {
         using (var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, focus))
         {
             try
             {
+                if (context.Watcher.IsLargeWorkingTree && !context.GraphWarmed.IsCompleted)
+                {
+                    if (full)
+                        await context.State.RefreshRefsAsync(linked.Token).ConfigureAwait(false);
+                    // Task.WhenAny never throws; a focus change or close ends the delay.
+                    await Task.WhenAny(context.GraphWarmed, Task.Delay(StatusAfterGraphCeiling, linked.Token))
+                        .ConfigureAwait(false);
+                    linked.Token.ThrowIfCancellationRequested();
+                    await context.State.RefreshStatusAsync(linked.Token).ConfigureAwait(false);
+                    return;
+                }
+
                 await (full ? context.State.RefreshAllAsync(linked.Token) : context.State.RefreshStatusAsync(linked.Token))
                     .ConfigureAwait(false);
                 return;
