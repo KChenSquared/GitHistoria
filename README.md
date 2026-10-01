@@ -141,5 +141,5 @@ the [GNU General Public License](LICENSE) for more details.
 
 Copyright (C) 2026 The Historia Contributors.
 
-Bundled third-party material (the [Material Symbols](https://github.com/google/material-design-icons) icon set, Apache-2.0; the diff viewer and conflict editor adapted from [SourceGit](https://github.com/sourcegit-scm/sourcegit), MIT; and editor libraries AvaloniaEdit, TextMateSharp, onigwrap, and DiffPlex) is credited
+Bundled third-party material (the [Material Symbols](https://github.com/google/material-design-icons) icon set, Apache-2.0; the diff viewer and conflict editor adapted from [SourceGit](https://github.com/sourcegit-scm/sourcegit), MIT; editor libraries AvaloniaEdit, TextMateSharp, onigwrap, and DiffPlex; and terminal libraries XTerm.NET, Porta.Pty, and Microsoft.Windows.Console.ConPTY) is credited
 in [`docs/third-party-licenses.md`](docs/third-party-licenses.md).
