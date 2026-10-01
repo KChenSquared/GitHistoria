@@ -202,7 +202,8 @@ public sealed class RepositoryContext : IAsyncDisposable
             return string.Equals(
                 Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)),
                 Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
-                StringComparison.OrdinalIgnoreCase);
+                // As the repo-state cache keys its files.
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
         }
         catch
         {

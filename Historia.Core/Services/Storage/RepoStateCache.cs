@@ -130,7 +130,12 @@ public sealed class RepoStateCache(ISettingsService settings) : IRepoStateCache
 
     private static string FileFor(string repoPath, string kind)
     {
-        var norm = repoPath.Replace('\\', '/').TrimEnd('/');
+        // Keyed on the resolved directory, so any spelling of the repository root ("." from the
+        // command line, a ".." segment) finds the same file.
+        string full;
+        try { full = Path.GetFullPath(repoPath); }
+        catch { full = repoPath; }
+        var norm = full.Replace('\\', '/').TrimEnd('/');
         if (OperatingSystem.IsWindows())
             norm = norm.ToLowerInvariant();
         var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(norm)));

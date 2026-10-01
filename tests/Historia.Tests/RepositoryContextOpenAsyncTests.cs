@@ -65,7 +65,7 @@ public sealed class RepositoryContextOpenAsyncTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Seeds_the_cached_refs_at_construction_from_the_root_or_a_subdirectory()
+    public async Task Seeds_the_cached_refs_at_construction_from_any_path_into_the_repository()
     {
         var sp = Provider(_host.Cli, withStateCache: true);
         string root;
@@ -73,7 +73,7 @@ public sealed class RepositoryContextOpenAsyncTests : IAsyncDisposable
             root = probe.RepositoryPath;
         sp.GetRequiredService<IRepoStateCache>().SaveRefs(root, [Branch("cached-only")], [], []);
 
-        foreach (var path in new[] { _repo.Path, Path.Combine(_repo.Path, "dir") })
+        foreach (var path in new[] { _repo.Path, Path.Combine(_repo.Path, "dir"), Path.Combine(_repo.Path, "dir", "..") })
         {
             await using var ctx = await RepositoryContext.OpenAsync(path, sp);
             Assert.Contains(ctx.State.Branches, b => b.Name == "cached-only");
