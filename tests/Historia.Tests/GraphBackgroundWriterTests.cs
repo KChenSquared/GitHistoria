@@ -494,4 +494,44 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
             await Task.Delay(20);
         Assert.False(writer.HasInactiveJob(ctx));
     }
+
+    [Fact]
+    public async Task CancelInactiveTab_drops_a_queued_job_without_waiting_for_the_one_running()
+    {
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
+        await using var running = _host.Open(_repo.Path);
+        await using var queued = _host.Open(_repo.Path);
+        await using var after = _host.Open(_repo.Path);
+
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        var runningCancelled = false;
+        writer.EnqueueInactiveTab(running, async ct =>
+        {
+            started.SetResult();
+            await release.Task;
+            runningCancelled = ct.IsCancellationRequested;
+        });
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var queuedRan = false;
+        var afterRan = new TaskCompletionSource();
+        writer.EnqueueInactiveTab(queued, _ => { queuedRan = true; return Task.CompletedTask; });
+        writer.EnqueueInactiveTab(after, _ => { afterRan.SetResult(); return Task.CompletedTask; });
+
+        // Completes while the other tab's job still runs, and the tab no longer counts as having one.
+        await writer.CancelInactiveTabAsync(queued).WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.False(writer.HasInactiveJob(queued));
+        Assert.True(writer.HasInactiveJob(running));
+
+        // A later enqueue for the same tab is not swallowed by the de-dupe.
+        writer.EnqueueInactiveTab(queued, _ => { queuedRan = true; return Task.CompletedTask; });
+        Assert.True(writer.HasInactiveJob(queued));
+        await writer.CancelInactiveTabAsync(queued).WaitAsync(TimeSpan.FromSeconds(1));
+
+        release.SetResult();
+        await afterRan.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(queuedRan);
+        Assert.False(runningCancelled);
+    }
 }

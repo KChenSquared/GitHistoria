@@ -172,4 +172,44 @@ public sealed class GraphFocusedHeadlessRaceTests : IAsyncDisposable
         Assert.True(GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true).Ok,
             "with the job gone the foreground load writes again");
     }
+
+    [Fact(Timeout = 60_000)]
+    public async Task Focusing_a_tab_queued_behind_another_tabs_job_lets_it_write_at_once()
+    {
+        var repo = NewRepo("linear-300", BaseCommits);
+        var other = NewRepo("linear-20", 20);
+        var expected = await InMemoryOrderAsync(repo.Path);
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator, _host.Provider.GetRequiredService<IGitCliService>());
+        var writer = (GraphBackgroundWriter)typeof(GraphLayoutService)
+            .GetField("_backgroundWriter", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(svc)!;
+        await using var ctx = _host.Open(repo.Path);
+        await using var otherCtx = _host.Open(other.Path);
+        ctx.MarkFirstGraphPaintDone();
+        ctx.MarkFirstFullLoadDone();
+
+        // Another tab's headless job is running (minutes, on a large repo); this tab's is queued behind it.
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        writer.EnqueueInactiveTab(otherCtx, async _ => { started.SetResult(); await release.Task; });
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        svc.EnqueueInactiveTabCaching(ctx, Q);
+
+        try
+        {
+            // Focus cancels the queued job; the other tab's job keeps running.
+            await svc.CancelInactiveTabCachingAsync(ctx).WaitAsync(TimeSpan.FromSeconds(5));
+
+            var layout = await svc.ComputeLayoutAsync(ctx, Q, 50);
+            for (var i = 0; i < 4; i++)
+                layout = await svc.ExtendLayoutAsync(ctx, layout, additionalRows: 50);
+            AssertPaintedRows(layout, expected);
+            Assert.True(GraphMetaStore.ProbeExisting(repo.Path, includeRemoteBranches: true).Ok,
+                "the focused tab writes its own store while another tab's job runs");
+        }
+        finally
+        {
+            release.SetResult();
+        }
+    }
 }

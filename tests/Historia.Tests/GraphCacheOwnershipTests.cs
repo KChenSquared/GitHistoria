@@ -246,12 +246,12 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
         var bRan = false;
         writer.EnqueueInactiveTab(ctxB, ct => { bRan = true; return Task.CompletedTask; });
 
+        // B never started, so it is dropped at once rather than waiting behind A in the drain loop.
         var cancelTask = writer.CancelInactiveTabAsync(ctxB);
-        Assert.False(cancelTask.IsCompleted); // B is still behind A in the drain loop
+        Assert.True(cancelTask.IsCompleted);
 
-        blockA.SetResult(); // let A finish so the loop can reach (and skip) B
-
-        await cancelTask.WaitAsync(TimeSpan.FromSeconds(5));
+        blockA.SetResult(); // let A finish; the loop must not reach B
+        await Task.Delay(150);
         Assert.False(bRan, "a job cancelled while still queued must never actually run");
     }
 
