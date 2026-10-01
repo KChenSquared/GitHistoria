@@ -283,9 +283,9 @@ public sealed class TerminalControl : Control
         _session.ReadBuffer(view =>
         {
             var total = view.TotalLines;
-            // The emulator's own viewport top (YDisp) is the authoritative bottom-anchor:
-            // XTerm.NET pre-grows the buffer toward its scrollback capacity, so `total - rows`
-            // points at blank pre-allocated lines far below the content.
+            // The emulator's own viewport top (YDisp) is the authoritative bottom-anchor: it
+            // follows the emulator through scrolls and reflows instead of being re-derived from
+            // the line count.
             var bottomTop = Math.Clamp(view.ViewportTop, 0, Math.Max(0, total - 1));
             var top = Math.Clamp(bottomTop - (int)Math.Round(_scrollOffsetLines), 0, bottomTop);
             (metMax, metValue) = (bottomTop, top);

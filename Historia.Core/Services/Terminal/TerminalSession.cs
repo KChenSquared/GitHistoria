@@ -14,8 +14,8 @@ public enum TerminalSessionState { Starting, Running, Exited, Failed }
 /// <c>XTerm.Terminal.Write</c> takes a <c>string</c>, so
 /// this class owns one stateful <see cref="Decoder"/> that carries partial-UTF-8 state across
 /// pty chunks — so a character split across two chunks is never mangled.
-/// XTerm.NET 1.2.0 exposes no damage event, so a row-hash diff here synthesises
-/// the dirty-row set for the control.
+/// XTerm.NET has no damage event (<c>BufferChanged</c> fires only when the active buffer
+/// switches), so a row-hash diff here synthesises the dirty-row set for the control.
 /// </para>
 /// </summary>
 public sealed class TerminalSession : IDisposable
@@ -90,6 +90,15 @@ public sealed class TerminalSession : IDisposable
             Rows = rows,
             Scrollback = Math.Max(0, scrollbackLines),
             TermName = "xterm-256color",
+            // Historia neither renders nor handles these protocols, so the emulator must not
+            // advertise or answer them.
+            KittyKeyboardEnabled = false,
+            KittyGraphicsEnabled = false,
+            ITerm2ImagesEnabled = false,
+            KittyNotificationsEnabled = false,
+            PointerShapesEnabled = false,
+            ClipboardWriteEnabled = false,
+            ClipboardReadEnabled = false,
         });
 
         _coalesceTimer = _dispatcher.CreateTimer(TimeSpan.FromMilliseconds(16), OnCoalesceTick);

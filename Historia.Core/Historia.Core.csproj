@@ -19,7 +19,7 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
     <!-- Headless VT/ANSI emulator + pseudoterminal. Both are framework-free process /
          parsing libraries, so Core purity holds. -->
-    <PackageReference Include="XTerm.NET" Version="1.2.0" />
+    <PackageReference Include="XTerm.NET" Version="2.0.2" />
     <PackageReference Include="Porta.Pty" Version="2.2.2" />
   </ItemGroup>
 
