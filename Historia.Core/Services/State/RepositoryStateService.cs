@@ -332,9 +332,13 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, tags, remotes)));
     }
 
-    public void SeedFromCache()
+    public void SeedFromCache() => SeedFrom(_repoCache?.TryLoad(_context.RepositoryPath));
+
+    /// <summary>Seeds from a snapshot the caller already read (<see cref="RepositoryContext.OpenAsync"/>
+    /// reads it alongside discovery). No event: nothing has bound to this state yet.</summary>
+    internal void SeedFrom(RepoStateSnapshot? snap)
     {
-        if (_repoCache?.TryLoad(_context.RepositoryPath) is not { } snap)
+        if (snap is null)
             return;
         lock (_sync)
         {

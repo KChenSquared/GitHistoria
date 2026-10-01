@@ -83,6 +83,12 @@ public sealed class RepositoryContext : IAsyncDisposable
     public GitProfile? ActiveProfile => State.ActiveProfile;
 
     private RepositoryContext(DiscoveredRepository discovered, IServiceProvider services)
+        : this(discovered, services, seed: null, seedFromCache: true)
+    {
+    }
+
+    private RepositoryContext(DiscoveredRepository discovered, IServiceProvider services,
+        RepoStateSnapshot? seed, bool seedFromCache)
     {
         Lifetime = _lifetimeCts.Token;
         IsBare = discovered.IsBare;
@@ -104,11 +110,16 @@ public sealed class RepositoryContext : IAsyncDisposable
                 services.GetRequiredService<Historia.Services.Profiles.ICredentialVaultService>()),
             RepositoryPath);
 
-        State = new RepositoryStateService(
+        var state = new RepositoryStateService(
             this,
             services.GetService<IUiDispatcher>(),
             services.GetService<IRepoStateCache>());
-        State.SeedFromCache(); // paint the sidebar from last-known state before the first refresh
+        State = state;
+        // Paint the sidebar from last-known state before the first refresh.
+        if (seedFromCache)
+            state.SeedFromCache();
+        else
+            state.SeedFrom(seed);
 
         Workspace = services.GetService<IWorkspaceService>();
 
@@ -119,8 +130,8 @@ public sealed class RepositoryContext : IAsyncDisposable
     }
 
     /// <summary>
-    /// Opens a repository discovered from <paramref name="path"/>. Runs off the UI thread
-    /// (discovery is CLI I/O). Throws <see cref="HistoriaGitException"/> with
+    /// Opens a repository discovered from <paramref name="path"/>, blocking the calling thread on
+    /// discovery — never from the UI thread; <see cref="OpenAsync"/> is the app's path. Throws <see cref="HistoriaGitException"/> with
     /// <see cref="GitErrorKind.NotAGitRepository"/> when no repository is found.
     /// </summary>
     public static RepositoryContext Open(string path, IServiceProvider services)
@@ -138,6 +149,64 @@ public sealed class RepositoryContext : IAsyncDisposable
         {
             _log.Fail(ex);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Opens a repository discovered from <paramref name="path"/> without blocking a thread on git,
+    /// reading the cached sidebar state alongside discovery rather than after it. Pass
+    /// <paramref name="discovered"/> when the caller already discovered the repository. Throws
+    /// <see cref="HistoriaGitException"/> with <see cref="GitErrorKind.NotAGitRepository"/> when no
+    /// repository is found.
+    /// </summary>
+    public static async Task<RepositoryContext> OpenAsync(
+        string path, IServiceProvider services, CancellationToken ct = default, DiscoveredRepository? discovered = null)
+    {
+        using var _ = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.Open({Path.GetFileName(path)})");
+        using var _log = AppLog.Operation("repo", $"Open({Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))})");
+
+        // The cache is keyed on the repository root, which the path of a restored or recent tab
+        // already is: start reading it now, and only read again if discovery lands elsewhere.
+        var cache = services.GetService<IRepoStateCache>();
+        var speculativeSeed = cache is null ? null : Task.Run(() => cache.TryLoad(path), CancellationToken.None);
+
+        discovered ??= await RepositoryDiscovery.DiscoverAsync(path, services.GetRequiredService<IGitCliService>(), ct)
+            .ConfigureAwait(false);
+
+        RepoStateSnapshot? seed = null;
+        if (cache is not null)
+        {
+            var root = discovered.RepositoryPath;
+            seed = SameDirectory(path, root)
+                ? await speculativeSeed!.ConfigureAwait(false)
+                : await Task.Run(() => cache.TryLoad(root), CancellationToken.None).ConfigureAwait(false);
+        }
+
+        try
+        {
+            var ctx = new RepositoryContext(discovered, services, seed, seedFromCache: false);
+            _log.Outcome(ctx.DisplayName);
+            return ctx;
+        }
+        catch (Exception ex)
+        {
+            _log.Fail(ex);
+            throw;
+        }
+    }
+
+    private static bool SameDirectory(string a, string b)
+    {
+        try
+        {
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
         }
     }
 

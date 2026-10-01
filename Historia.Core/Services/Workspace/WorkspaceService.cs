@@ -145,7 +145,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             return existing;
         }
 
-        return await OpenCoreAsync(path, focus: true, initialize: true, ct).ConfigureAwait(false);
+        return await OpenCoreAsync(path, focus: true, initialize: true, ct, discovered: discovered).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -158,9 +158,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     /// </summary>
     private async Task<RepositoryContext> OpenCoreAsync(
         string path, bool focus, bool initialize, CancellationToken ct,
-        Task<RepositoryContext>? prefetched = null, bool recordRecent = true)
+        Task<RepositoryContext>? prefetched = null, bool recordRecent = true, DiscoveredRepository? discovered = null)
     {
-        var context = await (prefetched ?? Task.Run(() => RepositoryContext.Open(path, _services), ct))
+        var context = await (prefetched ?? RepositoryContext.OpenAsync(path, _services, ct, discovered))
             .ConfigureAwait(false);
         context.Workspace = this;
 
@@ -441,7 +441,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             throw HistoriaGitException.FromCli(result, "Clone");
         }
 
-        var context = await Task.Run(() => RepositoryContext.Open(targetDirectory, _services)).ConfigureAwait(false);
+        var context = await RepositoryContext.OpenAsync(targetDirectory, _services).ConfigureAwait(false);
         context.Workspace = this;
         if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
             is Historia.Services.Graph.IGraphLayoutService graphSvc)
@@ -547,7 +547,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             return existing;
         }
 
-        var context = await Task.Run(() => RepositoryContext.Open(submodulePath, _services), ct).ConfigureAwait(false);
+        var context = await RepositoryContext.OpenAsync(submodulePath, _services, ct, discovered).ConfigureAwait(false);
         context.Workspace = this;
         context.LinkOwner = root;
 
@@ -765,7 +765,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         foreach (var p in paths)
         {
             if (System.IO.Directory.Exists(p) && !prefetches.ContainsKey(p))
-                prefetches[p] = Task.Run(() => RepositoryContext.Open(p, _services), ct);
+                // Task.Run only so each open's synchronous start (launching git) runs in parallel
+                // with the others; no thread waits on git.
+                prefetches[p] = Task.Run(() => RepositoryContext.OpenAsync(p, _services, ct), ct);
         }
 
         try
