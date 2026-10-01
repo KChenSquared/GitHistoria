@@ -46,8 +46,8 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     {
         _context = context;
         _gateway = gateway ?? context.Gateway;
-        _refsCoalescer = new(() => _context.Lifetime.IsCancellationRequested);
-        _statusCoalescer = new(() => _context.Lifetime.IsCancellationRequested);
+        _refsCoalescer = new(() => _context.Lifetime);
+        _statusCoalescer = new(() => _context.Lifetime);
         _ui = ui;
         _repoCache = repoCache;
         _repository = new RepositoryInfo
@@ -197,11 +197,11 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public Task RefreshStatusAsync(CancellationToken ct = default)
         => _statusCoalescer.RunAsync(DoRefreshStatusAsync, ct);
 
-    private async Task DoRefreshStatusAsync(Action markDataRead)
+    private async Task DoRefreshStatusAsync(Action markDataRead, CancellationToken ct)
     {
         using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshStatusAsync({_context.DisplayName})");
-        var status = await _gateway.GetStatusAsync(_context.Lifetime).ConfigureAwait(false);
-        var info = await _gateway.GetRepositoryInfoAsync(_context.Lifetime).ConfigureAwait(false);
+        var status = await _gateway.GetStatusAsync(ct).ConfigureAwait(false);
+        var info = await _gateway.GetRepositoryInfoAsync(ct).ConfigureAwait(false);
         markDataRead();
         var operation = DetectOperationState(_context.GitDirectory);
 
@@ -289,11 +289,11 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public Task RefreshRefsAsync(CancellationToken ct = default)
         => _refsCoalescer.RunAsync(DoRefreshRefsAsync, ct);
 
-    private async Task DoRefreshRefsAsync(Action markDataRead)
+    private async Task DoRefreshRefsAsync(Action markDataRead, CancellationToken ct)
     {
         using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshRefsAsync({_context.DisplayName})");
-        var branches = await _gateway.GetBranchesAsync(_context.Lifetime).ConfigureAwait(false);
-        var remotes = await _gateway.GetRemotesAsync(_context.Lifetime).ConfigureAwait(false);
+        var branches = await _gateway.GetBranchesAsync(ct).ConfigureAwait(false);
+        var remotes = await _gateway.GetRemotesAsync(ct).ConfigureAwait(false);
 
         markDataRead();
 
@@ -314,7 +314,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         if (branchesOrRemotesChanged)
             Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, existingTags, remotes)));
 
-        var tags = await _gateway.GetTagsAsync(_context.Lifetime).ConfigureAwait(false);
+        var tags = await _gateway.GetTagsAsync(ct).ConfigureAwait(false);
 
         bool tagsChanged;
         lock (_sync)
@@ -408,127 +408,144 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         return ValueTask.CompletedTask;
     }
 
-    private sealed class SingleFlightCoalescer
+    /// <summary>
+    /// One refresh at a time per kind. A caller arriving before the running refresh has read its
+    /// data joins it; one arriving after queues a single trailing run. A run's work gets a token
+    /// that cancels when the tab closes or when every caller waiting on that run has given up
+    /// (their tokens cancelled) — a tab the user switched away from stops paying for a refresh
+    /// nobody is waiting for. A caller with a non-cancellable token keeps its run alive.
+    /// </summary>
+    private sealed class SingleFlightCoalescer(Func<CancellationToken> lifetime)
     {
-        private readonly Func<bool>? _isCancellationRequested;
         private readonly object _gate = new();
-        private Task? _inFlightPump;
-        private TaskCompletionSource _currentTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private TaskCompletionSource? _trailingTcs;
-        private bool _hasReadData;
+        private Run? _current;  // running
+        private Run? _trailing; // queued behind _current
 
-        public SingleFlightCoalescer(Func<bool>? isCancellationRequested = null)
+        private sealed class Run
         {
-            _isCancellationRequested = isCancellationRequested;
+            public readonly TaskCompletionSource Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public readonly CancellationTokenSource Abandoned = new();
+            public int Waiters;      // guarded by the coalescer's _gate
+            public bool HasReadData; // guarded by the coalescer's _gate
         }
 
-        public Task RunAsync(Func<Action, Task> work, CancellationToken ct)
+        public Task RunAsync(Func<Action, CancellationToken, Task> work, CancellationToken ct)
         {
-            Task taskToAwait;
+            // A caller that already gave up never starts (or joins) work.
+            if (ct.IsCancellationRequested)
+                return Task.FromCanceled(ct);
+
+            Run run;
+            var start = false;
             lock (_gate)
             {
-                if (_inFlightPump == null || _currentTcs.Task.IsCompleted)
+                if (_current is null)
                 {
-                    // _currentTcs.Task.IsCompleted can be true even with _inFlightPump non-null:
-                    // if `work` faults or completes synchronously, RunPumpAsync runs to
-                    // completion (via lock reentrancy) inside the RunPumpAsync(work) call below,
-                    // finishing and nulling _inFlightPump before that call returns — only for the
-                    // assignment to then overwrite it with the now-already-completed task.
-                    if (_inFlightPump != null && _trailingTcs != null)
-                    {
-                        taskToAwait = _trailingTcs.Task;
-                    }
-                    else
-                    {
-                        _currentTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                        _trailingTcs = null;
-                        _hasReadData = false;
-                        taskToAwait = _currentTcs.Task;
-                        _inFlightPump = RunPumpAsync(work);
-                    }
+                    _current = run = new Run();
+                    start = true;
                 }
-                else if (!_hasReadData)
+                else if (!_current.HasReadData && !_current.Abandoned.IsCancellationRequested)
                 {
-                    // Caller arriving before data is read joins the in-flight run.
-                    taskToAwait = _currentTcs.Task;
+                    run = _current;
                 }
                 else
                 {
-                    // Caller arriving after data is read queues a trailing run.
-                    _trailingTcs ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    taskToAwait = _trailingTcs.Task;
+                    if (_trailing is { Abandoned.IsCancellationRequested: true })
+                        _trailing = null; // everyone waiting on it left; it will never start
+                    run = _trailing ??= new Run();
                 }
+                run.Waiters++;
             }
 
-            return TaskGate.WaitWithCancellationAsync(taskToAwait, ct);
+            if (start)
+                _ = PumpAsync(work);
+            return WaitAsync(run, ct);
         }
 
-        private void MarkDataRead()
-        {
-            lock (_gate)
-            {
-                _hasReadData = true;
-            }
-        }
-
-        private async Task RunPumpAsync(Func<Action, Task> work)
+        private async Task WaitAsync(Run run, CancellationToken ct)
         {
             try
             {
-                while (true)
-                {
-                    TaskCompletionSource current;
-                    lock (_gate)
-                    {
-                        current = _currentTcs;
-                    }
-
-                    Exception? fault = null;
-                    bool canceled = false;
-                    try
-                    {
-                        await work(MarkDataRead).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        canceled = true;
-                    }
-                    catch (ObjectDisposedException) when (_isCancellationRequested?.Invoke() == true)
-                    {
-                        canceled = true;
-                    }
-                    catch (Exception ex)
-                    {
-                        fault = ex;
-                    }
-
-                    lock (_gate)
-                    {
-                        if (canceled)
-                            current.TrySetCanceled();
-                        else if (fault != null)
-                            current.TrySetException(fault);
-                        else
-                            current.TrySetResult();
-
-                        if (_trailingTcs is null)
-                        {
-                            _inFlightPump = null;
-                            return;
-                        }
-
-                        _currentTcs = _trailingTcs;
-                        _trailingTcs = null;
-                        _hasReadData = false;
-                    }
-                }
+                await TaskGate.WaitWithCancellationAsync(run.Done.Task, ct).ConfigureAwait(false);
             }
             finally
             {
+                bool abandon;
                 lock (_gate)
                 {
-                    _inFlightPump = null;
+                    run.Waiters--;
+                    abandon = run.Waiters == 0 && !run.Done.Task.IsCompleted;
                 }
+                // Outside the lock: cancelling runs the work's cancellation callbacks.
+                if (abandon)
+                {
+                    try { run.Abandoned.Cancel(); }
+                    catch (ObjectDisposedException) { }
+                }
+            }
+        }
+
+        private async Task PumpAsync(Func<Action, CancellationToken, Task> work)
+        {
+            while (true)
+            {
+                Run run;
+                lock (_gate)
+                    run = _current!;
+
+                var (canceled, fault) = await ExecuteAsync(run, work).ConfigureAwait(false);
+
+                lock (_gate)
+                {
+                    if (canceled)
+                        run.Done.TrySetCanceled();
+                    else if (fault is not null)
+                        run.Done.TrySetException(fault);
+                    else
+                        run.Done.TrySetResult();
+
+                    _current = _trailing;
+                    _trailing = null;
+                    if (_current is null)
+                        return;
+                }
+            }
+        }
+
+        private async Task<(bool Canceled, Exception? Fault)> ExecuteAsync(Run run, Func<Action, CancellationToken, Task> work)
+        {
+            CancellationTokenSource? linked = null;
+            try
+            {
+                var tabLifetime = lifetime();
+                if (run.Abandoned.IsCancellationRequested || tabLifetime.IsCancellationRequested)
+                    return (true, null);
+                linked = CancellationTokenSource.CreateLinkedTokenSource(tabLifetime, run.Abandoned.Token);
+                await work(() => { lock (_gate) run.HasReadData = true; }, linked.Token).ConfigureAwait(false);
+                return (false, null);
+            }
+            catch (OperationCanceledException)
+            {
+                return (true, null);
+            }
+            catch (ObjectDisposedException) when (lifetime().IsCancellationRequested)
+            {
+                // The tab's context was disposed under the run.
+                return (true, null);
+            }
+            catch (Exception) when (linked?.IsCancellationRequested == true)
+            {
+                // A git call killed by the cancellation can surface as a failure; it is still a
+                // cancellation, not a fault to report.
+                return (true, null);
+            }
+            catch (Exception ex)
+            {
+                return (false, ex);
+            }
+            finally
+            {
+                linked?.Dispose();
             }
         }
     }

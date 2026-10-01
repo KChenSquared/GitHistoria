@@ -237,6 +237,40 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
     }
 
     [Fact(Timeout = 30_000)]
+    public async Task When_every_caller_gives_up_the_running_probe_is_cancelled()
+    {
+        var cli = new BlockingGitCliService(_host.Provider.GetRequiredService<IGitCliService>(), IsRootProbe);
+        var svc = new RepoIdentityService(cli);
+        await using var ctx = _host.Open(_repo.Path);
+
+        using var giveUp = new CancellationTokenSource();
+        var only = svc.ResolveAsync(ctx, giveUp.Token);
+        await cli.Entered.Task;
+
+        giveUp.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => only);
+        await cli.CancelObserved.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Null(ctx.IdentityKey);
+
+        // The next caller starts a fresh resolve.
+        Assert.Equal(RepoIdentityKey.FromRootCommit(ExpectedSmallestRoot()), await svc.ResolveAsync(ctx));
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task A_caller_that_already_gave_up_starts_nothing()
+    {
+        var cli = new BlockingGitCliService(_host.Provider.GetRequiredService<IGitCliService>(), _ => false);
+        var svc = new RepoIdentityService(cli);
+        await using var ctx = _host.Open(_repo.Path);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => svc.ResolveAsync(ctx, new CancellationToken(canceled: true)));
+
+        await Task.Delay(200);
+        Assert.Empty(cli.Requests);
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task A_failed_resolve_is_retried_by_the_next_call()
     {
         var failing = true;

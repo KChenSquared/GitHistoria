@@ -53,6 +53,11 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // interrupt contract below, will never come on its own.
     private TaskCompletionSource _foregroundChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    // Cancelled (and replaced) whenever focus changes — the focused tab's own token for work that
+    // only matters while the user is looking at it. Never disposed: tokens taken from it may still
+    // be linked after it is cancelled.
+    private CancellationTokenSource _focusCts = new();
+
     private AtomicFileWriter? _sessionWriter;
     private AtomicFileWriter SessionWriter => _sessionWriter ??= new AtomicFileWriter(AppPaths.SessionFile);
     private long _sessionPersistSequence;
@@ -242,6 +247,11 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         var ceiling = foreground ? GraphFirstPaintCeiling : GraphPriorityTimeout;
         await Task.WhenAny(context.FirstGraphPaint, Task.Delay(ceiling, attemptToken)).ConfigureAwait(false);
 
+        // A focus switch cancels the attempt, which also ends the wait above. Never start identity
+        // or refresh work for a tab the user already left — the background queue retries it.
+        if (attemptToken.IsCancellationRequested)
+            return context.Lifetime.IsCancellationRequested ? InitOutcome.Closed : InitOutcome.Interrupted;
+
         // Identity resolution and the first refs/status refresh don't depend on each
         // other (refresh never reads the active profile identity sets) — run them concurrently.
         // Foreground tabs refresh refs here to unlock FirstFullLoad immediately, then kick
@@ -274,15 +284,17 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         return InitOutcome.Completed;
     }
 
-    private static async Task RefreshStatusAfterInitAsync(RepositoryContext context)
+    /// <summary>The tab's status right after its first load — immediately while it keeps focus,
+    /// otherwise from the background queue (see <see cref="RequestBackgroundRefreshAsync"/>).</summary>
+    private async Task RefreshStatusAfterInitAsync(RepositoryContext context)
     {
         try
         {
-            await context.State.RefreshStatusAsync(context.Lifetime).ConfigureAwait(false);
+            await RequestBackgroundRefreshAsync(context, full: false, context.Lifetime).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            // Tab closed or cancelled.
+            // Tab closed.
         }
         catch (Exception ex)
         {
@@ -887,10 +899,13 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         Task? taskToAwait = null;
         bool startPump = false;
         bool isFocused;
+        var focus = CancellationToken.None;
         lock (_sync)
         {
             // The focused tab must keep refreshing immediately; this queue is for background tabs only.
             isFocused = ReferenceEquals(_focused, context);
+            if (isFocused)
+                focus = _focusCts.Token;
             if (!isFocused && !_open.Contains(context))
             {
                 taskToAwait = Task.CompletedTask;
@@ -930,9 +945,33 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         // run synchronously up to their first await, and _sync must be held only across queue
         // mutation.
         if (isFocused)
-            return full ? context.State.RefreshAllAsync(ct) : context.State.RefreshStatusAsync(ct);
+            return RefreshFocusedAsync(context, full, focus, ct);
 
         return TaskGate.WaitWithCancellationAsync(taskToAwait!, ct);
+    }
+
+    /// <summary>A focused tab's refresh runs at once, but only while the tab keeps focus: a cold
+    /// status on a huge working tree can take tens of seconds and must not compete with the tab
+    /// the user moved on to. When focus leaves mid-refresh, the refresh is abandoned and finished
+    /// from the background queue instead — the caller still waits for it.</summary>
+    private async Task RefreshFocusedAsync(RepositoryContext context, bool full, CancellationToken focus, CancellationToken ct)
+    {
+        using (var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, focus))
+        {
+            try
+            {
+                await (full ? context.State.RefreshAllAsync(linked.Token) : context.State.RefreshStatusAsync(linked.Token))
+                    .ConfigureAwait(false);
+                return;
+            }
+            catch (OperationCanceledException) when (focus.IsCancellationRequested
+                && !ct.IsCancellationRequested && !context.Lifetime.IsCancellationRequested)
+            {
+                // Focus moved on — requeued below.
+            }
+        }
+
+        await RequestBackgroundRefreshAsync(context, full, ct).ConfigureAwait(false);
     }
 
     /// <summary>Initialises and refreshes the queued background tabs one at a time in app-band tab order,
@@ -1041,6 +1080,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         RepositoryContext? old;
         bool needsInit;
         CancellationTokenSource? toCancel = null;
+        CancellationTokenSource? leftFocus;
         bool startPump = false;
         lock (_sync)
         {
@@ -1048,6 +1088,8 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                 return;
             old = _focused;
             _focused = context;
+            leftFocus = _focusCts;
+            _focusCts = new CancellationTokenSource();
 
             // Interrupt the outgoing tab's in-flight identity/refresh work, if any, so
             // the tab the user is now looking at doesn't queue behind it. A tab whose FirstFullLoad
@@ -1098,6 +1140,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
         // Never run cancellation callbacks while holding _sync.
         toCancel?.Cancel();
+        leftFocus.Cancel();
         if (startPump)
             _ = Task.Run(DrainBackgroundInitQueueAsync);
 

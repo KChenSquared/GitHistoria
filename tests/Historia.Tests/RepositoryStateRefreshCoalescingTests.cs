@@ -160,6 +160,110 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
     }
 
     [Fact(Timeout = 10000)]
+    public async Task When_every_waiter_gives_up_the_refs_refresh_is_cancelled()
+    {
+        var gateway = new FakeGitGateway();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.OnGetBranches = async ct =>
+        {
+            entered.TrySetResult();
+            try { await Task.Delay(Timeout.Infinite, ct); }
+            catch (OperationCanceledException) { cancelled.TrySetResult(); throw; }
+            return Array.Empty<BranchInfo>();
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        using var cts = new CancellationTokenSource();
+        var only = state.RefreshRefsAsync(cts.Token);
+        await entered.Task;
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => only);
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The next refresh runs afresh rather than joining the cancelled one.
+        gateway.OnGetBranches = _ => Task.FromResult<IReadOnlyList<BranchInfo>>([MakeBranch("main")]);
+        await state.RefreshRefsAsync();
+        Assert.Single(state.Branches);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task When_every_waiter_gives_up_the_status_refresh_is_cancelled()
+    {
+        var gateway = new FakeGitGateway();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.OnGetStatus = async ct =>
+        {
+            entered.TrySetResult();
+            try { await Task.Delay(Timeout.Infinite, ct); }
+            catch (OperationCanceledException) { cancelled.TrySetResult(); throw; }
+            return Historia.Models.RepositoryStatus.Empty;
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        using var cts = new CancellationTokenSource();
+        var only = state.RefreshStatusAsync(cts.Token);
+        await entered.Task;
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => only);
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_waiter_without_a_token_keeps_the_refresh_running_when_the_others_leave()
+    {
+        var gateway = new FakeGitGateway();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = false;
+        gateway.OnGetBranches = async ct =>
+        {
+            entered.TrySetResult();
+            using (ct.Register(() => cancelled = true))
+                await proceed.Task;
+            return [MakeBranch("main")];
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        using var cts = new CancellationTokenSource();
+        var leaver = state.RefreshRefsAsync(cts.Token);
+        await entered.Task;
+        var stayer = state.RefreshRefsAsync();
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => leaver);
+
+        proceed.TrySetResult();
+        await stayer;
+        Assert.False(cancelled);
+        Assert.Single(state.Branches);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_caller_that_already_gave_up_starts_no_refresh()
+    {
+        var gateway = new FakeGitGateway();
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => state.RefreshRefsAsync(new CancellationToken(canceled: true)));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => state.RefreshStatusAsync(new CancellationToken(canceled: true)));
+
+        Assert.Equal(0, gateway.BranchesCalls);
+        Assert.Equal(0, gateway.StatusCalls);
+    }
+
+    [Fact(Timeout = 10000)]
     public async Task Branches_are_published_before_tags_are_read()
     {
         var gateway = new FakeGitGateway();
