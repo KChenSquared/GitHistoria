@@ -257,6 +257,30 @@ public sealed class RepoIdentityServiceTests : IAsyncDisposable
     }
 
     [Fact(Timeout = 30_000)]
+    public async Task A_resolve_abandoned_mid_write_finishes_before_the_next_one_starts()
+    {
+        using var empty = TestRepositoryBuilder.Create();
+        var cli = new BlockingGitCliService(_host.Provider.GetRequiredService<IGitCliService>(), IsRepoIdWrite);
+        var svc = new RepoIdentityService(cli);
+        await using var ctx = _host.Open(empty.Path);
+
+        using var giveUp = new CancellationTokenSource();
+        var abandoned = svc.ResolveAsync(ctx, giveUp.Token);
+        await cli.Entered.Task; // the id write has started, and a write is never cancelled
+        giveUp.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => abandoned);
+
+        var next = svc.ResolveAsync(ctx);
+        await Task.Delay(300);
+        cli.Release.SetResult();
+        var key = await next;
+
+        Assert.Single(cli.Requests, IsRepoIdWrite);
+        Assert.Equal(key, ctx.IdentityKey);
+        Assert.Equal(key.Value, empty.Git("config", "--local", "--get", "Historia.repoId").Trim());
+    }
+
+    [Fact(Timeout = 30_000)]
     public async Task A_caller_that_already_gave_up_starts_nothing()
     {
         var cli = new BlockingGitCliService(_host.Provider.GetRequiredService<IGitCliService>(), _ => false);

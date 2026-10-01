@@ -32,11 +32,19 @@ public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityServi
         {
             if (!_inFlight.TryGetValue(context, out shared!) || shared.Cts.IsCancellationRequested)
             {
+                // An abandoned resolve may still be finishing its id write, which is never
+                // cancelled: start only once it has ended, so a rootless repo gets one id.
+                var previous = shared?.Task;
                 if (shared is not null)
                     _inFlight.Remove(context);
                 shared = new SharedResolve(LinkedTo(context.Lifetime));
                 var token = shared.Cts.Token;
-                shared.Task = Task.Run(() => ResolveCoreAsync(context, token));
+                shared.Task = Task.Run(async () =>
+                {
+                    if (previous is not null)
+                        await Task.WhenAny(previous).ConfigureAwait(false);
+                    return await ResolveCoreAsync(context, token).ConfigureAwait(false);
+                });
                 _inFlight.Add(context, shared);
                 var started = shared;
                 _ = started.Task.ContinueWith(t =>
@@ -65,9 +73,8 @@ public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityServi
             lock (_inFlightLock)
             {
                 shared.Waiters--;
+                // Left in _inFlight once cancelled: the next caller replaces it, after it ends.
                 abandon = shared.Waiters == 0 && !shared.Task.IsCompleted;
-                if (abandon && _inFlight.TryGetValue(context, out var current) && ReferenceEquals(current, shared))
-                    _inFlight.Remove(context);
             }
             // Outside the lock: cancelling runs the git calls' cancellation callbacks.
             if (abandon)
