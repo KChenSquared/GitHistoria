@@ -1351,7 +1351,13 @@ public sealed partial class CommitGraphControl : Control
                     }
                     catch (Exception ex)
                     {
-                        req.Completion?.TrySetException(ex);
+                        AppLog.Write(AppLogLevel.Warn, "graph", $"Background graph extend failed for {req.Context.DisplayName}", ex);
+                        // The waiter may already have given up (a tab switch cancels its wait), and
+                        // a faulted task nobody reads is rethrown by the finalizer as an unobserved
+                        // exception — an "unexpected error" for the user. Reading Exception marks it
+                        // observed; a waiter still waiting gets the fault as before.
+                        if (req.Completion is { } completion && completion.TrySetException(ex))
+                            _ = completion.Task.Exception;
                     }
 
                     // Yield briefly after background batch to keep system and UI fully responsive
