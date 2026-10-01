@@ -371,8 +371,9 @@ internal sealed class GraphConcurrencyHarness : IAsyncDisposable
     }
 
     /// <summary>An exception a racing tab switch or ref change legitimately causes in a call that
-    /// was already running when its cache was torn down.</summary>
-    private static bool IsTeardownRace(Exception ex) => ex is ObjectDisposedException or OperationCanceledException;
+    /// was already running when its cache was torn down. Not <see cref="ObjectDisposedException"/>:
+    /// a call must not touch what teardown disposed.</summary>
+    private static bool IsTeardownRace(Exception ex) => ex is OperationCanceledException;
 
     private async Task ForegroundAsync(Random rng)
     {
@@ -644,6 +645,9 @@ internal sealed class GraphConcurrencyHarness : IAsyncDisposable
     {
         var master = new Random(_seed);
         var rngs = Enumerable.Range(0, 6).Select(_ => new Random(master.Next())).ToArray();
+        // Finalize earlier tests' faulted tasks now, so I5 sees only this run's.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
         void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs e) { _unobserved.Enqueue(e.Exception); e.SetObserved(); }
         TaskScheduler.UnobservedTaskException += OnUnobserved;
         var previousBatch = GraphLayoutService.TestSpillBatchRowsOverride;
@@ -683,7 +687,7 @@ internal sealed class GraphConcurrencyHarness : IAsyncDisposable
         GC.WaitForPendingFinalizers();
         GC.Collect();
         foreach (var ex in _unobserved)
-            _checker.Violation("I5", $"an unobserved task exception: {ex.GetBaseException().GetType().Name}: {ex.GetBaseException().Message}");
+            _checker.Violation("I5", $"an unobserved task exception: {Describe(ex.GetBaseException())}");
 
         _output?.WriteLine(
             $"seed={_seed} activity={_activity.TotalMilliseconds:0} ms actions foreground/headless/refs/tabs/readers/foreign="

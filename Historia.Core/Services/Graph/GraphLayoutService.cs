@@ -88,6 +88,16 @@ public sealed class GraphLayoutService : IGraphLayoutService
         set => _testSpliceCommitted.Value = value;
     }
 
+    /// <summary>Test seam: invoked as a compute or extend reaches
+    /// <see cref="MaybeStartBackgroundSpill"/>, so a test can tear the cache down at exactly that
+    /// point. Null outside tests.</summary>
+    private static readonly AsyncLocal<Action?> _testBeforeBackgroundSpillStart = new();
+    internal static Action? TestBeforeBackgroundSpillStart
+    {
+        get => _testBeforeBackgroundSpillStart.Value;
+        set => _testBeforeBackgroundSpillStart.Value = value;
+    }
+
     /// <summary>Test seam: how many full ref scans (fingerprint + tip resolution) have run per
     /// repository path. A scan costs seconds on a repo with tens of thousands of refs, so tests
     /// assert on the delta across a call to prove a satisfied or resumed walk step skipped it.
@@ -270,6 +280,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         public readonly object SpillSync = new();
         public readonly CancellationTokenSource Cts = new();
+
+        /// <summary><see cref="Cts"/>'s token, read once here. Teardown (Forget, a forced reset,
+        /// Hibernate) cancels and disposes <see cref="Cts"/> without waiting for a compute or extend
+        /// that is still running on this cache, and reading <c>Cts.Token</c> after that throws.</summary>
+        public CancellationToken Cancellation { get; }
+
+        public RepoCache() => Cancellation = Cts.Token;
 
         /// <summary>The background spill's own Task, so
         /// <see cref="IGraphLayoutService.Hibernate"/> can cancel <see cref="Cts"/> and then await
@@ -832,14 +849,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// </summary>
     private void MaybeStartBackgroundSpill(RepositoryContext context, RepoCache cache, GraphQuery query)
     {
+        TestBeforeBackgroundSpillStart?.Invoke();
         var batchRows = TestSpillBatchRowsOverride > 0 ? TestSpillBatchRowsOverride : DefaultSpillBatchRows;
+        var ct = cache.Cancellation;
 
         lock (cache.SpillSync)
         {
             // Note: cache.Exhausted (the walk finished) is NOT a reason to skip — that is exactly
-            // when the remaining rows are already walked and just need spilling.
+            // when the remaining rows are already walked and just need spilling. A cancelled cache
+            // was torn down while this compute or extend ran; nothing should spill into it.
             if (!SpillEnabled(query) || cache.Fingerprint == 0 || cache.BackgroundSpillRunning
-                || cache.MetaComplete || cache.WalkHalted)
+                || cache.MetaComplete || cache.WalkHalted || ct.IsCancellationRequested)
                 return;
             var have = TotalWalked(cache);
             if (cache.SpilledRows >= have && cache.Exhausted)
@@ -847,7 +867,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
             cache.BackgroundSpillRunning = true;
         }
 
-        var ct = cache.Cts.Token;
         var spillTask = Task.Run(async () =>
         {
             try

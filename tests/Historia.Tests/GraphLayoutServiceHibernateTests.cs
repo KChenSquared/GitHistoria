@@ -85,4 +85,24 @@ public sealed class GraphLayoutServiceHibernateTests : IAsyncDisposable
         for (var i = 0; i < beforeIds.Count; i++)
             Assert.Equal(beforeIds[i], after.Layout.Commits[i].Id);
     }
+
+    [Fact(Timeout = 30000)]
+    public async Task A_compute_whose_cache_is_torn_down_before_its_spill_starts_still_returns()
+    {
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator);
+        await using var ctx = _host.Open(_repo.Path);
+        ctx.MarkFirstGraphPaintDone();
+        ctx.MarkFirstFullLoadDone();
+
+        // A tab switch or ref change tears the cache down (cancelling and disposing its token
+        // source) while a compute that still holds it is about to start the background spill.
+        GraphLayoutService.TestBeforeBackgroundSpillStart = () => svc.Forget(ctx);
+        try
+        {
+            var result = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs });
+            Assert.Equal(CommitCount, result.Layout.RowCount);
+        }
+        finally { GraphLayoutService.TestBeforeBackgroundSpillStart = null; }
+    }
 }
