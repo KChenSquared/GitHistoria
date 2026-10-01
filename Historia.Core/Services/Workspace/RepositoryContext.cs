@@ -72,6 +72,10 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// file changes — the commit graph and the tag list read refs here.</summary>
     public RefSnapshotProvider RefSnapshots { get; }
 
+    /// <summary>Read-only access to this repo's commit-graph files, in the common directory's
+    /// object store so linked worktrees share it.</summary>
+    public CommitGraphIndex CommitGraph { get; }
+
     /// <summary>This repo's remotes, read via Git CLI and cached until the common config
     /// file timestamp changes.</summary>
     public RepoConfigReader RemoteConfig { get; }
@@ -109,6 +113,8 @@ public sealed class RepositoryContext : IAsyncDisposable
         GitDirectory = discovered.GitDirectory;
         RepositoryPath = discovered.RepositoryPath;
         DisplayName = DeriveDisplayName(RepositoryPath, GitDirectory);
+
+        CommitGraph = new CommitGraphIndex(Path.Combine(RefStateToken.ResolveCommonDir(GitDirectory), "objects"));
 
         RefSnapshots = new RefSnapshotProvider(
             services.GetRequiredService<IGitCliService>(), GitDirectory, RepositoryPath, Lifetime);
