@@ -307,8 +307,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // time. Pulled under WalkLock. Disposed on reset / Forget / exhaustion /
         // failure, and when a tip-set change supersedes the walk (WalkSuperseded) — a walk is
         // never re-primed over another tip set within one cache. LiveWalk and the three fields
-        // below it are written under WalkLock; Forget and a forced reset call DropLiveWalk without
-        // it, deliberately (see DropLiveWalk).
+        // below it are written under WalkLock; Forget and a forced reset call DisposeLiveWalkWhenFree
+        // without it, deliberately (see DisposeLiveWalkWhenFree).
         public IEnumerator<RawCommit>? LiveWalk { get; set; }
 
         /// <summary>3 (3b): despite the name (kept so reflection-based tests that poke this
@@ -337,10 +337,30 @@ public sealed class GraphLayoutService : IGraphLayoutService
             try { w?.Dispose(); } catch { /* best effort */ }
         }
 
-        /// <summary>Forget the walk without disposing it — for callers that can't take
-        /// <see cref="WalkLock"/> (Forget / reset), where a Dispose could race an in-flight
-        /// MoveNext. The orphaned git process exits once its stdout pipe is closed by
-        /// finalization, trading a brief leak for never killing a stream mid-read.</summary>
+        /// <summary>Forget the walk now and dispose it (killing its git process) as soon as
+        /// <see cref="WalkLock"/> is free — for callers that can't take the lock themselves
+        /// (Forget, a forced reset), where disposing on the spot could race a pull still
+        /// mid-MoveNext. Such a pull finishes its chunk with the stream it holds; the dispose
+        /// waits for it.
+        /// <para>Trap: only dropping the reference left the git process alive until finalization
+        /// closed its pipe, still running beside the walk that replaced it.</para></summary>
+        public void DisposeLiveWalkWhenFree()
+        {
+            var walk = LiveWalk;
+            DropLiveWalk();
+            if (walk is null)
+                return;
+            _ = Task.Run(async () =>
+            {
+                await WalkLock.WaitAsync().ConfigureAwait(false);
+                try { walk.Dispose(); }
+                catch { /* best effort */ }
+                finally { WalkLock.Release(); }
+            });
+        }
+
+        /// <summary>Forget the walk without disposing it. Callers either dispose it themselves
+        /// (<see cref="DisposeLiveWalk"/>) or hand it to <see cref="DisposeLiveWalkWhenFree"/>.</summary>
         public void DropLiveWalk()
         {
             LiveWalk = null;
@@ -1499,7 +1519,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 try { cache.Cts.Cancel(); } catch (ObjectDisposedException) { }
                 cache.Cts.Dispose();
                 cache.MetaStore?.Dispose();
-                cache.DropLiveWalk(); // off-gate: don't Dispose a walk another thread may hold
+                cache.DisposeLiveWalkWhenFree(); // disposed once no pull holds WalkLock
             }
             _caches.Remove(context);
         }
@@ -1606,7 +1626,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 }
                 finally { cache.WalkLock.Release(); }
             }
-            catch { cache.DropLiveWalk(); } // best effort
+            catch { cache.DisposeLiveWalkWhenFree(); } // best effort
         }
 
         lock (cache)
@@ -1646,7 +1666,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 try { stale.Cts.Cancel(); } catch (ObjectDisposedException) { }
                 stale.Cts.Dispose();
                 stale.MetaStore?.Dispose();
-                stale.DropLiveWalk(); // off-gate: don't Dispose a walk another thread may hold
+                stale.DisposeLiveWalkWhenFree(); // disposed once no pull holds WalkLock
             }
 
             _caches.Remove(context);
