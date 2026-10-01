@@ -92,6 +92,43 @@ public class TerminalSessionTests
     }
 
     [Fact]
+    public void FourByteEmojiSplitThreeWays_RendersOneCell()
+    {
+        using var session = NewSession(out var pty);
+        var bytes = new byte[] { 0xF0, 0x9F, 0x98, 0x80 }; // U+1F600, 😀
+        pty.EmitOutput(bytes[..1]);
+        pty.EmitOutput(bytes[1..3]);
+        pty.EmitOutput(bytes[3..]);
+
+        var cell = session.ReadBuffer(v => v.GetCell(0, 0));
+        Assert.Equal("😀", cell.Content);
+        Assert.Equal(2, cell.Width);
+    }
+
+    [Fact]
+    public void InvalidUtf8_RendersReplacementAndContinues()
+    {
+        using var session = NewSession(out var pty);
+        pty.EmitOutput(new byte[] { 0xC3, 0x28, 0x41 }); // C3 wants a continuation byte; 28 is '('
+
+        var line = session.ReadBuffer(v => v.GetLineText(0));
+        Assert.StartsWith("�(A", line);
+    }
+
+    [Fact]
+    public void ExitBannerAfterTruncatedSequence_IsIntact()
+    {
+        using var session = NewSession(out var pty);
+        pty.EmitOutput(new byte[] { 0xE2, 0x82 }); // the first two bytes of a three-byte sequence
+        pty.EmitExit(0);
+
+        var text = session.ReadBuffer(v =>
+            string.Join("\n", Enumerable.Range(0, v.TotalLines).Select(v.GetLineText)));
+        Assert.Contains("[process exited with code 0]", text);
+        Assert.Contains("Press Enter to start a new shell.", text);
+    }
+
+    [Fact]
     public void ShellExit_MovesToExitedAndAnnounces()
     {
         using var session = NewSession(out var pty);
