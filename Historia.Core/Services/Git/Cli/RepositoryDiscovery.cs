@@ -31,55 +31,27 @@ public static class RepositoryDiscovery
             ? workingDir
             : (Directory.Exists(Path.GetDirectoryName(workingDir)) ? Path.GetDirectoryName(workingDir)! : AppContext.BaseDirectory);
 
+        // One rev-parse answers all three questions for a working tree. In a bare repository, or
+        // from inside .git, --show-toplevel fails after git has already printed the first two
+        // answers — so stdout, not the exit code, says whether this is a repository at all.
         var revParseRequest = new GitCliRequest
         {
-            Arguments = ["-C", workingDir, "rev-parse", "--is-bare-repository", "--absolute-git-dir"],
+            Arguments = ["-C", workingDir, "rev-parse", "--is-bare-repository", "--absolute-git-dir", "--show-toplevel"],
             WorkingDirectory = validCwd,
         };
 
         // Checked only after RunAsync: it waits for git to be located, and tabs restored at
         // startup open while that is still running, when IsGitAvailable still reads false.
         var result = await cli.RunAsync(revParseRequest, ct).ConfigureAwait(false);
-        if (!result.IsSuccess)
-        {
-            if (!cli.IsGitAvailable)
-            {
-                throw new HistoriaGitException(
-                    GitErrorKind.Unknown,
-                    $"Git is required to open a repository. Install Git {GitExecutableInfo.MinimumVersion} or newer, or set its path in Settings.",
-                    result.StandardError);
-            }
-
-            if (result.ErrorKind == GitErrorKind.Cancelled)
-                throw new OperationCanceledException(ct);
-
-            if (result.ErrorKind == GitErrorKind.TimedOut)
-                throw HistoriaGitException.FromCli(result, "Open repository");
-
-            if (result.ErrorKind == GitErrorKind.UnsafeRepository)
-            {
-                throw new HistoriaGitException(
-                    GitErrorKind.UnsafeRepository,
-                    GitErrorClassifier.FormatUnsafeRepositoryMessage(path),
-                    result.StandardError);
-            }
-
-            throw new HistoriaGitException(
-                GitErrorKind.NotAGitRepository,
-                $"No Git repository was found at or above '{path}'.",
-                result.StandardError);
-        }
+        if (result.ErrorKind == GitErrorKind.Cancelled)
+            throw new OperationCanceledException(ct);
+        if (result.ErrorKind == GitErrorKind.TimedOut)
+            throw HistoriaGitException.FromCli(result, "Open repository");
 
         var lines = result.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Length < 2)
-        {
-            throw new HistoriaGitException(
-                GitErrorKind.NotAGitRepository,
-                $"No Git repository was found at or above '{path}'.",
-                result.StandardError);
-        }
+        if (lines.Length < 2 || !bool.TryParse(lines[0].Trim(), out var isBare))
+            throw DiscoveryFailure(result, path, cli);
 
-        var isBare = bool.TryParse(lines[0].Trim(), out var b) && b;
         var gitDir = NormalizePath(lines[1].Trim());
 
         if (isBare)
@@ -87,48 +59,61 @@ public static class RepositoryDiscovery
             return new DiscoveredRepository(gitDir, gitDir, IsBare: true);
         }
 
-        var showToplevelRequest = new GitCliRequest
-        {
-            Arguments = ["-C", workingDir, "rev-parse", "--show-toplevel"],
-            WorkingDirectory = validCwd,
-        };
+        if (result.IsSuccess && lines.Length >= 3)
+            return new DiscoveredRepository(gitDir, NormalizePath(lines[2].Trim()), IsBare: false);
 
-        var toplevelResult = await cli.RunAsync(showToplevelRequest, ct).ConfigureAwait(false);
+        // Not bare, but --show-toplevel failed ("must be run in a work tree"): <path> is inside
+        // .git. Ask again from the parent of --absolute-git-dir.
         string repositoryPath;
-        if (toplevelResult.IsSuccess && !string.IsNullOrWhiteSpace(toplevelResult.StandardOutput))
+        var parentDir = Path.GetDirectoryName(gitDir);
+        if (!string.IsNullOrEmpty(parentDir))
         {
-            repositoryPath = NormalizePath(toplevelResult.StandardOutput.Trim());
-        }
-        else
-        {
-            // `--show-toplevel` exits 128/1 ("must be run in a work tree") both in a bare repo
-            // and when <path> is inside .git; in the second case, retry from the parent of --absolute-git-dir.
-            var parentDir = Path.GetDirectoryName(gitDir);
-            if (!string.IsNullOrEmpty(parentDir))
+            var retryCwd = Directory.Exists(parentDir) ? parentDir : validCwd;
+            var retryRequest = new GitCliRequest
             {
-                var retryCwd = Directory.Exists(parentDir) ? parentDir : validCwd;
-                var retryRequest = new GitCliRequest
-                {
-                    Arguments = ["-C", parentDir, "rev-parse", "--show-toplevel"],
-                    WorkingDirectory = retryCwd,
-                };
-                var retryResult = await cli.RunAsync(retryRequest, ct).ConfigureAwait(false);
-                if (retryResult.IsSuccess && !string.IsNullOrWhiteSpace(retryResult.StandardOutput))
-                {
-                    repositoryPath = NormalizePath(retryResult.StandardOutput.Trim());
-                }
-                else
-                {
-                    repositoryPath = NormalizePath(parentDir);
-                }
+                Arguments = ["-C", parentDir, "rev-parse", "--show-toplevel"],
+                WorkingDirectory = retryCwd,
+            };
+            var retryResult = await cli.RunAsync(retryRequest, ct).ConfigureAwait(false);
+            if (retryResult.IsSuccess && !string.IsNullOrWhiteSpace(retryResult.StandardOutput))
+            {
+                repositoryPath = NormalizePath(retryResult.StandardOutput.Trim());
             }
             else
             {
-                repositoryPath = gitDir;
+                repositoryPath = NormalizePath(parentDir);
             }
+        }
+        else
+        {
+            repositoryPath = gitDir;
         }
 
         return new DiscoveredRepository(gitDir, repositoryPath, IsBare: false);
+    }
+
+    private static Exception DiscoveryFailure(GitCliResult result, string path, IGitCliService cli)
+    {
+        if (!result.IsSuccess && !cli.IsGitAvailable)
+        {
+            return new HistoriaGitException(
+                GitErrorKind.Unknown,
+                $"Git is required to open a repository. Install Git {GitExecutableInfo.MinimumVersion} or newer, or set its path in Settings.",
+                result.StandardError);
+        }
+
+        if (result.ErrorKind == GitErrorKind.UnsafeRepository)
+        {
+            return new HistoriaGitException(
+                GitErrorKind.UnsafeRepository,
+                GitErrorClassifier.FormatUnsafeRepositoryMessage(path),
+                result.StandardError);
+        }
+
+        return new HistoriaGitException(
+            GitErrorKind.NotAGitRepository,
+            $"No Git repository was found at or above '{path}'.",
+            result.StandardError);
     }
 
     private static string NormalizePath(string path)

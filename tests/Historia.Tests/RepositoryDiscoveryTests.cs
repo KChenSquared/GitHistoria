@@ -186,6 +186,71 @@ public sealed class RepositoryDiscoveryTests : IAsyncDisposable
         Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(repo.Path)), disc.RepositoryPath);
     }
 
+    [Fact]
+    public async Task One_git_process_discovers_a_working_tree_root_or_subdirectory()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("disc-count", r =>
+            r.WriteFile("dir/file.txt", "content").Stage().Commit("c1"));
+
+        foreach (var path in new[] { repo.Path, Path.Combine(repo.Path, "dir") })
+        {
+            var cli = new InterceptingGitCliService(Cli);
+            var disc = await RepositoryDiscovery.DiscoverAsync(path, cli);
+
+            Assert.Single(cli.Requests);
+            Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(repo.Path)), disc.RepositoryPath);
+        }
+    }
+
+    [Fact]
+    public async Task One_git_process_discovers_a_bare_repository_and_two_from_inside_dot_git()
+    {
+        var bareDir = TestScratch.NewDirectory("disc-count-bare-");
+        Assert.True((await Cli.RunAsync(new GitCliRequest { Arguments = ["init", "--bare", bareDir], WorkingDirectory = bareDir })).IsSuccess);
+        using var repo = TestRepositoryBuilder.FromTemplate("disc-count", r =>
+            r.WriteFile("dir/file.txt", "content").Stage().Commit("c1"));
+
+        var bareCli = new InterceptingGitCliService(Cli);
+        Assert.True((await RepositoryDiscovery.DiscoverAsync(bareDir, bareCli)).IsBare);
+        Assert.Single(bareCli.Requests);
+
+        var dotGitCli = new InterceptingGitCliService(Cli);
+        var disc = await RepositoryDiscovery.DiscoverAsync(Path.Combine(repo.Path, ".git", "refs"), dotGitCli);
+        Assert.Equal(2, dotGitCli.Requests.Count);
+        Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(repo.Path)), disc.RepositoryPath);
+    }
+
+    [Fact]
+    public async Task One_git_process_discovers_a_linked_worktree()
+    {
+        using var mainRepo = TestRepositoryBuilder.FromTemplate("disc-count-wt", r =>
+            r.WriteFile("file.txt", "content").Stage().Commit("c1"));
+        var wtDir = TestScratch.NewDirectory("disc-count-linked-");
+        Assert.True((await Cli.RunAsync(new GitCliRequest { Arguments = ["worktree", "add", wtDir, "-b", "wt-count"], WorkingDirectory = mainRepo.Path })).IsSuccess);
+
+        var cli = new InterceptingGitCliService(Cli);
+        var disc = await RepositoryDiscovery.DiscoverAsync(wtDir, cli);
+
+        Assert.Single(cli.Requests);
+        Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(wtDir)), disc.RepositoryPath);
+    }
+
+    [Fact]
+    public async Task An_unsafe_repository_is_still_reported_as_unsafe()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("disc-count", r =>
+            r.WriteFile("dir/file.txt", "content").Stage().Commit("c1"));
+        var cli = new InterceptingGitCliService(Cli)
+        {
+            Intercept = _ => new GitCliResult(128, "",
+                "fatal: detected dubious ownership in repository at 'x'", GitErrorKind.UnsafeRepository, TimeSpan.Zero),
+        };
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() => RepositoryDiscovery.DiscoverAsync(repo.Path, cli));
+
+        Assert.Equal(GitErrorKind.UnsafeRepository, ex.Kind);
+    }
+
     private sealed class DelayedLocator : IGitExecutableLocator
     {
         private readonly TaskCompletionSource<GitExecutableInfo> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
