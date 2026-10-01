@@ -144,7 +144,12 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
 
 6. **Git access is the CLI only.** Every process is set up by `GitCliProcessSetup`
    (`IGitCliService`, or `GitLogStream` for the streamed graph walk). LibGit2Sharp is a
-   test-only fixture dependency; `NoLibGit2InProductionTests` enforces it. *(§I-6.3.1)*
+   test-only fixture dependency; `NoLibGit2InProductionTests` enforces it. Reading git's own
+   files directly is allowed only as a read-only accelerator over a CLI path that stays the
+   fallback: documented formats only, never written, no handle held past the call, and
+   parity-tested against git. The current ones: `HEAD` and ref timestamps (`RefStateToken`),
+   the index header (`FileWatcherService`), `packed-refs` (`PackedRefsReader`) and the
+   commit-graph (`CommitGraphIndex`). *(§I-6.3.1)*
 7. **Repository writes run inside the write lock; reads never take it.** Historia's own
    index/HEAD/ref/work-tree writes run inside the repository write lock; reads never take it
    and run with `--no-optional-locks`. The lock is never held across a dialog or a nested
