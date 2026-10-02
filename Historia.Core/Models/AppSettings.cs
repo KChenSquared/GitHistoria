@@ -12,7 +12,7 @@ public sealed record AppSettings
     /// v5: multi-line tab strip; v6: persistent graph cache toggle; v7: graph
     /// row hard cap; v8: local repo-state cache toggle; v9: terminal; v10: tab-width mode;
     /// v11: custom-theme id; v12: splash-screen toggle.</summary>
-    public int SchemaVersion { get; init; } = 18;
+    public int SchemaVersion { get; init; } = 19;
 
     // ── Profile &amp; Identity ──
     /// <summary>the default profile — the clone-dialog pre-selection and what an opened
@@ -125,15 +125,6 @@ public sealed record AppSettings
     /// effect on the next launch. Default on.
     /// </summary>
     public bool GraphMetadataFromDisk { get; init; } = true;
-
-    /// <summary>
-    /// When on (default), a large repository (≥ 30,000 commits walked, checked as the
-    /// background spill proceeds in 25k-row chunks) that has no commit-graph file yet gets
-    /// one written in the background (<c>git commit-graph write --reachable</c>). A commit-graph
-    /// is what lets Git's own <c>--date-order</c> walk (the CLI graph engine) expand lazily by
-    /// generation number instead of touching the whole history up front.
-    /// </summary>
-    public bool WriteCommitGraphForLargeRepos { get; init; } = true;
 
     /// <summary>
     /// When on, a large (200,000+ row), exhausted
