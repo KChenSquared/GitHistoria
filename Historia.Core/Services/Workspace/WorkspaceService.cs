@@ -43,8 +43,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // Per-attempt cancellation for whichever context is currently running
     // InitializeContextCoreAsync, linked to (but distinct from) RepositoryContext.Lifetime —
     // Lifetime only ever cancels on tab close, but a focus switch away from a still-loading tab
-    // needs to interrupt its identity/refresh work without tearing the tab down. Entry removed by
-    // the owning InitializeContextAsync's own finally once its attempt ends.
+    // needs to interrupt its identity/refresh work without tearing the tab down. The entry is the
+    // tab's claim to being mid-load: InitializeContextAsync removes it when its load settles (or
+    // its attempt ends), FocusInternal when it interrupts the attempt — whichever comes first
+    // under _sync decides whether the load counts as completed or interrupted.
     private readonly Dictionary<RepositoryContext, CancellationTokenSource> _attemptCts = [];
 
     // Signalled (and replaced) every time _foregroundInit changes, so
@@ -57,6 +59,18 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     // only matters while the user is looking at it. Never disposed: tokens taken from it may still
     // be linked after it is cancelled.
     private CancellationTokenSource _focusCts = new();
+
+    // What a context this workspace opens is built from: the app's services, with this workspace
+    // as IWorkspaceService. A context then knows its workspace from construction, before its file
+    // watcher can publish — a watcher with no workspace refreshes on the tab's Lifetime, a token
+    // focus loss can't cancel.
+    private readonly IServiceProvider _contextServices;
+
+    private sealed class WorkspaceScopedServices(IServiceProvider inner, IWorkspaceService workspace) : IServiceProvider
+    {
+        public object? GetService(Type serviceType) =>
+            serviceType == typeof(IWorkspaceService) ? workspace : inner.GetService(serviceType);
+    }
 
     private AtomicFileWriter? _sessionWriter;
     private AtomicFileWriter SessionWriter => _sessionWriter ??= new AtomicFileWriter(AppPaths.SessionFile);
@@ -99,6 +113,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         IRepoIdentityService identity)
     {
         _services = services;
+        _contextServices = new WorkspaceScopedServices(services, this);
         _cli = cli;
         _recents = recents;
         _profiles = profiles;
@@ -164,7 +179,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         string path, bool focus, bool initialize, CancellationToken ct,
         Task<RepositoryContext>? prefetched = null, bool recordRecent = true, DiscoveredRepository? discovered = null)
     {
-        var context = await (prefetched ?? RepositoryContext.OpenAsync(path, _services, ct, discovered))
+        var context = await (prefetched ?? RepositoryContext.OpenAsync(path, _contextServices, ct, discovered))
             .ConfigureAwait(false);
         context.Workspace = this;
 
@@ -175,6 +190,8 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                 _deferredInit.Add(context);
         }
 
+        if (TestAfterTabAddedBeforeFocus is { } added)
+            await added(context).ConfigureAwait(false);
         if (focus)
             FocusInternal(context);
         RaiseOpenChanged();
@@ -217,14 +234,51 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         // An attempt-scoped token, linked to (not the same as) context.Lifetime, so
         // FocusInternal can cancel just this attempt — interrupting identity/refresh work for a
         // tab that lost focus — without tearing down the tab itself (only a real close does that).
-        var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(context.Lifetime);
-        lock (_sync) _attemptCts[context] = attemptCts;
+        CancellationTokenSource attemptCts;
+        lock (_sync)
+        {
+            // One attempt per tab at a time; the running one covers this request. Trap: the open
+            // path used to start its attempt even when the background queue had already started
+            // one for the tab (a watcher refresh queued between the tab joining _open and taking
+            // focus). Only the second was tracked, so a focus change cancelled it while the first
+            // kept the tab's status running on a token focus loss can't cancel.
+            if (_attemptCts.ContainsKey(context))
+                return;
+            attemptCts = CancellationTokenSource.CreateLinkedTokenSource(context.Lifetime);
+            _attemptCts[context] = attemptCts;
+        }
 
         try
         {
             var outcome = await InitializeContextCoreAsync(context, foreground, attemptCts.Token).ConfigureAwait(false);
-            if (outcome != InitOutcome.Interrupted)
-                context.MarkFirstFullLoadDone(); // unblock any auto-fetch waiter
+            if (TestBeforeInitSettles is { } hook)
+                await hook(context).ConfigureAwait(false);
+
+            // Settle under the lock FocusInternal and RequestBackgroundRefreshAsync decide under:
+            // a completed load is claimed (its attempt entry removed) and marked done in one step,
+            // so no focus change or refresh ever sees a finished load that still reads as loading.
+            // If a focus change took the attempt first, the tab is already requeued and this
+            // attempt counts as interrupted. FirstFullLoad runs its continuations asynchronously,
+            // so completing it here runs nothing under the lock.
+            lock (_sync)
+            {
+                if (outcome == InitOutcome.Completed
+                    && !(_attemptCts.TryGetValue(context, out var current) && ReferenceEquals(current, attemptCts)))
+                    outcome = context.Lifetime.IsCancellationRequested ? InitOutcome.Closed : InitOutcome.Interrupted;
+                if (outcome != InitOutcome.Interrupted)
+                {
+                    if (_attemptCts.TryGetValue(context, out var mine) && ReferenceEquals(mine, attemptCts))
+                        _attemptCts.Remove(context);
+                    context.MarkFirstFullLoadDone(); // unblock any auto-fetch waiter
+                }
+            }
+
+            // Trap: this status used to start inside the attempt, and the load was marked done
+            // only afterwards. A focus change or a focus-cancelled refresh in between requeued the
+            // finished tab as an init; the queue re-ran it, and its refresh joined this status run
+            // on a token focus loss can't cancel.
+            if (outcome == InitOutcome.Completed && foreground)
+                _ = RefreshStatusAfterInitAsync(context);
         }
         finally
         {
@@ -237,6 +291,34 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             }
             attemptCts.Dispose();
         }
+    }
+
+    private static readonly AsyncLocal<Func<RepositoryContext, Task>?> _testAfterTabAddedBeforeFocus = new();
+
+    /// <summary>Test seam: awaited on the open path once the tab is in the open set and before it
+    /// takes focus, in the flow that opened it.</summary>
+    internal static Func<RepositoryContext, Task>? TestAfterTabAddedBeforeFocus
+    {
+        get => _testAfterTabAddedBeforeFocus.Value;
+        set => _testAfterTabAddedBeforeFocus.Value = value;
+    }
+
+    /// <summary>Test seam: true while an init attempt for <paramref name="context"/> is
+    /// running.</summary>
+    internal bool HasInitAttemptForTesting(RepositoryContext context)
+    {
+        lock (_sync)
+            return _attemptCts.ContainsKey(context);
+    }
+
+    private static readonly AsyncLocal<Func<RepositoryContext, Task>?> _testBeforeInitSettles = new();
+
+    /// <summary>Test seam: awaited when an init attempt's work has ended, before the attempt
+    /// settles as completed or interrupted — in the flow that opened the tab.</summary>
+    internal static Func<RepositoryContext, Task>? TestBeforeInitSettles
+    {
+        get => _testBeforeInitSettles.Value;
+        set => _testBeforeInitSettles.Value = value;
     }
 
     private async Task<InitOutcome> InitializeContextCoreAsync(RepositoryContext context, bool foreground, CancellationToken attemptToken)
@@ -258,8 +340,8 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
         // Identity resolution and the first refs/status refresh don't depend on each
         // other (refresh never reads the active profile identity sets) — run them concurrently.
-        // Foreground tabs refresh refs here to unlock FirstFullLoad immediately, then kick
-        // status refresh in the background once completed; background init runs RefreshAllAsync
+        // Foreground tabs refresh refs here to unlock FirstFullLoad immediately, then the caller
+        // kicks the status refresh once the load is marked complete; background init runs RefreshAllAsync
         // to fully hydrate before promotion. Both use attemptToken so a focus-loss interrupt
         // cancels both at once.
         var identityTask = ResolveIdentityAsync(context, attemptToken);
@@ -281,9 +363,6 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
         if (attemptToken.IsCancellationRequested)
             return context.Lifetime.IsCancellationRequested ? InitOutcome.Closed : InitOutcome.Interrupted;
-
-        if (foreground)
-            _ = RefreshStatusAfterInitAsync(context);
 
         return InitOutcome.Completed;
     }
@@ -445,7 +524,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             throw HistoriaGitException.FromCli(result, "Clone");
         }
 
-        var context = await RepositoryContext.OpenAsync(targetDirectory, _services).ConfigureAwait(false);
+        var context = await RepositoryContext.OpenAsync(targetDirectory, _contextServices).ConfigureAwait(false);
         context.Workspace = this;
         if (_services.GetService(typeof(Historia.Services.Graph.IGraphLayoutService))
             is Historia.Services.Graph.IGraphLayoutService graphSvc)
@@ -551,7 +630,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             return existing;
         }
 
-        var context = await RepositoryContext.OpenAsync(submodulePath, _services, ct, discovered).ConfigureAwait(false);
+        var context = await RepositoryContext.OpenAsync(submodulePath, _contextServices, ct, discovered).ConfigureAwait(false);
         context.Workspace = this;
         context.LinkOwner = root;
 
@@ -771,7 +850,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             if (System.IO.Directory.Exists(p) && !prefetches.ContainsKey(p))
                 // Task.Run only so each open's synchronous start (launching git) runs in parallel
                 // with the others; no thread waits on git.
-                prefetches[p] = Task.Run(() => RepositoryContext.OpenAsync(p, _services, ct), ct);
+                prefetches[p] = Task.Run(() => RepositoryContext.OpenAsync(p, _contextServices, ct), ct);
         }
 
         try
@@ -1045,7 +1124,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
 
             try
             {
-                if (next.IsInit)
+                // Decided now, not when queued: a tab whose load completed since then needs only
+                // the refresh.
+                if (next.IsInit && !next.Context.FirstFullLoad.IsCompleted)
                 {
                     await InitializeContextAsync(next.Context, foreground: false).ConfigureAwait(false);
                 }
@@ -1120,8 +1201,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             // priority frees up — RefreshAllAsync is read-only, and identity resolution's only
             // write (seeding git config from the active profile) checks the attempt token
             // before starting and then runs uncancelled, so re-running from scratch
-            // is fine: either the write never started, or it already completed.
-            if (old is not null && !old.FirstFullLoad.IsCompleted && _attemptCts.TryGetValue(old, out var oldCts))
+            // is fine: either the write never started, or it already completed. Taking the
+            // attempt's entry is what tells its InitializeContextAsync the load was interrupted.
+            if (old is not null && !old.FirstFullLoad.IsCompleted && _attemptCts.Remove(old, out var oldCts))
             {
                 toCancel = oldCts;
                 var existing = _bgQueue.FirstOrDefault(x => ReferenceEquals(x.Context, old));
@@ -1160,8 +1242,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
             }
         }
 
-        // Never run cancellation callbacks while holding _sync.
-        toCancel?.Cancel();
+        // Never run cancellation callbacks while holding _sync. The attempt may have ended (and
+        // disposed its source) since it was taken above.
+        try { toCancel?.Cancel(); } catch (ObjectDisposedException) { }
         leftFocus.Cancel();
         if (startPump)
             _ = Task.Run(DrainBackgroundInitQueueAsync);

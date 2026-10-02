@@ -96,6 +96,105 @@ public sealed class WorkspaceFocusLossTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
+    private static bool SamePath(string x, string y) =>
+        string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(x)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(y)), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>A focus change that lands as a tab's first load ends finds the load either still
+    /// running (interrupted and requeued) or settled — never finished with its status already
+    /// started. Trap: the status used to start inside the load, before it was marked done; a focus
+    /// change or a focus-cancelled refresh in that window requeued the finished tab as an init,
+    /// whose refresh then joined the running status on a token focus loss can't cancel.</summary>
+    [Fact(Timeout = 60000)]
+    public async Task A_focus_change_as_a_first_load_ends_never_finds_its_status_started()
+    {
+        var a = CreateRepo("a");
+        var b = CreateRepo("b");
+        var postLoadStatusStarted = 0;
+        var cli = new BlockingGitCliService(_host.Cli, r =>
+        {
+            if (BlockingGitCliService.IsIn(r, a.Path) && r.Arguments.Contains("status")
+                && Environment.StackTrace.Contains("RefreshStatusAfterInitAsync", StringComparison.Ordinal))
+                Interlocked.Exchange(ref postLoadStatusStarted, 1);
+            return false;
+        });
+        var (ws, _) = NewWorkspace(cli);
+
+        RepositoryContext? ctxB = null;
+        int? statusStartedAtFocusChange = null;
+        WorkspaceService.TestBeforeInitSettles = async ctx =>
+        {
+            if (!SamePath(ctx.RepositoryPath, a.Path))
+                return;
+            statusStartedAtFocusChange = Volatile.Read(ref postLoadStatusStarted);
+            ctxB = await ws.OpenAsync(b.Path);
+        };
+        try
+        {
+            var ctxA = await ws.OpenAsync(a.Path);
+            ctxA.MarkFirstGraphPaintDone();
+            Assert.True(await EventuallyAsync(() => ctxB is not null, TimeSpan.FromSeconds(20)));
+
+            Assert.Equal(0, statusStartedAtFocusChange);
+            // The focus change caught the load before it settled: interrupted, not completed.
+            Assert.False(ctxA.FirstFullLoad.IsCompleted);
+        }
+        finally
+        {
+            WorkspaceService.TestBeforeInitSettles = null;
+            ctxB?.MarkFirstGraphPaintDone();
+            await ws.DisposeAsync();
+        }
+    }
+
+    /// <summary>A tab runs one init attempt at a time. When the background queue has already
+    /// started one (a refresh queued while the tab was open but not yet focused), the open path
+    /// does not start a second: an untracked attempt would keep the tab's status running on a
+    /// token a focus change can't cancel.</summary>
+    [Fact(Timeout = 60000)]
+    public async Task Opening_a_tab_the_queue_already_initialises_starts_no_second_init()
+    {
+        var a = CreateRepo("a");
+        var (ws, identity) = NewWorkspace(_host.Cli);
+        WorkspaceService.TestAfterTabAddedBeforeFocus = async ctx =>
+        {
+            // As a watcher event would: the tab isn't focused yet, so this queues its init.
+            _ = ws.RequestBackgroundRefreshAsync(ctx);
+            Assert.True(await EventuallyAsync(() => ws.HasInitAttemptForTesting(ctx), TimeSpan.FromSeconds(20)));
+        };
+        try
+        {
+            var ctxA = await ws.OpenAsync(a.Path);
+            WorkspaceService.TestAfterTabAddedBeforeFocus = null;
+            ctxA.MarkFirstGraphPaintDone();
+            await ctxA.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.True(await EventuallyAsync(() => !ws.HasInitAttemptForTesting(ctxA), TimeSpan.FromSeconds(20)));
+
+            Assert.Single(identity.Resolved, c => ReferenceEquals(c, ctxA));
+        }
+        finally
+        {
+            WorkspaceService.TestAfterTabAddedBeforeFocus = null;
+            await ws.DisposeAsync();
+        }
+    }
+
+    /// <summary>A tab the workspace opens knows its workspace before its file watcher starts.
+    /// A watcher that started without one refreshed on the tab's Lifetime — a token focus loss
+    /// can't cancel — whenever its first event fired before the workspace was attached.</summary>
+    [Fact(Timeout = 60000)]
+    public async Task A_tab_opened_by_the_workspace_knows_it_before_its_watcher_starts()
+    {
+        var a = CreateRepo("a");
+        var (ws, _) = NewWorkspace(_host.Cli);
+
+        var ctxA = await ws.OpenAsync(a.Path);
+
+        Assert.True(ctxA.Watcher.StartedWithWorkspaceForTesting);
+        ctxA.MarkFirstGraphPaintDone();
+        await ws.DisposeAsync();
+    }
+
     [Fact(Timeout = 60000)]
     public async Task Leaving_a_tab_cancels_its_status_refresh_and_the_background_queue_redoes_it()
     {

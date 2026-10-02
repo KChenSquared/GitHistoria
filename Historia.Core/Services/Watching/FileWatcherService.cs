@@ -43,6 +43,9 @@ public sealed class FileWatcherService : IAsyncDisposable
     /// <summary>Test seam: a fixture can't reach the tracked-file threshold.</summary>
     internal void TreatAsLargeWorkingTreeForTesting() => IsLargeWorkingTree = true;
 
+    /// <summary>Test seam: whether the tab's workspace was known when this watcher started.</summary>
+    internal bool StartedWithWorkspaceForTesting => _workspace is not null;
+
     public FileWatcherService(
         RepositoryContext context,
         IRepositoryStateService state,
