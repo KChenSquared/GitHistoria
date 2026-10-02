@@ -126,10 +126,26 @@ public sealed class CommitGraphIndex(string objectsDirectory)
             return null;
         }
 
-        var distinct = ids as IReadOnlySet<GitObjectId> ?? ids.ToHashSet();
-        if (memo is null || !memo.Asked.IsSupersetOf(distinct))
+        // The lookup's own copy: the result is a view over it, so a caller changing its collection
+        // afterwards can't change the answer.
+        var asked = ids.ToHashSet();
+        List<GitObjectId>? notAsked = null;
+        var count = 0;
+        if (memo is not null)
         {
-            var missing = memo is null ? [.. distinct] : distinct.Where(id => !memo.Asked.Contains(id)).ToArray();
+            // One pass: every found id was asked before, so the asked set is consulted only for
+            // ids the memo didn't find.
+            foreach (var id in asked)
+            {
+                if (memo.Found.ContainsKey(id))
+                    count++;
+                else if (!memo.Asked.Contains(id))
+                    (notAsked ??= []).Add(id);
+            }
+        }
+        if (memo is null || notAsked is not null)
+        {
+            GitObjectId[] missing = memo is null ? [.. asked] : [.. notAsked!];
             Array.Sort(missing);
             Dictionary<GitObjectId, long> found;
             int graphHashLength;
@@ -155,16 +171,17 @@ public sealed class CommitGraphIndex(string objectsDirectory)
                 return null;
             }
             memo = Merge(files.State, memo, missing, found, graphHashLength);
+            count = 0;
+            foreach (var id in asked)
+                if (memo.Found.ContainsKey(id))
+                    count++;
         }
 
         lock (_lock)
             _lastLogged = null;
 
-        var result = new Dictionary<GitObjectId, long>(Math.Min(distinct.Count, memo.Found.Count));
-        foreach (var id in distinct)
-            if (memo.Found.TryGetValue(id, out var date))
-                result[id] = date;
-        return new CommitGraphLookup(result);
+        // A view, not a copy: the memo's dictionary is never changed once built.
+        return new CommitGraphLookup(memo.Found, asked, count);
     }
 
     /// <summary>Folds newly read ids into the memo for <paramref name="state"/> — the latest one
@@ -544,17 +561,25 @@ public sealed class CommitGraphIndex(string objectsDirectory)
 /// commits in the commit-graph, with their corrected commit dates.</summary>
 public sealed class CommitGraphLookup
 {
+    // Dates for at least the looked-up ids (possibly more, from earlier lookups of the same graph
+    // state), restricted to the ids asked. Neither collection changes after construction.
     private readonly Dictionary<GitObjectId, long> _dates;
+    private readonly HashSet<GitObjectId> _asked;
 
-    internal CommitGraphLookup(Dictionary<GitObjectId, long> dates) => _dates = dates;
+    internal CommitGraphLookup(Dictionary<GitObjectId, long> dates, HashSet<GitObjectId> asked, int count)
+    {
+        _dates = dates;
+        _asked = asked;
+        Count = count;
+    }
 
     /// <summary>Looked-up ids found in the graph.</summary>
-    public int Count => _dates.Count;
+    public int Count { get; }
 
     /// <summary>True when <paramref name="id"/> was looked up and is a commit in the graph.</summary>
-    public bool Contains(GitObjectId id) => _dates.ContainsKey(id);
+    public bool Contains(GitObjectId id) => _asked.Contains(id) && _dates.ContainsKey(id);
 
     /// <summary>The corrected commit date (seconds since the epoch) of a looked-up commit in the
     /// graph; null otherwise.</summary>
-    public long? CorrectedDate(GitObjectId id) => _dates.TryGetValue(id, out var d) ? d : null;
+    public long? CorrectedDate(GitObjectId id) => _asked.Contains(id) && _dates.TryGetValue(id, out var d) ? d : null;
 }
