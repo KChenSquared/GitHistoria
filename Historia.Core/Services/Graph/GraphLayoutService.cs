@@ -129,10 +129,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// it did.</summary>
     internal readonly record struct PrefixWalkOutcome(int RecentTips, int TotalTips, bool Proven, int Rows, string? FallbackReason);
 
-    /// <summary>Fewest tips worth a prefix walk: below this, <c>git log --date-order</c> over every
-    /// tip starts quickly anyway.</summary>
-    private const int PrefixMinTips = 1_000;
-
     /// <summary>Tips whose corrected commit date is within this of the newest go into the prefix
     /// walk.</summary>
     private static readonly long PrefixRecentWindowSeconds = (long)TimeSpan.FromDays(30).TotalSeconds;
@@ -2386,11 +2382,17 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private static readonly ConcurrentDictionary<string, byte> _prefixDistrusted = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// The first prime of a large all-refs walk: walks only the recent tips and keeps those rows
+    /// The first prime of an all-refs walk: walks only the recent tips and keeps those rows
     /// only when they are provably the full walk's first rows, so the first window doesn't wait
     /// for <c>git log --date-order</c> to sort every tip's history. Returns false — nothing pulled
     /// kept, nothing in the cache changed — when the prime isn't eligible or the proof fails
     /// twice; the caller then primes the full walk as usual.
+    /// <para><b>Eligible</b> when nothing has been walked, loaded or adopted yet (no rows, no live
+    /// store), the scope is all refs with no path filter, there are at least two tips (one tip
+    /// can never leave an older one outside the window), the repository isn't distrusted after a
+    /// failed proof, it has no <c>info/grafts</c>, and the commit-graph is usable. The tip count
+    /// sets no other bound: the tips are always looked up, and the dates decide — when every tip
+    /// is recent there is nothing to leave out, and the normal prime runs.</para>
     /// <para><b>The proof.</b> The commit-graph's corrected commit date (cd) of a commit is greater
     /// than each parent's and at least its own commit date, so a tip's cd bounds the commit date of
     /// everything it reaches. R = tips with cd within <see cref="PrefixRecentWindowSeconds"/> of
@@ -2411,7 +2413,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         var tips = prep.Tips!;
         if (PrefixWalkDisabledForTesting || prep.Have != 0 || TotalWalked(cache) != 0 || cache.MetaStore is not null
             || query.RefScope != GraphRefScope.AllRefs || !string.IsNullOrEmpty(query.PathFilter)
-            || tips.Length < PrefixMinTips || _prefixDistrusted.ContainsKey(context.RepositoryPath))
+            || tips.Length < 2 || _prefixDistrusted.ContainsKey(context.RepositoryPath))
             return false;
 
         var sw = Stopwatch.StartNew();

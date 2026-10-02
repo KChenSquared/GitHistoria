@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// The first prime of a large all-refs walk paints from a walk of only the recent tips, and keeps
+/// The first prime of an all-refs walk paints from a walk of only the recent tips, and keeps
 /// those rows only when the commit-graph's corrected dates prove they are the full walk's first
 /// rows. Everything painted must be identical to the same service walking every tip — rows, lanes,
 /// edges and badges — whether the proof holds, fails, or the prefix is skipped; the full walk must
@@ -262,10 +262,60 @@ public sealed class GraphPrefixWalkTests(ITestOutputHelper output) : IAsyncDispo
     }
 
     [Fact]
-    public async Task Fewer_than_a_thousand_tips_skips_the_prefix()
+    public async Task Few_tips_with_an_old_tag_use_the_prefix()
     {
-        var (result, outcomes) = await WithPrefix(Repo("few-tags", tags: 900), AllRefs);
-        var expected = await FullWalk(AllRefs, Window, () => Repo("few-tags", tags: 900));
+        var (result, outcomes) = await WithPrefix(Repo("few-tags", tags: 5), AllRefs);
+        var expected = await FullWalk(AllRefs, Window, () => Repo("few-tags", tags: 5));
+
+        var outcome = Assert.Single(outcomes);
+        Assert.True(outcome.Proven, outcome.FallbackReason);
+        Assert.True(outcome.TotalTips < 10, $"{outcome.TotalTips} tips");
+        Assert.Equal(Painted(expected), Painted(result));
+    }
+
+    [Fact]
+    public async Task Every_tip_recent_skips_the_prefix()
+    {
+        TestRepositoryBuilder Copy()
+        {
+            var repo = TestRepositoryBuilder.FromTemplate("prefix-walk-all-recent", b =>
+            {
+                for (var i = 0; i < 20; i++)
+                {
+                    b.WriteFile("f.txt", $"{i}\n").Stage();
+                    b.CommitAt($"c{i}", Newest.AddDays(-20 + i));
+                    if (i % 4 == 0)
+                        b.Git("tag", $"t{i}");
+                }
+                b.Git("commit-graph", "write", "--reachable");
+            });
+            _repos.Add(repo);
+            return repo;
+        }
+        var (result, outcomes) = await WithPrefix(Copy(), AllRefs);
+        var expected = await FullWalk(AllRefs, Window, Copy);
+
+        var outcome = Assert.Single(outcomes);
+        Assert.False(outcome.Proven);
+        Assert.Equal("every tip is recent", outcome.FallbackReason);
+        Assert.Equal(Painted(expected), Painted(result));
+    }
+
+    [Fact]
+    public async Task Single_tip_skips_the_prefix()
+    {
+        TestRepositoryBuilder Copy()
+        {
+            var repo = TestRepositoryBuilder.FromTemplate("prefix-walk-single-tip", b =>
+            {
+                b.LinearHistory(30);
+                b.Git("commit-graph", "write", "--reachable");
+            });
+            _repos.Add(repo);
+            return repo;
+        }
+        var (result, outcomes) = await WithPrefix(Copy(), AllRefs);
+        var expected = await FullWalk(AllRefs, Window, Copy);
 
         Assert.Empty(outcomes);
         Assert.Equal(Painted(expected), Painted(result));
