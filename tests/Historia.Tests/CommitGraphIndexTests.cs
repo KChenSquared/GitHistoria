@@ -353,6 +353,176 @@ public sealed class CommitGraphIndexTests(ITestOutputHelper output) : IDisposabl
         Assert.Equal(0, lookup.Count);
     }
 
+    private static void AssertSameAnswers(CommitGraphLookup expected, CommitGraphLookup actual, IEnumerable<GitObjectId> ids)
+    {
+        Assert.Equal(expected.Count, actual.Count);
+        foreach (var id in ids)
+        {
+            Assert.Equal(expected.Contains(id), actual.Contains(id));
+            Assert.Equal(expected.CorrectedDate(id), actual.CorrectedDate(id));
+        }
+    }
+
+    [Fact]
+    public void A_repeated_lookup_reads_no_graph_file()
+    {
+        var repo = NewRepo();
+        var ids = Ids(Import(repo, Dag));
+        repo.Git("commit-graph", "write", "--reachable");
+        var index = new CommitGraphIndex(ObjectsDir(repo));
+
+        var first = index.Lookup(ids)!;
+        var opens = index.LayerOpensForTesting;
+        var second = index.Lookup(ids)!;
+
+        Assert.Equal(opens, index.LayerOpensForTesting);
+        AssertSameAnswers(first, second, ids);
+        AssertSameAnswers(new CommitGraphIndex(ObjectsDir(repo)).Lookup(ids)!, second, ids);
+    }
+
+    [Fact]
+    public void A_superset_reads_only_the_new_ids_and_answers_like_a_fresh_reader()
+    {
+        var repo = NewRepo();
+        var ids = Ids(Import(repo, Dag));
+        repo.Git("commit-graph", "write", "--reachable");
+        var blob = GitObjectId.Parse(repo.Git("rev-parse", ids[0] + ":f.txt").Trim());
+        var index = new CommitGraphIndex(ObjectsDir(repo));
+
+        Assert.NotNull(index.Lookup(ids[..3]));
+        GitObjectId[] all = [.. ids, blob];
+        var superset = index.Lookup(all)!;
+        var opens = index.LayerOpensForTesting;
+
+        AssertSameAnswers(new CommitGraphIndex(ObjectsDir(repo)).Lookup(all)!, superset, all);
+        Assert.Equal(ids.Length, superset.Count);
+        Assert.NotNull(index.Lookup(all));
+        Assert.Equal(opens, index.LayerOpensForTesting); // the blob was asked too: nothing new
+    }
+
+    [Fact]
+    public void A_split_write_after_a_lookup_is_a_new_state()
+    {
+        var repo = NewRepo();
+        Import(repo, Dag[..3]);
+        repo.Git("commit-graph", "write", "--reachable", "--split=no-merge");
+        var index = new CommitGraphIndex(ObjectsDir(repo));
+        var before = Ids(repo.Git("rev-list", "--all").Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.Equal(before.Length, index.Lookup(before)!.Count);
+
+        repo.Git("commit", "--allow-empty", "-m", "layer 2", "--no-gpg-sign");
+        var tip = GitObjectId.Parse(repo.HeadSha);
+        Assert.False(index.Lookup([tip])!.Contains(tip)); // the asked-but-absent tip is remembered...
+        repo.Git("commit-graph", "write", "--reachable", "--split=no-merge");
+
+        GitObjectId[] all = [.. before, tip];
+        var after = index.Lookup(all)!;                    // ...until the chain changes
+        Assert.True(after.Contains(tip));
+        AssertSameAnswers(new CommitGraphIndex(ObjectsDir(repo)).Lookup(all)!, after, all);
+    }
+
+    [Fact]
+    public void A_replaced_single_file_is_a_new_state()
+    {
+        var repo = NewRepo();
+        var ids = Ids(Import(repo, Dag));
+        repo.Git("commit-graph", "write", "--reachable");
+        var index = new CommitGraphIndex(ObjectsDir(repo));
+        repo.Git("commit", "--allow-empty", "-m", "more", "--no-gpg-sign");
+        var tip = GitObjectId.Parse(repo.HeadSha);
+        GitObjectId[] all = [.. ids, tip];
+        Assert.False(index.Lookup(all)!.Contains(tip));
+
+        repo.Git("commit-graph", "write", "--reachable");
+
+        var after = index.Lookup(all)!;
+        Assert.True(after.Contains(tip));
+        AssertSameAnswers(new CommitGraphIndex(ObjectsDir(repo)).Lookup(all)!, after, all);
+    }
+
+    [Fact]
+    public void A_lookup_never_answers_for_ids_another_caller_asked()
+    {
+        var repo = NewRepo();
+        var ids = Ids(Import(repo, Dag));
+        repo.Git("commit-graph", "write", "--reachable");
+        var index = new CommitGraphIndex(ObjectsDir(repo));
+
+        Assert.Equal(2, index.Lookup([ids[0], ids[1]])!.Count);
+        var onlyB = index.Lookup([ids[1]])!;
+
+        Assert.Equal(1, onlyB.Count);
+        Assert.False(onlyB.Contains(ids[0]));
+        Assert.Null(onlyB.CorrectedDate(ids[0]));
+        Assert.True(onlyB.Contains(ids[1]));
+    }
+
+    private static int NotUsedLines(AppLog.AppLogSession session)
+    {
+        session.Dispose();
+        return File.ReadAllLines(session.SessionPath).Count(l => l.Contains("Commit-graph not used for", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_missing_graph_is_logged_once_and_again_after_it_comes_and_goes()
+    {
+        var repo = NewRepo();
+        var ids = Ids(Import(repo, Dag));
+        var index = new CommitGraphIndex(ObjectsDir(repo));
+        using var dir = new StateDir();
+
+        var session = AppLog.StartSessionForTesting(dir.Path);
+        for (var i = 0; i < 3; i++)
+            Assert.Null(index.Lookup(ids));
+        Assert.Equal(1, NotUsedLines(session));
+
+        session = AppLog.StartSessionForTesting(dir.Path);
+        repo.Git("commit-graph", "write", "--reachable");
+        Assert.NotNull(index.Lookup(ids));
+        var file = Path.Combine(ObjectsDir(repo), "info", "commit-graph");
+        File.SetAttributes(file, FileAttributes.Normal);
+        File.Delete(file);
+        Assert.Null(index.Lookup(ids));
+        Assert.Null(index.Lookup(ids));
+        Assert.Equal(1, NotUsedLines(session));
+    }
+
+    [Fact]
+    public void A_generation_one_graph_is_logged_and_parsed_once()
+    {
+        var repo = NewRepo();
+        var ids = Ids(Import(repo, Dag));
+        repo.Git("-c", "commitGraph.generationVersion=1", "commit-graph", "write", "--reachable");
+        var index = new CommitGraphIndex(ObjectsDir(repo));
+        using var dir = new StateDir();
+
+        var session = AppLog.StartSessionForTesting(dir.Path);
+        for (var i = 0; i < 3; i++)
+            Assert.Null(index.Lookup(ids));
+
+        Assert.Equal(1, NotUsedLines(session));
+        Assert.Equal(1, index.LayerOpensForTesting);
+    }
+
+    [Fact]
+    public async Task Concurrent_lookups_answer_like_a_fresh_reader()
+    {
+        var repo = NewRepo();
+        var ids = Ids(Import(repo, Dag));
+        repo.Git("commit-graph", "write", "--reachable");
+        var index = new CommitGraphIndex(ObjectsDir(repo));
+        var expected = new CommitGraphIndex(ObjectsDir(repo));
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(t => Task.Run(() =>
+        {
+            var mine = ids.Skip(t % 4).Take(3 + t % 3).ToArray();
+            return (Ids: mine, Lookup: index.Lookup(mine)!);
+        })));
+
+        foreach (var (mine, lookup) in results)
+            AssertSameAnswers(expected.Lookup(mine)!, lookup, ids);
+    }
+
     [Fact]
     public void Reader_never_memory_maps()
     {
@@ -393,6 +563,41 @@ public sealed class CommitGraphIndexTests(ITestOutputHelper output) : IDisposabl
                 best = Math.Min(best, sw.Elapsed.TotalMilliseconds);
             }
             output.WriteLine($"{path}: {ids.Length} ids, {lookup?.Count ?? -1} in graph, best {best:F0} ms");
+        }
+    }
+
+    /// <summary>In each <c>HISTORIA_PERF_REPOS</c> repository, a lookup of every packed id and then
+    /// of the ref snapshot's tip ids (a subset), as one load does: the second must come from the
+    /// memo, under 10 ms warm. Read-only.</summary>
+    [ColdLoadPerfFact]
+    public async Task A_second_lookup_of_the_tips_comes_from_the_memo()
+    {
+        var repos = (Environment.GetEnvironmentVariable("HISTORIA_PERF_REPOS") ?? "")
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(Directory.Exists);
+        await using var host = new MiniHost();
+        foreach (var path in repos)
+        {
+            await using var ctx = host.Open(path);
+            var snapshot = await ctx.RefSnapshots.GetAsync();
+            var packed = new TestRepositoryBuilderView(path).Run("for-each-ref", "--format=%(objectname)")
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries).Distinct().Select(GitObjectId.Parse).ToArray();
+            var tips = snapshot.Refs.Select(r => r.PeeledCommit).OfType<GitObjectId>().Where(packed.Contains).Distinct().ToArray();
+
+            var index = new CommitGraphIndex(ctx.CommitGraph.ObjectsDirectory);
+            var sw = Stopwatch.StartNew();
+            var first = index.Lookup(packed);
+            var firstMs = sw.Elapsed.TotalMilliseconds;
+            sw.Restart();
+            var second = index.Lookup(tips);
+            var secondMs = sw.Elapsed.TotalMilliseconds;
+
+            output.WriteLine($"{path}: {packed.Length} ids in {firstMs:F0} ms, then {tips.Length} tips in {secondMs:F1} ms");
+            if (first is not null)
+            {
+                Assert.NotNull(second);
+                Assert.True(secondMs < 10, $"{secondMs:F1} ms");
+            }
         }
     }
 

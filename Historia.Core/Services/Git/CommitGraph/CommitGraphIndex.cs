@@ -14,8 +14,16 @@ namespace Historia.Services.Git;
 /// data (a generation-1 graph) gives no such bound, and is reported as no usable graph.</para>
 /// <para>Every file is opened shared for read, write and delete and closed before
 /// <see cref="Lookup"/> returns: git rewrites and renames these files (<c>gc</c>, split
-/// writes), and a handle held open on Windows would make that fail. Nothing is memory-mapped
-/// and nothing is cached between calls.</para>
+/// writes), and a handle held open on Windows would make that fail. Nothing is memory-mapped.</para>
+/// <para>What was looked up is remembered for one <i>graph state</i> — the files git would read:
+/// the single file's length, write time and creation time, or the chain file's bytes (its lines
+/// name each layer by its checksum) and whether each listed layer exists. Every lookup reads the
+/// state first (a stat, or a ~1 KB read); in the same state, ids asked before are answered from
+/// memory and only new ids are read from the files. Any change to the graph files is a new state
+/// and starts over. An unusable graph is remembered for its state too, and its reason is logged
+/// once per state and reason. git replaces a graph file by renaming a new one into place (a new
+/// creation time) and names chain layers by checksum, so a rewrite always reads as a new state.
+/// The memo holds no file handle.</para>
 /// </summary>
 public sealed class CommitGraphIndex(string objectsDirectory)
 {
@@ -37,52 +45,207 @@ public sealed class CommitGraphIndex(string objectsDirectory)
     private const int MergeGap = 16 * 1024;
     private const int MaxSpan = 1024 * 1024;
 
+    // The memo is dropped rather than grown past this many ids.
+    private const int MaxMemoIds = 500_000;
+
+    private const string NoGraphState = "none";
+    private const string UnreadableState = "unreadable";
+
+    /// <summary>What one graph state has answered so far: every id asked, the corrected dates of
+    /// those found and the graph's hash length — or, for an unusable graph, why. Immutable: a
+    /// merge builds a new one.</summary>
+    private sealed record Memo(
+        string State, HashSet<GitObjectId> Asked, Dictionary<GitObjectId, long> Found, int HashLength, string? UnusableReason);
+
+    /// <summary>The files git would read, keyed as a graph state: the single file's path, or the
+    /// chain file's bytes (null when there is neither, or the chain file is implausibly
+    /// large).</summary>
+    private sealed record GraphFiles(string State, string? Single, byte[]? Chain);
+
+    /// <summary>A failure that depends on the ids asked rather than on the graph: never
+    /// remembered.</summary>
+    private sealed class IdsMismatchException(string message) : Exception(message);
+
+    private readonly object _lock = new();
+    private Memo? _memo;
+    private (string State, string Reason)? _lastLogged;
+    private int _layerOpens;
+
     public string ObjectsDirectory { get; } = objectsDirectory;
+
+    /// <summary>Test seam: how many times a graph file (the single file or a chain layer) has been
+    /// opened to read entries.</summary>
+    internal int LayerOpensForTesting => Volatile.Read(ref _layerOpens);
 
     /// <summary>Looks up <paramref name="ids"/> in the commit-graph. Null when there is no
     /// usable graph — none at all, a layer without generation data, a hash that doesn't match the
-    /// ids, a file that fails validation, or an I/O error (each logged once with the reason).</summary>
+    /// ids, a file that fails validation, or an I/O error; the reason is logged once per graph
+    /// state and reason. The result covers exactly <paramref name="ids"/>, whatever else this
+    /// instance has looked up. Safe to call concurrently.</summary>
     public CommitGraphLookup? Lookup(IReadOnlyCollection<GitObjectId> ids)
     {
+        GraphFiles files;
         try
         {
-            return LookupCore(ids);
-        }
-        catch (InvalidDataException ex)
-        {
-            Unusable(ex.Message);
-            return null;
+            files = ReadGraphFiles();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Unusable($"I/O error: {ex.Message}");
+            Unusable(UnreadableState, $"I/O error: {ex.Message}");
             return null;
         }
-    }
 
-    private void Unusable(string reason) =>
-        AppLog.Write(AppLogLevel.Info, "git", $"Commit-graph not used for {ObjectsDirectory}: {reason}");
-
-    private CommitGraphLookup? LookupCore(IReadOnlyCollection<GitObjectId> ids)
-    {
         var hashLength = 0;
         foreach (var id in ids)
         {
             if (hashLength == 0)
                 hashLength = id.HashSize;
             else if (id.HashSize != hashLength)
-                throw new InvalidDataException("ids of mixed hash lengths");
+            {
+                Unusable(files.State, "ids of mixed hash lengths");
+                return null;
+            }
         }
 
-        var layers = LocateLayers();
-        if (layers is null)
+        Memo? memo;
+        lock (_lock)
         {
-            Unusable("no commit-graph file");
+            if (_memo is not null && _memo.State != files.State)
+                _memo = null;
+            memo = _memo;
+        }
+
+        if (memo?.UnusableReason is { } why)
+        {
+            Unusable(files.State, why);
+            return null;
+        }
+        if (memo is not null && hashLength != 0 && hashLength != memo.HashLength)
+        {
+            Unusable(files.State, $"hash length {memo.HashLength} doesn't match the ids' ({hashLength})");
             return null;
         }
 
-        var sorted = ids.Distinct().ToArray();
-        Array.Sort(sorted);
+        var distinct = ids as IReadOnlySet<GitObjectId> ?? ids.ToHashSet();
+        if (memo is null || !memo.Asked.IsSupersetOf(distinct))
+        {
+            var missing = memo is null ? [.. distinct] : distinct.Where(id => !memo.Asked.Contains(id)).ToArray();
+            Array.Sort(missing);
+            Dictionary<GitObjectId, long> found;
+            int graphHashLength;
+            try
+            {
+                (found, graphHashLength) = ReadEntries(files, missing, hashLength);
+            }
+            catch (IdsMismatchException ex)
+            {
+                Unusable(files.State, ex.Message);
+                return null;
+            }
+            catch (InvalidDataException ex)
+            {
+                lock (_lock)
+                    _memo = new Memo(files.State, [], [], 0, ex.Message);
+                Unusable(files.State, ex.Message);
+                return null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Unusable(files.State, $"I/O error: {ex.Message}");
+                return null;
+            }
+            memo = Merge(files.State, memo, missing, found, graphHashLength);
+        }
+
+        lock (_lock)
+            _lastLogged = null;
+
+        var result = new Dictionary<GitObjectId, long>(Math.Min(distinct.Count, memo.Found.Count));
+        foreach (var id in distinct)
+            if (memo.Found.TryGetValue(id, out var date))
+                result[id] = date;
+        return new CommitGraphLookup(result);
+    }
+
+    /// <summary>Folds newly read ids into the memo for <paramref name="state"/> — the latest one
+    /// stored for that state, when another lookup merged meanwhile — and returns the combined
+    /// memo. It is stored unless it would outgrow <see cref="MaxMemoIds"/>, in which case the memo
+    /// is dropped.</summary>
+    private Memo Merge(string state, Memo? basis, GitObjectId[] asked, Dictionary<GitObjectId, long> found, int hashLength)
+    {
+        lock (_lock)
+        {
+            if (_memo is { UnusableReason: null } current && current.State == state)
+                basis = current;
+            Memo merged;
+            if (basis is null)
+                merged = new Memo(state, [.. asked], found, hashLength, null);
+            else
+            {
+                var dates = new Dictionary<GitObjectId, long>(basis.Found);
+                foreach (var (id, date) in found)
+                    dates[id] = date;
+                merged = new Memo(state, [.. basis.Asked, .. asked], dates, hashLength, null);
+            }
+            _memo = merged.Asked.Count <= MaxMemoIds ? merged : null;
+            return merged;
+        }
+    }
+
+    /// <summary>Logs why the graph isn't used, unless the same reason was already logged for the
+    /// same graph state. A usable lookup clears it, so a graph that breaks again is logged
+    /// again.</summary>
+    private void Unusable(string state, string reason)
+    {
+        lock (_lock)
+        {
+            if (_lastLogged == (state, reason))
+                return;
+            _lastLogged = (state, reason);
+        }
+        AppLog.Write(AppLogLevel.Info, "git", $"Commit-graph not used for {ObjectsDirectory}: {reason}");
+    }
+
+    /// <summary>The graph state: a stat of the single file, else the chain file's bytes plus each
+    /// listed layer's existence, else no graph. Opens no layer.</summary>
+    private GraphFiles ReadGraphFiles()
+    {
+        var info = Path.Combine(ObjectsDirectory, "info");
+        var single = new FileInfo(Path.Combine(info, "commit-graph"));
+        if (single.Exists)
+            return new($"file:{single.Length}:{single.LastWriteTimeUtc.Ticks}:{single.CreationTimeUtc.Ticks}", single.FullName, null);
+
+        var chainFile = new FileInfo(Path.Combine(info, "commit-graphs", "commit-graph-chain"));
+        if (!chainFile.Exists)
+            return new(NoGraphState, null, null);
+
+        byte[] bytes;
+        using (var handle = File.OpenHandle(chainFile.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        {
+            var length = RandomAccess.GetLength(handle);
+            if (length > 1 << 20)
+                return new($"chain-oversized:{length}:{chainFile.LastWriteTimeUtc.Ticks}", null, null);
+            bytes = new byte[length];
+            ReadExactly(handle, bytes, 0);
+        }
+
+        var state = new StringBuilder("chain:");
+        foreach (var line in ChainLines(bytes))
+            state.Append(line).Append(File.Exists(LayerPath(line)) ? '+' : '-').Append(';');
+        return new(state.ToString(), null, bytes);
+    }
+
+    private static IEnumerable<string> ChainLines(byte[] chain) =>
+        Encoding.ASCII.GetString(chain).Split('\n').Select(raw => raw.TrimEnd('\r')).Where(line => line.Length > 0);
+
+    private string LayerPath(string hash) => Path.Combine(ObjectsDirectory, "info", "commit-graphs", $"graph-{hash}.graph");
+
+    /// <summary>Reads <paramref name="sorted"/>'s corrected dates from every layer, validating each
+    /// layer first, and returns them with the graph's hash length. Throws
+    /// <see cref="InvalidDataException"/> with the reason when the graph is unusable.</summary>
+    private (Dictionary<GitObjectId, long> Found, int HashLength) ReadEntries(GraphFiles files, GitObjectId[] sorted, int hashLength)
+    {
+        var layers = LocateLayers(files);
         var found = new Dictionary<GitObjectId, long>(Math.Min(sorted.Length, 1 << 16));
 
         var baseHashes = new List<byte[]>();
@@ -90,6 +253,7 @@ public sealed class CommitGraphIndex(string objectsDirectory)
         {
             var (path, expectedHash) = layers[i];
             using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            Interlocked.Increment(ref _layerOpens);
             var layer = ReadLayer(handle, path, hashLength);
             hashLength = layer.HashLength;
 
@@ -110,52 +274,34 @@ public sealed class CommitGraphIndex(string objectsDirectory)
                 throw new InvalidDataException("the single commit-graph file names base graphs");
 
             if (layer.GenData is null)
-            {
-                Unusable($"{Path.GetFileName(path)} has no corrected commit dates (generation data)");
-                return null;
-            }
+                throw new InvalidDataException($"{Path.GetFileName(path)} has no corrected commit dates (generation data)");
 
             if (sorted.Length > 0)
                 ReadLayerEntries(handle, layer, sorted, found);
         }
 
-        return new CommitGraphLookup(found);
+        return (found, hashLength);
     }
 
     /// <summary>The graph files in git's order, each with the checksum its chain line names (null
-    /// for the single file). Null when there is none.</summary>
-    private List<(string Path, byte[]? ExpectedHash)>? LocateLayers()
+    /// for the single file). Throws when there is none.</summary>
+    private List<(string Path, byte[]? ExpectedHash)> LocateLayers(GraphFiles files)
     {
-        var info = Path.Combine(ObjectsDirectory, "info");
-        var single = Path.Combine(info, "commit-graph");
-        if (File.Exists(single))
+        if (files.Single is { } single)
             return [(single, null)];
-
-        var chainFile = Path.Combine(info, "commit-graphs", "commit-graph-chain");
-        if (!File.Exists(chainFile))
-            return null;
-
-        byte[] bytes;
-        using (var handle = File.OpenHandle(chainFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-        {
-            var length = RandomAccess.GetLength(handle);
-            if (length > 1 << 20)
-                throw new InvalidDataException("commit-graph-chain is implausibly large");
-            bytes = new byte[length];
-            ReadExactly(handle, bytes, 0);
-        }
+        if (files.State.StartsWith("chain-oversized:", StringComparison.Ordinal))
+            throw new InvalidDataException("commit-graph-chain is implausibly large");
+        if (files.Chain is not { } chain)
+            throw new InvalidDataException("no commit-graph file");
 
         var layers = new List<(string, byte[]?)>();
-        foreach (var raw in Encoding.ASCII.GetString(bytes).Split('\n'))
+        foreach (var line in ChainLines(chain))
         {
-            var line = raw.TrimEnd('\r');
-            if (line.Length == 0)
-                continue;
             if (!GitObjectId.TryParse(line, out var hash))
                 throw new InvalidDataException($"commit-graph-chain line '{line}' is not a hash");
-            layers.Add((Path.Combine(info, "commit-graphs", $"graph-{line}.graph"), hash.AsSpan().ToArray()));
+            layers.Add((LayerPath(line), hash.AsSpan().ToArray()));
         }
-        return layers.Count == 0 ? null : layers;
+        return layers.Count == 0 ? throw new InvalidDataException("no commit-graph file") : layers;
     }
 
     private sealed record Layer(
@@ -184,7 +330,7 @@ public sealed class CommitGraphIndex(string objectsDirectory)
             _ => throw new InvalidDataException($"{name}: unknown hash version {header[5]}"),
         };
         if (expectedHashLength != 0 && hashLength != expectedHashLength)
-            throw new InvalidDataException($"{name}: hash length {hashLength} doesn't match the repository's ({expectedHashLength})");
+            throw new IdsMismatchException($"{name}: hash length {hashLength} doesn't match the ids' ({expectedHashLength})");
         int chunkCount = header[6];
         int baseCount = header[7];
 
