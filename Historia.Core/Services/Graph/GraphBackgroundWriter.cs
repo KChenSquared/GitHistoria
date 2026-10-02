@@ -62,10 +62,8 @@ namespace Historia.Services.Graph;
 /// on-disk header under a per-repo lock before every write.
 /// </para>
 /// </summary>
-internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService settings, IBackgroundWorkGate? gate = null)
+internal sealed class GraphBackgroundWriter(IGitCliService cli, IBackgroundWorkGate? gate = null)
 {
-    internal const int MinCommitsToWrite = 30_000;
-
     private static readonly IReadOnlyDictionary<string, string> NoLazyFetch =
         new Dictionary<string, string> { ["GIT_NO_LAZY_FETCH"] = "1" };
 
@@ -87,6 +85,8 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
     // written only while _serial is held.
     private readonly Dictionary<string, long> _checkedToken = new(StringComparer.OrdinalIgnoreCase);
 
+    private int _pendingChecks;
+
     private readonly object _sync = new();
 
     private readonly Queue<(RepositoryContext Context, Func<CancellationToken, Task> Work, CancellationTokenSource Cts, TaskCompletionSource Done)> _inactiveQueue = new();
@@ -105,9 +105,6 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
     private readonly Dictionary<string, List<(CancellationTokenSource Cts, TaskCompletionSource Done)>> _inactiveJobs =
         new(StringComparer.Ordinal);
     private bool _pumping;
-
-    /// <summary>Forwards to <see cref="EnsureCurrent"/>; the row count is not used.</summary>
-    public void MaybeSchedule(RepositoryContext context, int commitsWalked) => EnsureCurrent(context);
 
     /// <summary>
     /// Queues a headless job for an inactive tab. Jobs run one at a time, in the order
@@ -272,8 +269,16 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
     {
         if (!cli.IsGitAvailable)
             return;
-        _ = Task.Run(() => EnsureCurrentAsync(context));
+        Interlocked.Increment(ref _pendingChecks);
+        _ = Task.Run(async () =>
+        {
+            try { await EnsureCurrentAsync(context).ConfigureAwait(false); }
+            finally { Interlocked.Decrement(ref _pendingChecks); }
+        });
     }
+
+    /// <summary>Test seam: checks queued by <see cref="EnsureCurrent"/> that haven't finished.</summary>
+    internal int PendingChecksForTesting => Volatile.Read(ref _pendingChecks);
 
     /// <summary>The work behind <see cref="EnsureCurrent"/>; completes when the check (and any
     /// write it started) is done, or when the tab closed before its turn. Never throws.</summary>
@@ -423,12 +428,6 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
         {
             _serial.Release();
         }
-    }
-
-    /// <summary>A no-op: <see cref="WriteForCloneAsync"/> records the clone's ref state
-    /// itself.</summary>
-    public void RecordWrite(string gitDir, int rowCount)
-    {
     }
 
     /// <summary>Fire-and-forget commit-graph check after a successful fetch, pull or push — the

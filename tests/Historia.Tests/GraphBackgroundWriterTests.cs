@@ -42,7 +42,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task A_missing_commit_graph_is_written_plain_reachable_at_below_normal_priority()
     {
         var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var writer = new GraphBackgroundWriter(cli);
         await using var ctx = _host.Open(_repo.Path);
 
         await writer.EnsureCurrentAsync(ctx);
@@ -57,7 +57,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task Never_calls_git_maintenance_or_touches_git_config()
     {
         var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var writer = new GraphBackgroundWriter(cli);
         await using var ctx = _host.Open(_repo.Path);
 
         await writer.EnsureCurrentAsync(ctx);
@@ -78,7 +78,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     {
         WriteStubGraph();
         var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var writer = new GraphBackgroundWriter(cli);
         await using var ctx = _host.Open(_repo.Path);
 
         await writer.EnsureCurrentAsync(ctx);
@@ -94,7 +94,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task A_second_check_with_unchanged_refs_does_not_write_again()
     {
         var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var writer = new GraphBackgroundWriter(cli);
         await using var ctx = _host.Open(_repo.Path);
 
         await writer.EnsureCurrentAsync(ctx);
@@ -110,7 +110,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     {
         WriteStubGraph();
         var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var writer = new GraphBackgroundWriter(cli);
         await using var ctx = _host.Open(_repo.Path);
 
         writer.RefreshAfterFetch(ctx);
@@ -125,7 +125,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task RefreshAfterFetch_with_no_graph_writes_plain_reachable_whatever_the_size()
     {
         var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var writer = new GraphBackgroundWriter(cli);
         await using var ctx = _host.Open(_repo.Path);
 
         writer.RefreshAfterFetch(ctx);
@@ -140,7 +140,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     {
         var gate = new BlockingGate();
         var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings, gate);
+        var writer = new GraphBackgroundWriter(cli, gate);
         await using var ctx = _host.Open(_repo.Path);
 
         var check = writer.EnsureCurrentAsync(ctx);
@@ -157,7 +157,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task Commit_graph_writes_run_with_an_uncancellable_token()
     {
         var cli = new TokenRecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var writer = new GraphBackgroundWriter(cli);
         await using var ctx = _host.Open(_repo.Path);
 
         await writer.EnsureCurrentAsync(ctx);
@@ -176,7 +176,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
         // caller does to its own RepositoryContext.Lifetime can reach that registration.
         var block = new TaskCompletionSource();
         var cli = new TokenRecordingGitCliService(block);
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var writer = new GraphBackgroundWriter(cli);
         var ctx = _host.Open(_repo.Path);
 
         var check = writer.EnsureCurrentAsync(ctx);
@@ -203,7 +203,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task A_commit_graph_write_completes_while_an_inactive_job_is_still_parked()
     {
         var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var writer = new GraphBackgroundWriter(cli);
         await using var ctx = _host.Open(_repo.Path);
 
         var headlessStarted = new TaskCompletionSource();
@@ -226,7 +226,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     [Fact]
     public async Task EnqueueInactiveTab_runs_jobs_one_at_a_time_in_enqueue_order()
     {
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService());
         // Two distinct contexts — EnqueueInactiveTab now de-dupes by context, so
         // this ordering test (which predates that fix) must not enqueue the same context twice.
         await using var ctx1 = _host.Open(_repo.Path);
@@ -265,7 +265,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     [Fact]
     public async Task EnqueueInactiveTab_one_jobs_failure_does_not_stall_the_rest()
     {
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService());
         // Two distinct contexts — see the ordering test above for why.
         await using var ctx1 = _host.Open(_repo.Path);
         await using var ctx2 = _host.Open(_repo.Path);
@@ -281,7 +281,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task EnqueueInactiveTab_waits_for_the_gate_before_running()
     {
         var fakeGate = new BlockingGate();
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings, fakeGate);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), fakeGate);
         await using var ctx = _host.Open(_repo.Path);
 
         var ran = new TaskCompletionSource();
@@ -297,7 +297,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     [Fact]
     public async Task EnqueueInactiveTab_a_context_already_queued_is_not_queued_again()
     {
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService());
         await using var ctxA = _host.Open(_repo.Path);
         await using var ctxB = _host.Open(_repo.Path);
 
@@ -370,7 +370,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task EnqueueInactiveTab_skips_a_job_whose_tab_is_focused_when_it_starts()
     {
         var gate = new FocusTrackingGate();
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings, gate);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), gate);
         await using var ctx = _host.Open(_repo.Path);
 
         var ran = false;
@@ -393,7 +393,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task EnqueueInactiveTab_still_runs_for_an_unfocused_tab()
     {
         var gate = new FocusTrackingGate();
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings, gate);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), gate);
         await using var focused = _host.Open(_repo.Path);
         await using var other = _host.Open(_repo.Path);
         gate.Focused = focused;
@@ -409,7 +409,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task HasInactiveJob_covers_queued_and_running_then_clears()
     {
         var gate = new BlockingGate();
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings, gate);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), gate);
         await using var ctx = _host.Open(_repo.Path);
         Assert.False(writer.HasInactiveJob(ctx));
 
@@ -433,7 +433,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     [Fact]
     public async Task CancelInactiveTab_drops_a_queued_job_without_waiting_for_the_one_running()
     {
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService());
         await using var running = _host.Open(_repo.Path);
         await using var queued = _host.Open(_repo.Path);
         await using var after = _host.Open(_repo.Path);

@@ -31,7 +31,7 @@ public sealed class CommitGraphMaintenanceTests : IAsyncDisposable
     private (GraphBackgroundWriter Writer, InterceptingGitCliService Cli) NewWriter()
     {
         var cli = new InterceptingGitCliService(_host.Provider.GetRequiredService<IGitCliService>());
-        return (new GraphBackgroundWriter(cli, _host.Settings), cli);
+        return (new GraphBackgroundWriter(cli), cli);
     }
 
     private static List<GitCliRequest> Writes(InterceptingGitCliService cli) =>
@@ -246,7 +246,7 @@ public sealed class CommitGraphMaintenanceTests : IAsyncDisposable
     {
         var repo = NewRepo(3);
         var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var writer = new GraphBackgroundWriter(cli);
         await using var ctx = _host.Open(repo.Path);
 
         await writer.WriteForCloneAsync(ctx, CancellationToken.None);
