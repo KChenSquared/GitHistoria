@@ -16,8 +16,8 @@ public sealed class ColdLoadPerfFactAttribute : FactAttribute
 
 /// <summary>
 /// Cold-load and tab-switch latency measurements of the shipped code: logging on the calling
-/// thread, repository discovery, the watcher's size probe, opening a repository and restoring a
-/// whole session. <c>HISTORIA_PERF_REPOS</c> is a <c>;</c>-separated list of real repositories;
+/// thread, repository discovery, the watcher's size probe, opening a repository, restoring a
+/// whole session, and the first graph window. <c>HISTORIA_PERF_REPOS</c> is a <c>;</c>-separated list of real repositories;
 /// every repo operation here is read-only. Results also go to <c>HISTORIA_PERF_OUT</c> when set.
 /// <code>
 /// $env:HISTORIA_COLDLOAD_PERF=1; $env:HISTORIA_PERF_REPOS="C:\big\repo;D:\other\repo"
@@ -219,6 +219,70 @@ public sealed class ColdLoadPerfManualTests(ITestOutputHelper output) : IDisposa
         {
             Log($"[restore-open] {name}: all {Repos.Count} open in {Median(runs.Select(r => r.All).ToList()):F0} ms " +
                 $"(rounds: {string.Join(", ", runs.Select(r => $"{r.All:F0}"))}); peak thread-pool queue {runs.Max(r => r.PeakQueue)}");
+        }
+    }
+
+    // ── First graph window ──
+
+    /// <summary>Opens each repository and times what stands between Bind and the first graph
+    /// window: the ref snapshot (fast or typed, and why), the commit-graph lookup of the walk's
+    /// tips, and the first window itself, with the prefix walk's tips, proof and rows. Median of 3.
+    /// <para>Warm by default. For a cold number, point <c>HISTORIA_PERF_REPOS</c> at a fresh copy of
+    /// the repository whose <c>.git</c> was copied with <c>robocopy /J</c> (unbuffered, so none of
+    /// it is in the file cache), run this once, then delete the copy.</para></summary>
+    [ColdLoadPerfFact]
+    public async Task First_graph_window_of_each_repository()
+    {
+        Assert.NotEmpty(Repos);
+        await using var host = new MiniHost();
+        var sp = BuildProvider(host);
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
+
+        foreach (var repo in Repos)
+        {
+            var refs = new List<double>();
+            var lookup = new List<double>();
+            var window = new List<double>();
+            string? kind = null;
+            GraphLayoutService.PrefixWalkOutcome? prefix = null;
+            var tipCount = 0;
+            for (var round = 0; round < 3; round++)
+            {
+                await using var ctx = await RepositoryContext.OpenAsync(repo, sp);
+                ctx.MarkFirstGraphPaintDone();
+                ctx.MarkFirstFullLoadDone();
+
+                var sw = Stopwatch.StartNew();
+                var snapshot = await ctx.RefSnapshots.GetAsync();
+                refs.Add(sw.Elapsed.TotalMilliseconds);
+                kind = ctx.RefSnapshots.LastScanKindForTesting;
+
+                var tips = snapshot.Refs
+                    .Where(r => r.CanonicalName.StartsWith("refs/heads/", StringComparison.Ordinal)
+                        || r.CanonicalName.StartsWith("refs/remotes/", StringComparison.Ordinal)
+                        || r.CanonicalName.StartsWith("refs/tags/", StringComparison.Ordinal))
+                    .Select(r => r.PeeledCommit).OfType<GitObjectId>().Distinct().ToArray();
+                tipCount = tips.Length;
+                sw.Restart();
+                ctx.CommitGraph.Lookup(tips);
+                lookup.Add(sw.Elapsed.TotalMilliseconds);
+
+                var service = new GraphLayoutService(host.Settings, host.Locator);
+                prefix = null;
+                GraphLayoutService.TestPrefixWalkObserved = o => prefix = o;
+                sw.Restart();
+                await service.ComputeLayoutAsync(ctx, query, 200);
+                window.Add(sw.Elapsed.TotalMilliseconds);
+                GraphLayoutService.TestPrefixWalkObserved = null;
+                service.Forget(ctx);
+                service.ClearPersistentCache();
+            }
+            var prefixText = prefix is { } p
+                ? p.Proven ? $"prefix {p.RecentTips} of {p.TotalTips} tips, proof ok, {p.Rows} rows" : $"prefix fell back ({p.FallbackReason})"
+                : "no prefix";
+            Log($"[first window] {Path.GetFileName(repo)}: refs {Median(refs):F0} ms ({kind}); " +
+                $"commit-graph lookup of {tipCount} tips {Median(lookup):F0} ms; first window {Median(window):F0} ms ({prefixText}); " +
+                $"first round {refs[0] + window[0]:F0} ms");
         }
     }
 
