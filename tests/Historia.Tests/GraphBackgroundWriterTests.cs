@@ -24,63 +24,48 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
         await _host.DisposeAsync();
     }
 
-    private async Task<RecordingGitCliService> WriteMissingGraphAsync(int rowCount)
+    private void WriteStubGraph()
     {
-        var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
-        await using var ctx = _host.Open(_repo.Path);
+        var info = Path.Combine(_repo.Path, ".git", "objects", "info");
+        Directory.CreateDirectory(info);
+        File.WriteAllText(Path.Combine(info, "commit-graph"), "stub");
+    }
 
-        writer.MaybeSchedule(ctx, rowCount);
+    private static async Task WaitForAsync(Func<bool> condition)
+    {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (cli.Requests.Count == 0 && DateTime.UtcNow < deadline)
+        while (!condition() && DateTime.UtcNow < deadline)
             await Task.Delay(20);
-        return cli;
-    }
-
-    [Fact]
-    public async Task MaybeSchedule_below_the_threshold_never_writes()
-    {
-        var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
-        await using var ctx = _host.Open(_repo.Path);
-
-        writer.MaybeSchedule(ctx, GraphBackgroundWriter.MinCommitsToWrite - 1);
-        await Task.Delay(200); // give a wrongly-scheduled write a chance to show up
-
-        Assert.Empty(cli.Requests);
-    }
-
-    [Fact]
-    public async Task MaybeSchedule_off_by_setting_never_writes()
-    {
-        var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = false });
-        await using var ctx = _host.Open(_repo.Path);
-
-        writer.MaybeSchedule(ctx, GraphBackgroundWriter.MinCommitsToWrite + 1);
-        await Task.Delay(200);
-
-        Assert.Empty(cli.Requests);
     }
 
     [Fact]
     public async Task A_missing_commit_graph_is_written_plain_reachable_at_below_normal_priority()
     {
-        var cli = await WriteMissingGraphAsync(GraphBackgroundWriter.MinCommitsToWrite);
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await using var ctx = _host.Open(_repo.Path);
+
+        await writer.EnsureCurrentAsync(ctx);
 
         var req = Assert.Single(cli.Requests);
         Assert.Equal(["commit-graph", "write", "--reachable"], req.Arguments);
         Assert.True(req.LowerPriority);
+        Assert.Equal("1", req.ExtraEnvironment?["GIT_NO_LAZY_FETCH"]);
     }
 
     [Fact]
     public async Task Never_calls_git_maintenance_or_touches_git_config()
     {
-        var cli = await WriteMissingGraphAsync(GraphBackgroundWriter.MinCommitsToWrite);
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await using var ctx = _host.Open(_repo.Path);
 
+        await writer.EnsureCurrentAsync(ctx);
+        WriteStubGraph();
+        File.WriteAllText(Path.Combine(_repo.Path, ".git", "refs", "heads", "other"), (await ctx.RefSnapshots.GetAsync()).HeadTarget + "\n");
+        await writer.EnsureCurrentAsync(ctx);
+
+        Assert.Equal(2, cli.Requests.Count);
         Assert.All(cli.Requests, r =>
         {
             Assert.DoesNotContain("maintenance", r.Arguments);
@@ -89,23 +74,153 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_second_MaybeSchedule_for_an_already_written_graph_does_not_write_again()
+    public async Task An_unusable_existing_graph_is_refreshed_with_split_and_an_expire_time()
     {
-        var cli = await WriteMissingGraphAsync(GraphBackgroundWriter.MinCommitsToWrite);
+        WriteStubGraph();
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await using var ctx = _host.Open(_repo.Path);
+
+        await writer.EnsureCurrentAsync(ctx);
+
+        var req = Assert.Single(cli.Requests);
+        Assert.Equal(["commit-graph", "write", "--reachable", "--split"], req.Arguments.Take(4));
+        Assert.Contains(req.Arguments, a => a.StartsWith("--expire-time="));
+        Assert.True(req.LowerPriority);
+        Assert.Equal("1", req.ExtraEnvironment?["GIT_NO_LAZY_FETCH"]);
+    }
+
+    [Fact]
+    public async Task A_second_check_with_unchanged_refs_does_not_write_again()
+    {
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await using var ctx = _host.Open(_repo.Path);
+
+        await writer.EnsureCurrentAsync(ctx);
+        // The recording CLI writes nothing, so the graph is still missing: only the recorded ref
+        // state keeps the second check from writing.
+        await writer.EnsureCurrentAsync(ctx);
+
         Assert.Single(cli.Requests);
+    }
 
-        // Simulate the write having actually landed on disk (RecordingGitCliService doesn't
-        // touch the filesystem), then call MaybeSchedule again as a later spill chunk would.
-        var gitDir = Path.Combine(_repo.Path, ".git");
-        Directory.CreateDirectory(Path.Combine(gitDir, "objects", "info"));
-        File.WriteAllText(Path.Combine(gitDir, "objects", "info", "commit-graph"), "stub");
+    [Fact]
+    public async Task RefreshAfterFetch_with_an_existing_graph_writes_split_with_an_expire_time()
+    {
+        WriteStubGraph();
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await using var ctx = _host.Open(_repo.Path);
 
-        var writer2 = new GraphBackgroundWriter(cli, _host.Settings); // fresh instance: _attemptedFresh empty
-        await using var ctx2 = _host.Open(_repo.Path);
-        writer2.MaybeSchedule(ctx2, GraphBackgroundWriter.MinCommitsToWrite);
+        writer.RefreshAfterFetch(ctx);
+        await WaitForAsync(() => cli.Requests.Count > 0);
+
+        var req = Assert.Single(cli.Requests);
+        Assert.Contains("--split", req.Arguments);
+        Assert.Contains(req.Arguments, a => a.StartsWith("--expire-time="));
+    }
+
+    [Fact]
+    public async Task RefreshAfterFetch_with_no_graph_writes_plain_reachable_whatever_the_size()
+    {
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await using var ctx = _host.Open(_repo.Path);
+
+        writer.RefreshAfterFetch(ctx);
+        await WaitForAsync(() => cli.Requests.Count > 0);
+
+        var req = Assert.Single(cli.Requests);
+        Assert.Equal(["commit-graph", "write", "--reachable"], req.Arguments);
+    }
+
+    [Fact]
+    public async Task EnsureCurrent_waits_for_the_gate_before_checking()
+    {
+        var gate = new BlockingGate();
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings, gate);
+        await using var ctx = _host.Open(_repo.Path);
+
+        var check = writer.EnsureCurrentAsync(ctx);
         await Task.Delay(200);
+        Assert.False(check.IsCompleted);
+        Assert.Empty(cli.Requests);
 
-        Assert.Single(cli.Requests); // still just the one write from before
+        gate.Open();
+        await check.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Single(cli.Requests);
+    }
+
+    [Fact]
+    public async Task Commit_graph_writes_run_with_an_uncancellable_token()
+    {
+        var cli = new TokenRecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await using var ctx = _host.Open(_repo.Path);
+
+        await writer.EnsureCurrentAsync(ctx);
+
+        var ct = Assert.Single(cli.Tokens);
+        Assert.False(ct.CanBeCanceled);
+    }
+
+    [Fact]
+    public async Task Cancelling_the_tab_lifetime_mid_write_does_not_cancel_the_git_process()
+    {
+        // Verified against Historia.Core.Services.Git.GitCliService.RunAsync: the request's own
+        // CancellationToken is what's registered to TryKill the process (see
+        // GitCliProcessSetup.TryKill -> Process.Kill(entireProcessTree: true), i.e. TerminateProcess
+        // on Windows). Passing CancellationToken.None for the process run itself means nothing the
+        // caller does to its own RepositoryContext.Lifetime can reach that registration.
+        var block = new TaskCompletionSource();
+        var cli = new TokenRecordingGitCliService(block);
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        var ctx = _host.Open(_repo.Path);
+
+        var check = writer.EnsureCurrentAsync(ctx);
+        await WaitForAsync(() => cli.Tokens.Count > 0);
+        Assert.Single(cli.Tokens); // the write has started and is now blocked mid-run
+
+        await ctx.DisposeAsync(); // the tab closes while the git process is still "running"
+        await Task.Delay(150); // give a wrongly-cancelled write a chance to unwind
+        Assert.False(check.IsCompleted);
+
+        block.SetResult(); // let the fake "process" finish, as if the real one ran to completion
+        await check.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, cli.Completed);
+
+        // The serializer was released: a later ref change on a new tab writes again.
+        await using var ctx2 = _host.Open(_repo.Path);
+        File.WriteAllText(Path.Combine(_repo.Path, ".git", "refs", "heads", "other"), (await ctx2.RefSnapshots.GetAsync()).HeadTarget + "\n");
+        await writer.EnsureCurrentAsync(ctx2);
+        Assert.Equal(2, cli.Tokens.Count);
+        Assert.All(cli.Tokens, t => Assert.False(t.CanBeCanceled));
+    }
+
+    [Fact]
+    public async Task A_commit_graph_write_completes_while_an_inactive_job_is_still_parked()
+    {
+        var cli = new RecordingGitCliService();
+        var writer = new GraphBackgroundWriter(cli, _host.Settings);
+        await using var ctx = _host.Open(_repo.Path);
+
+        var headlessStarted = new TaskCompletionSource();
+        var headlessGate = new TaskCompletionSource();
+        writer.EnqueueInactiveTab(ctx, async ct =>
+        {
+            headlessStarted.SetResult();
+            await headlessGate.Task.WaitAsync(ct); // parked indefinitely, holding only _headlessSerial
+        });
+
+        await headlessStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // With the headless job still parked, a commit-graph write must still go through — it
+        // only ever needs _serial, which the headless job never touches.
+        await writer.EnsureCurrentAsync(ctx).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Single(cli.Requests);
     }
 
     [Fact]
@@ -180,67 +295,6 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task WriteCommitGraphCoreAsync_runs_the_git_process_with_an_uncancellable_token()
-    {
-        var cli = new TokenRecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
-        await using var ctx = _host.Open(_repo.Path);
-
-        writer.MaybeSchedule(ctx, GraphBackgroundWriter.MinCommitsToWrite);
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (cli.Tokens.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(20);
-
-        var ct = Assert.Single(cli.Tokens);
-        Assert.False(ct.CanBeCanceled);
-    }
-
-    [Fact]
-    public async Task Cancelling_the_tab_lifetime_mid_write_does_not_cancel_the_git_process()
-    {
-        // Verified against Historia.Core.Services.Git.GitCliService.RunAsync: the request's own
-        // CancellationToken is what's registered to TryKill the process (see
-        // GitCliProcessSetup.TryKill -> Process.Kill(entireProcessTree: true), i.e. TerminateProcess
-        // on Windows). Passing CancellationToken.None for the process run itself (as
-        // GraphBackgroundWriter.WriteCommitGraphCoreAsync now does) means nothing the caller does
-        // to its own RepositoryContext.Lifetime can reach that registration.
-        var block = new TaskCompletionSource();
-        var cli = new TokenRecordingGitCliService(block);
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
-        var ctx = _host.Open(_repo.Path);
-
-        writer.MaybeSchedule(ctx, GraphBackgroundWriter.MinCommitsToWrite);
-        var startDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (cli.Tokens.Count == 0 && DateTime.UtcNow < startDeadline)
-            await Task.Delay(20);
-        Assert.Single(cli.Tokens); // the write has started and is now blocked mid-run
-
-        await ctx.DisposeAsync(); // the tab closes while the git process is still "running"
-        await Task.Delay(150); // give a wrongly-cancelled write a chance to unwind
-
-        block.SetResult(); // let the fake "process" finish, as if the real one ran to completion
-
-        // Prove the first write actually completed and recorded state (rather than having been
-        // silently cancelled) by triggering a refresh through the SAME writer instance, whose
-        // in-memory _lastWrite would otherwise be empty.
-        var gitDir = Path.Combine(_repo.Path, ".git");
-        Directory.CreateDirectory(Path.Combine(gitDir, "objects", "info"));
-        File.WriteAllText(Path.Combine(gitDir, "objects", "info", "commit-graph"), "stub");
-
-        await using var ctx2 = _host.Open(_repo.Path);
-        writer.MaybeSchedule(ctx2, GraphBackgroundWriter.MinCommitsToWrite + 100_000);
-
-        var refreshDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (cli.Tokens.Count < 2 && DateTime.UtcNow < refreshDeadline)
-            await Task.Delay(20);
-
-        Assert.Equal(2, cli.Tokens.Count); // the refresh only fires if the first write's state stuck
-        Assert.All(cli.Tokens, t => Assert.False(t.CanBeCanceled));
-    }
-
-    [Fact]
     public async Task EnqueueInactiveTab_a_context_already_queued_is_not_queued_again()
     {
         var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
@@ -267,127 +321,6 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
         Assert.Equal(1, bRuns);
     }
 
-    [Fact]
-    public async Task An_active_tab_write_completes_while_an_inactive_job_is_still_parked()
-    {
-        var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
-        await using var ctx = _host.Open(_repo.Path);
-
-        var headlessStarted = new TaskCompletionSource();
-        var headlessGate = new TaskCompletionSource();
-        writer.EnqueueInactiveTab(ctx, async ct =>
-        {
-            headlessStarted.SetResult();
-            await headlessGate.Task.WaitAsync(ct); // parked indefinitely, holding only _headlessSerial
-        });
-
-        await headlessStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-        // With the headless job still parked, the active tab's own commit-graph write must still
-        // go through — it only ever needs _serial, which the headless job never touches.
-        writer.MaybeSchedule(ctx, GraphBackgroundWriter.MinCommitsToWrite);
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (cli.Requests.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(20);
-
-        Assert.Single(cli.Requests);
-    }
-
-    // ── RefreshAfterFetch ──
-
-    [Fact]
-    public async Task RefreshAfterFetch_with_an_existing_graph_writes_split_with_an_expire_time()
-    {
-        var gitDir = Path.Combine(_repo.Path, ".git");
-        Directory.CreateDirectory(Path.Combine(gitDir, "objects", "info"));
-        File.WriteAllText(Path.Combine(gitDir, "objects", "info", "commit-graph"), "stub");
-
-        var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
-        await using var ctx = _host.Open(_repo.Path);
-
-        writer.RefreshAfterFetch(ctx);
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (cli.Requests.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(20);
-
-        var req = Assert.Single(cli.Requests);
-        Assert.Equal("commit-graph", req.Arguments[0]);
-        Assert.Equal("write", req.Arguments[1]);
-        Assert.Contains("--split", req.Arguments);
-        Assert.Contains(req.Arguments, a => a.StartsWith("--expire-time="));
-        Assert.True(req.LowerPriority);
-    }
-
-    [Fact]
-    public async Task RefreshAfterFetch_with_no_graph_but_a_known_large_meta_header_writes_plain_reachable()
-    {
-        // A `.meta.hdr` left by an earlier headless/foreground walk is the ONLY way this repo's
-        // size is known without a fresh commit-graph write — write one directly rather than
-        // spilling 30,000 real RawCommit rows through GraphMetaWriter.
-        var hdr = new GraphMetaStore.Header
-        {
-            Version = GraphMetaStore.Version,
-            Fingerprint = 0x1234,
-            IncludeRemoteBranches = true,
-            RowCount = GraphBackgroundWriter.MinCommitsToWrite,
-            RecordCount = GraphBackgroundWriter.MinCommitsToWrite,
-            Exhausted = true,
-            WalkEngine = GraphWalkCache.CliWalkMarker,
-        };
-        var hdrPath = GraphCachePaths.File(_repo.Path, GraphMetaStore.HdrExt);
-        Directory.CreateDirectory(Path.GetDirectoryName(hdrPath)!);
-        File.WriteAllBytes(hdrPath, System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(hdr, GraphMetaStore.Json));
-
-        var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
-        await using var ctx = _host.Open(_repo.Path);
-
-        writer.RefreshAfterFetch(ctx);
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (cli.Requests.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(20);
-
-        var req = Assert.Single(cli.Requests);
-        Assert.Equal(["commit-graph", "write", "--reachable"], req.Arguments);
-    }
-
-    [Fact]
-    public async Task RefreshAfterFetch_with_no_graph_and_an_unknown_size_never_writes()
-    {
-        var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = true });
-        await using var ctx = _host.Open(_repo.Path);
-
-        writer.RefreshAfterFetch(ctx);
-        await Task.Delay(200); // give a wrongly-triggered write a chance to show up
-
-        Assert.Empty(cli.Requests);
-    }
-
-    [Fact]
-    public async Task RefreshAfterFetch_off_by_setting_never_writes()
-    {
-        var gitDir = Path.Combine(_repo.Path, ".git");
-        Directory.CreateDirectory(Path.Combine(gitDir, "objects", "info"));
-        File.WriteAllText(Path.Combine(gitDir, "objects", "info", "commit-graph"), "stub");
-
-        var cli = new RecordingGitCliService();
-        var writer = new GraphBackgroundWriter(cli, _host.Settings);
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = false });
-        await using var ctx = _host.Open(_repo.Path);
-
-        writer.RefreshAfterFetch(ctx);
-        await Task.Delay(200);
-
-        Assert.Empty(cli.Requests);
-    }
-
     /// <summary>Local fake — not <see cref="RecordingGitCliService"/> in <c>Fakes.cs</c> — because
     /// it also records the <see cref="CancellationToken"/>
     /// each call receives, and can optionally block mid-call to simulate a long-running write.</summary>
@@ -395,6 +328,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     {
         public List<GitCliRequest> Requests { get; } = [];
         public List<CancellationToken> Tokens { get; } = [];
+        public int Completed { get; private set; }
 
         public bool IsGitAvailable => true;
 
@@ -408,6 +342,7 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
             Tokens.Add(ct);
             if (blockUntil is not null)
                 await blockUntil.Task;
+            Completed++;
             return new GitCliResult(0, "", "", GitErrorKind.None, TimeSpan.Zero);
         }
     }
