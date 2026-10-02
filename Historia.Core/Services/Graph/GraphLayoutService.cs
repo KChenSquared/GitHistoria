@@ -98,6 +98,45 @@ public sealed class GraphLayoutService : IGraphLayoutService
         set => _testBeforeBackgroundSpillStart.Value = value;
     }
 
+    /// <summary>Test seam: primes walk every tip from the start, as if no prime were eligible
+    /// for <see cref="TryPrefixPrime"/> — the A side of an A/B comparison. Flow-local.</summary>
+    private static readonly AsyncLocal<bool> _prefixWalkDisabledForTesting = new();
+    internal static bool PrefixWalkDisabledForTesting
+    {
+        get => _prefixWalkDisabledForTesting.Value;
+        set => _prefixWalkDisabledForTesting.Value = value;
+    }
+
+    /// <summary>Test seam: told how each eligible prime's prefix walk went. Null outside tests.</summary>
+    private static readonly AsyncLocal<Action<PrefixWalkOutcome>?> _testPrefixWalkObserved = new();
+    internal static Action<PrefixWalkOutcome>? TestPrefixWalkObserved
+    {
+        get => _testPrefixWalkObserved.Value;
+        set => _testPrefixWalkObserved.Value = value;
+    }
+
+    /// <summary>Test seam: rewrites a proven prefix's rows before they reach the cache, so a test
+    /// can plant a row the full walk disagrees with. Null outside tests.</summary>
+    private static readonly AsyncLocal<Func<List<RawCommit>, List<RawCommit>>?> _testRewriteProvenPrefix = new();
+    internal static Func<List<RawCommit>, List<RawCommit>>? TestRewriteProvenPrefix
+    {
+        get => _testRewriteProvenPrefix.Value;
+        set => _testRewriteProvenPrefix.Value = value;
+    }
+
+    /// <summary>What <see cref="TryPrefixPrime"/> did: how many of the tips the accepted (or last
+    /// tried) prefix walked, whether the proof held, the rows it kept, and why it fell back when
+    /// it did.</summary>
+    internal readonly record struct PrefixWalkOutcome(int RecentTips, int TotalTips, bool Proven, int Rows, string? FallbackReason);
+
+    /// <summary>Fewest tips worth a prefix walk: below this, <c>git log --date-order</c> over every
+    /// tip starts quickly anyway.</summary>
+    private const int PrefixMinTips = 1_000;
+
+    /// <summary>Tips whose corrected commit date is within this of the newest go into the prefix
+    /// walk.</summary>
+    private static readonly long PrefixRecentWindowSeconds = (long)TimeSpan.FromDays(30).TotalSeconds;
+
     /// <summary>Test seam: how many full ref scans (fingerprint + tip resolution) have run per
     /// repository path. A scan costs seconds on a repo with tens of thousands of refs, so tests
     /// assert on the delta across a call to prove a satisfied or resumed walk step skipped it.
@@ -189,7 +228,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// <see cref="BackgroundSpillRunning"/>.</item>
     /// <item><see cref="WalkLock"/> — <see cref="LiveWalk"/>, <see cref="LiveWalkPos"/>,
     /// <see cref="LiveWalkFingerprint"/>, <see cref="LiveWalkSnapshotToken"/>,
-    /// <see cref="WalkFailed"/>, <see cref="WalkSuperseded"/>.</item>
+    /// <see cref="WalkFailed"/>, <see cref="WalkSuperseded"/>, <see cref="ProvenPrefixIds"/>,
+    /// <see cref="ProvenPrefix"/>, <see cref="PrefixRejected"/>.</item>
     /// </list>
     /// Lock order: the service's <c>_sync</c>, then <see cref="SpillSync"/>, then <c>lock (cache)</c>;
     /// <see cref="WalkLock"/> is taken before <c>lock (cache)</c>. <c>lock (cache)</c> and a store's
@@ -358,6 +398,21 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 finally { WalkLock.Release(); }
             });
         }
+
+        /// <summary>The ids of rows <c>[0, n)</c> when they came from a proven prefix walk (see
+        /// <see cref="TryPrefixPrime"/>) and the full walk has not yet confirmed them. The hand-off
+        /// prime skips those rows of the full walk and compares each with its id here; once every
+        /// one matched this is cleared. While it is set, no row reaches the disk caches. Written
+        /// under <see cref="WalkLock"/>; a stale read elsewhere only delays a disk write.</summary>
+        public GitObjectId[]? ProvenPrefixIds { get; set; }
+
+        /// <summary>Rows <c>[0, n)</c> came from a proven prefix walk — the count, for logs.</summary>
+        public int ProvenPrefix { get; set; }
+
+        /// <summary>The full walk disagreed with a proven prefix row: the walk is halted (with
+        /// <see cref="WalkSuperseded"/>) and the next extend rebuilds the layout from a fresh full
+        /// walk. Written under <see cref="WalkLock"/>.</summary>
+        public bool PrefixRejected { get; set; }
 
         /// <summary>Forget the walk without disposing it. Callers either dispose it themselves
         /// (<see cref="DisposeLiveWalk"/>) or hand it to <see cref="DisposeLiveWalkWhenFree"/>.</summary>
@@ -537,6 +592,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
         var want = existing.State.Rows.Count + additionalRows + WalkOverscan;
         await EnsureWalkedAsync(context, cache.Query, cache, want, ct, background).ConfigureAwait(false);
 
+        // The full walk disagreed with a row of the proven prefix this layout was built on: no row
+        // of it can be trusted. Hand back a layout of the full walk instead; its caller replaces
+        // the one it extended.
+        if (cache.PrefixRejected)
+            return await ComputeLayoutAsync(context, cache.Query, existing.State.Rows.Count + additionalRows, ct).ConfigureAwait(false);
+
         // Extend mutates existing.State in place; run it to completion (a handful of ms for
         // <=5k rows) rather than risk a cancellation leaving that shared state half-updated.
         // Read the consumed-row count under lock(existing.State), then
@@ -621,7 +682,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 // A queued or running headless job for this tab is a second writer on the same
                 // store; this write stands aside and the background spill writes these rows after
                 // waiting that job out. The layout is served from what is already on disk.
+                // Rows of a proven prefix the full walk hasn't confirmed yet never reach disk.
                 if (gateOpen && cache.WalkKey != 0 && !cache.WalkHalted && rowCount > cache.SpilledRows
+                    && cache.ProvenPrefixIds is null
                     && !(_backgroundWriter?.HasInactiveJob(context) ?? false))
                 {
                     // Outcome is deliberately unobserved here: Appended/Adopted both leave
@@ -950,6 +1013,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
                     {
                         await WaitForGateAsync(ct).ConfigureAwait(false);
                         if (ct.IsCancellationRequested)
+                            break;
+                        // Unconfirmed proven-prefix rows: the next walk step confirms them first.
+                        if (cache.ProvenPrefixIds is not null)
                             break;
 
                         int from, to;
@@ -1785,7 +1851,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // Step 2 — off the gate: prime or resume the walk.
         WalkResult walked = prep.Kind switch
         {
-            GatePrepKind.PrimeCli => await PrimeCliWalkAsync(context, cache, query, prep, ct).ConfigureAwait(false),
+            GatePrepKind.PrimeCli => await PrimeCliWalkAsync(context, cache, query, prep, allowPrefix: !background, ct).ConfigureAwait(false),
             GatePrepKind.ResumeCli => await ResumeCliWalkAsync(context, cache, prep, ct).ConfigureAwait(false),
             _ => prep.Result,
         };
@@ -1842,7 +1908,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // this avoids ever building `[.. cache.Commits]` (an O(n) copy of the pending buffer)
         // for a file nothing reads anymore in disk mode (see PrepareWalk / TryOptimisticSnapshot).
         if (!background && !_metaFromDisk && !walked.FromDisk && !cache.WalkHalted && walked.Fingerprint != 0
-            && GraphWalkCache.Supports(query))
+            && cache.ProvenPrefixIds is null && GraphWalkCache.Supports(query))
         {
             List<RawCommit> commits;
             Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> decos;
@@ -2064,9 +2130,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// non-exhausted, so an empty or partial history is never recorded as complete.
     /// <para>The prime's ref state (fingerprint, walk key, decorations) reaches the cache here,
     /// under <see cref="RepoCache.WalkLock"/> and before any row is pulled, so a resume that takes
-    /// the lock next already sees it. The result carries none for the caller to merge.</para></summary>
+    /// the lock next already sees it. The result carries none for the caller to merge.</para>
+    /// <para>A foreground first prime may paint from a proven prefix instead
+    /// (<see cref="TryPrefixPrime"/>), leaving no live walk; the next prime is then the full
+    /// walk, skipping and checking the proven rows.</para></summary>
     private async Task<WalkResult> PrimeCliWalkAsync(
-        RepositoryContext context, RepoCache cache, GraphQuery query, GatePrep prep, CancellationToken ct)
+        RepositoryContext context, RepoCache cache, GraphQuery query, GatePrep prep, bool allowPrefix, CancellationToken ct)
     {
         await cache.WalkLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -2083,6 +2152,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
             using var walkTimer = Diagnostics.PerfLog.Scope("Walk loop (cli)");
             PublishRefState(cache, prep);
+
+            if (allowPrefix && TryPrefixPrime(context, cache, query, prep, ct))
+                return new WalkResult([], prep.Decorations, Exhausted: false, prep.Fingerprint, prep.DecosFresh,
+                    WalkKey: prep.WalkKey, CarriesRefState: false);
+
             var stream = GitLogStream.TryStart(
                 _locator, context.RepositoryPath, prep.Tips!, context.ActiveProfile, query.PathFilter);
 
@@ -2106,6 +2180,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // [0, need) would land duplicated after the cached ones.
             var exhausted = PumpCommits(stream, delta, skip: prep.Have, want: need, cache, ct);
 
+            if (cache.PrefixRejected)
+            {
+                RejectProvenPrefix(context, cache);
+                return new WalkResult([], prep.Decorations, Exhausted: false, prep.Fingerprint, prep.DecosFresh,
+                    WalkKey: prep.WalkKey, CarriesRefState: false);
+            }
             if (stream.Failed)
             {
                 MarkWalkFailed(context, cache, stream.FailureReason ?? "git log failed");
@@ -2184,6 +2264,11 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // is 0 and nothing is skipped there.
             var delta = new List<RawCommit>(Math.Min(need, 8192));
             var exhausted = PumpCommits(live, delta, skip: have, want: need, cache, ct);
+            if (cache.PrefixRejected)
+            {
+                RejectProvenPrefix(context, cache);
+                return new WalkResult([], cache.Decorations, Exhausted: false, prep.Fingerprint, DecosFresh: false, WalkKey: prep.WalkKey, CarriesRefState: false);
+            }
             if (live is GitLogStream { Failed: true } failed)
             {
                 MarkWalkFailed(context, cache, failed.FailureReason ?? "git log failed");
@@ -2274,12 +2359,184 @@ public sealed class GraphLayoutService : IGraphLayoutService
             if (!walk.MoveNext())
                 return true;
             var pos = cache.LiveWalkPos++;
+            if (cache.ProvenPrefixIds is { } proven && pos < proven.Length)
+            {
+                // The full walk's row `pos` must be the proven prefix's row `pos`.
+                if (walk.Current.Id != proven[pos])
+                {
+                    cache.PrefixRejected = true;
+                    return false;
+                }
+                if (pos == proven.Length - 1)
+                {
+                    cache.ProvenPrefixIds = null;
+                    Diagnostics.PerfLog.Mark($"graph prefix walk: full walk confirmed all {cache.ProvenPrefix} proven rows");
+                }
+            }
             if (pos < skip)
                 continue;
             into.Add(walk.Current);
             collected++;
         }
         return false;
+    }
+
+    /// <summary>Repositories where the full walk once disagreed with a proven prefix: their primes
+    /// walk every tip from the start for the rest of the session.</summary>
+    private static readonly ConcurrentDictionary<string, byte> _prefixDistrusted = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The first prime of a large all-refs walk: walks only the recent tips and keeps those rows
+    /// only when they are provably the full walk's first rows, so the first window doesn't wait
+    /// for <c>git log --date-order</c> to sort every tip's history. Returns false — nothing pulled
+    /// kept, nothing in the cache changed — when the prime isn't eligible or the proof fails
+    /// twice; the caller then primes the full walk as usual.
+    /// <para><b>The proof.</b> The commit-graph's corrected commit date (cd) of a commit is greater
+    /// than each parent's and at least its own commit date, so a tip's cd bounds the commit date of
+    /// everything it reaches. R = tips with cd within <see cref="PrefixRecentWindowSeconds"/> of
+    /// the newest, plus any tip the graph doesn't list; O = the rest, maxO their largest cd. Walk R
+    /// with the same <c>git log</c> and pull a window. If maxO is below every pulled row's commit
+    /// date, then in the full walk no commit reachable only from O can come out before any of them
+    /// (its date is lower, and the walk emits the newest ready commit first), and none of them has
+    /// such a commit as a child (that child's cd would exceed maxO): the full walk emits exactly
+    /// these rows first, in this order — R keeps the full tip list's order, so ties break the
+    /// same way. On failure, R widens once to every tip whose cd reaches the oldest pulled row.</para>
+    /// <para>On success the rows become rows <c>[0, n)</c> with no live walk; the next step primes
+    /// the full walk, which skips those rows and checks each against them
+    /// (<see cref="RepoCache.ProvenPrefixIds"/>). Caller holds <see cref="RepoCache.WalkLock"/>
+    /// and has published the prime's ref state; the prefix stream never outlives this call.</para>
+    /// </summary>
+    private bool TryPrefixPrime(RepositoryContext context, RepoCache cache, GraphQuery query, GatePrep prep, CancellationToken ct)
+    {
+        var tips = prep.Tips!;
+        if (PrefixWalkDisabledForTesting || prep.Have != 0 || TotalWalked(cache) != 0 || cache.MetaStore is not null
+            || query.RefScope != GraphRefScope.AllRefs || !string.IsNullOrEmpty(query.PathFilter)
+            || tips.Length < PrefixMinTips || _prefixDistrusted.ContainsKey(context.RepositoryPath))
+            return false;
+
+        var sw = Stopwatch.StartNew();
+        void Report(PrefixWalkOutcome outcome)
+        {
+            Diagnostics.PerfLog.Mark(outcome.Proven
+                ? $"graph prefix walk: {outcome.RecentTips} of {outcome.TotalTips} tips, proof ok, {outcome.Rows} rows in {sw.Elapsed.TotalMilliseconds:F0} ms"
+                : $"graph prefix walk: {outcome.RecentTips} of {outcome.TotalTips} tips, full walk instead ({outcome.FallbackReason}) after {sw.Elapsed.TotalMilliseconds:F0} ms");
+            TestPrefixWalkObserved?.Invoke(outcome);
+        }
+
+        // Grafts rewrite parents the commit-graph knows nothing about; its dates bound nothing then.
+        if (File.Exists(Path.Combine(RefStateToken.ResolveCommonDir(context.GitDirectory), "info", "grafts")))
+        {
+            Report(new(0, tips.Length, false, 0, "info/grafts"));
+            return false;
+        }
+
+        var ids = new GitObjectId[tips.Length];
+        for (var i = 0; i < tips.Length; i++)
+            if (!GitObjectId.TryParse(tips[i], out ids[i]))
+                return false;
+        if (context.CommitGraph.Lookup(ids) is not { } graph)
+        {
+            Report(new(0, tips.Length, false, 0, "no commit-graph with corrected dates"));
+            return false;
+        }
+
+        var dates = new long?[tips.Length];
+        long newest = long.MinValue;
+        for (var i = 0; i < tips.Length; i++)
+        {
+            dates[i] = graph.CorrectedDate(ids[i]);
+            if (dates[i] is { } d && d > newest)
+                newest = d;
+        }
+        if (newest == long.MinValue)
+        {
+            Report(new(0, tips.Length, false, 0, "no tip in the commit-graph"));
+            return false;
+        }
+
+        var cutoff = newest - PrefixRecentWindowSeconds;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var recent = new List<string>();
+            long maxOld = long.MinValue;
+            for (var i = 0; i < tips.Length; i++)
+            {
+                if (dates[i] is not { } d || d >= cutoff)
+                    recent.Add(tips[i]);
+                else if (d > maxOld)
+                    maxOld = d;
+            }
+            if (maxOld == long.MinValue)
+            {
+                Report(new(recent.Count, tips.Length, false, 0, attempt == 0 ? "every tip is recent" : "the widened window holds every tip"));
+                return false;
+            }
+
+            var (rows, failure) = PullPrefix(context, query, recent, prep.WantCount, ct);
+            if (rows is null)
+            {
+                Report(new(recent.Count, tips.Length, false, 0, failure));
+                return false;
+            }
+
+            var minDate = long.MaxValue;
+            foreach (var r in rows)
+                minDate = Math.Min(minDate, r.Metadata.CommitWhen.ToUnixTimeSeconds());
+            if (maxOld < minDate)
+            {
+                if (TestRewriteProvenPrefix is { } rewrite)
+                    rows = rewrite(rows);
+                cache.ProvenPrefixIds = [.. rows.Select(r => r.Id)];
+                cache.ProvenPrefix = rows.Count;
+                AppendWalked(cache, rows, 0);
+                Report(new(recent.Count, tips.Length, true, rows.Count, null));
+                return true;
+            }
+
+            Diagnostics.PerfLog.Mark(
+                $"graph prefix walk: proof failed for {recent.Count} of {tips.Length} tips (oldest tip outside {maxOld} >= oldest row {minDate})");
+            cutoff = minDate;
+            if (attempt == 1)
+                Report(new(recent.Count, tips.Length, false, 0, "the proof failed twice"));
+        }
+        return false;
+    }
+
+    /// <summary>Walks <paramref name="tips"/> for up to <paramref name="want"/> rows and disposes
+    /// the stream. Null rows (with the reason) when it couldn't start, failed, was cancelled, or
+    /// produced nothing.</summary>
+    private (List<RawCommit>? Rows, string Failure) PullPrefix(
+        RepositoryContext context, GraphQuery query, List<string> tips, int want, CancellationToken ct)
+    {
+        using var stream = GitLogStream.TryStart(_locator, context.RepositoryPath, tips, context.ActiveProfile, query.PathFilter);
+        if (stream is null)
+            return (null, "git log could not be started");
+        var rows = new List<RawCommit>(Math.Min(want, 8192));
+        while (rows.Count < want)
+        {
+            if (ct.IsCancellationRequested)
+                return (null, "cancelled");
+            if (!stream.MoveNext())
+                break;
+            rows.Add(stream.Current);
+        }
+        if (stream.Failed)
+            return (null, stream.FailureReason ?? "git log failed");
+        return rows.Count == 0 ? (null, "the recent tips walked no rows") : (rows, "");
+    }
+
+    /// <summary>The full walk disagreed with a proven prefix row: halt this cache like a stale
+    /// walk key (the next compute rebuilds from a full walk), and never prefix-walk this
+    /// repository again this session. Caller holds <see cref="RepoCache.WalkLock"/>.</summary>
+    private static void RejectProvenPrefix(RepositoryContext context, RepoCache cache)
+    {
+        cache.DisposeLiveWalk();
+        cache.ProvenPrefixIds = null;
+        cache.WalkSuperseded = true;
+        _prefixDistrusted[context.RepositoryPath] = 0;
+        Diagnostics.PerfLog.Mark("graph prefix walk: full walk disagrees with a proven row — rebuilding from the full walk");
+        AppLog.Write(AppLogLevel.Warn, "graph",
+            $"Commit graph for {context.RepositoryPath}: the full walk disagrees with a row of the first window; rebuilding the graph from the full walk.");
     }
 
     /// <summary>Resolves the walk's tips from <paramref name="snapshot"/> — local / remote / tag
