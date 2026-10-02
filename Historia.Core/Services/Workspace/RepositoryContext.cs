@@ -117,7 +117,7 @@ public sealed class RepositoryContext : IAsyncDisposable
         CommitGraph = new CommitGraphIndex(Path.Combine(RefStateToken.ResolveCommonDir(GitDirectory), "objects"));
 
         RefSnapshots = new RefSnapshotProvider(
-            services.GetRequiredService<IGitCliService>(), GitDirectory, RepositoryPath, Lifetime);
+            services.GetRequiredService<IGitCliService>(), GitDirectory, RepositoryPath, Lifetime, CommitGraph);
 
         RemoteConfig = new RepoConfigReader(
             services.GetRequiredService<IGitCliService>(), GitDirectory, RepositoryPath);
