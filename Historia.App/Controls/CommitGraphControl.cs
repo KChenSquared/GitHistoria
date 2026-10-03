@@ -1809,6 +1809,20 @@ public sealed partial class CommitGraphControl : Control
             LogScroll("drag end");
     }
 
+    /// <summary>Frame benchmark: scrolls to <paramref name="offset"/> the way a plain wheel step
+    /// does — clamped to the scroll range, then <see cref="OnScrolled"/>.</summary>
+    internal void SetVerticalOffsetForBench(double offset)
+    {
+        _scrollOffset = Math.Clamp(offset, 0, Math.Max(0, _scrollBar.Maximum));
+        OnScrolled();
+    }
+
+    /// <summary>Frame benchmark: the largest vertical offset over the rows loaded so far.</summary>
+    internal double MaxVerticalOffsetForBench => Math.Max(0, _scrollBar.Maximum);
+
+    /// <summary>Frame benchmark: the selected commit's row, or -1 while it is not loaded.</summary>
+    internal int SelectedRowForBench => _selectedRow;
+
     private void OnScrolled()
     {
         if (_revealTarget is not null && !_revealUserTookOver)
@@ -3070,6 +3084,24 @@ public sealed partial class CommitGraphControl : Control
     private double RowY(int row) => RowsTop + row * _rowHeight - _scrollOffset;
 
     public override void Render(DrawingContext dc)
+    {
+        if (FrameBench.Active)
+        {
+            var start = Stopwatch.GetTimestamp();
+            try
+            {
+                RenderGraph(dc);
+            }
+            finally
+            {
+                FrameBench.RecordGraphRender(start);
+            }
+            return;
+        }
+        RenderGraph(dc);
+    }
+
+    private void RenderGraph(DrawingContext dc)
     {
         var size = Bounds.Size;
         dc.DrawRectangle(_bg, null, new Rect(size));

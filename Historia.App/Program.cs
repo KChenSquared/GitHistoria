@@ -47,6 +47,18 @@ internal static class Program
             return 0;
         }
 
+        // ── Frame benchmark. Parsed before the single-instance guard: a benchmark launch needs
+        //    to be the primary instance and never forwards to a running one. ──
+        if (args is [FrameBench.SummarizeVerb, ..])
+            return FrameBenchSummarizer.Run(args);
+        if (args is [FrameBench.RunVerb, ..])
+        {
+            if (FrameBenchRunner.PrepareProcess(args) is { } stop)
+                return stop;
+            IsPrimaryInstance = true;
+            return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        }
+
         // ── Single-instance guard. A second launch forwards its non-switch arguments
         //    (repo paths) to the running instance and exits, so only one process ever writes
         //    the shared JSON state files. ──

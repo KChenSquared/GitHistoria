@@ -132,6 +132,16 @@ public sealed class App : Application
 
         base.OnFrameworkInitializationCompleted();
 
+        // A benchmark launch opens only its own repository, takes no forwarded paths, and
+        // drives the window itself once the shell is up.
+        if (FrameBench.Active)
+        {
+            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime benchDesktop)
+                Dispatcher.UIThread.Post(() => _ = FrameBenchRunner.RunAsync(Services, benchDesktop));
+            _ = StartBackgroundInitializationAsync();
+            return;
+        }
+
         // Listen for later launches handing us their repo paths, and honour any path on
         // our own command line.
         if (Program.IsPrimaryInstance)
@@ -215,7 +225,16 @@ public sealed class App : Application
         services.AddSingleton<IThemeService, ThemeService>();
         services.AddSingleton<SyntaxThemeHost>();
         services.AddSingleton<IGitExecutableLocator, GitExecutableLocator>();
-        services.AddSingleton<IGitCliService, GitCliService>();
+        if (FrameBench.Active)
+        {
+            // The benchmark repositories are read-only: refuse every git write or network call.
+            services.AddSingleton<IGitCliService>(sp =>
+                new FrameBenchGitGuard(new GitCliService(sp.GetRequiredService<IGitExecutableLocator>())));
+        }
+        else
+        {
+            services.AddSingleton<IGitCliService, GitCliService>();
+        }
         services.AddSingleton<IBackgroundWorkGate, BackgroundWorkGate>();
         services.AddSingleton<Historia.Services.Graph.IGraphLayoutService, Historia.Services.Graph.GraphLayoutService>();
         services.AddSingleton<IRepoStateCache, RepoStateCache>();

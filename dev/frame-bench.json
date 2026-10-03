@@ -1,0 +1,18 @@
+{
+  "repos": {
+    "linux": {
+      "head": "4d7d9486c04d917265f64c55bd23b2cc4fe7749c",
+      "diff": {
+        "commit": "91c93c090dfc58a3dcc97bb5e43b27892e043e9f",
+        "path": "drivers/gpu/drm/amd/include/asic_reg/gc/gc_12_1_0_sh_mask.h"
+      }
+    },
+    "chromium": {
+      "head": "21eeb0ad8f75440b004552bf7e6f4abf34931999",
+      "diff": {
+        "commit": "8613e01c8d3511c465f5ffb705a41e73ac9c3e51",
+        "path": "tools/metrics/actions/actions.xml"
+      }
+    }
+  }
+}

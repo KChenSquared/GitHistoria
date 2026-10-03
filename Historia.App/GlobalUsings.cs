@@ -57,6 +57,7 @@ global using Historia.Services.Workspace;
 global using Historia.Theming;
 global using Historia.Views;
 global using Microsoft.Extensions.DependencyInjection;
+global using System.Collections.Concurrent;
 global using System.Diagnostics;
 global using System.Globalization;
 global using System.IO.Pipes;
