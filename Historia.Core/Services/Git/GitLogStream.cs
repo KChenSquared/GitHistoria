@@ -24,7 +24,12 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
     private const string Format = "%H%x1f%P%x1f%aI%x1f%cI%x1f%an%x1f%ae%x1f%s";
     private const char FieldSep = '\x1f';
 
+    // Started and not yet disposed, by process id. Only Dispose removes an entry — a stream
+    // dropped without Dispose stays listed. Holds no reference to the stream or its process.
+    private static readonly ConcurrentDictionary<int, string> Undisposed = new();
+
     private readonly Process _process;
+    private readonly int _processId;
     private readonly NulRecordReader _reader;
     private readonly StringBuilder _stderr;
     private readonly Task _stderrDrain;
@@ -45,6 +50,7 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
     private GitLogStream(Process process, Task stderrDrain, StringBuilder stderr)
     {
         _process = process;
+        try { _processId = process.Id; } catch (InvalidOperationException) { _processId = -1; }
         _reader = new NulRecordReader(process.StandardOutput.BaseStream);
         _stderrDrain = stderrDrain;
         _stderr = stderr;
@@ -132,7 +138,9 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
 
         var stderr = new StringBuilder();
         var drain = Task.Run(() => DrainStderr(process, stderr));
-        return new GitLogStream(process, drain, stderr);
+        var stream = new GitLogStream(process, drain, stderr);
+        Undisposed[stream._processId] = repositoryPath;
+        return stream;
     }
 
     private static async Task DrainStderr(Process process, StringBuilder into)
@@ -148,6 +156,11 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
             // Best-effort — surfaced only in a failure PerfLog mark.
         }
     }
+
+    /// <summary>Test seam: streams started for <paramref name="repositoryPath"/> and not yet
+    /// disposed.</summary>
+    internal static int LiveCountForTesting(string repositoryPath) =>
+        Undisposed.Count(kv => string.Equals(kv.Value, repositoryPath, StringComparison.OrdinalIgnoreCase));
 
     public bool MoveNext()
     {
@@ -247,6 +260,7 @@ public sealed class GitLogStream : IEnumerator<RawCommit>
         if (_disposed)
             return;
         _disposed = true;
+        Undisposed.TryRemove(_processId, out _);
         GitCliProcessSetup.TryKill(_process);
         try { _stderrDrain.Wait(1_000); } catch { /* best effort */ }
         try { _process.Dispose(); } catch { /* best effort */ }

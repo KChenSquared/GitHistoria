@@ -235,7 +235,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     public async Task CancelInactiveTabAsync_cancels_a_queued_job_before_it_ever_runs()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("seed-1", b => b.WriteFile("f.txt", "1\n").Stage().Commit("c1"));
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService());
         await using var ctxA = _host.Open(repo.Path);
         await using var ctxB = _host.Open(repo.Path);
 
@@ -259,7 +259,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     public async Task CancelInactiveTabAsync_waits_for_a_running_jobs_own_exit()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("seed-1", b => b.WriteFile("f.txt", "1\n").Stage().Commit("c1"));
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService());
         await using var ctx = _host.Open(repo.Path);
 
         var started = new TaskCompletionSource();
@@ -283,7 +283,7 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
     public async Task CancelInactiveTabAsync_is_a_no_op_when_nothing_is_queued_or_running()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("seed-1", b => b.WriteFile("f.txt", "1\n").Stage().Commit("c1"));
-        var writer = new GraphBackgroundWriter(new RecordingGitCliService(), _host.Settings);
+        var writer = new GraphBackgroundWriter(new RecordingGitCliService());
         await using var ctx = _host.Open(repo.Path);
 
         await writer.CancelInactiveTabAsync(ctx).WaitAsync(TimeSpan.FromSeconds(5));

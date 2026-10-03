@@ -27,6 +27,20 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// <summary>Idempotent -- safe to call once per attempt or not at all.</summary>
     public void MarkFirstGraphPaintDone() => _firstGraphPaint.TrySetResult();
 
+    // Signalled once the graph's silent crawl has loaded its first stretch of history, or stopped
+    // short of it. On a large working tree WorkspaceService holds the tab's first git status until
+    // then: a cold status there reads every file, and each crawl step it overlapped ran several
+    // times slower.
+    private readonly TaskCompletionSource _graphWarmed =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once the graph's silent crawl has warmed up (or stopped). Never faults;
+    /// a caller with no graph control attached applies its own timeout.</summary>
+    public Task GraphWarmed => _graphWarmed.Task;
+
+    /// <summary>Idempotent.</summary>
+    public void MarkGraphWarmed() => _graphWarmed.TrySetResult();
+
     // signalled once this tab is "fully loaded" -- identity resolved and the first full
     // state refresh (branches, graph, changes) has completed. IAutoFetchService waits on this
     // before its [InitialFetch] / [AutoFetch] loop touches the repo. Like FirstGraphPaint it
@@ -58,6 +72,10 @@ public sealed class RepositoryContext : IAsyncDisposable
     /// file changes — the commit graph and the tag list read refs here.</summary>
     public RefSnapshotProvider RefSnapshots { get; }
 
+    /// <summary>Read-only access to this repo's commit-graph files, in the common directory's
+    /// object store so linked worktrees share it.</summary>
+    public CommitGraphIndex CommitGraph { get; }
+
     /// <summary>This repo's remotes, read via Git CLI and cached until the common config
     /// file timestamp changes.</summary>
     public RepoConfigReader RemoteConfig { get; }
@@ -83,6 +101,12 @@ public sealed class RepositoryContext : IAsyncDisposable
     public GitProfile? ActiveProfile => State.ActiveProfile;
 
     private RepositoryContext(DiscoveredRepository discovered, IServiceProvider services)
+        : this(discovered, services, seed: null, seedFromCache: true)
+    {
+    }
+
+    private RepositoryContext(DiscoveredRepository discovered, IServiceProvider services,
+        RepoStateSnapshot? seed, bool seedFromCache)
     {
         Lifetime = _lifetimeCts.Token;
         IsBare = discovered.IsBare;
@@ -90,8 +114,10 @@ public sealed class RepositoryContext : IAsyncDisposable
         RepositoryPath = discovered.RepositoryPath;
         DisplayName = DeriveDisplayName(RepositoryPath, GitDirectory);
 
+        CommitGraph = new CommitGraphIndex(Path.Combine(RefStateToken.ResolveCommonDir(GitDirectory), "objects"));
+
         RefSnapshots = new RefSnapshotProvider(
-            services.GetRequiredService<IGitCliService>(), GitDirectory, RepositoryPath, Lifetime);
+            services.GetRequiredService<IGitCliService>(), GitDirectory, RepositoryPath, Lifetime, CommitGraph);
 
         RemoteConfig = new RepoConfigReader(
             services.GetRequiredService<IGitCliService>(), GitDirectory, RepositoryPath);
@@ -104,11 +130,16 @@ public sealed class RepositoryContext : IAsyncDisposable
                 services.GetRequiredService<Historia.Services.Profiles.ICredentialVaultService>()),
             RepositoryPath);
 
-        State = new RepositoryStateService(
+        var state = new RepositoryStateService(
             this,
             services.GetService<IUiDispatcher>(),
             services.GetService<IRepoStateCache>());
-        State.SeedFromCache(); // paint the sidebar from last-known state before the first refresh
+        State = state;
+        // Paint the sidebar from last-known state before the first refresh.
+        if (seedFromCache)
+            state.SeedFromCache();
+        else
+            state.SeedFrom(seed);
 
         Workspace = services.GetService<IWorkspaceService>();
 
@@ -119,8 +150,8 @@ public sealed class RepositoryContext : IAsyncDisposable
     }
 
     /// <summary>
-    /// Opens a repository discovered from <paramref name="path"/>. Runs off the UI thread
-    /// (discovery is CLI I/O). Throws <see cref="HistoriaGitException"/> with
+    /// Opens a repository discovered from <paramref name="path"/>, blocking the calling thread on
+    /// discovery — never from the UI thread; <see cref="OpenAsync"/> is the app's path. Throws <see cref="HistoriaGitException"/> with
     /// <see cref="GitErrorKind.NotAGitRepository"/> when no repository is found.
     /// </summary>
     public static RepositoryContext Open(string path, IServiceProvider services)
@@ -138,6 +169,65 @@ public sealed class RepositoryContext : IAsyncDisposable
         {
             _log.Fail(ex);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Opens a repository discovered from <paramref name="path"/> without blocking a thread on git,
+    /// reading the cached sidebar state alongside discovery rather than after it. Pass
+    /// <paramref name="discovered"/> when the caller already discovered the repository. Throws
+    /// <see cref="HistoriaGitException"/> with <see cref="GitErrorKind.NotAGitRepository"/> when no
+    /// repository is found.
+    /// </summary>
+    public static async Task<RepositoryContext> OpenAsync(
+        string path, IServiceProvider services, CancellationToken ct = default, DiscoveredRepository? discovered = null)
+    {
+        using var _ = Historia.Diagnostics.PerfLog.Scope($"RepositoryContext.Open({Path.GetFileName(path)})");
+        using var _log = AppLog.Operation("repo", $"Open({Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))})");
+
+        // The cache is keyed on the repository root, which the path of a restored or recent tab
+        // already is: start reading it now, and only read again if discovery lands elsewhere.
+        var cache = services.GetService<IRepoStateCache>();
+        var speculativeSeed = cache is null ? null : Task.Run(() => cache.TryLoad(path), CancellationToken.None);
+
+        discovered ??= await RepositoryDiscovery.DiscoverAsync(path, services.GetRequiredService<IGitCliService>(), ct)
+            .ConfigureAwait(false);
+
+        RepoStateSnapshot? seed = null;
+        if (cache is not null)
+        {
+            var root = discovered.RepositoryPath;
+            seed = SameDirectory(path, root)
+                ? await speculativeSeed!.ConfigureAwait(false)
+                : await Task.Run(() => cache.TryLoad(root), CancellationToken.None).ConfigureAwait(false);
+        }
+
+        try
+        {
+            var ctx = new RepositoryContext(discovered, services, seed, seedFromCache: false);
+            _log.Outcome(ctx.DisplayName);
+            return ctx;
+        }
+        catch (Exception ex)
+        {
+            _log.Fail(ex);
+            throw;
+        }
+    }
+
+    private static bool SameDirectory(string a, string b)
+    {
+        try
+        {
+            return string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)),
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)),
+                // As the repo-state cache keys its files.
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
         }
     }
 

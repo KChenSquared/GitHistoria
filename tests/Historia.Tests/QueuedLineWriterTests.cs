@@ -1,0 +1,175 @@
+namespace Historia.Tests;
+
+[Trait("tier", "unit")]
+public sealed class QueuedLineWriterTests : IDisposable
+{
+    private readonly string _dir = TestScratch.NewDirectory("queued-writer-");
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_dir, recursive: true); } catch { /* best effort */ }
+    }
+
+    /// <summary>A stream whose first write blocks until released — a write the disk or a virus
+    /// scanner is holding up.</summary>
+    internal sealed class StallingStream(Stream inner, ManualResetEventSlim release, ManualResetEventSlim entered) : Stream
+    {
+        private bool _stalled;
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (!_stalled)
+            {
+                _stalled = true;
+                entered.Set();
+                release.Wait(TimeSpan.FromSeconds(30));
+            }
+            inner.Write(buffer, offset, count);
+        }
+        public override void Flush() => inner.Flush();
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => inner.SetLength(value);
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
+    internal static Stream Append(string path) => new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+
+    internal static string[] ReadShared(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(fs);
+        return reader.ReadToEnd().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    [Fact]
+    public void Lines_land_in_enqueue_order_and_flush_waits_for_them()
+    {
+        var path = Path.Combine(_dir, "a.log");
+        using var writer = QueuedLineWriter.OpenPerBatch("test-writer");
+        for (var i = 0; i < 500; i++)
+            writer.Enqueue(path, $"line {i}");
+
+        Assert.True(writer.Flush(TimeSpan.FromSeconds(10)));
+        Assert.Equal(Enumerable.Range(0, 500).Select(i => $"line {i}"), File.ReadAllLines(path));
+    }
+
+    [Fact]
+    public void A_per_batch_file_is_closed_once_flushed_so_anyone_can_read_it()
+    {
+        var path = Path.Combine(_dir, "b.log");
+        using var writer = QueuedLineWriter.OpenPerBatch("test-writer");
+        writer.Enqueue(path, "one");
+        Assert.True(writer.Flush(TimeSpan.FromSeconds(10)));
+
+        // File.ReadAllLines shares Read only — it fails while any writer still holds the file.
+        Assert.Equal(["one"], File.ReadAllLines(path));
+    }
+
+    [Fact]
+    public void Enqueue_never_blocks_while_a_write_is_stalled()
+    {
+        var path = Path.Combine(_dir, "c.log");
+        using var release = new ManualResetEventSlim();
+        using var entered = new ManualResetEventSlim();
+        var writer = QueuedLineWriter.OpenPerBatch("test-writer",
+            p => new StallingStream(Append(p), release, entered));
+        try
+        {
+            writer.Enqueue(path, "first");
+            writer.Flush(TimeSpan.Zero); // nudge: the write happens at the latest on flush
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "the writer thread never reached the sink");
+
+            var sw = Stopwatch.StartNew();
+            for (var i = 0; i < 1000; i++)
+                writer.Enqueue(path, $"queued {i}");
+            Assert.True(sw.ElapsedMilliseconds < 50, $"Enqueue blocked behind a stalled write: {sw.ElapsedMilliseconds} ms");
+
+            Assert.False(writer.Flush(TimeSpan.FromMilliseconds(100)), "Flush must time out while the sink is stalled");
+        }
+        finally
+        {
+            release.Set();
+            writer.Dispose();
+        }
+
+        var lines = ReadShared(path);
+        Assert.Equal("first", lines[0]);
+        Assert.Equal(1001, lines.Length);
+    }
+
+    [Fact]
+    public void A_full_backlog_drops_lines_and_says_how_many()
+    {
+        var path = Path.Combine(_dir, "d.log");
+        using var release = new ManualResetEventSlim();
+        using var entered = new ManualResetEventSlim();
+        var writer = QueuedLineWriter.OpenPerBatch("test-writer",
+            p => new StallingStream(Append(p), release, entered), maxBacklog: 10);
+
+        writer.Enqueue(path, "first");
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(10)));
+        for (var i = 0; i < 25; i++)
+            writer.Enqueue(path, $"queued {i}");
+        release.Set();
+        Assert.True(writer.Flush(TimeSpan.FromSeconds(10)));
+        writer.Dispose();
+
+        var lines = ReadShared(path);
+        Assert.Contains(lines, l => l.Contains("15 log lines dropped"));
+        Assert.Contains("queued 9", lines);
+        Assert.DoesNotContain("queued 10", lines);
+    }
+
+    [Fact]
+    public void A_held_open_file_stays_open_until_dispose_which_drains_the_queue()
+    {
+        var path = Path.Combine(_dir, "e.log");
+        var writer = QueuedLineWriter.HoldOpen(path, "test-writer");
+        for (var i = 0; i < 100; i++)
+            writer.Enqueue($"line {i}");
+        Assert.True(writer.Flush(TimeSpan.FromSeconds(10)));
+
+        Assert.Throws<IOException>(() => File.Open(path, FileMode.Open, FileAccess.Write, FileShare.None));
+
+        writer.Enqueue("last");
+        writer.Dispose();
+        var lines = File.ReadAllLines(path);
+        Assert.Equal(101, lines.Length);
+        Assert.Equal("last", lines[^1]);
+    }
+
+    [Fact]
+    public void Lines_after_dispose_are_ignored()
+    {
+        var path = Path.Combine(_dir, "f.log");
+        var writer = QueuedLineWriter.OpenPerBatch("test-writer");
+        writer.Dispose();
+        writer.Enqueue(path, "late");
+        Assert.True(writer.Flush(TimeSpan.FromSeconds(1)));
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void A_path_change_between_lines_switches_files()
+    {
+        var a = Path.Combine(_dir, "g1.log");
+        var b = Path.Combine(_dir, "sub", "g2.log");
+        using var writer = QueuedLineWriter.OpenPerBatch("test-writer");
+        writer.Enqueue(a, "a1");
+        writer.Enqueue(b, "b1");
+        writer.Enqueue(a, "a2");
+        Assert.True(writer.Flush(TimeSpan.FromSeconds(10)));
+
+        Assert.Equal(["a1", "a2"], File.ReadAllLines(a));
+        Assert.Equal(["b1"], File.ReadAllLines(b));
+    }
+}

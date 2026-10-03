@@ -2,9 +2,15 @@ namespace Historia.Services.Git;
 
 /// <summary>
 /// One per open repository (<see cref="RepositoryContext.RefSnapshots"/>): hands out the current
-/// <see cref="RefSnapshot"/>, re-reading refs with one <c>git for-each-ref</c> only when
-/// <see cref="RefStateToken"/> says a ref file changed. The scan is a separate process, so ref
-/// enumeration runs concurrently with other repository reads.
+/// <see cref="RefSnapshot"/>, re-reading refs only when <see cref="RefStateToken"/> says a ref
+/// file changed. The scan runs in separate processes, so ref enumeration runs concurrently with
+/// other repository reads.
+/// <para>Two scans give the same entries. The fast scan lists refs without reading their objects
+/// and types them from <c>packed-refs</c> peel lines and the commit-graph, asking
+/// <c>cat-file</c> only about the rest (<see cref="ScanFastAsync"/>). It needs a
+/// <c>packed-refs</c> file with the <c>fully-peeled</c> trait; a reftable repository, or one
+/// without such a file, gets the typed scan: one <c>for-each-ref</c> that reads every ref's
+/// object.</para>
 /// <para>One scan at a time: callers that miss on the same token share one scan, and a caller
 /// whose token differs from the scan in flight waits for it to finish before looking again, so a
 /// burst of ref writes (a fetch) never stacks up overlapping scans of every ref. The scan runs on
@@ -33,6 +39,7 @@ public sealed class RefSnapshotProvider
     private readonly string _gitDir;
     private readonly string _workingDirectory;
     private readonly CancellationToken _lifetime;
+    private readonly CommitGraphIndex? _commitGraph;
     private readonly object _sync = new();
 
     private RefSnapshot? _current;
@@ -43,18 +50,31 @@ public sealed class RefSnapshotProvider
     // the current one — an older scan finishing late never steps the cache back.
     private long _nextSeq;
     private int _scanCount;
+    private string? _lastScanKind;
 
-    public RefSnapshotProvider(IGitCliService cli, string gitDir, string workingDirectory, CancellationToken lifetime)
+    /// <param name="commitGraph">Types refs whose objects the commit-graph lists as commits
+    /// without reading them; null types them all through <c>cat-file</c>.</param>
+    public RefSnapshotProvider(
+        IGitCliService cli, string gitDir, string workingDirectory, CancellationToken lifetime, CommitGraphIndex? commitGraph = null)
     {
         _cli = cli;
         _gitDir = gitDir;
         _workingDirectory = workingDirectory;
         _lifetime = lifetime;
+        _commitGraph = commitGraph;
     }
 
     /// <summary>Scans started since construction — a test seam for single-flight / cache-hit
     /// assertions.</summary>
     internal int ScanCountForTesting => Volatile.Read(ref _scanCount);
+
+    /// <summary>How the last scan read the refs: <c>fast</c>, or <c>typed: &lt;why&gt;</c> — a
+    /// test seam.</summary>
+    internal string? LastScanKindForTesting => Volatile.Read(ref _lastScanKind);
+
+    /// <summary>The full typed scan, whatever the repository's files would allow — a test seam
+    /// for parity with the fast scan.</summary>
+    internal Task<List<RefEntry>> ScanTypedForTestingAsync() => ScanTypedAsync();
 
     /// <summary>The snapshot for the refs on disk right now. A token check costs milliseconds; a
     /// miss runs one <c>for-each-ref</c> (≈0.75 s at 39k refs). Throws only
@@ -104,18 +124,35 @@ public sealed class RefSnapshotProvider
         try
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var result = await RunAsync(ForEachRefParser.Arguments).ConfigureAwait(false);
+            List<RefEntry> refs;
+            string? typedBecause = null;
+            PackedRefs? packed = null;
+            if (state.IsReftable)
+                typedBecause = "reftable";
+            else if ((packed = PackedRefsReader.TryRead(RefStateToken.ResolveCommonDir(_gitDir))) is not { FullyPeeled: true })
+                typedBecause = "no fully-peeled packed-refs";
 
-            var refs = result.ExitCode == 0
-                ? Parse(() => ForEachRefParser.Parse(result.StandardOutput))
-                : await ScanPastMissingObjectsAsync(result).ConfigureAwait(false);
-            await PeelNestedTagsAsync(refs).ConfigureAwait(false);
+            var fast = packed is { FullyPeeled: true } && typedBecause is null
+                ? await ScanFastAsync(packed, sw).ConfigureAwait(false)
+                : null;
+            if (fast is not null)
+            {
+                refs = fast;
+                Volatile.Write(ref _lastScanKind, "fast");
+            }
+            else
+            {
+                typedBecause ??= "the type-free listing failed";
+                refs = await ScanTypedAsync().ConfigureAwait(false);
+                Volatile.Write(ref _lastScanKind, "typed: " + typedBecause);
+                Diagnostics.PerfLog.Mark($"ref snapshot: scanned {refs.Count} refs in {sw.Elapsed.TotalMilliseconds:F0}ms (typed scan: {typedBecause})");
+            }
+
             var (headSymref, headTarget) = state.IsReftable
                 ? await ResolveHeadWithCliAsync().ConfigureAwait(false)
                 : ResolveHeadFromFile(state, refs);
 
             var snapshot = new RefSnapshot(refs, state.Token, headSymref, headTarget);
-            Diagnostics.PerfLog.Mark($"ref snapshot: scanned {refs.Count} refs in {sw.Elapsed.TotalMilliseconds:F0}ms");
 
             lock (_sync)
             {
@@ -164,6 +201,173 @@ public sealed class RefSnapshotProvider
         {
             throw new HistoriaGitException(GitErrorKind.Unknown, "Reading refs failed (unreadable output).", ex.Message);
         }
+    }
+
+    /// <summary>One <c>for-each-ref</c> with every field, then the missing-object fallback when
+    /// git stops on one, then any nested tag a git that peels one level left half-peeled.</summary>
+    private async Task<List<RefEntry>> ScanTypedAsync()
+    {
+        var result = await RunAsync(ForEachRefParser.Arguments).ConfigureAwait(false);
+        var refs = result.ExitCode == 0
+            ? Parse(() => ForEachRefParser.Parse(result.StandardOutput))
+            : await ScanPastMissingObjectsAsync(result).ConfigureAwait(false);
+        await PeelNestedTagsAsync(refs).ConfigureAwait(false);
+        return refs;
+    }
+
+    /// <summary>
+    /// The same entries as <see cref="ScanTypedAsync"/>, without reading an object per ref. Refs
+    /// are listed with no object reads (<see cref="ForEachRefParser.ListFormat"/>); their types
+    /// come from what git already wrote down:
+    /// <list type="bullet">
+    /// <item>A ref <c>packed-refs</c> holds with the same id (a loose ref shadowing a stale packed
+    /// entry doesn't count) and a peel line is an annotated tag peeling to that line — git peels
+    /// all the way when it packs. Its peel is a commit when the commit-graph lists it.</item>
+    /// <item>Such a ref without a peel line is not a tag (the file says <c>fully-peeled</c>); it is
+    /// a commit when the commit-graph lists it.</item>
+    /// <item>Everything else — loose refs, objects the graph doesn't list, a peel of unknown type
+    /// — goes to one <c>cat-file --batch-check</c>, then one for the peels of objects that turned
+    /// out to be tags. A missing object drops its ref, as the typed scan does.</item>
+    /// </list>
+    /// Tagger and message for every annotated tag come from one <c>cat-file --batch</c>; a tag
+    /// object it can't read is missing, and its ref is dropped too. Null when the listing itself
+    /// fails: the caller falls back to the typed scan, which classifies the failure.
+    /// </summary>
+    private async Task<List<RefEntry>?> ScanFastAsync(PackedRefs packed, Stopwatch sw)
+    {
+        var listing = RunAsync(ForEachRefParser.ListArguments);
+        // The packed ids and peels are known before git answers; look them up meanwhile.
+        var graphLookup = _commitGraph is { } index
+            ? Task.Run(() => index.Lookup([.. packed.Entries.SelectMany(e => e.Peeled is { } p ? [e.Target, p] : new[] { e.Target })]))
+            : Task.FromResult<CommitGraphLookup?>(null);
+        var listed = await listing.ConfigureAwait(false);
+        var graph = await graphLookup.ConfigureAwait(false);
+        if (listed.ExitCode != 0)
+        {
+            if (listed.ErrorKind is GitErrorKind.Cancelled or GitErrorKind.TimedOut)
+                throw Failure(listed, "Reading refs");
+            return null;
+        }
+        var list = Parse(() => ForEachRefParser.ParseList(listed.StandardOutput));
+
+        var items = new FastItem[list.Count];
+        var unknown = new HashSet<GitObjectId>();
+        int fromGraph = 0, fromPeel = 0;
+        for (var i = 0; i < list.Count; i++)
+        {
+            var (name, objectName, symref, upstream) = list[i];
+            if (ForEachRefParser.ParseId(objectName) is not { } id)
+                return null;
+            var item = new FastItem(name, id, symref, upstream);
+            if (packed.TryGet(name, out var packedId, out var peel) && packedId == id)
+            {
+                if (peel is { } p)
+                {
+                    item.Type = "tag";
+                    item.Peeled = p;
+                    fromPeel++;
+                    if (graph?.Contains(p) == true)
+                        item.PeeledType = "commit";
+                    else
+                        unknown.Add(p);
+                }
+                else if (graph?.Contains(id) == true)
+                {
+                    item.Type = "commit";
+                    fromGraph++;
+                }
+            }
+            if (item.Type is null)
+                unknown.Add(id);
+            items[i] = item;
+        }
+
+        var unknownList = unknown.ToList();
+        var types = await BatchCheckAsync([.. unknownList.Select(o => o.ToString())]).ConfigureAwait(false);
+        var typeOf = new Dictionary<GitObjectId, string?>(unknownList.Count);
+        for (var i = 0; i < unknownList.Count; i++)
+            typeOf[unknownList[i]] = types[i].Type;
+
+        // Tags found by cat-file: peel all the way, as %(*objectname) does.
+        var foundTags = items.Where(it => it.Type is null && typeOf[it.Id] == "tag").Select(it => it.Id).Distinct().ToList();
+        var peels = await BatchCheckAsync([.. foundTags.Select(o => o + "^{}")]).ConfigureAwait(false);
+        var peelOf = new Dictionary<GitObjectId, (GitObjectId? Id, string? Type)>(foundTags.Count);
+        for (var i = 0; i < foundTags.Count; i++)
+            peelOf[foundTags[i]] = peels[i];
+
+        var dropped = new List<string>();
+        foreach (var it in items)
+        {
+            if (it.Type is null)
+            {
+                it.Type = typeOf[it.Id];
+                if (it.Type == "tag")
+                    (it.Peeled, it.PeeledType) = peelOf[it.Id];
+            }
+            else if (it.Type == "tag" && it.PeeledType is null)
+                it.PeeledType = typeOf[it.Peeled!.Value];
+
+            // A missing object, or a tag whose peel is missing, stops the typed scan's listing
+            // just the same; both are left out.
+            if (it.Type is null || (it.Type == "tag" && it.PeeledType is null))
+                it.Dropped = true;
+        }
+
+        var tagObjects = items.Where(it => !it.Dropped && it.Type == "tag").Select(it => it.Id).Distinct().ToList();
+        var tagData = await ReadTagObjectsAsync([.. tagObjects.Select(o => o.ToString())]).ConfigureAwait(false);
+
+        var refs = new List<RefEntry>(items.Length);
+        foreach (var it in items)
+        {
+            CatFileParser.TagData tag = default;
+            if (!it.Dropped && it.Type == "tag" && !tagData.TryGetValue(it.Id, out tag))
+                it.Dropped = true;
+            if (it.Dropped)
+            {
+                dropped.Add(it.Name);
+                continue;
+            }
+            var annotated = it.Type == "tag";
+            refs.Add(new RefEntry(
+                CanonicalName: it.Name,
+                Target: it.Id,
+                ObjectType: it.Type!,
+                Peeled: annotated ? it.Peeled : null,
+                PeeledType: annotated ? it.PeeledType : null,
+                SymrefTarget: it.Symref,
+                TaggerName: annotated ? tag.TaggerName : null,
+                TaggerWhen: annotated ? tag.TaggerWhen : null,
+                Message: annotated ? tag.Message ?? "" : null)
+            {
+                Upstream = it.Upstream,
+            });
+        }
+        refs.Sort((a, b) => StringComparer.Ordinal.Compare(a.CanonicalName, b.CanonicalName));
+
+        if (dropped.Count > 0)
+            LogDropped(dropped);
+        Diagnostics.PerfLog.Mark(
+            $"ref snapshot: fast scan {refs.Count} refs (graph {fromGraph}, packed peel {fromPeel}, cat-file {unknownList.Count}) in {sw.Elapsed.TotalMilliseconds:F0} ms"
+            + (dropped.Count > 0 ? $", dropped {dropped.Count} refs with missing objects" : ""));
+        return refs;
+    }
+
+    private sealed class FastItem(string name, GitObjectId id, string? symref, string? upstream)
+    {
+        public string Name { get; } = name;
+        public GitObjectId Id { get; } = id;
+        public string? Symref { get; } = symref;
+        public string? Upstream { get; } = upstream;
+        public string? Type { get; set; }
+        public GitObjectId? Peeled { get; set; }
+        public string? PeeledType { get; set; }
+        public bool Dropped { get; set; }
+    }
+
+    private void LogDropped(List<string> dropped)
+    {
+        var names = string.Join(", ", dropped.Take(5)) + (dropped.Count > 5 ? $" and {dropped.Count - 5} more" : "");
+        AppLog.Write(AppLogLevel.Warn, "git", $"Ignoring {dropped.Count} ref(s) whose objects are missing in {_workingDirectory}: {names}");
     }
 
     /// <summary>
@@ -237,8 +441,7 @@ public sealed class RefSnapshotProvider
         }
         refs.Sort((a, b) => StringComparer.Ordinal.Compare(a.CanonicalName, b.CanonicalName));
 
-        var names = string.Join(", ", dropped.Take(5)) + (dropped.Count > 5 ? $" and {dropped.Count - 5} more" : "");
-        AppLog.Write(AppLogLevel.Warn, "git", $"Ignoring {dropped.Count} ref(s) whose objects are missing in {_workingDirectory}: {names}");
+        LogDropped(dropped);
         Diagnostics.PerfLog.Mark($"ref snapshot: degraded scan, dropped {dropped.Count} refs with missing objects");
         return refs;
     }

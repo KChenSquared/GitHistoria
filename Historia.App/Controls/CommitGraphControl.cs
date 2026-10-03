@@ -1351,7 +1351,13 @@ public sealed partial class CommitGraphControl : Control
                     }
                     catch (Exception ex)
                     {
-                        req.Completion?.TrySetException(ex);
+                        AppLog.Write(AppLogLevel.Warn, "graph", $"Background graph extend failed for {req.Context.DisplayName}", ex);
+                        // The waiter may already have given up (a tab switch cancels its wait), and
+                        // a faulted task nobody reads is rethrown by the finalizer as an unobserved
+                        // exception — an "unexpected error" for the user. Reading Exception marks it
+                        // observed; a waiter still waiting gets the fault as before.
+                        if (req.Completion is { } completion && completion.TrySetException(ex))
+                            _ = completion.Task.Exception;
                     }
 
                     // Yield briefly after background batch to keep system and UI fully responsive
@@ -1402,6 +1408,10 @@ public sealed partial class CommitGraphControl : Control
 
     internal static TimeSpan StuckGuardCeiling => CrawlStuckGuardCeiling;
 
+    /// <summary>Rows the silent crawl loads before <see cref="RepositoryContext.MarkGraphWarmed"/>
+    /// lets a large working tree's first <c>git status</c> start.</summary>
+    internal const int GraphWarmedRows = 100_000;
+
     internal static async Task<bool> WaitForCrawlGuardAsync(RepositoryContext context, TimeSpan ceiling, CancellationToken ct)
     {
         var ceilingTask = Task.Delay(ceiling, ct);
@@ -1437,6 +1447,8 @@ public sealed partial class CommitGraphControl : Control
                 var cap = Volatile.Read(ref _crawlTarget);
                 if (_layout is not { } current || current.Layout.IsComplete)
                     break;
+                if (current.Layout.RowCount >= GraphWarmedRows)
+                    context.MarkGraphWarmed();
                 if (current.Layout.RowCount >= cap)
                     break; // reached the silent pre-load ceiling — deeper history loads on scroll
 
@@ -1471,6 +1483,8 @@ public sealed partial class CommitGraphControl : Control
         finally
         {
             Interlocked.Exchange(ref _crawlRunning, 0);
+            // However the crawl ended, the status it was keeping off the disk may run now.
+            context.MarkGraphWarmed();
         }
     }
 

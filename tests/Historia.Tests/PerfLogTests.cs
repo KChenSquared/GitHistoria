@@ -46,3 +46,59 @@ public sealed class PerfLogTests : IDisposable
         Assert.NotNull(enabledScope);
     }
 }
+
+/// <summary>Swaps the process-wide perf-log writer, so it runs alone.</summary>
+[Trait("tier", "unit")]
+[Collection("serial")]
+public sealed class PerfLogWriterTests : IDisposable
+{
+    private readonly StateDir _state = new();
+
+    public void Dispose()
+    {
+        PerfLog.OverrideEnabledForTesting(null);
+        _state.Dispose();
+    }
+
+    [Fact]
+    public void Marks_reach_perf_log_once_flushed()
+    {
+        PerfLog.OverrideEnabledForTesting(true);
+        PerfLog.Mark("perf-log-writer-test: one");
+        PerfLog.Mark("perf-log-writer-test: two");
+
+        Assert.True(PerfLog.Flush(TimeSpan.FromSeconds(10)));
+        var lines = File.ReadAllLines(PerfLog.LogPath);
+        Assert.Contains(lines, l => l.EndsWith("perf-log-writer-test: one", StringComparison.Ordinal));
+        Assert.Contains(lines, l => l.EndsWith("perf-log-writer-test: two", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_mark_never_waits_on_a_stalled_write()
+    {
+        PerfLog.OverrideEnabledForTesting(true);
+        using var release = new ManualResetEventSlim();
+        using var entered = new ManualResetEventSlim();
+        var stalled = QueuedLineWriter.OpenPerBatch("test-perf-writer",
+            p => new QueuedLineWriterTests.StallingStream(QueuedLineWriterTests.Append(p), release, entered));
+        var previous = PerfLog.SwapWriterForTesting(stalled);
+        try
+        {
+            PerfLog.Mark("first");
+            Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "the writer thread never reached the file");
+
+            var sw = Stopwatch.StartNew();
+            for (var i = 0; i < 200; i++)
+                PerfLog.Mark($"behind a stalled write {i}");
+            Assert.True(sw.ElapsedMilliseconds < 50, $"a mark waited on the stalled write: {sw.ElapsedMilliseconds} ms");
+        }
+        finally
+        {
+            release.Set();
+            PerfLog.SwapWriterForTesting(previous);
+            stalled.Dispose();
+        }
+
+        Assert.Equal(201, QueuedLineWriterTests.ReadShared(PerfLog.LogPath).Length);
+    }
+}

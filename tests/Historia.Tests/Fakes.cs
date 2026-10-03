@@ -246,3 +246,46 @@ public sealed class SlowIdentityService : IRepoIdentityService
         return new RepoIdentityKey(context.RepositoryPath);
     }
 }
+
+/// <summary>Delegates to a real CLI, records every request, and holds the first request that
+/// <c>block</c> matches until <see cref="Release"/> — or until its own token is cancelled, which it
+/// then reports as a cancelled run (as the real CLI does when it kills the process) and records in
+/// <see cref="CancelObserved"/>.</summary>
+public sealed class BlockingGitCliService(IGitCliService inner, Func<GitCliRequest, bool> block) : IGitCliService
+{
+    private readonly ConcurrentQueue<GitCliRequest> _requests = new();
+    private int _blocked;
+
+    public IReadOnlyList<GitCliRequest> Requests => _requests.ToList();
+    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource CancelObserved { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public bool IsGitAvailable => inner.IsGitAvailable;
+
+    public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default)
+        => RunAsync(request, progress: null, onStdoutLine: null, ct);
+
+    public async Task<GitCliResult> RunAsync(
+        GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default)
+    {
+        _requests.Enqueue(request);
+        if (block(request) && Interlocked.Exchange(ref _blocked, 1) == 0)
+        {
+            Entered.TrySetResult();
+            try
+            {
+                await Release.Task.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                CancelObserved.TrySetResult();
+                return new GitCliResult(-1, "", "", GitErrorKind.Cancelled, TimeSpan.Zero);
+            }
+        }
+        return await inner.RunAsync(request, progress, onStdoutLine, ct).ConfigureAwait(false);
+    }
+
+    public static bool IsIn(GitCliRequest request, string repositoryPath) =>
+        string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(request.WorkingDirectory)),
+            Path.TrimEndingDirectorySeparator(Path.GetFullPath(repositoryPath)), StringComparison.OrdinalIgnoreCase);
+}

@@ -24,13 +24,12 @@ public static partial class AppLog
     private static readonly OptInFlag Flag = new("HISTORIA_LOG", "dev-logging.on");
     private static string? _sessionPath;
 
-    /// <summary>The session file, held open for as long as logging is enabled. Every previous
-    /// version reopened, seeked-to-end, wrote, and closed the file on *every single entry* — a
-    /// full file-open cycle per gateway call / CLI invocation, all serialised on <see cref="Gate"/>,
-    /// which both slowed down the very operations being timed and let logging contention distort
-    /// the numbers it existed to record. Kept with auto-flush on, so each line still reaches disk
-    /// immediately without paying for a close+reopen.</summary>
-    private static StreamWriter? _writer;
+    /// <summary>The session file's writer: the file is held open for as long as logging is
+    /// enabled, and lines are written on the writer's own thread, so logging never waits on the
+    /// disk. Trap: reopening the file per entry, then writing a held-open file under
+    /// <see cref="Gate"/>, both put file I/O on every logging thread — one held-up write stalled
+    /// them all.</summary>
+    private static QueuedLineWriter? _writer;
 
     static AppLog()
     {
@@ -57,7 +56,7 @@ public static partial class AppLog
     internal sealed class AppLogSession : IDisposable
     {
         private readonly object _gate = new();
-        private StreamWriter? _writer;
+        private QueuedLineWriter? _writer;
         private bool _disposed;
 
         public string SessionPath { get; }
@@ -68,8 +67,7 @@ public static partial class AppLog
             var dir = logsDirectory ?? AppPaths.LogsDirectory;
             Directory.CreateDirectory(dir);
             SessionPath = Path.Combine(dir, $"dev-{DateTime.Now:yyyyMMdd-HHmmss-fffffff}.log");
-            var stream = new FileStream(SessionPath, FileMode.Append, FileAccess.Write, FileShare.Read);
-            _writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true };
+            _writer = QueuedLineWriter.HoldOpen(SessionPath, "app-log-test-writer");
             var asm = typeof(AppLog).Assembly.GetName();
             WriteLine($"# Historia developer log — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             WriteLine($"# {asm.Name} {asm.Version}  |  {RuntimeInformation.OSDescription}  |  pid {Environment.ProcessId}");
@@ -81,20 +79,29 @@ public static partial class AppLog
             lock (_gate)
             {
                 if (_disposed || _writer is null) return;
-                try { _writer.WriteLine(line); } catch { }
+                _writer.Enqueue(line);
             }
+        }
+
+        public bool Flush(TimeSpan timeout)
+        {
+            QueuedLineWriter? writer;
+            lock (_gate) writer = _writer;
+            return writer is null || writer.Flush(timeout);
         }
 
         public void Dispose()
         {
+            QueuedLineWriter? writer;
             lock (_gate)
             {
                 if (_disposed) return;
                 _disposed = true;
                 Enabled = false;
-                try { _writer?.Dispose(); } catch { }
+                writer = _writer;
                 _writer = null;
             }
+            try { writer?.Dispose(); } catch { }
 
             if (ReferenceEquals(_testSession.Value, this))
                 _testSession.Value = null;
@@ -114,6 +121,7 @@ public static partial class AppLog
                 return;
             }
 
+            QueuedLineWriter? retired = null;
             lock (Gate)
             {
                 var wasEnabled = Flag.Enabled;
@@ -129,9 +137,12 @@ public static partial class AppLog
                 {
                     WriteLineLocked($"{Stamp()}  INFO   [app]  logging stopped");
                     _sessionPath = null;
-                    CloseWriterLocked();
+                    retired = DetachWriterLocked();
                 }
             }
+
+            // Drains the session's queued lines; outside Gate so other loggers never wait on it.
+            retired?.Dispose();
         }
     }
 
@@ -191,12 +202,26 @@ public static partial class AppLog
             _testSession.Value = null;
         }
 
+        QueuedLineWriter? retired;
         lock (Gate)
         {
             Flag.SetEnabledInMemory(false);
             _sessionPath = null;
-            CloseWriterLocked();
+            retired = DetachWriterLocked();
         }
+        retired?.Dispose();
+    }
+
+    /// <summary>Waits (at most <paramref name="timeout"/>) until every line written so far is in
+    /// the session file — for crash handlers and exit, where the process may end right after.
+    /// True when it got there in time.</summary>
+    public static bool Flush(TimeSpan timeout)
+    {
+        if (_testSession.Value is { } session)
+            return session.Flush(timeout);
+        QueuedLineWriter? writer;
+        lock (Gate) writer = _writer;
+        return writer is null || writer.Flush(timeout);
     }
 
     // ── session lifecycle ──
@@ -207,22 +232,17 @@ public static partial class AppLog
         Directory.CreateDirectory(dir);
         PruneLocked(dir);
 
-        CloseWriterLocked(); // in case a session was already open (Enabled toggled off/on rapidly)
+        // In case a session is still open. Disposed here, not deferred: the new session file can
+        // have the same name (same second), and the old handle must be gone before it reopens.
+        DetachWriterLocked()?.Dispose();
 
         _sessionPath = Path.Combine(dir, $"dev-{DateTime.Now:yyyyMMdd-HHmmss}.log");
         try
         {
-            // FileShare.Read explicitly: unlike File.AppendAllText's close-after-every-write,
-            // this handle stays open for the whole session, so anything that wants to read the
-            // file while it's live — "Open logs folder" + a text editor, `Get-Content -Wait` —
-            // must still be able to open it for read concurrently.
-            var stream = new FileStream(_sessionPath, FileMode.Append, FileAccess.Write, FileShare.Read);
-            // No-BOM, matching what File.AppendAllText (the old per-line writer) used — a BOM
-            // partway through an appended file would be wrong anyway.
-            _writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
-            {
-                AutoFlush = true,
-            };
+            // Held open for the whole session with FileShare.Read, so anything that wants to read
+            // the file while it's live — "Open logs folder" + a text editor, `Get-Content -Wait` —
+            // still can. No BOM: lines are appended.
+            _writer = QueuedLineWriter.HoldOpen(_sessionPath, "app-log-writer");
         }
         catch
         {
@@ -238,11 +258,11 @@ public static partial class AppLog
         WriteLineLocked($"{Stamp()}  INFO   [app]  logging started");
     }
 
-    private static void CloseWriterLocked()
+    private static QueuedLineWriter? DetachWriterLocked()
     {
-        try { _writer?.Dispose(); }
-        catch { /* best effort */ }
+        var writer = _writer;
         _writer = null;
+        return writer;
     }
 
     private static void PruneLocked(string dir)
@@ -263,10 +283,7 @@ public static partial class AppLog
 
     private static void WriteLineLocked(string line)
     {
-        if (_writer is null)
-            return;
-        try { _writer.WriteLine(line); }
-        catch { /* disk full / permission — drop the line */ }
+        _writer?.Enqueue(line);
     }
 
     // ── formatting ──

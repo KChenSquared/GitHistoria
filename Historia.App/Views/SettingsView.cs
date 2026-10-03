@@ -331,10 +331,6 @@ public sealed class SettingsView : UserControl, IDisposable
             v => _ = _cfg.UpdateAsync(s => s with { GraphMetadataFromDisk = v })),
             "Pages commit metadata (messages, author, dates) from the local cache folder to minimize memory usage on large repositories. Applies after restart of Historia."));
 
-        advBody.Children.Add(WithCaption(Check("Write a commit-graph file for large repositories", c.WriteCommitGraphForLargeRepos,
-            v => _ = _cfg.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = v })),
-            "The commit-graph file is written once a repository is known to have 30,000+ commits, and refreshed after each automatic fetch. Lets Git's own history walk skip straight to recent commits instead of scanning the whole history."));
-
         advBody.Children.Add(WithCaption(Check("Splice new commits into the graph cache instead of re-walking (large repositories, experimental)", c.EnableGraphSplice,
             v => _ = _cfg.UpdateAsync(s => s with { EnableGraphSplice = v })),
             "Applies after restart of Historia."));

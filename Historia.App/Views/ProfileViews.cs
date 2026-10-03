@@ -388,7 +388,7 @@ internal static class DefaultProfileFlow
                 var path = entry.Path;
                 var (key, resolved, hasRow) = await Task.Run(async () =>
                 {
-                    await using var ctx = RepositoryContext.Open(path, sp);
+                    await using var ctx = await RepositoryContext.OpenAsync(path, sp);
                     var k = await identity.ResolveAsync(ctx);
                     var row = profiles.GetProfileForRepository(k) is not null || profiles.IsLocalConfigSelected(k);
                     return (k, profiles.ResolveActiveProfile(k), row);

@@ -21,6 +21,7 @@ global using Historia.Services.Workspace;
 global using Microsoft.Extensions.DependencyInjection;
 global using Microsoft.Win32;
 global using Microsoft.Win32.SafeHandles;
+global using System.Buffers.Binary;
 global using System.Collections;
 global using System.Collections.Concurrent;
 global using System.Collections.Frozen;

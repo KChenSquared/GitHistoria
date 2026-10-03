@@ -201,6 +201,7 @@ public sealed class RepositoryWriteLockTests : IAsyncDisposable
             });
             var ctx = _host.Open(repo.Path);
 
+            PerfLog.Flush(TimeSpan.FromSeconds(10));
             var startLineCount = File.Exists(PerfLog.LogPath)
                 ? File.ReadAllLines(PerfLog.LogPath).Length
                 : 0;
@@ -210,6 +211,7 @@ public sealed class RepositoryWriteLockTests : IAsyncDisposable
                 await Task.Delay(15, ct);
             });
 
+            Assert.True(PerfLog.Flush(TimeSpan.FromSeconds(10)));
             var lines = File.ReadAllLines(PerfLog.LogPath).Skip(startLineCount).ToList();
             Assert.Contains(lines, l => l.Contains("write lock hold") && l.Contains(nameof(PerfLog_records_wait_and_hold_marks)));
         }

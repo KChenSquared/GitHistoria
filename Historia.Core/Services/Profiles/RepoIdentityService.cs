@@ -7,34 +7,59 @@ public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityServi
     // repo with no root commit each would generate and persist its own id, and the caller that
     // lost the race would act on a key that was never stored.
     private readonly object _inFlightLock = new();
-    private readonly ConditionalWeakTable<RepositoryContext, Task<RepoIdentityKey>> _inFlight = new();
+    private readonly ConditionalWeakTable<RepositoryContext, SharedResolve> _inFlight = new();
+
+    /// <summary>The resolve every caller for one context shares. Its work runs on
+    /// <see cref="Cts"/> — linked to the tab's lifetime, and cancelled once every caller waiting on
+    /// it has given up, so a tab the user switched away from stops probing git for an identity no
+    /// one is waiting for. A caller with a non-cancellable token keeps it alive.</summary>
+    private sealed class SharedResolve(CancellationTokenSource cts)
+    {
+        public CancellationTokenSource Cts { get; } = cts;
+        public Task<RepoIdentityKey> Task { get; set; } = null!;
+        public int Waiters; // guarded by _inFlightLock
+    }
 
     public async Task<RepoIdentityKey> ResolveAsync(RepositoryContext context, CancellationToken ct = default)
     {
         if (context.IdentityKey is { } cached)
             return cached;
+        // A caller that already gave up never starts (or joins) a resolve.
+        ct.ThrowIfCancellationRequested();
 
-        Task<RepoIdentityKey> shared;
+        SharedResolve shared;
         lock (_inFlightLock)
         {
-            if (!_inFlight.TryGetValue(context, out shared!))
+            if (!_inFlight.TryGetValue(context, out shared!) || shared.Cts.IsCancellationRequested)
             {
-                // Runs on the tab's own lifetime, not on this caller's token: another caller may be
-                // waiting on the same resolve, so one caller giving up must not cancel it.
-                shared = Task.Run(() => ResolveCoreAsync(context, context.Lifetime));
+                // An abandoned resolve may still be finishing its id write, which is never
+                // cancelled: start only once it has ended, so a rootless repo gets one id.
+                var previous = shared?.Task;
+                if (shared is not null)
+                    _inFlight.Remove(context);
+                shared = new SharedResolve(LinkedTo(context.Lifetime));
+                var token = shared.Cts.Token;
+                shared.Task = Task.Run(async () =>
+                {
+                    if (previous is not null)
+                        await Task.WhenAny(previous).ConfigureAwait(false);
+                    return await ResolveCoreAsync(context, token).ConfigureAwait(false);
+                });
                 _inFlight.Add(context, shared);
                 var started = shared;
-                _ = started.ContinueWith(t =>
+                _ = started.Task.ContinueWith(t =>
                 {
                     _ = t.Exception; // observed here even when every caller has given up
-                    ForgetIfFailed(context, t);
+                    ForgetIfFailed(context, started);
+                    started.Cts.Dispose();
                 }, TaskScheduler.Default);
             }
+            shared.Waiters++;
         }
 
         try
         {
-            return await shared.WaitAsync(ct).ConfigureAwait(false);
+            return await shared.Task.WaitAsync(ct).ConfigureAwait(false);
         }
         catch
         {
@@ -42,17 +67,45 @@ public sealed class RepoIdentityService(IGitCliService cli) : IRepoIdentityServi
             ForgetIfFailed(context, shared);
             throw;
         }
+        finally
+        {
+            bool abandon;
+            lock (_inFlightLock)
+            {
+                shared.Waiters--;
+                // Left in _inFlight once cancelled: the next caller replaces it, after it ends.
+                abandon = shared.Waiters == 0 && !shared.Task.IsCompleted;
+            }
+            // Outside the lock: cancelling runs the git calls' cancellation callbacks.
+            if (abandon)
+            {
+                try { shared.Cts.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+        }
+    }
+
+    private static CancellationTokenSource LinkedTo(CancellationToken lifetime)
+    {
+        try { return CancellationTokenSource.CreateLinkedTokenSource(lifetime); }
+        catch (ObjectDisposedException)
+        {
+            // The tab was disposed: a resolve for it can only be cancelled.
+            var cancelled = new CancellationTokenSource();
+            cancelled.Cancel();
+            return cancelled;
+        }
     }
 
     /// <summary>A failed or cancelled resolve is never remembered: the next call retries. A resolve
     /// still running, or one that succeeded, stays.</summary>
-    private void ForgetIfFailed(RepositoryContext context, Task<RepoIdentityKey> task)
+    private void ForgetIfFailed(RepositoryContext context, SharedResolve shared)
     {
-        if (!task.IsCompleted || task.IsCompletedSuccessfully)
+        if (!shared.Task.IsCompleted || shared.Task.IsCompletedSuccessfully)
             return;
         lock (_inFlightLock)
         {
-            if (_inFlight.TryGetValue(context, out var current) && ReferenceEquals(current, task))
+            if (_inFlight.TryGetValue(context, out var current) && ReferenceEquals(current, shared))
                 _inFlight.Remove(context);
         }
     }

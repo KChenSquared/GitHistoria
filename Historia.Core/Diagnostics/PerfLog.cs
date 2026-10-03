@@ -25,9 +25,28 @@ public static class PerfLog
     /// <summary>Full path of the log file, for surfacing in the Developer panel.</summary>
     public static string LogPath => Path.Combine(AppPaths.LogsDirectory, "perf.log");
 
-    private static readonly object Gate = new();
     private static readonly long Origin = Stopwatch.GetTimestamp();
+    private static QueuedLineWriter? _writer;
 
+    private static QueuedLineWriter Writer
+    {
+        get
+        {
+            var w = Volatile.Read(ref _writer);
+            if (w is not null)
+                return w;
+            var created = QueuedLineWriter.OpenPerBatch("perf-log-writer");
+            if (Interlocked.CompareExchange(ref _writer, created, null) is { } raced)
+            {
+                created.Dispose();
+                return raced;
+            }
+            return created;
+        }
+    }
+
+    /// <summary>Queues one timestamped line. The timestamp is taken here; the file write happens
+    /// on the log writer's own thread, so a mark never waits on the disk.</summary>
     public static void Mark(string message)
     {
         if (!Enabled)
@@ -35,13 +54,18 @@ public static class PerfLog
 
         var ms = Stopwatch.GetElapsedTime(Origin).TotalMilliseconds;
         var line = $"{DateTime.Now:HH:mm:ss.fff}  +{ms,10:F1}ms  {message}";
-        try
-        {
-            lock (Gate)
-                File.AppendAllText(LogPath, line + Environment.NewLine);
-        }
+        try { Writer.Enqueue(LogPath, line); }
         catch { /* diagnostics must never throw */ }
     }
+
+    /// <summary>Waits (at most <paramref name="timeout"/>, default 2 s) until every mark queued so
+    /// far is in the file. True when it got there in time.</summary>
+    public static bool Flush(TimeSpan? timeout = null)
+        => Volatile.Read(ref _writer) is not { } w || w.Flush(timeout ?? TimeSpan.FromSeconds(2));
+
+    /// <summary>Test seam: replaces the line writer, returning the previous one.</summary>
+    internal static QueuedLineWriter? SwapWriterForTesting(QueuedLineWriter? writer)
+        => Interlocked.Exchange(ref _writer, writer);
 
     /// <summary>Times the scope and logs <c>label: N.Nms</c> on dispose.</summary>
     public static IDisposable Scope(string label) =>

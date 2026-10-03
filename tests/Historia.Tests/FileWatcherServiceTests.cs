@@ -128,4 +128,74 @@ public sealed class FileWatcherServiceTests : IAsyncDisposable
         public event EventHandler<FocusedRepositoryChangedEventArgs>? FocusedRepositoryChanged { add { } remove { } }
         public event EventHandler<OpenRepositoriesChangedEventArgs>? OpenRepositoriesChanged { add { } remove { } }
     }
+
+    [Fact]
+    public void Tracked_file_count_comes_from_the_index_header()
+    {
+        _repo.WriteFile("two.txt", "2").WriteFile("three.txt", "3").Stage().Commit("more");
+
+        Assert.Equal(3, Historia.Services.Watching.FileWatcherService.TrackedFileCount(Path.Combine(_repo.Path, ".git")));
+    }
+
+    [Fact]
+    public void A_split_index_counts_the_shared_index_too()
+    {
+        for (var i = 0; i < 20; i++)
+            _repo.WriteFile($"f{i}.txt", $"{i}");
+        _repo.Stage().Commit("twenty");
+        _repo.Git("update-index", "--split-index");
+        _repo.WriteFile("f0.txt", "changed").Stage();
+
+        var gitDir = Path.Combine(_repo.Path, ".git");
+        Assert.NotEmpty(Directory.GetFiles(gitDir, "sharedindex.*"));
+        Assert.Equal(21, Historia.Services.Watching.FileWatcherService.TrackedFileCount(gitDir));
+    }
+
+    [Fact]
+    public void A_missing_or_corrupt_index_counts_as_empty()
+    {
+        var gitDir = TestScratch.NewDirectory("fake-git-dir-");
+        Assert.Equal(0, Historia.Services.Watching.FileWatcherService.TrackedFileCount(gitDir));
+
+        File.WriteAllBytes(Path.Combine(gitDir, "index"), [0x01, 0x02, 0x03]);
+        Assert.Equal(0, Historia.Services.Watching.FileWatcherService.TrackedFileCount(gitDir));
+
+        File.WriteAllBytes(Path.Combine(gitDir, "index"), [(byte)'N', (byte)'O', (byte)'P', (byte)'E', 0, 0, 0, 2, 0, 0, 0, 5]);
+        Assert.Equal(0, Historia.Services.Watching.FileWatcherService.TrackedFileCount(gitDir));
+    }
+
+    [Fact]
+    public async Task An_index_past_the_threshold_degrades_to_watching_git_only()
+    {
+        // Rewrite only the header's entry count: the watcher decides from the header alone.
+        var index = Path.Combine(_repo.Path, ".git", "index");
+        var bytes = File.ReadAllBytes(index);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(bytes.AsSpan(8, 4), 60_000);
+        File.WriteAllBytes(index, bytes);
+
+        await using var ctx = _host.Open(_repo.Path);
+
+        Assert.True(ctx.Watcher.IsDegraded);
+    }
+
+    [Fact]
+    public async Task A_small_index_watches_the_working_tree()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+
+        Assert.False(ctx.Watcher.IsDegraded);
+    }
+
+    [Fact]
+    public async Task A_linked_worktree_reads_its_own_index()
+    {
+        var linked = Path.Combine(TestScratch.NewDirectory("watch-linked-"), "wt");
+        _repo.Git("worktree", "add", "-q", "-b", "side", linked);
+
+        await using var ctx = _host.Open(linked);
+
+        Assert.EndsWith(Path.Combine("worktrees", "wt"), ctx.GitDirectory, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, Historia.Services.Watching.FileWatcherService.TrackedFileCount(ctx.GitDirectory));
+        Assert.False(ctx.Watcher.IsDegraded);
+    }
 }

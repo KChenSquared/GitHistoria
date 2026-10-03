@@ -266,4 +266,18 @@ public sealed class SettingsV16ToV17 : IJsonMigration
 /// version.</summary>
 public sealed class SettingsV17ToV18() : StampOnlyMigration(17, 18);
 
+/// <summary>v18 → v19: removes <c>writeCommitGraphForLargeRepos</c> — every repository's
+/// commit-graph is now always kept current.</summary>
+public sealed class SettingsV18ToV19 : IJsonMigration
+{
+    public int FromVersion => 18;
+    public int ToVersion => 19;
+
+    public void Apply(JsonObject document)
+    {
+        document.Remove("writeCommitGraphForLargeRepos");
+        document["schemaVersion"] = 19;
+    }
+}
+
 

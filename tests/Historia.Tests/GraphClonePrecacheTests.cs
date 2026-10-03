@@ -21,11 +21,7 @@ public sealed class GraphClonePrecacheTests : IAsyncDisposable
 
     private async Task<GraphLayoutService> DiskBackedServiceAsync(IBackgroundWorkGate? gate = null)
     {
-        await _host.Settings.UpdateAsync(s => s with
-        {
-            GraphMetadataFromDisk = true,
-            WriteCommitGraphForLargeRepos = true,
-        });
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
         var locator = _host.Provider.GetRequiredService<IGitExecutableLocator>();
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
         return gate is not null
@@ -67,18 +63,6 @@ public sealed class GraphClonePrecacheTests : IAsyncDisposable
         await svc.PrecacheClonedRepositoryAsync(ctx, Q, null, CancellationToken.None);
 
         Assert.True(GraphBackgroundWriter.HasCommitGraph(ctx.GitDirectory));
-    }
-
-    [Fact]
-    public async Task Precache_skips_the_commit_graph_when_the_setting_is_off()
-    {
-        var svc = await DiskBackedServiceAsync();
-        await _host.Settings.UpdateAsync(s => s with { WriteCommitGraphForLargeRepos = false });
-        await using var ctx = _host.Open(_repo.Path);
-
-        await svc.PrecacheClonedRepositoryAsync(ctx, Q, null, CancellationToken.None);
-
-        Assert.False(GraphBackgroundWriter.HasCommitGraph(ctx.GitDirectory));
     }
 
     [Fact]

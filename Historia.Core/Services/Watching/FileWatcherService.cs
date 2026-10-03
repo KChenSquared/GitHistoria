@@ -35,6 +35,17 @@ public sealed class FileWatcherService : IAsyncDisposable
     public bool IsDegraded { get; private set; }
     public string? DegradedReason { get; private set; }
 
+    /// <summary>Git tracks at least <see cref="LargeTreeFileThreshold"/> files here: the working
+    /// tree is not watched, and a cold <c>git status</c> reads so many files that other git work
+    /// on the same disk slows down while it runs.</summary>
+    public bool IsLargeWorkingTree { get; private set; }
+
+    /// <summary>Test seam: a fixture can't reach the tracked-file threshold.</summary>
+    internal void TreatAsLargeWorkingTreeForTesting() => IsLargeWorkingTree = true;
+
+    /// <summary>Test seam: whether the tab's workspace was known when this watcher started.</summary>
+    internal bool StartedWithWorkspaceForTesting => _workspace is not null;
+
     public FileWatcherService(
         RepositoryContext context,
         IRepositoryStateService state,
@@ -83,8 +94,9 @@ public sealed class FileWatcherService : IAsyncDisposable
         }
 
         var workDir = NormalizePath(_context.RepositoryPath);
-        if (Directory.Exists(workDir) && CountFilesCapped(workDir, LargeTreeFileThreshold) >= LargeTreeFileThreshold)
+        if (Directory.Exists(workDir) && TrackedFileCount(gitDir) >= LargeTreeFileThreshold)
         {
+            IsLargeWorkingTree = true;
             EnterDegradedMode("Repository working tree is very large. Watching .git only; working tree uses refresh-on-focus.");
             return;
         }
@@ -306,38 +318,49 @@ public sealed class FileWatcherService : IAsyncDisposable
         }, NormalizePath(_context.RepositoryPath));
     }
 
-    private static int CountFilesCapped(string root, int cap)
+    /// <summary>
+    /// How many files git tracks here, read from the index header (<c>DIRC</c>, a version, then the
+    /// big-endian entry count) — no walk of the working tree, so opening a tab never pays for one.
+    /// With a split index the main index holds only the recent changes and the bulk sits in
+    /// <c>sharedindex.&lt;hash&gt;</c> beside it, so the newest shared index counts too. 0 when
+    /// there is no readable index (a fresh repo).
+    /// <para>Trap: counting files on disk (capped at the threshold) cost seconds on a large tree,
+    /// on the open path of every tab, just to reach this same decision.</para>
+    /// </summary>
+    internal static int TrackedFileCount(string gitDir)
     {
-        var count = 0;
+        var count = IndexHeaderEntryCount(Path.Combine(gitDir, "index"));
         try
         {
-            var stack = new Stack<string>();
-            stack.Push(root);
-            while (stack.Count > 0 && count < cap)
-            {
-                var dir = stack.Pop();
-                var name = Path.GetFileName(dir);
-                if (name is "bin" or "obj" or "node_modules" or ".git" or ".vs")
-                    continue;
-
-                try
-                {
-                    count += Directory.EnumerateFiles(dir).Count();
-                    foreach (var sub in Directory.EnumerateDirectories(dir))
-                        stack.Push(sub);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    // Skip unreadable directories.
-                }
-            }
+            var shared = new DirectoryInfo(gitDir).EnumerateFiles("sharedindex.*")
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .FirstOrDefault();
+            if (shared is not null)
+                count = Math.Max(count, IndexHeaderEntryCount(shared.FullName));
         }
-        catch
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Unreadable git dir: the main index's count stands.
+        }
+        return count;
+    }
+
+    private static int IndexHeaderEntryCount(string indexPath)
+    {
+        try
+        {
+            using var fs = new FileStream(indexPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            Span<byte> header = stackalloc byte[12];
+            if (fs.ReadAtLeast(header, header.Length, throwOnEndOfStream: false) != header.Length
+                || header[0] != (byte)'D' || header[1] != (byte)'I' || header[2] != (byte)'R' || header[3] != (byte)'C')
+                return 0;
+            var count = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(header[8..]);
+            return count > int.MaxValue ? int.MaxValue : (int)count;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return 0;
         }
-
-        return count;
     }
 
     private void EnterDegradedMode(string reason)

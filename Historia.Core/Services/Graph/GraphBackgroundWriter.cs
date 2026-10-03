@@ -6,27 +6,37 @@ namespace Historia.Services.Graph;
 /// never fans out several concurrent <c>git commit-graph write</c> invocations, nor several
 /// concurrent headless walks, at once:
 /// <list type="bullet">
-/// <item><b>The active tab's own commit-graph write</b> (<see cref="MaybeSchedule"/>) — called by
-///'s background spill after every chunk it walks, as soon as the repo is known to be large
-/// enough to be worth it.</item>
+/// <item><b>Keeping a repository's commit-graph current</b> (<see cref="EnsureCurrent"/>) — every
+/// repository, whatever its size, always. A missing graph (no <c>commit-graph</c> file and no
+/// <c>commit-graphs/</c> chain in the <i>common</i> directory's <c>objects/info</c>, so a linked
+/// worktree sees the shared one) gets a full <c>--reachable</c> write. A stale graph (a ref tip —
+/// a branch, remote-tracking branch, tag peeled to a commit, or <c>HEAD</c> — that
+/// <see cref="CommitGraphIndex"/> doesn't find) or an unusable one (no generation data, damaged)
+/// gets an incremental <c>--split</c> refresh, whoever wrote it: git documents the split write as
+/// adding only the commits the graph lacks in a new layer, merging layers by its own size rule,
+/// and expiring replaced layers no sooner than <c>--expire-time</c>, so it never rewrites another
+/// writer's graph from scratch. At most one check runs per repository (keyed by common directory)
+/// per ref state (<see cref="RefStateToken"/>): an empty repository (git writes no file), a graph
+/// that stays unusable, a write that failed, or back-to-back triggers do nothing more until a ref
+/// moves.</item>
 /// <item><b>Inactive tabs, one at a time</b> (<see cref="EnqueueInactiveTab"/>) — a headless
-/// per-tab pipeline (commit-graph, then disk cache) that <c>GraphLayoutService</c> drives; this
-/// class only owns the queue/serialization/gate discipline, not what the work actually does.</item>
+/// per-tab pipeline that <c>GraphLayoutService</c> drives; this class only owns the
+/// queue/serialization/gate discipline, not what the work actually does.</item>
 /// </list>
-/// Every job awaits <see cref="IBackgroundWorkGate"/> before it starts (never mid-write — see the
-/// plan's documentation check on git's lockfile cleanup and
-/// <see cref="Process.Kill()"/>/<c>TerminateProcess</c>) and runs at
+/// Every job awaits <see cref="IBackgroundWorkGate"/> before it starts and runs at
 /// <see cref="ProcessPriorityClass.BelowNormal"/> for the git process itself
-/// (<see cref="GitCliRequest.LowerPriority"/>). Never calls <c>git maintenance start</c>/
-/// <c>register</c> or changes git config.
+/// (<see cref="GitCliRequest.LowerPriority"/>). Every commit-graph write sets
+/// <c>GIT_NO_LAZY_FETCH=1</c>: in a partial clone, <c>commit-graph write --reachable</c> otherwise
+/// fetches a promisor-only object a ref points at — a network call the user never asked for.
+/// Never calls <c>git maintenance start</c>/<c>register</c> or changes git config.
 /// <para>
 /// Once a commit-graph write has actually started it is never cancelled: git only removes <c>objects/info/commit-graph.lock</c> /
 /// <c>commit-graphs/commit-graph-chain.lock</c> from its own exit/signal handlers, never when the
 /// process tree is torn down with <c>TerminateProcess</c>
 /// (<see cref="GitCliProcessSetup.TryKill"/> calls <c>Process.Kill(entireProcessTree: true)</c>,
 /// which on Windows is exactly that — verified in <c>GitCliService.RunAsync</c>: a request's
-/// cancellation token is what triggers <c>TryKill</c>). So <see cref="WriteCommitGraphCoreAsync"/>
-/// runs the git process itself with <see cref="CancellationToken.None"/>; a context's
+/// cancellation token is what triggers <c>TryKill</c>). So <see cref="RunWriteAsync"/> runs the
+/// git process itself with <see cref="CancellationToken.None"/>; a context's
 /// <see cref="RepositoryContext.Lifetime"/> only gates whether a write is allowed to <i>start</i>
 /// (the gate wait, and the wait for <see cref="_serial"/> below) — a closed tab still skips a
 /// write that hasn't begun, but never kills one already running.
@@ -35,10 +45,10 @@ namespace Historia.Services.Graph;
 /// The inactive-tab queue (<see cref="EnqueueInactiveTab"/>) de-dupes by context: a
 /// context already queued and not yet running is not queued a second time. It also runs behind
 /// its own serializer, <see cref="_headlessSerial"/>, separate from <see cref="_serial"/> — a long
-/// headless walk (pure C#, no git process) no longer makes the active tab's own below-normal
-/// commit-graph write wait behind it. <see cref="_serial"/> is reserved for the actual
+/// headless walk (pure C#, no git process) never makes a below-normal commit-graph write wait
+/// behind it. <see cref="_serial"/> is reserved for the commit-graph check and its
 /// <c>git commit-graph write</c> process, wherever it's invoked from, so a below-normal
-/// commit-graph write may now briefly overlap a lowest-priority headless walk's non-git work —
+/// commit-graph write may briefly overlap a lowest-priority headless walk's non-git work —
 /// an accepted trade-off, since only one process-level write can ever run at a time either way.
 /// </para>
 /// <para>
@@ -52,32 +62,31 @@ namespace Historia.Services.Graph;
 /// on-disk header under a per-repo lock before every write.
 /// </para>
 /// </summary>
-internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService settings, IBackgroundWorkGate? gate = null)
+internal sealed class GraphBackgroundWriter(IGitCliService cli, IBackgroundWorkGate? gate = null)
 {
-    internal const int MinCommitsToWrite = 30_000;
+    private static readonly IReadOnlyDictionary<string, string> NoLazyFetch =
+        new Dictionary<string, string> { ["GIT_NO_LAZY_FETCH"] = "1" };
 
-    // A commit-graph is refreshed (not just written once) when enough new commits have
-    // landed since the app's own last write. Tracked in memory only, per process — a graph this
-    // process didn't itself write (a fresh launch reopening a repo git already maintains, or one
-    // `git gc` rewrote) is left alone entirely; only ever refreshing a graph this process wrote
-    // avoids fighting whatever cadence git's own maintenance already uses.
-    private const double StaleFraction = 0.10;
-    private const int StaleAbsolute = 50_000;
+    // How long a layer that a split write replaces is kept before git may delete it, so a reader
+    // that opened the chain just before the write can still finish.
+    private static readonly TimeSpan SplitExpiry = TimeSpan.FromHours(1);
 
-    // Serializes only the actual `git commit-graph write` process — active tab or headless —
-    // against every other one. Waiting on it is cancellable (a not-yet-started write can still be
-    // skipped when a tab closes); the process run itself, once it starts, is not (see the class
-    // doc comment).
+    // Serializes the commit-graph check and its `git commit-graph write` process — active tab,
+    // headless or clone — against every other one. Waiting on it is cancellable (a not-yet-started
+    // write can still be skipped when a tab closes); the process run itself, once it starts, is
+    // not (see the class doc comment).
     private readonly SemaphoreSlim _serial = new(1, 1);
 
     // Serializes the inactive-tab headless pipeline's own steps (one at a time, in enqueue order)
-    // separately from _serial, so a long headless walk never blocks the active tab's
-    // commit-graph write behind it.
+    // separately from _serial, so a long headless walk never blocks a commit-graph write behind it.
     private readonly SemaphoreSlim _headlessSerial = new(1, 1);
 
-    private readonly HashSet<string> _attemptedFresh = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, (int RowCount, DateTime WrittenUtc)> _lastWrite =
-        new(StringComparer.OrdinalIgnoreCase);
+    // Per common directory: the ref-state token the last commit-graph check acted on. Read and
+    // written only while _serial is held.
+    private readonly Dictionary<string, long> _checkedToken = new(StringComparer.OrdinalIgnoreCase);
+
+    private int _pendingChecks;
+
     private readonly object _sync = new();
 
     private readonly Queue<(RepositoryContext Context, Func<CancellationToken, Task> Work, CancellationTokenSource Cts, TaskCompletionSource Done)> _inactiveQueue = new();
@@ -96,23 +105,6 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
     private readonly Dictionary<string, List<(CancellationTokenSource Cts, TaskCompletionSource Done)>> _inactiveJobs =
         new(StringComparer.Ordinal);
     private bool _pumping;
-
-    /// <summary>
-    /// Fire-and-forget: schedules a background commit-graph write/refresh for the ACTIVE tab if
-    /// it qualifies (≥ <see cref="MinCommitsToWrite"/> commits walked, the setting is on, git is
-    /// available). Safe to call repeatedly — the background spill calls this after every
-    /// chunk it walks, as soon as the running total is known, rather than waiting for the whole
-    /// spill to finish.
-    /// </summary>
-    public void MaybeSchedule(RepositoryContext context, int commitsWalked)
-    {
-        if (!settings.Current.WriteCommitGraphForLargeRepos || !cli.IsGitAvailable)
-            return;
-        if (commitsWalked < MinCommitsToWrite)
-            return;
-
-        _ = Task.Run(() => WriteOrRefreshCommitGraphAsync(context, commitsWalked));
-    }
 
     /// <summary>
     /// Queues a headless job for an inactive tab. Jobs run one at a time, in the order
@@ -227,8 +219,8 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
                 if (gate is not null)
                     await gate.WaitUntilOpenAsync(cts.Token).ConfigureAwait(false);
                 // Its own serializer, separate from _serial — see the class doc comment. A long
-                // headless walk here never makes the active tab's own commit-graph write (which
-                // only ever needs _serial, and briefly) wait behind it.
+                // headless walk here never makes a commit-graph write (which only ever needs
+                // _serial) wait behind it.
                 await _headlessSerial.WaitAsync(cts.Token).ConfigureAwait(false);
                 try
                 {
@@ -267,187 +259,39 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
         }
     }
 
-    private async Task WriteOrRefreshCommitGraphAsync(RepositoryContext context, int rowCount)
+    /// <summary>
+    /// Fire-and-forget: brings <paramref name="context"/>'s commit-graph up to date once the gate
+    /// opens — writes a missing graph, refreshes a stale or unusable one with <c>--split</c>, or
+    /// does nothing when it already holds every ref tip or this ref state was already checked.
+    /// Safe to call as often as triggers fire.
+    /// </summary>
+    public void EnsureCurrent(RepositoryContext context)
+    {
+        if (!cli.IsGitAvailable)
+            return;
+        Interlocked.Increment(ref _pendingChecks);
+        _ = Task.Run(async () =>
+        {
+            try { await EnsureCurrentAsync(context).ConfigureAwait(false); }
+            finally { Interlocked.Decrement(ref _pendingChecks); }
+        });
+    }
+
+    /// <summary>Test seam: checks queued by <see cref="EnsureCurrent"/> that haven't finished.</summary>
+    internal int PendingChecksForTesting => Volatile.Read(ref _pendingChecks);
+
+    /// <summary>The work behind <see cref="EnsureCurrent"/>; completes when the check (and any
+    /// write it started) is done, or when the tab closed before its turn. Never throws.</summary>
+    internal async Task EnsureCurrentAsync(RepositoryContext context)
     {
         try
         {
-            var gitDir = context.GitDirectory;
-            var hasBefore = HasCommitGraph(gitDir, out var mtimeBefore);
-            if (!hasBefore)
-            {
-                lock (_sync) { if (!_attemptedFresh.Add(gitDir)) return; }
-            }
-            else if (!ShouldRefresh(gitDir, mtimeBefore, rowCount))
-            {
-                return;
-            }
-
             if (gate is not null)
                 await gate.WaitUntilOpenAsync(context.Lifetime).ConfigureAwait(false);
-
-            await WriteCommitGraphCoreAsync(context, gitDir, rowCount).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // Tab closed while waiting for the gate or for _serial — the write itself never
-            // started, so there's nothing to clean up (a write already running is never
-            // cancelled; see WriteCommitGraphCoreAsync).
-        }
-        catch
-        {
-            // Commit-graph maintenance is an optimisation, never a correctness dependency.
-        }
-    }
-
-    /// <summary>Writes a missing commit-graph, or refreshes a stale one this process itself wrote
-    /// earlier this session. The gate is assumed already open. Shared by the active-tab path and
-    /// (once wired) the headless per-tab pipeline.
-    /// <para>
-    /// Waits on <see cref="_serial"/> with <paramref name="context"/>'s <c>Lifetime</c> — a tab
-    /// that closes before its turn simply skips the write. Once that wait succeeds the actual
-    /// <c>git commit-graph write</c> process runs with <see cref="CancellationToken.None"/>: git
-    /// only clears its lock files from its own exit/signal handlers, never when the process tree
-    /// is torn down with <c>TerminateProcess</c> (see the class doc comment), so a
-    /// write already in flight must be left to finish rather than killed when the tab closes.
-    /// </para>
-    /// </summary>
-    public async Task WriteCommitGraphCoreAsync(RepositoryContext context, string gitDir, int rowCount)
-    {
-        await _serial.WaitAsync(context.Lifetime).ConfigureAwait(false);
-        try
-        {
-            // Re-check inside the lock: another repo sharing this gitdir (a second tab, a
-            // worktree), or a concurrent call for the same one, may have already
-            // written/refreshed it while this call waited for the gate/semaphore.
-            var has = HasCommitGraph(gitDir, out var mtime);
-            if (has && !ShouldRefresh(gitDir, mtime, rowCount))
-                return;
-
-            var args = has
-                ? new[] { "commit-graph", "write", "--reachable", "--split", $"--expire-time={DateTimeOffset.UtcNow.AddHours(-1):O}" }
-                : ["commit-graph", "write", "--reachable"];
-
-            using var _ = Diagnostics.PerfLog.Scope($"GraphBackgroundWriter.write({context.DisplayName})");
-            var result = await cli.RunAsync(new GitCliRequest
-            {
-                Arguments = args,
-                WorkingDirectory = context.RepositoryPath,
-                Timeout = Timeout.InfiniteTimeSpan,
-                LowerPriority = true,
-            }, CancellationToken.None).ConfigureAwait(false);
-
-            if (result.IsSuccess)
-                lock (_sync) _lastWrite[gitDir] = (rowCount, DateTime.UtcNow);
-            else
-                Diagnostics.PerfLog.Mark($"GraphBackgroundWriter: write failed (exit={result.ExitCode}) for {context.DisplayName}");
-        }
-        finally
-        {
-            _serial.Release();
-        }
-    }
-
-    /// <summary>
-    /// Writes a commit-graph for a newly cloned repository ahead of the background gate.
-    /// Skips the 30k-commit threshold. If cancelled before acquiring the serial lock, the write is
-    /// skipped. Once the git process starts, it runs with <see cref="CancellationToken.None"/> to avoid leaving
-    /// stale lock files. Adds gitdir to <see cref="_attemptedFresh"/> and does NOT touch <see cref="_lastWrite"/>.
-    /// </summary>
-    public async Task WriteForCloneAsync(RepositoryContext context, CancellationToken ct)
-    {
-        if (!settings.Current.WriteCommitGraphForLargeRepos || !cli.IsGitAvailable)
-            return;
-
-        var gitDir = context.GitDirectory;
-        await _serial.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            lock (_sync) _attemptedFresh.Add(gitDir);
-
-            var args = new[] { "commit-graph", "write", "--reachable" };
-
-            using var _ = Diagnostics.PerfLog.Scope($"GraphBackgroundWriter.writeForClone({context.DisplayName})");
-            var result = await cli.RunAsync(new GitCliRequest
-            {
-                Arguments = args,
-                WorkingDirectory = context.RepositoryPath,
-                Timeout = Timeout.InfiniteTimeSpan,
-                LowerPriority = true,
-            }, CancellationToken.None).ConfigureAwait(false);
-
-            if (!result.IsSuccess)
-                Diagnostics.PerfLog.Mark($"GraphBackgroundWriter: clone write failed (exit={result.ExitCode}) for {context.DisplayName}");
-        }
-        finally
-        {
-            _serial.Release();
-        }
-    }
-
-    /// <summary>
-    /// Records that a commit-graph write finished and was sized to <paramref name="rowCount"/> rows,
-    /// so subsequent staleness checks start from the actual cloned size.
-    /// </summary>
-    public void RecordWrite(string gitDir, int rowCount)
-    {
-        lock (_sync)
-        {
-            _lastWrite[gitDir] = (rowCount, DateTime.UtcNow);
-        }
-    }
-
-    /// <summary>
-    /// Fire-and-forget refresh of
-    /// <paramref name="context"/>'s commit-graph after a successful auto-fetch. Unlike
-    /// <see cref="MaybeSchedule"/>'s own-write tracking (<see cref="ShouldRefresh"/>), this
-    /// refreshes ANY existing commit-graph regardless of who wrote it — git documents
-    /// <c>commit-graph write --split</c> as a safe, idempotent no-op when nothing new needs to be
-    /// added, so refreshing a graph this process never wrote (git's own maintenance, another tab,
-    /// a previous session) is safe here specifically because the write is always incremental
-    /// (<c>--split</c>) and time-bounded (<c>--expire-time</c>), never a from-scratch rewrite. A
-    /// repo with no commit-graph yet only gets a first (non-split) write when a <c>.meta</c> header
-    /// already knows it has at least <see cref="MinCommitsToWrite"/> commits — cheap, no repo walk.
-    /// Same gate / <see cref="_serial"/> / below-normal-priority / never-killed discipline as every
-    /// other write (see the class doc comment).
-    /// </summary>
-    public void RefreshAfterFetch(RepositoryContext context)
-    {
-        if (!settings.Current.WriteCommitGraphForLargeRepos || !cli.IsGitAvailable)
-            return;
-
-        _ = Task.Run(() => RefreshAfterFetchCoreAsync(context));
-    }
-
-    private async Task RefreshAfterFetchCoreAsync(RepositoryContext context)
-    {
-        try
-        {
-            var gitDir = context.GitDirectory;
-            var has = HasCommitGraph(gitDir, out _);
-            if (!has && !RepoKnownLarge(context.RepositoryPath))
-                return;
-
-            if (gate is not null)
-                await gate.WaitUntilOpenAsync(context.Lifetime).ConfigureAwait(false);
-
             await _serial.WaitAsync(context.Lifetime).ConfigureAwait(false);
             try
             {
-                // Re-check under the lock: another writer may have created the graph while this
-                // call waited for the gate/semaphore.
-                has = HasCommitGraph(gitDir, out _);
-                var args = has
-                    ? new[] { "commit-graph", "write", "--reachable", "--split", $"--expire-time={DateTimeOffset.UtcNow.AddHours(-1):O}" }
-                    : ["commit-graph", "write", "--reachable"];
-
-                using var scope = Diagnostics.PerfLog.Scope($"GraphBackgroundWriter.refreshAfterFetch({context.DisplayName})");
-                await cli.RunAsync(new GitCliRequest
-                {
-                    Arguments = args,
-                    WorkingDirectory = context.RepositoryPath,
-                    Timeout = Timeout.InfiniteTimeSpan,
-                    LowerPriority = true,
-                }, CancellationToken.None).ConfigureAwait(false);
+                await CheckAndWriteAsync(context).ConfigureAwait(false);
             }
             finally
             {
@@ -456,7 +300,8 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
         }
         catch (OperationCanceledException)
         {
-            // Tab closed while waiting for the gate/_serial — the write never started.
+            // Tab closed while waiting for the gate, _serial or its refs — no write started, so
+            // there's nothing to clean up (a write already running is never cancelled).
         }
         catch
         {
@@ -464,59 +309,141 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, ISettingsService
         }
     }
 
-    /// <summary>Cheap, header-only check: does the on-disk graph-cache header for
-    /// <paramref name="repoPath"/> (there is only ever one physical <c>.meta.hdr</c> per repo,
-    /// whichever remote-branch flag last wrote it) know it already has at least
-    /// <see cref="MinCommitsToWrite"/> commits? Tries both remote-branch flags since neither is
-    /// known up front here — at most one can ever match the single on-disk header.</summary>
-    private static bool RepoKnownLarge(string repoPath)
+    /// <summary>One check, under <see cref="_serial"/>. The ref-state token is recorded whatever
+    /// the outcome — a write that ran, failed, or wasn't needed — so one ref state is never acted
+    /// on twice.</summary>
+    private async Task CheckAndWriteAsync(RepositoryContext context)
     {
-        foreach (var includeRemoteBranches in new[] { true, false })
+        var gitDir = context.GitDirectory;
+        var commonDir = RefStateToken.ResolveCommonDir(gitDir);
+        var token = RefStateToken.Compute(gitDir).Token;
+        if (_checkedToken.TryGetValue(commonDir, out var last) && last == token)
+            return;
+
+        if (!HasCommitGraph(gitDir))
         {
-            var probe = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches);
-            if (probe.Ok)
-                return probe.RowCount >= MinCommitsToWrite;
+            _checkedToken[commonDir] = token;
+            await RunWriteAsync(context, split: false, "written (missing)").ConfigureAwait(false);
+            return;
         }
-        return false;
-    }
 
-    /// <summary>A commit-graph this process never wrote (or one whose mtime moved since we last
-    /// wrote it — someone else, e.g. `git gc`, keeps it fresh on their own) is left alone. One we
-    /// did write is refreshed once at least <see cref="StaleAbsolute"/> commits, or
-    /// <see cref="StaleFraction"/> of its size, have landed since.</summary>
-    private bool ShouldRefresh(string gitDir, DateTime graphMtimeUtc, int currentRowCount)
-    {
-        lock (_sync)
-        {
-            if (!_lastWrite.TryGetValue(gitDir, out var last))
-                return false;
-            if (graphMtimeUtc > last.WrittenUtc.AddSeconds(1))
-                return false;
-            var delta = currentRowCount - last.RowCount;
-            return delta >= StaleAbsolute || (last.RowCount > 0 && (double)delta / last.RowCount >= StaleFraction);
-        }
-    }
-
-    internal static bool HasCommitGraph(string gitDirectory) => HasCommitGraph(gitDirectory, out _);
-
-    private static bool HasCommitGraph(string gitDirectory, out DateTime mtimeUtc)
-    {
-        mtimeUtc = default;
+        RefSnapshot snapshot;
         try
         {
-            var flat = Path.Combine(gitDirectory, "objects", "info", "commit-graph");
-            if (File.Exists(flat))
-            {
-                mtimeUtc = File.GetLastWriteTimeUtc(flat);
-                return true;
-            }
-            var chain = Path.Combine(gitDirectory, "objects", "info", "commit-graphs");
-            if (Directory.Exists(chain))
-            {
-                mtimeUtc = Directory.GetLastWriteTimeUtc(chain);
-                return true;
-            }
-            return false;
+            snapshot = await context.RefSnapshots.GetAsync(context.Lifetime).ConfigureAwait(false);
+        }
+        catch (HistoriaGitException ex)
+        {
+            _checkedToken[commonDir] = token;
+            Diagnostics.PerfLog.Mark($"commit-graph: not checked, refs unreadable ({ex.Kind}) ({context.DisplayName})");
+            return;
+        }
+        _checkedToken[commonDir] = token;
+
+        var tips = CollectTips(snapshot);
+        var lookup = context.CommitGraph.Lookup(tips);
+        if (lookup is null)
+        {
+            await RunWriteAsync(context, split: true, "refreshed (unusable graph)").ConfigureAwait(false);
+            return;
+        }
+
+        var missing = tips.Count(t => !lookup.Contains(t));
+        if (missing > 0)
+            await RunWriteAsync(context, split: true, $"refreshed ({missing} of {tips.Count} tips not in the graph)").ConfigureAwait(false);
+        else
+            Diagnostics.PerfLog.Mark($"commit-graph: current ({tips.Count} tips) ({context.DisplayName})");
+    }
+
+    /// <summary>The commits the graph must hold to be current: every branch, remote-tracking
+    /// branch and tag peeled to a commit (a tag of a tree or blob has none), plus <c>HEAD</c>.</summary>
+    private static List<GitObjectId> CollectTips(RefSnapshot snapshot)
+    {
+        var tips = new HashSet<GitObjectId>();
+        foreach (var r in snapshot.Refs)
+        {
+            if (r.PeeledCommit is { } id
+                && (r.CanonicalName.StartsWith("refs/heads/", StringComparison.Ordinal)
+                    || r.CanonicalName.StartsWith("refs/remotes/", StringComparison.Ordinal)
+                    || r.CanonicalName.StartsWith("refs/tags/", StringComparison.Ordinal)))
+                tips.Add(id);
+        }
+        if (snapshot.HeadTarget is { } head)
+            tips.Add(head);
+        return [.. tips];
+    }
+
+    /// <summary>Runs one <c>git commit-graph write --reachable</c> — with <c>--split</c> and an
+    /// expiry when <paramref name="split"/> — and marks the outcome. The caller holds
+    /// <see cref="_serial"/>. The process runs with <see cref="CancellationToken.None"/>: git
+    /// only clears its lock files from its own exit/signal handlers, never when the process tree
+    /// is torn down with <c>TerminateProcess</c> (see the class doc comment), so a write already
+    /// in flight is left to finish rather than killed when the tab closes. A failure is logged
+    /// and not retried.</summary>
+    private async Task RunWriteAsync(RepositoryContext context, bool split, string outcome)
+    {
+        string[] args = split
+            ? ["commit-graph", "write", "--reachable", "--split", $"--expire-time={DateTimeOffset.UtcNow - SplitExpiry:O}"]
+            : ["commit-graph", "write", "--reachable"];
+
+        var sw = Stopwatch.StartNew();
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = args,
+            WorkingDirectory = context.RepositoryPath,
+            Timeout = Timeout.InfiniteTimeSpan,
+            LowerPriority = true,
+            ExtraEnvironment = NoLazyFetch,
+        }, CancellationToken.None).ConfigureAwait(false);
+
+        if (result.IsSuccess)
+        {
+            Diagnostics.PerfLog.Mark($"commit-graph: {outcome} in {sw.ElapsedMilliseconds} ms ({context.DisplayName})");
+            return;
+        }
+        Diagnostics.PerfLog.Mark($"commit-graph: write failed (exit {result.ExitCode}) ({context.DisplayName})");
+        AppLog.Write(AppLogLevel.Info, "git",
+            $"Commit-graph write failed for {context.RepositoryPath} (exit {result.ExitCode}); not retried until a ref changes");
+    }
+
+    /// <summary>
+    /// Writes a commit-graph for a newly cloned repository ahead of the background gate. If
+    /// cancelled before acquiring <see cref="_serial"/>, the write is skipped; once the git
+    /// process starts it runs to the end. Records the clone's ref state, so the first
+    /// <see cref="EnsureCurrent"/> after it does not write again.
+    /// </summary>
+    public async Task WriteForCloneAsync(RepositoryContext context, CancellationToken ct)
+    {
+        if (!cli.IsGitAvailable)
+            return;
+
+        await _serial.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var gitDir = context.GitDirectory;
+            _checkedToken[RefStateToken.ResolveCommonDir(gitDir)] = RefStateToken.Compute(gitDir).Token;
+            await RunWriteAsync(context, split: false, "written (clone)").ConfigureAwait(false);
+        }
+        finally
+        {
+            _serial.Release();
+        }
+    }
+
+    /// <summary>Fire-and-forget commit-graph check after a successful fetch, pull or push — the
+    /// same check as <see cref="EnsureCurrent"/>.</summary>
+    public void RefreshAfterFetch(RepositoryContext context) => EnsureCurrent(context);
+
+    /// <summary>True when the repository's common directory holds a commit-graph — the single
+    /// <c>objects/info/commit-graph</c> file or a <c>commit-graphs/commit-graph-chain</c> — so a
+    /// linked worktree sees the graph it shares with its main worktree.</summary>
+    internal static bool HasCommitGraph(string gitDirectory)
+    {
+        try
+        {
+            var info = Path.Combine(RefStateToken.ResolveCommonDir(gitDirectory), "objects", "info");
+            return File.Exists(Path.Combine(info, "commit-graph"))
+                || File.Exists(Path.Combine(info, "commit-graphs", "commit-graph-chain"));
         }
         catch
         {
