@@ -1090,8 +1090,11 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                 foreground = _foregroundInit;
                 // A closed foreground tab (or every tab, after DisposeAsync) will never finish
                 // loading, and its cancelled Lifetime makes the wait below return instantly —
-                // waiting on it would spin this loop forever. Treat it as no foreground.
-                if (foreground is not null && !_open.Contains(foreground))
+                // waiting on it would spin this loop forever. Treat it as no foreground. The same
+                // goes for one whose load already completed: a tab the queue was loading when it
+                // took focus (or when the open path found it loading) stays _foregroundInit after
+                // that background attempt ends, since only a foreground attempt clears it.
+                if (foreground is not null && (!_open.Contains(foreground) || foreground.FirstFullLoad.IsCompleted))
                     foreground = null;
                 next = SelectNextBackgroundItemLocked();
                 foregroundChanged = _foregroundChanged.Task;

@@ -179,6 +179,44 @@ public sealed class WorkspaceFocusLossTests : IAsyncDisposable
         }
     }
 
+    /// <summary>A tab the background queue loaded while it took focus stays the queue's
+    /// foreground tab after its load completes (only a foreground attempt clears that). The queue
+    /// must not keep waiting on that finished load: another tab's queued refresh still runs.</summary>
+    [Fact(Timeout = 60000)]
+    public async Task A_tab_the_queue_loaded_while_it_took_focus_never_holds_up_the_queue()
+    {
+        var a = CreateRepo("a");
+        var b = CreateRepo("b");
+        var (ws, _) = NewWorkspace(_host.Cli);
+        try
+        {
+            var ctxB = await ws.OpenAsync(b.Path);
+            ctxB.MarkFirstGraphPaintDone();
+            await ctxB.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(30));
+
+            WorkspaceService.TestAfterTabAddedBeforeFocus = async ctx =>
+            {
+                // As a watcher event would: the tab isn't focused yet, so this queues its init.
+                _ = ws.RequestBackgroundRefreshAsync(ctx);
+                Assert.True(await EventuallyAsync(() => ws.HasInitAttemptForTesting(ctx), TimeSpan.FromSeconds(20)));
+            };
+            var ctxA = await ws.OpenAsync(a.Path);
+            WorkspaceService.TestAfterTabAddedBeforeFocus = null;
+            ctxA.MarkFirstGraphPaintDone();
+            await ctxA.FirstFullLoad.WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.True(await EventuallyAsync(() => !ws.HasInitAttemptForTesting(ctxA), TimeSpan.FromSeconds(20)));
+
+            // B is open and unfocused, so its refresh goes through the background queue.
+            var refresh = ws.RequestBackgroundRefreshAsync(ctxB, full: true);
+            Assert.Same(refresh, await Task.WhenAny(refresh, Task.Delay(TimeSpan.FromSeconds(20))));
+        }
+        finally
+        {
+            WorkspaceService.TestAfterTabAddedBeforeFocus = null;
+            await ws.DisposeAsync();
+        }
+    }
+
     /// <summary>A tab the workspace opens knows its workspace before its file watcher starts.
     /// A watcher that started without one refreshed on the tab's Lifetime — a token focus loss
     /// can't cancel — whenever its first event fired before the workspace was attached.</summary>
