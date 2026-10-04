@@ -89,6 +89,20 @@ public class TerminalKittyRoutingTests
     }
 
     [AvaloniaFact]
+    public void Flag8_AltGrText_SendsTheCharacterWithoutCtrlAlt()
+    {
+        // Flags 8|2: every key as an escape code, with releases. Windows reports AltGr+Q on a
+        // German layout as Ctrl+Alt with the symbol "@", and KeyUp carries no symbol.
+        using var rig = NewRig("10");
+
+        rig.Window.KeyPress(Key.Q, RawInputModifiers.Control | RawInputModifiers.Alt, PhysicalKey.Q, "@");
+        rig.Window.KeyTextInput("@");
+        rig.Window.KeyRelease(Key.Q, RawInputModifiers.Control | RawInputModifiers.Alt, PhysicalKey.Q, null);
+
+        Assert.Equal(["[64u", "[64;1:3u"], rig.Pty.WrittenStrings());
+    }
+
+    [AvaloniaFact]
     public void Flag1_TypingA_StaysOnTextInput()
     {
         using var rig = NewRig("1");

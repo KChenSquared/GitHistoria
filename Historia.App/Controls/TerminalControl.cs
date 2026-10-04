@@ -43,8 +43,8 @@ public sealed class TerminalControl : Control
     private bool _blinkOn = true;
 
     // Keys whose press went through the Kitty encoder and are still held; a second KeyDown is a
-    // repeat, and only these keys get a release.
-    private readonly HashSet<int> _kittyKeysDown = [];
+    // repeat, and only these keys get a release, reported as the press was.
+    private readonly Dictionary<int, KittyHeldKey> _kittyKeysDown = [];
     // The text of a key the Kitty encoder already sent, so its TextInput is not sent again.
     private string? _swallowTextInput;
 
@@ -660,9 +660,15 @@ public sealed class TerminalControl : Control
         if (key.Length == 0)
             return false;
 
+        // Windows reports AltGr as Ctrl+Alt; the text it typed already reflects it, so neither is
+        // a modifier of this key.
+        var stripped = textKey && mods.HasFlag(TerminalModifiers.Control) && mods.HasFlag(TerminalModifiers.Alt)
+            ? TerminalModifiers.Control | TerminalModifiers.Alt
+            : TerminalModifiers.None;
+
         var id = KeyId(e);
-        var kind = _kittyKeysDown.Contains(id) ? TerminalKeyEventKind.Repeat : TerminalKeyEventKind.Press;
-        if (!_session.TryEncodeKittyKey(new TerminalKeyInput(key, ToBrowserCode(e.PhysicalKey), mods), kind, out var bytes))
+        var kind = _kittyKeysDown.ContainsKey(id) ? TerminalKeyEventKind.Repeat : TerminalKeyEventKind.Press;
+        if (!_session.TryEncodeKittyKey(new TerminalKeyInput(key, ToBrowserCode(e.PhysicalKey), mods & ~stripped), kind, out var bytes))
             return false;
 
         if (bytes.Length > 0)
@@ -670,7 +676,7 @@ public sealed class TerminalControl : Control
             _session.Write(bytes);
             _scrollOffsetLines = 0;
         }
-        _kittyKeysDown.Add(id);
+        _kittyKeysDown[id] = new KittyHeldKey(key, stripped);
         if (textKey)
             _swallowTextInput = e.KeySymbol;
         e.Handled = true;
@@ -680,19 +686,23 @@ public sealed class TerminalControl : Control
     protected override void OnKeyUp(KeyEventArgs e)
     {
         base.OnKeyUp(e);
-        if (_session is null || !_kittyKeysDown.Remove(KeyId(e)))
+        if (_session is null || !_kittyKeysDown.Remove(KeyId(e), out var held))
             return;
         e.Handled = true;
 
         if (!_session.KeyboardProtocol.ReportsEventTypes)
             return;
-        var input = new TerminalKeyInput(ToBrowserKey(e.Key, e.KeySymbol), ToBrowserCode(e.PhysicalKey), ToModifiers(e.KeyModifiers));
+        // The press's key name: KeyUp may carry no KeySymbol, which would name an AltGr key by
+        // its base character.
+        var input = new TerminalKeyInput(held.Key, ToBrowserCode(e.PhysicalKey), ToModifiers(e.KeyModifiers) & ~held.Stripped);
         if (_session.TryEncodeKittyKey(input, TerminalKeyEventKind.Release, out var bytes) && bytes.Length > 0)
             _session.Write(bytes);
     }
 
     private static int KeyId(KeyEventArgs e)
         => e.PhysicalKey != PhysicalKey.None ? (int)e.PhysicalKey : -1 - (int)e.Key;
+
+    private readonly record struct KittyHeldKey(string Key, TerminalModifiers Stripped);
 
     private TerminalModes ReadModes() => _session?.CurrentModes ?? default;
 
