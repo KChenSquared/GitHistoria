@@ -82,7 +82,7 @@ internal static class BranchMenu
         async Task Run(Func<Task> op, string what)
         {
             try { await op(); await ctx.State.RefreshAllAsync(ctx.Lifetime); }
-            catch (Exception ex) { notify.Publish(NotificationSeverity.Error, $"{what} failed: {ex.Message}", ex.NotificationDetails()); }
+            catch (Exception ex) { notify.Publish(NotificationSeverity.Error, ex.NotificationMessage(what), ex.NotificationDetails()); }
         }
 
         // A local branch matching the short name already exists → just check it out. Only when a
@@ -178,7 +178,7 @@ internal static class BranchMenu
                 await ctx.Gateway.CreateTagAsync(name.Trim(), sha, null, ctx.Lifetime);
                 await ctx.State.RefreshAllAsync(ctx.Lifetime);
             }
-            catch (Exception ex) { notify.Publish(NotificationSeverity.Error, $"Create tag failed: {ex.Message}", ex.NotificationDetails()); }
+            catch (Exception ex) { notify.Publish(NotificationSeverity.Error, ex.NotificationMessage("Create tag"), ex.NotificationDetails()); }
         });
         return Task.CompletedTask;
     }
@@ -216,7 +216,7 @@ internal static class BranchMenu
         }
         catch (Exception ex)
         {
-            notify.Publish(NotificationSeverity.Error, $"Delete branch failed: {ex.Message}", ex.NotificationDetails());
+            notify.Publish(NotificationSeverity.Error, ex.NotificationMessage("Delete branch"), ex.NotificationDetails());
         }
     }
 
@@ -240,7 +240,7 @@ internal static class BranchMenu
         }
         catch (Exception ex)
         {
-            notify.Publish(NotificationSeverity.Error, $"{what} failed: {ex.Message}", ex.NotificationDetails());
+            notify.Publish(NotificationSeverity.Error, ex.NotificationMessage(what), ex.NotificationDetails());
         }
     }
 
@@ -261,7 +261,7 @@ internal static class BranchMenu
         }
         catch (Exception ex)
         {
-            notify.Publish(NotificationSeverity.Error, $"Stash failed: {ex.Message}", ex.NotificationDetails());
+            notify.Publish(NotificationSeverity.Error, ex.NotificationMessage("Stash"), ex.NotificationDetails());
             return;
         }
 
@@ -269,7 +269,7 @@ internal static class BranchMenu
         if (!stashed)
         {
             try { await op(); await ctx.State.RefreshAllAsync(ctx.Lifetime); }
-            catch (Exception ex) { notify.Publish(NotificationSeverity.Error, $"{what} failed: {ex.Message}", ex.NotificationDetails()); }
+            catch (Exception ex) { notify.Publish(NotificationSeverity.Error, ex.NotificationMessage(what), ex.NotificationDetails()); }
             return;
         }
 

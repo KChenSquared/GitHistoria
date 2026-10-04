@@ -811,7 +811,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Delete failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Delete"), ex.NotificationDetails());
         }
     }
 
@@ -840,7 +840,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             _ = LoadPowerToolsAsync(_repo);
         }
         catch (OperationCanceledException) { /* tab closed or torn down mid-operation — not a failure */ }
-        catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, $"Operation failed: {ex.Message}", ex.NotificationDetails()); }
+        catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Operation"), ex.NotificationDetails()); }
     }
 
     /// <summary>Wraps a submodule "Init & update" (per-row, or <c>null</c> path for "Update
@@ -947,7 +947,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             _ = LoadPowerToolsAsync(_repo);
         }
         catch (OperationCanceledException) { /* tab closed or torn down mid-operation — not a failure */ }
-        catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, $"Stash op failed: {ex.Message}"); }
+        catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Stash op")); }
     }
 
     private async Task StashBranchAsync(StashEntry entry)

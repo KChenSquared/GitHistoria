@@ -427,7 +427,7 @@ public sealed partial class CommitGraphControl
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"{what} failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage(what), ex.NotificationDetails());
         }
     }
 
@@ -459,7 +459,7 @@ public sealed partial class CommitGraphControl
             }
             catch (Exception ex)
             {
-                _notifications.Publish(NotificationSeverity.Error, $"Copy message failed: {ex.Message}", ex.NotificationDetails());
+                _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Copy message"), ex.NotificationDetails());
             }
         });
     }

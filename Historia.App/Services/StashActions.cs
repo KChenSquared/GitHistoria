@@ -45,7 +45,7 @@ internal static class StashActions
         catch (Exception ex)
         {
             notifications.Publish(Historia.Services.Notifications.NotificationSeverity.Error,
-                $"Stash all failed: {ex.Message}", ex.NotificationDetails());
+                ex.NotificationMessage("Stash all"), ex.NotificationDetails());
             return false;
         }
     }

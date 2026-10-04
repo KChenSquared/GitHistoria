@@ -1219,7 +1219,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Save failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Save"), ex.NotificationDetails());
             return false;
         }
         finally
@@ -1296,7 +1296,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Take {(side == ConflictSide.Ours ? "ours" : "theirs")} failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage($"Take {(side == ConflictSide.Ours ? "ours" : "theirs")}"), ex.NotificationDetails());
         }
         finally
         {
@@ -1347,7 +1347,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Re-create conflict failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Re-create conflict"), ex.NotificationDetails());
         }
         finally
         {
@@ -1417,7 +1417,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"External tool failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("External tool"), ex.NotificationDetails());
         }
     }
 
@@ -1494,7 +1494,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Continue failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Continue"), ex.NotificationDetails());
         }
     }
 
@@ -1536,7 +1536,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Skip failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Skip"), ex.NotificationDetails());
         }
     }
 
@@ -1576,7 +1576,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Abort failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Abort"), ex.NotificationDetails());
         }
     }
 
@@ -1636,7 +1636,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Reload failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Reload"), ex.NotificationDetails());
         }
     }
 
@@ -1673,7 +1673,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Keep mine failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Keep mine"), ex.NotificationDetails());
         }
     }
 

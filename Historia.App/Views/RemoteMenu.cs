@@ -106,7 +106,7 @@ internal static class RemoteMenu
         catch (OperationCanceledException) { /* tab closed or torn down mid-operation — not a failure */ }
         catch (Exception ex)
         {
-            notifications.Publish(NotificationSeverity.Error, $"Set push URL failed: {ex.Message}", ex.NotificationDetails());
+            notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Set push URL"), ex.NotificationDetails());
             await RefreshAsync(ctx);
         }
     }
@@ -177,7 +177,7 @@ internal static class RemoteMenu
         catch (OperationCanceledException) { /* tab closed or torn down mid-operation — not a failure */ }
         catch (Exception ex)
         {
-            notifications.Publish(NotificationSeverity.Error, $"Delete remote failed: {ex.Message}", ex.NotificationDetails());
+            notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Delete remote"), ex.NotificationDetails());
             await RefreshAsync(ctx);
         }
     }
