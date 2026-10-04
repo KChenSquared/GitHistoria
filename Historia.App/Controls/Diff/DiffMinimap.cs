@@ -129,6 +129,8 @@ public sealed class DiffMinimap : Control
     /// <summary>Draws the cached add/delete bars. The row walk happens only on a rebuild.</summary>
     private sealed class BarsLayer : Control
     {
+        private const byte BarAlpha = 0x99;
+
         private readonly DiffMinimap _owner;
         private MinimapBars? _first;
         private MinimapBars? _second;
@@ -170,8 +172,10 @@ public sealed class DiffMinimap : Control
             }
 
             double scale = Bounds.Height / height;
-            var addBrush = PaletteBrushes.Get("ColorDiffAddBg");
-            var delBrush = PaletteBrushes.Get("ColorDiffDelBg");
+            // One bar per bucket row means no overdraw to build colour up, so the bars use the
+            // git colours at a fixed strong alpha rather than the faint row-background tints.
+            var addBrush = PaletteBrushes.GetTranslucent("ColorGitAdded", BarAlpha);
+            var delBrush = PaletteBrushes.GetTranslucent("ColorGitDeleted", BarAlpha);
 
             if (_owner._isSideBySide)
             {
