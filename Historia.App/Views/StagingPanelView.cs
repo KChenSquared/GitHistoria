@@ -20,6 +20,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private readonly IKeyboardCommandRouter _keyboard;
     private readonly Historia.Services.UI.IExternalLauncher _launcher;
     private readonly Historia.Services.PowerTools.IStashService _stash;
+    private readonly IRepoActionBus _actionBus;
     private IDisposable? _commitShortcut;
 
     private readonly TextBox _message = new()
@@ -79,6 +80,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _keyboard = sp.GetRequiredService<IKeyboardCommandRouter>();
         _launcher = sp.GetRequiredService<Historia.Services.UI.IExternalLauncher>();
         _stash = sp.GetRequiredService<Historia.Services.PowerTools.IStashService>();
+        _actionBus = sp.GetRequiredService<IRepoActionBus>();
 
         _commit = TextButton("Commit", () => _ = CommitAsync(false), primary: true);
         var commitPush = TextButton("Commit & Push", () => _ = CommitAsync(true));
@@ -716,7 +718,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Stash staged failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Stash staged"), ex.NotificationDetails());
         }
         finally
         {
@@ -792,23 +794,29 @@ public sealed class StagingPanelView : UserControl, IDisposable
             await _ctx.State.RefreshAllAsync(_ctx.Lifetime);
             _notifications.Publish(NotificationSeverity.Success, "Commit created.");
 
-            if (push)
-            {
-                var remote = _ctx.State.Remotes.FirstOrDefault(r => r.Name == "origin")?.Name ?? _ctx.State.Remotes.FirstOrDefault()?.Name;
-                var branch = _ctx.State.CurrentBranch?.Name;
-                if (remote is not null && branch is not null)
-                {
-                    await _ctx.Gateway.PushAsync(remote, new PushSpec { RefSpec = branch, SetUpstream = _ctx.State.CurrentBranch?.UpstreamName is null }, null, _ctx.Lifetime);
-                    await _ctx.State.RefreshAllAsync(_ctx.Lifetime);
-                    _notifications.Publish(NotificationSeverity.Success, $"Pushed to {remote}.");
-                }
-            }
+            // The push goes through the network-action runner, which owns its progress,
+            // cancellation, busy guard and rejection / host-key / Local-config flows, and
+            // reports its own outcome.
+            if (push && BuildPushRequest(_ctx) is { } request)
+                _actionBus.RequestNetworkAction(request);
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Commit failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Commit"), ex.NotificationDetails());
         }
         finally { _committing = false; }
+    }
+
+    /// <summary>The push half of Commit &amp; Push: the current branch to <c>origin</c> (else the
+    /// first remote), pinned to this panel's repository. Null when there is no remote or no
+    /// checked-out branch.</summary>
+    internal static RepoNetworkRequest? BuildPushRequest(RepositoryContext ctx)
+    {
+        var remote = ctx.State.Remotes.FirstOrDefault(r => r.Name == "origin")?.Name ?? ctx.State.Remotes.FirstOrDefault()?.Name;
+        var branch = ctx.State.CurrentBranch?.Name;
+        return remote is null || branch is null
+            ? null
+            : new RepoNetworkRequest(RepoNetworkAction.Push, remote, branch, Repo: ctx);
     }
 
     private void UpdateCounter()

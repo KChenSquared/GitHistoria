@@ -5,9 +5,11 @@ namespace Historia.Services.UI;
 public sealed record RepoNetworkProgress(RepositoryContext Repo, GitProgress? Progress);
 
 /// <summary>
-/// Runs the Fetch / Pull / Push flow the shortcuts bar requests via <see cref="IRepoActionBus"/>,
-/// against whichever repository is focused. A DI singleton, eagerly resolved once at startup
-/// (<c>MainWindow</c>) so it subscribes to <see cref="IRepoActionBus.NetworkActionRequested"/> for
+/// Runs the Fetch / Pull / Push flow requested via <see cref="IRepoActionBus"/> — from the
+/// shortcuts bar, branch menus and the staging panel's Commit &amp; Push — against the request's
+/// repository, or the focused one when the request names none. One operation runs at a time; a
+/// request that arrives meanwhile is answered with a notice, not queued.
+/// A DI singleton, eagerly resolved once at startup (<c>MainWindow</c>) so it subscribes to <see cref="IRepoActionBus.NetworkActionRequested"/> for
 /// the app's whole lifetime — this logic used to live in <c>RepositoryView</c> itself, which meant
 /// Fetch/Pull/Push silently did nothing whenever the detail pane showed anything other than the
 /// repo view (Home, Settings, …), since that view (and its event subscription) had been disposed.
@@ -263,7 +265,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         catch (Exception retryEx)
         {
             _notifications.Publish(NotificationSeverity.Error,
-                $"Push failed: {retryEx.Message}", retryEx.NotificationDetails());
+                retryEx.NotificationMessage("Push"), retryEx.NotificationDetails());
         }
         finally
         {
@@ -281,8 +283,13 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
     private async Task RunAsync(RepoNetworkRequest request)
     {
         var op = request.Action;
-        if (_workspace.Focused is not { } repo || _busy)
+        if ((request.Repo ?? _workspace.Focused) is not { } repo)
             return;
+        if (_busy)
+        {
+            _notifications.Publish(NotificationSeverity.Info, "Another fetch, pull or push is still running.");
+            return;
+        }
 
         string remote;
         if (request.Remote is { } targetRemote)
@@ -365,7 +372,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                         repo.State.SetActiveProfile(previous);
                     }
                     catch { /* best effort rollback */ }
-                    _notifications.Publish(NotificationSeverity.Error, $"{op} failed: {retryEx.Message}", retryEx.NotificationDetails());
+                    _notifications.Publish(NotificationSeverity.Error, retryEx.NotificationMessage(op.ToString()), retryEx.NotificationDetails());
                 }
             }
             else
@@ -428,7 +435,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"{op} failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage(op.ToString()), ex.NotificationDetails());
         }
         finally
         {

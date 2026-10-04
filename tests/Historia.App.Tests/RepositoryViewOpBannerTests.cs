@@ -15,6 +15,7 @@ public class RepositoryViewOpBannerTests : IDisposable
         var sc = new ServiceCollection();
         sc.AddSingleton<IConflictService>(_conflicts);
         sc.AddSingleton<IDialogService>(_dialogs);
+        sc.AddSingleton<IRepoActionBus, RepoActionBus>();
         sc.AddSingleton<INotificationService, NotificationService>();
         sc.AddSingleton<IWorkspaceService, WorkspaceService>();
         sc.AddSingleton<IRepoLayoutService, RepoLayoutService>();
