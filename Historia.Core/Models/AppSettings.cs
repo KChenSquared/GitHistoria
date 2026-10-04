@@ -208,6 +208,12 @@ public sealed record AppSettings
     public bool TerminalCursorBlink { get; init; } = true;
     public TerminalBellStyle TerminalBellStyle { get; init; } = TerminalBellStyle.None;
 
+    /// <summary>Lets programs turn on the Kitty keyboard protocol. Read when a session starts.</summary>
+    public bool TerminalKittyKeyboard { get; init; } = true;
+
+    /// <summary>Lets programs write the system clipboard through OSC 52. Checked on every write.</summary>
+    public bool TerminalAllowClipboardWrite { get; init; } = true;
+
     public const int MinTerminalScrollback = 500;
     public const int MaxTerminalScrollback = 100_000;
 
