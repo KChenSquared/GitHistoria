@@ -25,7 +25,7 @@ public class RepositoryTopBarTests : IDisposable
     }
 
     [Fact]
-    public void Tracked_change_count_counts_unique_tracked_paths()
+    public void Working_copy_change_count_counts_unique_paths_including_untracked()
     {
         static FileStatusEntry Entry(string path, FileChangeKind kind) =>
             new() { Path = path, Kind = kind, IsBinary = false, IsSubmodule = false };
@@ -44,7 +44,7 @@ public class RepositoryTopBarTests : IDisposable
             ],
             Untracked =
             [
-                Entry("untracked.txt", FileChangeKind.Untracked), // should not be counted
+                Entry("untracked.txt", FileChangeKind.Untracked),
             ],
             Conflicted =
             [
@@ -52,8 +52,8 @@ public class RepositoryTopBarTests : IDisposable
             ],
         };
 
-        var count = RepositoryView.TrackedChangeCount(status);
-        Assert.Equal(4, count); // file1, file2, file3, file4
+        var count = RepositoryView.WorkingCopyChangeCount(status);
+        Assert.Equal(5, count); // file1, file2, file3, untracked, file4
     }
 
     [AvaloniaFact]

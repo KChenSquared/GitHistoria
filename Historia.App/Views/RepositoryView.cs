@@ -176,11 +176,12 @@ public sealed class RepositoryView : UserControl, IDisposable
     private void OnStateChanged2(object? s, RefsChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
     private void OnSelChanged(object? s, SelectionChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
 
-    internal static int TrackedChangeCount(RepositoryStatus s)
+    internal static int WorkingCopyChangeCount(RepositoryStatus s)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
         foreach (var f in s.Staged) set.Add(f.Path);
         foreach (var f in s.Unstaged) set.Add(f.Path);
+        foreach (var f in s.Untracked) set.Add(f.Path);
         foreach (var f in s.Conflicted) set.Add(f.Path);
         return set.Count;
     }
@@ -228,7 +229,7 @@ public sealed class RepositoryView : UserControl, IDisposable
             if (!ReferenceEquals(_body.Content, _detailPanel))
                 _body.Content = _detailPanel;
 
-            var n = TrackedChangeCount(st);
+            var n = WorkingCopyChangeCount(st);
             _workingCopyText.Text = $"← Working Copy (Changes: {n})";
             if (n > 0)
             {
