@@ -9,22 +9,36 @@ namespace Historia.Services.Git;
 public static class GitErrorClassifier
 {
     /// <summary>
-    /// Unambiguous "the remote was reached and refused the ref" markers. These win over the
-    /// ordered <see cref="Rules"/> below because a rejected push <i>also</i> prints the generic
-    /// <c>error: failed to push some refs</c> line, and often a trailing <c>fatal: unable to
-    /// access …</c> when git retries a second transport — both of which would otherwise match
-    /// <see cref="GitErrorKind.NetworkUnreachable"/> first and hide the real, recoverable cause.
+    /// The server was reached and refused the update by its own policy — a pre-receive hook, a
+    /// protected branch, a size limit. git prints these refs as <c>! [remote rejected]</c>, with
+    /// the server's reason in parentheses. Checked first, so a multi-ref push where one ref was
+    /// declined and another was merely behind never offers a force push.
     /// </summary>
-    private static readonly string[] StrongRejectionNeedles =
+    private static readonly string[] DeclinedNeedles =
+    [
+        "! [remote rejected]",
+        "pre-receive hook declined",
+        "protected branch",
+        "push declined",
+    ];
+
+    /// <summary>
+    /// git's own client-side refusal: the remote has commits the pushed branch does not
+    /// (<c>! [rejected] … (non-fast-forward)</c> / <c>(fetch first)</c>). These win over the
+    /// ordered <see cref="Rules"/> below because a rejected push <i>also</i> prints the generic
+    /// <c>error: failed to push some refs</c> line, and sometimes a trailing <c>fatal: unable to
+    /// access …</c> — which would otherwise match <see cref="GitErrorKind.NetworkUnreachable"/>
+    /// first and hide the real, recoverable cause. The generic push-failure lines alone
+    /// (<c>failed to push some refs</c>, <c>the remote end hung up</c>) are not evidence of
+    /// either and fall through to <see cref="GitErrorKind.Unknown"/>.
+    /// </summary>
+    private static readonly string[] NonFastForwardNeedles =
     [
         "! [rejected]",
         "updates were rejected",
         "non-fast-forward",
         "(fetch first)",
         "tip of your current branch is behind",
-        "protected branch",
-        "pre-receive hook declined",
-        "push declined",
     ];
 
     private static readonly (GitErrorKind Kind, string[] Needles)[] Rules =
@@ -50,13 +64,6 @@ public static class GitErrorClassifier
             "unable to access",
             "operation timed out",
             "temporary failure in name resolution",
-        ]),
-        // Weak catch-alls only — the unambiguous rejection markers live in
-        // StrongRejectionNeedles and are checked before NetworkUnreachable. These two also
-        // fire on a plain transport failure mid-push, so they stay *after* NetworkUnreachable.
-        (GitErrorKind.RemoteRejected, [
-            "failed to push some refs",
-            "the remote end hung up",
         ]),
         (GitErrorKind.MergeConflict, [
             "automatic merge failed",
@@ -109,7 +116,13 @@ public static class GitErrorClassifier
 
         var haystack = stderr.ToLowerInvariant();
 
-        foreach (var needle in StrongRejectionNeedles)
+        foreach (var needle in DeclinedNeedles)
+        {
+            if (haystack.Contains(needle, StringComparison.Ordinal))
+                return GitErrorKind.RemoteDeclined;
+        }
+
+        foreach (var needle in NonFastForwardNeedles)
         {
             if (haystack.Contains(needle, StringComparison.Ordinal))
                 return GitErrorKind.RemoteRejected;

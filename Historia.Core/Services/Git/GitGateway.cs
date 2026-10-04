@@ -8,8 +8,11 @@ public sealed partial class GitGateway(
     RepositoryContext context,
     IGitCliService cli,
     IRepoLayoutService repoLayout,
-    ICredentialVaultService credentialVault) : IGitGateway
+    ICredentialVaultService credentialVault,
+    ISshHostResolver? sshHosts = null) : IGitGateway
 {
+    private readonly ISshHostResolver _sshHosts = sshHosts ?? SshHostResolver.Shared;
+
     public string RepositoryPath => context.RepositoryPath;
 
     public async Task<RepositoryStatus> GetStatusAsync(CancellationToken ct = default)
@@ -290,6 +293,22 @@ public sealed partial class GitGateway(
     // blocked) fails fast instead of stalling on the OS TCP timeout before the fallback.
     private const int SshConnectTimeoutSeconds = 10;
 
+    /// <summary>One failed transport attempt, kept so the surfaced error can name every
+    /// attempt in its Details.</summary>
+    private sealed record NetworkAttempt(string Label, string? Url, HistoriaGitException Error, string? Note);
+
+    /// <summary>
+    /// Runs a network command over the transports <see cref="GitTransportRouting.Plan"/> orders.
+    /// The next transport is tried only after a <see cref="IsTransportFailure">transport
+    /// failure</see>; any other failure means git reached the remote (or failed locally) and a
+    /// second transport cannot help, so it is surfaced at once. When every attempt fails, the
+    /// surfaced error is the one from an attempt that reached the remote, else the primary
+    /// attempt's; its Details carry each attempt's text under a transport-and-URL header.
+    /// An HTTPS fallback from an SSH URL whose host is an <c>~/.ssh/config</c> alias retries
+    /// against the alias's real host name — except on a background fetch, which stops after SSH.
+    /// When git's own URL configuration sends that fallback to an SSH URL, it runs with the SSH
+    /// environment, or not at all when that URL is the one the SSH attempt already tried.
+    /// </summary>
     private async Task RunNetworkAsync(
         IReadOnlyList<string> args, string operation, string? remote,
         IProgress<GitProgress>? progress, CancellationToken ct, bool background = false)
@@ -307,25 +326,86 @@ public sealed partial class GitGateway(
 
         using var _ = context.BeginSelfOperation();
 
-        HistoriaGitException? lastError = null;
-        for (var i = 0; i < plan.Count; i++)
+        var attempts = new List<NetworkAttempt>(plan.Count);
+        foreach (var transport in plan)
         {
-            var transport = plan[i];
             var effectiveUrl = transport switch
             {
                 RouteTransport.Ssh => RemoteUrlConverter.ToSsh(remoteUrl!).ConvertedUrl ?? remoteUrl!,
                 RouteTransport.Https => RemoteUrlConverter.ToHttps(remoteUrl!).ConvertedUrl ?? remoteUrl!,
                 _ => remoteUrl,
             };
+            var label = transport switch
+            {
+                RouteTransport.Ssh => "SSH",
+                RouteTransport.Https => "HTTPS",
+                _ => "as-is",
+            };
+            string? note = null;
+            string? displayUrl = null;
+            var envTransport = transport;
+
+            // Only reached after the SSH attempt failed — never on the success path, and never
+            // with SSH Only on, whose plan has no HTTPS step.
+            if (transport == RouteTransport.Https && remote is not null && urlKind is RemoteUrlKind.ScpLike or RemoteUrlKind.SshUrl)
+            {
+                var alias = await ResolveSshAliasAsync(effectiveUrl!, ct).ConfigureAwait(false);
+                if (alias is { } a)
+                {
+                    // Git Credential Manager may open a sign-in window for the real host, and a
+                    // background fetch has nobody at the keyboard to answer it.
+                    if (background)
+                    {
+                        AppLog.Write(AppLogLevel.Info, "network",
+                            $"HTTPS fallback skipped for SSH alias '{a.Alias}' on a background fetch");
+                        continue;
+                    }
+
+                    effectiveUrl = a.HttpsUrl;
+                    note = $"Retried over HTTPS as {a.HostName} using the profile token or Git's credential helper — "
+                        + "this may be a different account than the SSH alias selects. Turn on SSH Only to prevent this.";
+                }
+
+                // url.<base>.insteadOf, and for a push pushInsteadOf and a stored pushurl, apply to
+                // the per-call override too, so git may contact another URL than the HTTPS one.
+                var push = args.Count > 0 && args[0] == "push";
+                var contacted = await ContactedUrlAsync(remote, effectiveUrl!, push, ct).ConfigureAwait(false);
+                if (contacted is not null && !string.Equals(contacted, effectiveUrl, StringComparison.Ordinal))
+                {
+                    envTransport = RemoteUrlConverter.Classify(contacted) switch
+                    {
+                        RemoteUrlKind.ScpLike or RemoteUrlKind.SshUrl => RouteTransport.Ssh,
+                        RemoteUrlKind.Https => RouteTransport.Https,
+                        _ => RouteTransport.AsIs,
+                    };
+
+                    if (envTransport == RouteTransport.Ssh)
+                    {
+                        var sshUrl = RemoteUrlConverter.ToSsh(remoteUrl!).ConvertedUrl ?? remoteUrl!;
+                        var sshContacted = await ContactedUrlAsync(remote, sshUrl, push, ct).ConfigureAwait(false);
+                        if (string.Equals(contacted, sshContacted, StringComparison.Ordinal))
+                        {
+                            AppLog.Write(AppLogLevel.Info, "network",
+                                $"HTTPS fallback skipped: git's URL configuration sends {effectiveUrl} to {contacted}, which the SSH attempt already tried");
+                            continue;
+                        }
+                    }
+
+                    label = "Retry";
+                    note = $"Retried with {contacted} — git's URL configuration (url.insteadOf, pushInsteadOf or a "
+                        + $"remote pushurl) sends {effectiveUrl} there. Turn on SSH Only to skip this retry.";
+                    displayUrl = contacted;
+                }
+            }
 
             // Per-invocation only — the stored remote.<name>.url in .git/config is never rewritten.
             var attemptArgs = remote is not null && effectiveUrl is not null && !string.Equals(effectiveUrl, remoteUrl, StringComparison.Ordinal)
                 ? WithRemoteUrlOverride(remote, effectiveUrl, args)
                 : args;
 
-            var env = transport switch
+            var env = envTransport switch
             {
-                RouteTransport.Https => await BuildCredentialEnvAsync(effectiveUrl, ct).ConfigureAwait(false),
+                RouteTransport.Https => await BuildCredentialEnvAsync(displayUrl ?? effectiveUrl, ct).ConfigureAwait(false),
                 RouteTransport.Ssh => SshEnv(),
                 _ => null, // AsIs — defer entirely to Git's own transport / credential resolution.
             };
@@ -344,28 +424,104 @@ public sealed partial class GitGateway(
             if (result.IsSuccess)
                 return;
 
-            lastError = HistoriaGitException.FromCli(result, operation);
+            var error = HistoriaGitException.FromCli(result, operation);
+            attempts.Add(new NetworkAttempt(label, displayUrl ?? effectiveUrl, error, note));
+            if (!IsTransportFailure(error.Kind))
+                break;
         }
 
-        // Every transport failed. Offer the Local-config fallback when a profile (not
-        // *Local config*) is the active selection and the failure could be a credential or
-        // reachability problem — never for a background auto-fetch, whose caller has no user
-        // to prompt, and never for errors a different profile can't fix (missing ref, rejected
-        // push, dirty tree…), which keep their own handling.
-        if (context.ActiveProfile is not null && !background && IsProfileFixable(lastError!.Kind))
-        {
-            throw new HistoriaGitException(lastError!.Kind, lastError.Message, lastError.Details)
-            {
-                FallbackToLocalConfigAvailable = true,
-            };
-        }
-
-        throw lastError!;
+        throw SurfacedError(attempts, background);
     }
+
+    /// <summary>
+    /// The error to throw once every attempt failed: an attempt that reached the remote wins,
+    /// else the primary attempt. The Local-config fallback is offered when a profile (not
+    /// <i>Local config</i>) is the active selection and that error could be a credential or
+    /// reachability problem — never for a background auto-fetch, whose caller has no user to
+    /// prompt, and never for errors a different profile can't fix (missing ref, rejected push,
+    /// dirty tree…), which keep their own handling.
+    /// </summary>
+    private HistoriaGitException SurfacedError(List<NetworkAttempt> attempts, bool background)
+    {
+        var chosen = attempts.FirstOrDefault(a => !IsTransportFailure(a.Error.Kind)) ?? attempts[0];
+        var offerLocalConfig = context.ActiveProfile is not null && !background && IsProfileFixable(chosen.Error.Kind);
+
+        if (attempts.Count == 1 && chosen.Note is null && !offerLocalConfig)
+            return chosen.Error;
+
+        var details = attempts.Count == 1 && chosen.Note is null
+            ? chosen.Error.Details
+            : string.Join("\n\n", attempts.Where(a => a != chosen).Prepend(chosen).Select(AttemptBlock));
+
+        return chosen.Error.WithDetails(details, offerLocalConfig);
+    }
+
+    private static string AttemptBlock(NetworkAttempt a)
+    {
+        var header = a.Url is null ? $"{a.Label} attempt:" : $"{a.Label} attempt ({a.Url}):";
+        var parts = new List<string> { header };
+        if (a.Note is not null) parts.Add(a.Note);
+        if (!string.IsNullOrWhiteSpace(a.Error.Details)) parts.Add(a.Error.Details);
+        return string.Join('\n', parts);
+    }
+
+    /// <summary>
+    /// True when the attempt may have failed before reaching the remote, so another transport
+    /// could succeed. <see cref="GitErrorKind.Unknown"/> stays eligible: an unclassified refusal
+    /// such as an SSH key with no access to the repository may work over HTTPS.
+    /// </summary>
+    internal static bool IsTransportFailure(GitErrorKind kind) => kind is
+        GitErrorKind.AuthenticationFailed or GitErrorKind.NetworkUnreachable or GitErrorKind.TimedOut
+        or GitErrorKind.HostKeyVerificationFailed or GitErrorKind.Unknown;
 
     internal static bool IsProfileFixable(GitErrorKind kind) => kind is
         GitErrorKind.AuthenticationFailed or GitErrorKind.NetworkUnreachable
         or GitErrorKind.TimedOut or GitErrorKind.Unknown;
+
+    private readonly record struct SshAlias(string Alias, string HostName, string HttpsUrl);
+
+    /// <summary>
+    /// For an HTTPS URL converted from an SSH remote, resolves the SSH host through
+    /// <c>ssh -G</c>. Returns the alias, its real host name and the HTTPS URL rebuilt on that
+    /// host when the config renames it; null when the host is not an alias or cannot be resolved.
+    /// </summary>
+    private async Task<SshAlias?> ResolveSshAliasAsync(string httpsUrl, CancellationToken ct)
+    {
+        const string scheme = "https://";
+        if (!httpsUrl.StartsWith(scheme, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var slash = httpsUrl.IndexOf('/', scheme.Length);
+        var host = slash < 0 ? httpsUrl[scheme.Length..] : httpsUrl[scheme.Length..slash];
+        if (host.Length == 0 || host.StartsWith('['))
+            return null;
+
+        var resolved = await _sshHosts.ResolveHostNameAsync(host, ct).ConfigureAwait(false);
+        if (resolved is null || string.Equals(resolved, host, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return new SshAlias(host, resolved, scheme + resolved + (slash < 0 ? "/" : httpsUrl[slash..]));
+    }
+
+    /// <summary>The URL git will contact for <paramref name="remote"/> when its URL is
+    /// overridden with <paramref name="url"/>: after <c>url.&lt;base&gt;.insteadOf</c> and, for a
+    /// push, after <c>pushInsteadOf</c> or a stored <c>remote.&lt;name&gt;.pushurl</c>
+    /// (<c>git remote get-url [--push]</c> — local, never talks to the remote); null when git
+    /// cannot say.</summary>
+    private async Task<string?> ContactedUrlAsync(string remote, string url, bool push, CancellationToken ct)
+    {
+        string[] getUrl = push ? ["remote", "get-url", "--push", remote] : ["remote", "get-url", remote];
+        var result = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = WithRemoteUrlOverride(remote, url, getUrl),
+            WorkingDirectory = context.RepositoryPath,
+        }, ct).ConfigureAwait(false);
+
+        if (!result.IsSuccess)
+            return null;
+        var expanded = result.StandardOutput.Trim();
+        return expanded.Length == 0 ? null : expanded;
+    }
 
     private IReadOnlyDictionary<string, string> SshEnv()
     {

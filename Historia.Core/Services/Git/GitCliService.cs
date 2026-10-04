@@ -36,10 +36,7 @@ public sealed class GitCliService : IGitCliService
             var result = await RunCoreAsync(request, progress, onStdoutLine, ct).ConfigureAwait(false);
             op.Outcome($"exit={result.ExitCode} kind={result.ErrorKind} ({result.Duration.TotalMilliseconds:F0}ms)");
             if (result.ExitCode != 0 && !string.IsNullOrWhiteSpace(result.StandardError))
-            {
-                var firstLine = result.StandardError.Split('\n', 2)[0].TrimEnd('\r');
-                AppLog.Write(AppLogLevel.Warn, "git-cli", firstLine);
-            }
+                AppLog.Write(AppLogLevel.Warn, "git-cli", GitStderr.SummaryLine(result.StandardError));
             return result;
         }
         catch (Exception ex)

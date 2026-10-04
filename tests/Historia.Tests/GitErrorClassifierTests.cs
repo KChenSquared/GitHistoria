@@ -18,7 +18,31 @@ public class GitErrorClassifierTests
         + "hint: Updates were rejected because the remote contains work that you do not\n"
         + "fatal: unable to access 'https://ssh-alias/owner/repo.git/': Could not resolve host: ssh-alias",
         GitErrorKind.RemoteRejected)]
-    [InlineData("To github.com:owner/repo.git\n ! [remote rejected] main -> main (protected branch hook declined)", GitErrorKind.RemoteRejected)]
+    [InlineData("To github.com:owner/repo.git\n ! [remote rejected] main -> main (protected branch hook declined)", GitErrorKind.RemoteDeclined)]
+    // GitHub's GH001 large-file refusal: progress noise, the server's reason, a [remote rejected]
+    // ref and the generic trailer. A server decline, never a non-fast-forward.
+    [InlineData(
+        "Enumerating objects: 244, done.\n"
+        + "Writing objects: 100% (244/244), 600.12 MiB | 12.00 MiB/s, done.\n"
+        + "remote: error: Trace: 0123456789abcdef\n"
+        + "remote: error: File big.bin is 361.72 MB; this exceeds GitHub's file size limit of 100.00 MB\n"
+        + "remote: error: GH001: Large files detected. You may want to try Git Large File Storage - https://git-lfs.github.com.\n"
+        + "To github-alias:owner/repo.git\n"
+        + " ! [remote rejected] main -> main (pre-receive hook declined)\n"
+        + "error: failed to push some refs to 'github-alias:owner/repo.git'",
+        GitErrorKind.RemoteDeclined)]
+    // One ref declined by the server and another merely behind: declined wins, so no force push
+    // is ever offered against a server policy.
+    [InlineData(
+        " ! [remote rejected] main -> main (protected branch hook declined)\n"
+        + " ! [rejected]        dev -> dev (non-fast-forward)\n"
+        + "error: failed to push some refs to 'x'",
+        GitErrorKind.RemoteDeclined)]
+    [InlineData("remote: error: denied\n ! [remote rejected] main -> main (push declined due to repository rule violations)", GitErrorKind.RemoteDeclined)]
+    // The generic push-failure trailers alone are not evidence of a rejection.
+    [InlineData("fatal: the remote end hung up unexpectedly", GitErrorKind.Unknown)]
+    [InlineData("error: failed to push some refs to 'x'", GitErrorKind.Unknown)]
+    [InlineData(" ! [rejected]        main -> main (stale info)\nerror: failed to push some refs to 'x'", GitErrorKind.RemoteRejected)]
     [InlineData("CONFLICT (content): Merge conflict in file.txt\nAutomatic merge failed; fix conflicts and then commit the result.", GitErrorKind.MergeConflict)]
     [InlineData("error: Your local changes to the following files would be overwritten by checkout:", GitErrorKind.UncommittedChanges)]
     [InlineData("fatal: Unable to create '/repo/.git/index.lock': File exists.", GitErrorKind.LockedIndex)]

@@ -15,17 +15,19 @@ public enum RepoNetworkAction
 /// <paramref name="RemoteBranch"/> is its name on <paramref name="Remote"/> (null means the
 /// same name as <paramref name="Branch"/>). <see langword="null"/> targets fall back to the
 /// runner's usual resolution — <c>origin</c> if present, else the first remote, and the current
-/// branch.</summary>
+/// branch. <paramref name="Repo"/> pins the request to one repository (e.g. the staging panel's
+/// own, whichever tab is focused by the time it runs); null means the focused repository.</summary>
 public readonly record struct RepoNetworkRequest(
     RepoNetworkAction Action,
     string? Remote,
     string? Branch,
-    string? RemoteBranch = null);
+    string? RemoteBranch = null,
+    RepositoryContext? Repo = null);
 
 /// <summary>
-/// A thin app-wide bus so the shortcuts bar (owned by the window shell) can drive the
-/// Fetch / Pull / Push flow that still lives in <c>RepositoryView</c> (which owns the inline
-/// progress box and push-rejection remedies). Singleton.
+/// A thin app-wide bus so any surface — the shortcuts bar, branch menus, the staging panel —
+/// can hand a Fetch / Pull / Push to the one network-action runner, which owns the progress
+/// box, cancellation, the busy guard and the recovery flows. Singleton.
 /// </summary>
 public interface IRepoActionBus
 {

@@ -48,6 +48,7 @@ public class ConflictResolverViewTests : IDisposable
         var sc = new ServiceCollection();
         sc.AddSingleton<IConflictService>(_conflicts);
         sc.AddSingleton<IDialogService>(_dialogs);
+        sc.AddSingleton<IRepoActionBus, RepoActionBus>();
         sc.AddSingleton<IUnsavedWorkRegistry>(_unsavedRegistry);
         sc.AddSingleton<IThemeService>(themeService);
         sc.AddSingleton(_syntaxHost);

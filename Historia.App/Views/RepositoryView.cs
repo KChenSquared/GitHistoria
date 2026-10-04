@@ -274,7 +274,7 @@ public sealed class RepositoryView : UserControl, IDisposable
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Continue failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Continue"), ex.NotificationDetails());
         }
         finally
         {
@@ -304,7 +304,7 @@ public sealed class RepositoryView : UserControl, IDisposable
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Abort failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Abort"), ex.NotificationDetails());
         }
         finally
         {

@@ -126,7 +126,7 @@ public sealed class NotificationHostView : UserControl, IDisposable
     private async Task RunAsync(NotificationAction action)
     {
         try { await action.Invoke(); }
-        catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, $"The action failed: {ex.Message}", ex.NotificationDetails()); }
+        catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("The action"), ex.NotificationDetails()); }
     }
 
     private async Task CopyAsync(string text)

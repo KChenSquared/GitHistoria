@@ -179,7 +179,7 @@ public sealed class RebaseEditorView : UserControl
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, $"Rebase failed: {ex.Message}", ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Rebase"), ex.NotificationDetails());
         }
     }
 }
