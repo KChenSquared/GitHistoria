@@ -37,13 +37,39 @@ public sealed class PortaPtyBackend : ITerminalBackend
         return new Connection(inner);
     }
 
-    private sealed class Connection : IPtyConnection
+    internal sealed class Connection : IPtyConnection
     {
         private readonly PortaPty.IPtyConnection _inner;
         private readonly PtyIoPump _pump;
+        private readonly object _subscribersGate = new();
+        private readonly ManualResetEventSlim _outputReleased = new();
+        private Action<ReadOnlyMemory<byte>>? _outputReceived;
         private int _disposed;
 
-        public event Action<ReadOnlyMemory<byte>>? OutputReceived;
+        /// <summary>
+        /// The read thread starts as soon as the shell is spawned, but the session only subscribes
+        /// after <see cref="StartAsync"/> returns — and the shell's first prompt can land in that
+        /// gap. So the read thread holds its first chunk until a handler attaches here (or the
+        /// connection is disposed), and every chunk reaches the subscriber, in order, on the read
+        /// thread. Holding the chunk stops the reader draining the pipe, which only back-pressures
+        /// the shell; nothing is dropped.
+        /// </summary>
+        public event Action<ReadOnlyMemory<byte>>? OutputReceived
+        {
+            add
+            {
+                lock (_subscribersGate)
+                    _outputReceived += value;
+                if (value is not null)
+                    _outputReleased.Set();
+            }
+            remove
+            {
+                lock (_subscribersGate)
+                    _outputReceived -= value;
+            }
+        }
+
         public event Action<int>? Exited;
 
         public Connection(PortaPty.IPtyConnection inner)
@@ -57,9 +83,15 @@ public sealed class PortaPtyBackend : ITerminalBackend
             _pump = new PtyIoPump(
                 output: _inner.ReaderStream,
                 input: _inner.WriterStream,
-                onOutput: chunk => OutputReceived?.Invoke(chunk),
+                onOutput: OnPumpOutput,
                 onOutputEnded: null,
                 name: "pty");
+        }
+
+        private void OnPumpOutput(ReadOnlyMemory<byte> chunk)
+        {
+            _outputReleased.Wait();
+            Volatile.Read(ref _outputReceived)?.Invoke(chunk);
         }
 
         private void OnInnerProcessExited(object? sender, PortaPty.PtyExitedEventArgs e)
@@ -98,10 +130,12 @@ public sealed class PortaPtyBackend : ITerminalBackend
 
             try { _inner.ProcessExited -= OnInnerProcessExited; } catch { /* best effort */ }
 
-            // Order matters. Kill the child, then dispose the inner connection so the ConPTY
-            // pipe handles close — that is what makes the pump's blocked synchronous ReadFile
-            // throw (a CancellationToken cannot). Only then can the pump join its threads
-            // promptly instead of timing out and leaking one forever.
+            // Order matters. Release a reader still holding output for a subscriber that never
+            // came, so it goes back to draining the pipe. Kill the child, then dispose the inner
+            // connection so the ConPTY pipe handles close — that is what makes the pump's blocked
+            // synchronous ReadFile throw (a CancellationToken cannot). Only then can the pump join
+            // its threads promptly instead of timing out and leaking one forever.
+            _outputReleased.Set();
             try { _inner.Kill(); } catch { /* best effort */ }
             try { _inner.Dispose(); } catch { /* best effort */ }
             try { _pump.Dispose(); } catch { /* best effort */ }

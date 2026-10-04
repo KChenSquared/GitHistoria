@@ -106,13 +106,15 @@ public sealed class TerminalSession : IDisposable
         _term.HyperlinkChanged += (_, e) => LastHyperlink = e.IsCleared ? null : e.Url;
         _term.DataReceived += OnEmulatorData;
 
-        _pty.OutputReceived += OnPtyOutput;
-        _pty.Exited += OnPtyExited;
+        // Before subscribing: the pty may already hold the shell's first output, and attaching
+        // releases it, so the notice must be in the buffer first to stay the first line.
+        if (!string.IsNullOrEmpty(startupNotice))
+            FeedString("\x1b[33m" + startupNotice + "\x1b[0m\r\n");
 
         State = TerminalSessionState.Running;
 
-        if (!string.IsNullOrEmpty(startupNotice))
-            FeedString("\x1b[33m" + startupNotice + "\x1b[0m\r\n");
+        _pty.OutputReceived += OnPtyOutput;
+        _pty.Exited += OnPtyExited;
     }
 
     // ── input ───────────────────────────────────────────────────────────────────────────────
