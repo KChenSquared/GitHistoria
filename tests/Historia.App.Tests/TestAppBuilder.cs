@@ -1,9 +1,4 @@
-using Avalonia;
-using Avalonia.Headless;
-using Avalonia.Themes.Fluent;
-using HistoriaApp.Tests;
-
-[assembly: AvaloniaTestApplication(typeof(TestAppBuilder))]
+[assembly: AvaloniaTestApplication(typeof(HistoriaApp.Tests.TestAppBuilder))]
 
 namespace HistoriaApp.Tests;
 

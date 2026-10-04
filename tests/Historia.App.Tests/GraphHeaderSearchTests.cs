@@ -1,6 +1,4 @@
-﻿using Avalonia.Headless;
-
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public sealed class GraphHeaderSearchTests

@@ -1,7 +1,4 @@
-﻿using System.Security.AccessControl;
-using System.Security.Principal;
-
-namespace Historia.Platform;
+﻿namespace Historia.Platform;
 
 /// <summary>
 /// Single-instance guard. The first process to start holds a named mutex and runs a tiny

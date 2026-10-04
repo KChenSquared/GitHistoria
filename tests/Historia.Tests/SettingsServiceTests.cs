@@ -226,6 +226,34 @@ public class SettingsServiceTests : IDisposable
         Assert.Equal(260, svc.Current.TerminalDockHeight);
     }
 
+    // ── Kitty keyboard / OSC 52 write toggles ──
+
+    [Fact]
+    public void TerminalProtocolSettings_DefaultOn_WhenAbsentFromFile()
+    {
+        // AppSettings has a parameterless constructor and init setters, so System.Text.Json
+        // leaves a missing property at its initializer.
+        File.WriteAllText(AppPaths.SettingsFile, "{ \"schemaVersion\": 19, \"appTheme\": \"dark\", \"terminalFontSize\": 15 }");
+
+        var svc = SettingsService.Load();
+
+        Assert.Equal(15, svc.Current.TerminalFontSize);
+        Assert.True(svc.Current.TerminalKittyKeyboard);
+        Assert.True(svc.Current.TerminalAllowClipboardWrite);
+    }
+
+    [Fact]
+    public async Task TerminalProtocolSettings_RoundTrip()
+    {
+        var svc = SettingsService.Load();
+        await svc.UpdateAsync(s => s with { TerminalKittyKeyboard = false, TerminalAllowClipboardWrite = false });
+        await svc.FlushAsync();
+
+        var reloaded = SettingsService.Load().Current;
+        Assert.False(reloaded.TerminalKittyKeyboard);
+        Assert.False(reloaded.TerminalAllowClipboardWrite);
+    }
+
     [Fact]
     public async Task Schema_v9_terminal_settings_round_trip()
     {

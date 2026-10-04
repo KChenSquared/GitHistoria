@@ -196,8 +196,64 @@ public sealed class TerminalDockControl : UserControl, IDisposable
 
         _theme.ThemeChanged += OnThemeChanged;
 
+        if (this.IsAttachedToVisualTree())
+            AttachClipboardSink(_sessions);
+
         RebuildTabs();
         _wired = true;
+    }
+
+    // ── OSC 52 clipboard sink ───────────────────────────────────────────────────────────────
+
+    // The dock only hides (IsVisible = false), it never leaves the tree, so a background
+    // session's write still finds the TopLevel while the dock is closed.
+    private ITerminalSessionService? _clipboardSource;
+
+    internal void AttachClipboardSink(ITerminalSessionService sessions)
+    {
+        DetachClipboardSink();
+        _clipboardSource = sessions;
+        sessions.ClipboardWriteRequested += OnClipboardWriteRequested;
+    }
+
+    private void DetachClipboardSink()
+    {
+        if (_clipboardSource is null)
+            return;
+        _clipboardSource.ClipboardWriteRequested -= OnClipboardWriteRequested;
+        _clipboardSource = null;
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        if (_wired && _clipboardSource is null)
+            AttachClipboardSink(_sessions);
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        DetachClipboardSink();
+    }
+
+    // Write-only and silent: the service already applied the user's setting.
+    private void OnClipboardWriteRequested(object? sender, TerminalClipboardWriteEventArgs e)
+    {
+        if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+            _ = SetClipboardTextAsync(clipboard, e.Text);
+    }
+
+    private static async Task SetClipboardTextAsync(Avalonia.Input.Platform.IClipboard clipboard, string text)
+    {
+        try
+        {
+            await clipboard.SetTextAsync(text);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(AppLogLevel.Warn, "terminal", "OSC 52 clipboard write failed", ex);
+        }
     }
 
     private void OnThemeChanged(object? sender, ThemeChangedEventArgs e) => Dispatcher.UIThread.Post(RebuildTabs);
@@ -571,6 +627,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     public void Dispose()
     {
         _chord?.Dispose();
+        DetachClipboardSink();
         if (_wired)
         {
             _sessions.SessionsChanged -= OnSessionsChanged;

@@ -64,6 +64,8 @@ global using System.Globalization;
 global using System.IO.Pipes;
 global using System.Runtime.InteropServices;
 global using System.Runtime.Versioning;
+global using System.Security.AccessControl;
+global using System.Security.Principal;
 global using System.Text.Json;
 global using System.Threading.Channels;
 

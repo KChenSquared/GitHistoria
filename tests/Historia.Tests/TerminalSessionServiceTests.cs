@@ -271,4 +271,77 @@ public class TerminalSessionServiceTests
         Assert.Equal("/home/me", backend.Starts[0].WorkingDirectory);
         Assert.NotNull(s.StartupNotice);
     }
+
+    // ── OSC 52 write / Kitty keyboard settings ──
+
+    private const string Osc52Hi = "\x1b]52;c;aGk=\x07";
+
+    [Fact]
+    public async Task ClipboardWrite_Forwarded_WhenAllowed()
+    {
+        var (svc, backend) = NewService();
+        var seen = new List<string>();
+        svc.ClipboardWriteRequested += (_, e) => seen.Add(e.Text);
+        await svc.OpenOrFocusAsync(Repo());
+
+        backend.Connections[0].EmitOutput(Osc52Hi);
+
+        Assert.Equal(["hi"], seen);
+    }
+
+    [Fact]
+    public async Task ClipboardWrite_Dropped_WhenSettingOff()
+    {
+        var settings = new FakeSettingsService();
+        var backend = new FakeTerminalBackend();
+        var svc = new TerminalSessionService(backend, settings, new ImmediateUiDispatcher(), Host());
+        var seen = new List<string>();
+        svc.ClipboardWriteRequested += (_, e) => seen.Add(e.Text);
+        await svc.OpenOrFocusAsync(Repo());
+
+        // Turned off after the session started: the gate is read per write, not per session.
+        await settings.UpdateAsync(s => s with { TerminalAllowClipboardWrite = false });
+        backend.Connections[0].EmitOutput(Osc52Hi);
+        Assert.Empty(seen);
+
+        await settings.UpdateAsync(s => s with { TerminalAllowClipboardWrite = true });
+        backend.Connections[0].EmitOutput(Osc52Hi);
+        Assert.Equal(["hi"], seen);
+    }
+
+    [Fact]
+    public async Task ClipboardWrite_NotForwarded_AfterSessionClosed()
+    {
+        var dispatcher = new RecordingUiDispatcher();
+        var backend = new FakeTerminalBackend();
+        var svc = new TerminalSessionService(backend, new FakeSettingsService(), dispatcher, Host());
+        var seen = new List<string>();
+        svc.ClipboardWriteRequested += (_, e) => seen.Add(e.Text);
+        var session = await svc.OpenOrFocusAsync(Repo());
+
+        // The write is posted, then the session closes before the dispatcher runs it.
+        backend.Connections[0].EmitOutput(Osc52Hi);
+        await svc.CloseAsync(session.Id);
+        dispatcher.DrainPosted();
+
+        Assert.Empty(seen);
+    }
+
+    [Fact]
+    public async Task KittySetting_AppliesToNewSessionsOnly()
+    {
+        var settings = new FakeSettingsService();
+        var backend = new FakeTerminalBackend();
+        var svc = new TerminalSessionService(backend, settings, new ImmediateUiDispatcher(), Host());
+        var first = await svc.OpenOrFocusAsync(Repo("alpha"));
+
+        await settings.UpdateAsync(s => s with { TerminalKittyKeyboard = false });
+        var second = await svc.OpenOrFocusAsync(Repo("beta"));
+
+        backend.Connections[0].EmitOutput("\x1b[>1u");
+        backend.Connections[1].EmitOutput("\x1b[>1u");
+
+        Assert.True(first.KeyboardProtocol.KittyActive);
+        Assert.False(second.KeyboardProtocol.KittyActive);
+    }
 }

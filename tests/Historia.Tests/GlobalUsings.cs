@@ -29,6 +29,7 @@ global using System.Collections.Immutable;
 global using System.Diagnostics;
 global using System.IO.Compression;
 global using System.Reflection;
+global using System.Runtime.CompilerServices;
 global using System.Runtime.Loader;
 global using System.Security.Cryptography;
 global using System.Text;

@@ -1,22 +1,37 @@
 namespace Historia.Tests;
 
-/// <summary>Pins what the emulator tells the child about itself. Historia handles neither the
-/// Kitty keyboard protocol nor clipboard reads, so the emulator must stay silent on those queries
-/// and its device attributes must not drift.</summary>
+/// <summary>Pins what the emulator tells the child about itself. The Kitty keyboard query is
+/// answered only when the setting turned the protocol on; clipboard reads and graphics are never
+/// answered, and the device attributes must not drift.</summary>
 [Trait("tier", "unit")]
 public class TerminalProtocolPinTests
 {
-    private static TerminalSession NewSession(out FakePtyConnection pty, int columns = 80, int rows = 24)
+    private static TerminalSession NewSession(out FakePtyConnection pty, int columns = 80, int rows = 24, bool kittyKeyboard = false)
     {
         pty = new FakePtyConnection();
-        return new TerminalSession(TerminalOrigin.Home("/home/me"), pty, new ImmediateUiDispatcher(), columns, rows, 1000);
+        return new TerminalSession(TerminalOrigin.Home("/home/me"), pty, new ImmediateUiDispatcher(), columns, rows, 1000,
+            kittyKeyboard: kittyKeyboard);
+    }
+
+    // XTerm InputHandler.Modes.cs KittyKeyboardQuery (:267): answers CSI ? flags u, and nothing
+    // at all when the option is off.
+    [Fact]
+    public void KittyKeyboardQuery_WhenEnabled_RepliesWithPushedFlags()
+    {
+        using var session = NewSession(out var pty, kittyKeyboard: true);
+
+        pty.EmitOutput("\x1b[>1u");
+        pty.EmitOutput("\x1b[?u");
+
+        Assert.Equal("\x1b[?1u", pty.AllWrittenText());
     }
 
     [Fact]
-    public void KittyKeyboardQuery_GetsNoReply()
+    public void KittyKeyboardQuery_WhenDisabled_GetsNoReply()
     {
-        using var session = NewSession(out var pty);
+        using var session = NewSession(out var pty, kittyKeyboard: false);
 
+        pty.EmitOutput("\x1b[>1u");
         pty.EmitOutput("\x1b[?u");
 
         Assert.Empty(pty.Writes);

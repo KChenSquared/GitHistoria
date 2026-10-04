@@ -265,10 +265,11 @@ public partial class MainWindow : Window
             return;
 
         // A focused terminal claims the chords it turns into shell input (e.g. Ctrl+B for
-        // readline backward-char / tmux prefix); chords the terminal has no use for (Ctrl+,,
-        // Ctrl+Enter) and Ctrl+` (dock toggle) stay with the application.
+        // readline backward-char / tmux prefix); chords the terminal has no use for (Ctrl+,, and
+        // Ctrl+Enter unless the child turned the Kitty keyboard protocol on) and Ctrl+` (dock
+        // toggle) stay with the application.
         var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
-        if (focused is TerminalControl && TerminalControl.ClaimsChord(e.Key, e.KeyModifiers))
+        if (focused is TerminalControl terminal && terminal.ClaimsChordNow(e.Key, e.KeyModifiers))
             return;
 
         var parts = new List<string>(4);

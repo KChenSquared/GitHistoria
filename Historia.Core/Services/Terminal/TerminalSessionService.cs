@@ -28,6 +28,7 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
     public event EventHandler? FocusedSessionChanged;
     public event EventHandler<TerminalSession>? SessionExited;
     public event EventHandler? ActivationRequested;
+    public event EventHandler<TerminalClipboardWriteEventArgs>? ClipboardWriteRequested;
 
     public TerminalSessionService(
         ITerminalBackend backend,
@@ -174,9 +175,11 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
                 origin, pty, _dispatcher,
                 DefaultColumns, DefaultRows,
                 AppSettings.ClampTerminalScrollback(settings.TerminalScrollbackLines),
-                notice);
+                notice,
+                settings.TerminalKittyKeyboard);
 
             session.StateChanged += OnSessionStateChanged;
+            session.ClipboardWriteRequested += OnSessionClipboardWrite;
 
             lock (_sync)
             {
@@ -209,6 +212,14 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
             return;
         if (session.State is TerminalSessionState.Exited or TerminalSessionState.Failed)
             SessionExited?.Invoke(this, session);
+    }
+
+    // Already on the UI thread: the session posted it. The setting is read per write, so
+    // turning it off stops the next write in a terminal that is already open.
+    private void OnSessionClipboardWrite(object? sender, TerminalClipboardWriteEventArgs e)
+    {
+        if (_settings.Current.TerminalAllowClipboardWrite)
+            ClipboardWriteRequested?.Invoke(this, e);
     }
 
     public void Focus(TerminalSession session)
@@ -249,6 +260,7 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
         }
 
         toClose.StateChanged -= OnSessionStateChanged;
+        toClose.ClipboardWriteRequested -= OnSessionClipboardWrite;
         toClose.Kill();
         toClose.Dispose();
 
@@ -314,6 +326,7 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
         foreach (var s in toDispose)
         {
             s.StateChanged -= OnSessionStateChanged;
+            s.ClipboardWriteRequested -= OnSessionClipboardWrite;
             try { s.Kill(); } catch { /* best effort */ }
         }
 

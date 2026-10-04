@@ -71,12 +71,84 @@ public class TerminalSessionTests
         Assert.Null(session.ReportedTitle);
     }
 
-    [Fact]
-    public void Osc52_ClipboardWrite_IsIgnored_NoThrow()
+    private static (TerminalSession Session, FakePtyConnection Pty, RecordingUiDispatcher Dispatcher, List<string> Seen) NewClipboardSession()
     {
-        using var session = NewSession(out var pty);
-        var ex = Record.Exception(() => pty.EmitOutput("\x1b]52;c;aGVsbG8=\x07hello world\r\n"));
-        Assert.Null(ex);
+        var dispatcher = new RecordingUiDispatcher();
+        var pty = new FakePtyConnection();
+        var session = new TerminalSession(TerminalOrigin.Home("/home/me"), pty, dispatcher, 80, 24, 1000);
+        var seen = new List<string>();
+        session.ClipboardWriteRequested += (_, e) => seen.Add(e.Text);
+        return (session, pty, dispatcher, seen);
+    }
+
+    [Fact]
+    public void Osc52Write_RaisesClipboardWriteOnDispatcher()
+    {
+        var (session, pty, dispatcher, seen) = NewClipboardSession();
+        using var _ = session;
+
+        pty.EmitOutput("\x1b]52;c;aGk=\x07");
+
+        Assert.Empty(seen); // posted, never raised inline under the session gate
+        dispatcher.DrainPosted();
+        Assert.Equal(["hi"], seen);
+    }
+
+    [Fact]
+    public void Osc52Write_EmptyPayload_Ignored()
+    {
+        var (session, pty, dispatcher, seen) = NewClipboardSession();
+        using var _ = session;
+
+        pty.EmitOutput("\x1b]52;c;\x07");
+        dispatcher.DrainPosted();
+
+        Assert.Empty(seen);
+    }
+
+    [Fact]
+    public void Osc52Write_OverCap_Ignored()
+    {
+        // XTerm's parser already drops an OSC payload of 1 << 20 chars or more
+        // (EscapeSequenceParser.MaxOscPayloadChars), which decodes to under 1 MiB, so the cap
+        // itself is pinned on the filter.
+        Assert.Null(TerminalSession.ClipboardTextFrom(new byte[TerminalSession.MaxClipboardWriteBytes + 1]));
+        Assert.NotNull(TerminalSession.ClipboardTextFrom(Enumerable.Repeat((byte)'a', TerminalSession.MaxClipboardWriteBytes).ToArray()));
+
+        var (session, pty, dispatcher, seen) = NewClipboardSession();
+        using var _ = session;
+        var huge = Convert.ToBase64String(Enumerable.Repeat((byte)'a', 800_000).ToArray());
+        pty.EmitOutput("\x1b]52;c;" + huge + "\x07");
+        dispatcher.DrainPosted();
+
+        Assert.Empty(seen);
+    }
+
+    [Fact]
+    public void Osc52Write_StripsNul()
+    {
+        var (session, pty, dispatcher, seen) = NewClipboardSession();
+        using var _ = session;
+        var payload = Convert.ToBase64String(new byte[] { (byte)'a', 0, (byte)'b', 0 });
+
+        pty.EmitOutput("\x1b]52;c;" + payload + "\x07");
+        dispatcher.DrainPosted();
+
+        Assert.Equal(["ab"], seen);
+    }
+
+    [Fact]
+    public void Osc52Write_InvalidBase64_Ignored()
+    {
+        // XTerm hands invalid base64 on as an empty write (xterm's "clear" idiom, see
+        // InputHandler.Osc.cs HandleClipboard); Historia never clears the clipboard.
+        var (session, pty, dispatcher, seen) = NewClipboardSession();
+        using var _ = session;
+
+        pty.EmitOutput("\x1b]52;c;!!not-base64!!\x07");
+        dispatcher.DrainPosted();
+
+        Assert.Empty(seen);
     }
 
     [Fact]

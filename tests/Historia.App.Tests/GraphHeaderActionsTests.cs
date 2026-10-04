@@ -1,6 +1,4 @@
-﻿using Avalonia.Headless;
-
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 
 /// <summary>The Graph column header's two right-aligned action icons — the cog (slot 0,
 /// navigates to repo-settings) and the reset (slot 1, returns the graph to the left-most

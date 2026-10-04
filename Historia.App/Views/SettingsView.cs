@@ -292,6 +292,12 @@ public sealed class SettingsView : UserControl, IDisposable
             next => _ = _cfg.UpdateAsync(s => s with { TerminalScrollbackLines = next }));
         termBody.Children.Add(WithCaption(LabeledRow("Scrollback lines", scrollback),
             "Memory ≈ lines × columns × ~8 bytes, per session — a 5,000-line buffer on a 120-column grid is ~5 MB, and this multiplies by the number of open terminal sessions."));
+        termBody.Children.Add(WithCaption(Check("Enhanced keyboard (Kitty protocol)", c.TerminalKittyKeyboard,
+            v => _ = _cfg.UpdateAsync(s => s with { TerminalKittyKeyboard = v })),
+            "Lets editors such as Neovim and Helix tell apart keys like Ctrl+Enter and Shift+Enter. Applies to new terminals."));
+        termBody.Children.Add(WithCaption(Check("Allow programs to copy to the clipboard (OSC 52)", c.TerminalAllowClipboardWrite,
+            v => _ = _cfg.UpdateAsync(s => s with { TerminalAllowClipboardWrite = v })),
+            "Lets copy in Vim or tmux reach the system clipboard, including over SSH. Programs can never read the clipboard."));
 
         var cursorStyle = new ComboBox { Width = 160 };
         foreach (var st in Enum.GetValues<TerminalCursorStyle>())

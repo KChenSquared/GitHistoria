@@ -1,11 +1,3 @@
-using Avalonia.Controls;
-using Avalonia.Headless.XUnit;
-using Avalonia.LogicalTree;
-using Historia.Platform;
-using Historia.Services.UI;
-using Xunit;
-using Path = Avalonia.Controls.Shapes.Path;
-
 namespace HistoriaApp.Tests;
 
 /// <summary>
@@ -49,7 +41,7 @@ public class DestructiveConfirmDialogTests
     {
         var warned = SimpleDialog.MessageBlock("Delete 3 files?", maxWidth: 380, DialogIcon.Warning);
         Assert.IsType<StackPanel>(warned);
-        Assert.Contains(warned.GetLogicalDescendants(), d => d is Path);
+        Assert.Contains(warned.GetLogicalDescendants(), d => d is Avalonia.Controls.Shapes.Path);
 
         var plain = SimpleDialog.MessageBlock("Just a message.", maxWidth: 380, DialogIcon.None);
         Assert.IsType<TextBlock>(plain);

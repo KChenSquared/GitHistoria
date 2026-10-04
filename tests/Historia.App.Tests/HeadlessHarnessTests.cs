@@ -1,8 +1,3 @@
-using Avalonia.Controls;
-using Avalonia.Headless.XUnit;
-using Avalonia.Threading;
-using Xunit;
-
 namespace HistoriaApp.Tests;
 
 /// <summary>Proves the headless Avalonia harness itself works — a UI-thread test can construct
