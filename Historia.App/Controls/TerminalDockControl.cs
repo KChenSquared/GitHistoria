@@ -286,13 +286,14 @@ public sealed class TerminalDockControl : UserControl, IDisposable
         }
     }
 
-    // persist:false is for the automatic show/hide as repo focus moves — that must not
-    // overwrite the user's own last open/closed choice in settings.
-    private void SetOpen(bool open, bool persist = true)
+    // byUser:false is for the automatic show/hide as repo focus moves — hiding that way must
+    // not clear the auto-hidden state, so the dock comes back when focus returns to a repo
+    // with a terminal.
+    private void SetOpen(bool open, bool byUser = true)
     {
         _open = open;
         IsVisible = open;
-        if (persist || open)
+        if (byUser || open)
             _autoHidden = false;
 
         if (open && !_firstOpenSized)
@@ -304,8 +305,6 @@ public sealed class TerminalDockControl : UserControl, IDisposable
         }
 
         Height = open ? ClampedHeight(_dockHeight) : 0;
-        if (persist)
-            _ = _settings.UpdateAsync(s => s with { TerminalDockOpen = open });
         if (open)
             Dispatcher.UIThread.Post(() => _terminal.Focus());
     }
@@ -324,14 +323,14 @@ public sealed class TerminalDockControl : UserControl, IDisposable
                     // back if it was auto-hidden for a previous terminal-less repo.
                     _sessions.Focus(match);
                     if (_autoHidden)
-                        SetOpen(true, persist: false);
+                        SetOpen(true, byUser: false);
                 }
                 else if (_open && _sessions.Focused?.Origin.Kind == TerminalOriginKind.Repository)
                 {
                     // The dock is showing some other repo's terminal and the newly focused repo
                     // has none — hide the dock (all sessions keep running) until focus returns
                     // to a repo that does. A Home terminal is left visible.
-                    SetOpen(false, persist: false);
+                    SetOpen(false, byUser: false);
                     _autoHidden = true;
                 }
             }

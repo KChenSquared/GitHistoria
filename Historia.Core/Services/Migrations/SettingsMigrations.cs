@@ -280,4 +280,21 @@ public sealed class SettingsV18ToV19 : IJsonMigration
     }
 }
 
+/// <summary>v19 → v20: removes <c>tabWidth</c>, <c>terminalBellStyle</c>,
+/// <c>enableBackgroundPolling</c> and <c>terminalDockOpen</c> — none of them had a reader.</summary>
+public sealed class SettingsV19ToV20 : IJsonMigration
+{
+    public int FromVersion => 19;
+    public int ToVersion => 20;
+
+    public void Apply(JsonObject document)
+    {
+        document.Remove("tabWidth");
+        document.Remove("terminalBellStyle");
+        document.Remove("enableBackgroundPolling");
+        document.Remove("terminalDockOpen");
+        document["schemaVersion"] = 20;
+    }
+}
+
 

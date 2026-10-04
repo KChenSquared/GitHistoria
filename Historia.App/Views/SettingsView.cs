@@ -185,9 +185,6 @@ public sealed class SettingsView : UserControl, IDisposable
         // ── Privacy & Network ──
         _root.Children.Add(Section("Privacy & Network"));
         _root.Children.Add(Muted("Network routing is per repository — pick an identity, and toggle \"SSH only\", in that repository's settings (the cog in the graph's GRAPH column header, or right-click that header)."));
-        _root.Children.Add(Check("Allow background API polling", c.EnableBackgroundPolling,
-            v => _ = _cfg.UpdateAsync(s => s with { EnableBackgroundPolling = v })));
-        _root.Children.Add(Muted("Effective only while a repository's selected profile has a connected token."));
         _root.Children.Add(Check("Automatically fetch open repositories", c.AutoFetchEnabled,
             v => _ = _cfg.UpdateAsync(s => s with { AutoFetchEnabled = v })));
         _root.Children.Add(Muted("Periodically runs “git fetch” on every open repository (about every 5 minutes plus 1 minute per open tab)."));
@@ -208,10 +205,6 @@ public sealed class SettingsView : UserControl, IDisposable
         WireNumericCommit(ctxLines, c.DiffContextLines, v => v,
             next => _ = _cfg.UpdateAsync(s => s with { DiffContextLines = next }));
         _root.Children.Add(LabeledRow("Context lines", ctxLines));
-        var tabW = new NumericUpDown { Minimum = 1, Maximum = 8, Value = c.TabWidth, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
-        WireNumericCommit(tabW, c.TabWidth, v => v,
-            next => _ = _cfg.UpdateAsync(s => s with { TabWidth = next }));
-        _root.Children.Add(LabeledRow("Tab width", tabW));
         _root.Children.Add(Check("Word-wrap diff lines", c.DiffWordWrap,
             v => _ = _cfg.UpdateAsync(s => s with { DiffWordWrap = v })));
 
@@ -310,17 +303,6 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         termBody.Children.Add(LabeledRow("Cursor style", cursorStyle));
         termBody.Children.Add(Check("Blink the cursor", c.TerminalCursorBlink, v => _ = _cfg.UpdateAsync(s => s with { TerminalCursorBlink = v })));
-
-        var bell = new ComboBox { Width = 160 };
-        foreach (var bs in Enum.GetValues<TerminalBellStyle>())
-            bell.Items.Add(new ComboBoxItem { Content = bs.ToString(), Tag = bs });
-        bell.SelectedIndex = (int)c.TerminalBellStyle;
-        bell.SelectionChanged += (_, _) =>
-        {
-            if ((bell.SelectedItem as ComboBoxItem)?.Tag is TerminalBellStyle bs)
-                _ = _cfg.UpdateAsync(s => s with { TerminalBellStyle = bs });
-        };
-        termBody.Children.Add(LabeledRow("Bell", bell));
 
         AddCollapsibleSection("Terminal", termBody, () => _terminalExpanded, v => _terminalExpanded = v);
 

@@ -12,7 +12,7 @@ public sealed record AppSettings
     /// v5: multi-line tab strip; v6: persistent graph cache toggle; v7: graph
     /// row hard cap; v8: local repo-state cache toggle; v9: terminal; v10: tab-width mode;
     /// v11: custom-theme id; v12: splash-screen toggle.</summary>
-    public int SchemaVersion { get; init; } = 19;
+    public int SchemaVersion { get; init; } = 20;
 
     // ── Profile &amp; Identity ──
     /// <summary>the default profile — the clone-dialog pre-selection and what an opened
@@ -21,15 +21,11 @@ public sealed record AppSettings
     public Guid? DefaultProfileId { get; init; }
 
     // ── Network &amp; Privacy ──
-    /// <summary>Gates background polling / hosting-API calls; effective only while a
-    /// token-bearing profile is the active per-repo selection.</summary>
-    public bool EnableBackgroundPolling { get; init; } = true;
-
     /// <summary>drives <c>IAutoFetchService</c>'s <c>[InitialFetch]</c> + <c>[AutoFetch]</c>
-    /// loop, which periodically <c>git fetch</c>es every open repository. Unlike
-    /// <see cref="EnableBackgroundPolling"/> it is <b>not</b> gated to a token-bearing profile —
-    /// it fetches SSH and <i>Local config</i> repos too — so this toggle is the single opt-out
-    /// that lets a user guarantee no unsolicited network traffic. Default on.</summary>
+    /// loop, which periodically <c>git fetch</c>es every open repository. It is not gated to a
+    /// token-bearing profile — it fetches SSH and <i>Local config</i> repos too — so this toggle
+    /// is the single opt-out that lets a user guarantee no unsolicited network traffic. Default
+    /// on.</summary>
     public bool AutoFetchEnabled { get; init; } = true;
 
     // ── UI preferences ──
@@ -95,7 +91,6 @@ public sealed record AppSettings
 
     // ── Diff &amp; editor ──
     public int DiffContextLines { get; init; } = 3;
-    public int TabWidth { get; init; } = 4;
 
     // ── Git &amp; repository ──
     /// <summary>Overrides discovery.</summary>
@@ -203,10 +198,8 @@ public sealed record AppSettings
     public int TerminalScrollbackLines { get; init; } = 5_000;
 
     public double TerminalDockHeight { get; init; } = 260;
-    public bool TerminalDockOpen { get; init; }
     public TerminalCursorStyle TerminalCursorStyle { get; init; } = TerminalCursorStyle.Block;
     public bool TerminalCursorBlink { get; init; } = true;
-    public TerminalBellStyle TerminalBellStyle { get; init; } = TerminalBellStyle.None;
 
     /// <summary>Lets programs turn on the Kitty keyboard protocol. Read when a session starts.</summary>
     public bool TerminalKittyKeyboard { get; init; } = true;
