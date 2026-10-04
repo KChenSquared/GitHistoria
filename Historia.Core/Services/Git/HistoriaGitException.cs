@@ -16,9 +16,8 @@ public sealed class HistoriaGitException : Exception
 
         // every classified git failure lands in the developer log the moment it is
         // created, whether or not a caller turns it into a notification. No-op unless enabled.
-        var detail = string.IsNullOrWhiteSpace(details)
-            ? ""
-            : " — " + details.Split('\n', 2)[0].TrimEnd('\r');
+        var summary = GitStderr.SummaryLine(details);
+        var detail = summary.Length == 0 ? "" : " — " + summary;
         AppLog.Write(AppLogLevel.Warn, "git-error", $"{kind}: {message}{detail}");
     }
 
@@ -32,10 +31,50 @@ public sealed class HistoriaGitException : Exception
     /// </summary>
     public bool FallbackToLocalConfigAvailable { get; init; }
 
+    /// <summary>
+    /// Builds the exception for a failed CLI call: a Historia-authored message
+    /// (<c>"Push failed: couldn't reach the remote."</c>) and Details that lead with the
+    /// server's own <c>remote:</c> messages, followed by the stderr with progress noise removed.
+    /// </summary>
     public static HistoriaGitException FromCli(Models.GitCliResult result, string operation) =>
-        new(result.ErrorKind,
-            $"{operation} failed ({result.ErrorKind}).",
-            string.IsNullOrWhiteSpace(result.StandardError) ? result.StandardOutput : result.StandardError);
+        new(result.ErrorKind, $"{operation} failed: {Describe(result.ErrorKind)}.", CliDetails(result));
+
+    /// <summary>A short lower-case phrase for a failure kind, written to follow
+    /// <c>"&lt;Operation&gt; failed: "</c>.</summary>
+    public static string Describe(GitErrorKind kind) => kind switch
+    {
+        GitErrorKind.None => "git reported a failure without saying why",
+        GitErrorKind.AuthenticationFailed => "the remote didn't accept your credentials",
+        GitErrorKind.HostKeyVerificationFailed => "the server's SSH host key couldn't be verified",
+        GitErrorKind.NetworkUnreachable => "couldn't reach the remote",
+        GitErrorKind.RemoteRejected => "the remote has commits this branch doesn't",
+        GitErrorKind.RemoteDeclined => "the remote declined it — its reason is in Details",
+        GitErrorKind.MergeConflict => "it stopped on merge conflicts",
+        GitErrorKind.UncommittedChanges => "local changes are in the way",
+        GitErrorKind.LockedIndex => "another git process is using the repository",
+        GitErrorKind.NotAGitRepository => "the folder is not a git repository",
+        GitErrorKind.RefNotFound => "the branch, tag or commit wasn't found",
+        GitErrorKind.InvalidRefName => "the name isn't a valid git ref",
+        GitErrorKind.DetachedHeadOperation => "it needs a checked-out branch",
+        GitErrorKind.HookFailed => "a git hook stopped it",
+        GitErrorKind.LfsMissing => "the repository needs Git LFS, which wasn't found",
+        GitErrorKind.UnrelatedHistories => "the histories are unrelated",
+        GitErrorKind.Cancelled => "it was cancelled",
+        GitErrorKind.TimedOut => "git took too long and was stopped",
+        GitErrorKind.UnsafeRepository => "git doesn't trust this repository's ownership",
+        GitErrorKind.Unknown => "git reported an error — see Details",
+        _ => "git reported an error — see Details",
+    };
+
+    private static string CliDetails(Models.GitCliResult result)
+    {
+        if (string.IsNullOrWhiteSpace(result.StandardError))
+            return result.StandardOutput;
+
+        var cleaned = GitStderr.Clean(result.StandardError);
+        var remote = GitStderr.RemoteMessages(result.StandardError);
+        return remote.Count == 0 ? cleaned : string.Join('\n', remote) + "\n\n" + cleaned;
+    }
 }
 
 /// <summary>Shared by every error-notification call site so none of them has to remember the
@@ -49,4 +88,10 @@ public static class ExceptionNotificationExtensions
     /// histories") behind an opaque stack trace.</summary>
     public static string? NotificationDetails(this Exception ex) =>
         ex is HistoriaGitException git ? git.Details : ex.ToString();
+
+    /// <summary>The toast message for a failed <paramref name="what"/>: a
+    /// <see cref="HistoriaGitException"/>'s message as-is, since it already names the operation,
+    /// otherwise <c>"&lt;what&gt; failed: &lt;message&gt;"</c>.</summary>
+    public static string NotificationMessage(this Exception ex, string what) =>
+        ex is HistoriaGitException git ? git.Message : $"{what} failed: {ex.Message}";
 }

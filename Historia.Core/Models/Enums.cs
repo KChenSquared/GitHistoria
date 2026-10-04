@@ -112,6 +112,12 @@ public enum GitErrorKind
     HostKeyVerificationFailed,
     NetworkUnreachable,
     RemoteRejected,
+
+    /// <summary>The remote was reached and refused the update by its own policy (a server hook,
+    /// a protected branch, a size limit). Integrating the remote's commits or force-pushing does
+    /// not help; the server's reason is the remedy.</summary>
+    RemoteDeclined,
+
     MergeConflict,
     UncommittedChanges,
     LockedIndex,

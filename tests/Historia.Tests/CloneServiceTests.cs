@@ -253,12 +253,13 @@ public class CloneServiceTests : IAsyncDisposable
         var request = new CloneRequest("https://example.com/repo.git", "C:/repo", new Historia.Services.Workspace.CloneOptions(), null);
         var startTask = service.StartAsync(request);
 
-        fakeWs.CloneTcs.TrySetException(new HistoriaGitException(GitErrorKind.Unknown, "Clone failed (Unknown)."));
+        fakeWs.CloneTcs.TrySetException(HistoriaGitException.FromCli(
+            new GitCliResult(128, "", "fatal: something novel", GitErrorKind.Unknown, TimeSpan.Zero), "Clone"));
         await startTask;
 
         var note = notifications.Current.FirstOrDefault(n => n.Severity == NotificationSeverity.Error);
         Assert.NotNull(note);
-        Assert.Equal("Clone failed (Unknown).", note.Message);
+        Assert.Equal("Clone failed: git reported an error — see Details.", note.Message);
         Assert.DoesNotContain("Clone failed: Clone failed", note.Message);
     }
 
