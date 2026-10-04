@@ -41,5 +41,6 @@ global using Xunit.Abstractions;
 
 global using Color = Historia.Rgb;
 global using Point = Historia.PointD;
+global using PortaPty = Porta.Pty;
 global using SubmoduleStatus = Historia.Models.SubmoduleStatus;
 global using Version = System.Version;

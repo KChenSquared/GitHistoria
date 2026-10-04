@@ -287,6 +287,14 @@ public sealed partial class CommitGraphControl : Control
     internal int LanePiecesSeenForTesting => _lanePiecesSeen;
     internal int LaneRunGrowthsForTesting => _laneRuns.Growths;
     internal void ResetLaneRunCountersForTesting() => _laneRuns.ResetCounters();
+    internal int PoolMissesForTesting => _poolMisses;
+    internal int TextMissesForTesting => _textCache.Misses;
+    internal int TextCacheCountForTesting => _textCache.Count;
+    internal void ResetMissCountersForTesting()
+    {
+        _poolMisses = 0;
+        _textCache.ResetCounters();
+    }
     internal ScrollBar VerticalScrollBarForTesting => _scrollBar;
     internal double ScrollOffsetForTesting => _scrollOffset;
     /// <summary>Test-only: replaces the layout's row count when sizing the vertical scroll
@@ -366,7 +374,12 @@ public sealed partial class CommitGraphControl : Control
     private readonly Dictionary<int, double> _badgeRightEdge = [];
     private readonly Dictionary<int, SolidColorBrush> _laneFills = [];
     private readonly Dictionary<int, SolidColorBrush> _laneTicks = [];
-    private readonly Dictionary<(int Tag, int Size, int WidthKey, string Text), FormattedText> _textCache = [];
+    // Every string the render path draws, shaped once. Keyed by brush reference, so a palette
+    // swap can never reuse a stale-coloured layout; cleared (and disposed) on a theme change.
+    private readonly ShapedTextCache _textCache = new(TextCacheCapacity);
+    // Builds by any Pooled(...) pool or the elbow geometry cache since the last reset: zero on
+    // a repeat frame.
+    private int _poolMisses;
     // Reused every frame to merge vertical lane pieces into runs (counts its growths).
     private readonly LaneRunBuilder _laneRuns = new();
     private int _lanePiecesSeen;
@@ -1566,59 +1579,56 @@ public sealed partial class CommitGraphControl : Control
 
     // every per-lane-colour Pen/Brush is memoised in its own dictionary (all cleared
     // together by RebuildThemeResources on a theme change). One shape: look it up, else build
-    // it once and cache. The build lambda runs only on a miss.
-    private static T Pooled<T>(Dictionary<int, T> pool, int colorIndex, Func<int, T> build)
-        => pool.TryGetValue(colorIndex, out var v) ? v : pool[colorIndex] = build(colorIndex);
+    // it once and cache. The build lambda runs only on a miss, which is counted. Builders are
+    // static lambdas handed the control, so a hit allocates no delegate.
+    private T Pooled<T>(Dictionary<int, T> pool, int colorIndex, Func<CommitGraphControl, int, T> build)
+    {
+        if (pool.TryGetValue(colorIndex, out var v))
+            return v;
+        _poolMisses++;
+        return pool[colorIndex] = build(this, colorIndex);
+    }
 
     // Lane and emphasis pens use a square cap: each piece overhangs its ends by half the pen
     // width, so butted runs, elbows and colour changes overlap instead of meeting at a
     // fractional y, where anti-aliasing would leave a faint seam. The overhang at a line's
     // real end sits under its commit dot or is clipped by the row area.
     private Pen LanePen(int colorIndex) => Pooled(_lanePens, colorIndex,
-        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), LaneStrokeWidth, lineCap: PenLineCap.Square));
+        static (g, i) => new Pen(new SolidColorBrush(ToColor(g.LaneRgb(i))), LaneStrokeWidth, lineCap: PenLineCap.Square));
 
     /// <summary>a thin, faint version of the lane colour for a non-HEAD badge→node
     /// connector. 1 DIP at 45% alpha — the crisp, stable equivalent of "thin and faint" (a
     /// sub-pixel stroke rounds away under layout rounding).</summary>
-    private Pen FaintConnectorPen(int colorIndex) => Pooled(_faintConnectorPens, colorIndex, i =>
+    private Pen FaintConnectorPen(int colorIndex) => Pooled(_faintConnectorPens, colorIndex, static (g, i) =>
     {
-        var c = LaneRgb(i);
+        var c = g.LaneRgb(i);
         return new Pen(new SolidColorBrush(AvColor.FromArgb(0x73, c.R, c.G, c.B)), 1.0);
     });
 
     private SolidColorBrush LaneBrush(int colorIndex) => Pooled(_laneBrushes, colorIndex,
-        i => new SolidColorBrush(ToColor(LaneRgb(i))));
+        static (g, i) => new SolidColorBrush(ToColor(g.LaneRgb(i))));
 
     private Pen EmphPen(int colorIndex) => Pooled(_emphPens, colorIndex,
-        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 3.0, lineCap: PenLineCap.Square));
+        static (g, i) => new Pen(new SolidColorBrush(ToColor(g.LaneRgb(i))), 3.0, lineCap: PenLineCap.Square));
 
     /// <summary>the badge is a solid opaque lane-colour fill, so its label and icons
     /// need ink that contrasts against that hue — near-black on a light badge, near-white on a
     /// dark one. Two shared brush instances keep <see cref="Text"/>'s cache keying correct.</summary>
     private SolidColorBrush BadgeInk(int colorIndex) => Pooled(_badgeInk, colorIndex,
-        i => GraphLanePalette.PrefersDarkInk(LaneRgb(i)) ? _badgeInkDark : _badgeInkLight);
+        static (g, i) => GraphLanePalette.PrefersDarkInk(g.LaneRgb(i)) ? g._badgeInkDark : g._badgeInkLight);
 
     private Pen PillBorder(int colorIndex) => Pooled(_pillBorders, colorIndex,
-        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 1.5));
+        static (g, i) => new Pen(new SolidColorBrush(ToColor(g.LaneRgb(i))), 1.5));
 
-    private SolidColorBrush LaneFill(int colorIndex) => Pooled(_laneFills, colorIndex, i =>
+    private SolidColorBrush LaneFill(int colorIndex) => Pooled(_laneFills, colorIndex, static (g, i) =>
     {
-        var c = LaneRgb(i);
-        byte a = _themeMode == EffectiveTheme.Light ? (byte)0x2E : (byte)0x3A;
+        var c = g.LaneRgb(i);
+        byte a = g._themeMode == EffectiveTheme.Light ? (byte)0x2E : (byte)0x3A;
         return new SolidColorBrush(AvColor.FromArgb(a, c.R, c.G, c.B));
     });
 
     private SolidColorBrush LaneTick(int colorIndex) => Pooled(_laneTicks, colorIndex,
-        i => new SolidColorBrush(ToColor(LaneRgb(i))));
-
-    private int TextTag(IBrush b) =>
-        ReferenceEquals(b, _text) ? 0 :
-        ReferenceEquals(b, _nodeFill) ? 1 :
-        ReferenceEquals(b, _textMuted) ? 2 :
-        ReferenceEquals(b, _pillText) ? 3 :
-        ReferenceEquals(b, _headerText) ? 4 :
-        ReferenceEquals(b, _badgeInkDark) ? 5 :
-        ReferenceEquals(b, _badgeInkLight) ? 6 : 7;
+        static (g, i) => new SolidColorBrush(ToColor(g.LaneRgb(i))));
 
     // ── Layout / arrange ──
 
@@ -1808,6 +1818,20 @@ public sealed partial class CommitGraphControl : Control
         else if (type == ScrollEventType.EndScroll)
             LogScroll("drag end");
     }
+
+    /// <summary>Frame benchmark: scrolls to <paramref name="offset"/> the way a plain wheel step
+    /// does — clamped to the scroll range, then <see cref="OnScrolled"/>.</summary>
+    internal void SetVerticalOffsetForBench(double offset)
+    {
+        _scrollOffset = Math.Clamp(offset, 0, Math.Max(0, _scrollBar.Maximum));
+        OnScrolled();
+    }
+
+    /// <summary>Frame benchmark: the largest vertical offset over the rows loaded so far.</summary>
+    internal double MaxVerticalOffsetForBench => Math.Max(0, _scrollBar.Maximum);
+
+    /// <summary>Frame benchmark: the selected commit's row, or -1 while it is not loaded.</summary>
+    internal int SelectedRowForBench => _selectedRow;
 
     private void OnScrolled()
     {
@@ -3071,6 +3095,24 @@ public sealed partial class CommitGraphControl : Control
 
     public override void Render(DrawingContext dc)
     {
+        if (FrameBench.Active)
+        {
+            var start = Stopwatch.GetTimestamp();
+            try
+            {
+                RenderGraph(dc);
+            }
+            finally
+            {
+                FrameBench.RecordGraphRender(start);
+            }
+            return;
+        }
+        RenderGraph(dc);
+    }
+
+    private void RenderGraph(DrawingContext dc)
+    {
         var size = Bounds.Size;
         dc.DrawRectangle(_bg, null, new Rect(size));
 
@@ -3346,7 +3388,7 @@ public sealed partial class CommitGraphControl : Control
             var leftmostIconX = secondIconRect?.X ?? iconRect?.X;
             var labelMaxWidth = leftmostIconX is { } lx ? Math.Max(10, lx - x - 12) : Math.Max(10, col.Width - 12);
             var ft = Text(label, _headerText, labelMaxWidth, HeaderTextSize);
-            dc.DrawText(ft, new Point(x + 8, (HeaderHeight - ft.Height) / 2));
+            ft.Draw(dc, new Point(x + 8, (HeaderHeight - ft.Height) / 2));
 
             if (col.Left > 0.5)
                 dc.DrawLine(_borderPen, new Point(x, 4), new Point(x, HeaderHeight - 4));
@@ -3381,7 +3423,7 @@ public sealed partial class CommitGraphControl : Control
         {
             var ghost = Text(rk.ToString().ToUpperInvariant(), _text, size: HeaderTextSize);
             dc.DrawRectangle(_hoverFill, _borderPen, new Rect(_reorderGhostX - 40, 2, 80, HeaderHeight - 4));
-            dc.DrawText(ghost, new Point(_reorderGhostX - 36, (HeaderHeight - ghost.Height) / 2));
+            ghost.Draw(dc, new Point(_reorderGhostX - 36, (HeaderHeight - ghost.Height) / 2));
 
             if (_reorderCaret >= 0)
             {
@@ -3401,7 +3443,7 @@ public sealed partial class CommitGraphControl : Control
     {
         var rowAreaH = Math.Max(0, size.Height - RowsTop);
         var text = Text("Loading history…", _textMuted, size.Width - 80, HeaderTextSize);
-        dc.DrawText(text, new Point((size.Width - text.Width) / 2, RowsTop + rowAreaH * 0.45));
+        text.Draw(dc, new Point((size.Width - text.Width) / 2, RowsTop + rowAreaH * 0.45));
     }
 
     /// <summary>The blanked-graph placeholder: a stand-in ref badge centred in the Branch/Tags
@@ -3443,7 +3485,7 @@ public sealed partial class CommitGraphControl : Control
         // in the middle of the window.
         var sub = Text($"Loading history…  {(_layout?.Layout.RowCount ?? 0):N0} rows",
             _textMuted, size.Width - 80, HeaderTextSize);
-        dc.DrawText(sub, new Point((size.Width - sub.Width) / 2, RowsTop + rowAreaH * 0.70));
+        sub.Draw(dc, new Point((size.Width - sub.Width) / 2, RowsTop + rowAreaH * 0.70));
     }
 
     private void DrawGraphColumn(DrawingContext dc, GraphLayout layout, int first, int last, double colX, double viewportWidth)
@@ -3692,16 +3734,16 @@ public sealed partial class CommitGraphControl : Control
                 var chipX = colX + colWidth - 4 - chipW;
                 var chipRect = new Rect(chipX, top, chipW, h);
                 dc.DrawRectangle(_hoverFill, _borderPen, chipRect, BadgeCornerRadius, BadgeCornerRadius);
-                dc.DrawText(ft, new Point(chipX + 5, CenteredTextY(ft, top, h, BadgeLabelSize)));
+                ft.Draw(dc, new Point(chipX + 5, CenteredTextY(ft, top, h, BadgeLabelSize)));
                 _overflowChips.Add((chipRect, row, hidden));
             }
         }
     }
 
-    /// <summary>Top-left Y for <c>dc.DrawText</c> so the text's cap band is optically centred
-    /// in a <paramref name="bandH"/>-tall band at <paramref name="bandTop"/> — independent of
-    /// the font's line-box padding, which <c>(bandH - ft.Height) / 2</c> ignores.</summary>
-    private static double CenteredTextY(FormattedText ft, double bandTop, double bandH, double size)
+    /// <summary>Top-left Y for drawing <paramref name="ft"/> so the text's cap band is optically
+    /// centred in a <paramref name="bandH"/>-tall band at <paramref name="bandTop"/> — independent
+    /// of the font's line-box padding, which <c>(bandH - ft.Height) / 2</c> ignores.</summary>
+    private static double CenteredTextY(TextLayout ft, double bandTop, double bandH, double size)
         => bandTop + bandH / 2 + size * 0.35 - ft.Baseline;
 
     private void DrawBadge(DrawingContext dc, GraphDecoration d, double x, double top, double w,
@@ -3724,13 +3766,13 @@ public sealed partial class CommitGraphControl : Control
         var label = d.Type == DecorationType.Head ? "HEAD" : d.Label;
         var textBudget = Math.Max(4, w - BadgePadX * 2 - rightExtras);
         var ft = Text(label, ink, textBudget, BadgeLabelSize);
-        dc.DrawText(ft, new Point(x + BadgePadX, CenteredTextY(ft, top, h, BadgeLabelSize)));
+        ft.Draw(dc, new Point(x + BadgePadX, CenteredTextY(ft, top, h, BadgeLabelSize)));
         _pillRects.Add((rect, row, d));
 
         if (plus is not null)
         {
             var pf = Text(plus, ink, size: BadgeLabelSize);
-            dc.DrawText(pf, new Point(x + w - BadgePadX - plusW, CenteredTextY(pf, top, h, BadgeLabelSize)));
+            pf.Draw(dc, new Point(x + w - BadgePadX - plusW, CenteredTextY(pf, top, h, BadgeLabelSize)));
         }
 
         // The icon cluster and the +N counter are always laid out from the badge's
@@ -3776,7 +3818,7 @@ public sealed partial class CommitGraphControl : Control
             var text = select(meta);
             var ft = Text(text, brush, maxW);
             var midY = RowY(row) + (_rowHeight - ft.Height) / 2;
-            dc.DrawText(ft, new Point(colX + 8, midY));
+            ft.Draw(dc, new Point(colX + 8, midY));
         }
     }
 
@@ -3852,6 +3894,7 @@ public sealed partial class CommitGraphControl : Control
     {
         if (_elbowGeometryCache.TryGetValue((laneDelta, kind), out var cached))
             return cached;
+        _poolMisses++;
 
         var geo = new StreamGeometry();
         var dx = laneDelta * _laneWidth;
@@ -3899,25 +3942,21 @@ public sealed partial class CommitGraphControl : Control
             dc.DrawGeometry(null, pen, geo);
     }
 
-    private FormattedText Text(string s, IBrush brush, double maxWidth = double.PositiveInfinity, double size = RowTextSize)
-    {
-        var tag = TextTag(brush);
-        var wKey = double.IsPositiveInfinity(maxWidth) ? -1 : (int)maxWidth;
-        var key = (tag, (int)size, wKey, s);
-        if (_textCache.TryGetValue(key, out var ft))
-            return ft;
-        if (_textCache.Count > 10000)
-            _textCache.Clear();
-        ft = new FormattedText(s, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight, _typeface, size, brush)
-        {
-            Trimming = TextTrimming.CharacterEllipsis,
-            MaxLineCount = 1,
-        };
-        if (!double.IsPositiveInfinity(maxWidth))
-            ft.MaxTextWidth = Math.Max(4, maxWidth);
-        _textCache[key] = ft;
-        return ft;
-    }
+    /// <summary>
+    /// Shaped-text layouts kept for the graph: the visible rows' text columns, badge labels and
+    /// <c>+N</c> chips, header labels and placeholders. On a 100k-row graph with every column
+    /// shown, a 1,400 DIP viewport (53 rows) draws 174 distinct strings, so this holds several
+    /// viewports even on a tall display: a scroll step shapes only the rows it reveals. Each
+    /// shaped message costs a few kilobytes, which is what keeps the bound this low.
+    /// </summary>
+    internal const int TextCacheCapacity = 1024;
+
+    /// <summary>A single-line, end-ellipsised layout of <paramref name="s"/>, shaped once and
+    /// cached. Do not dispose it or keep it past a theme change.</summary>
+    private TextLayout Text(string s, IBrush brush, double maxWidth = double.PositiveInfinity, double size = RowTextSize)
+        => _textCache.Get(s, _typeface, size, brush,
+            double.IsPositiveInfinity(maxWidth) ? maxWidth : Math.Max(4, maxWidth),
+            TextTrimming.CharacterEllipsis, maxLines: 1);
 
     private static string Relative(DateTimeOffset when)
     {

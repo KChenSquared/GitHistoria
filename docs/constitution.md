@@ -202,9 +202,13 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     overscan exists. *(§I-6.10.3, §I-7.4)*
 24. **The graph render path creates no Historia-owned object per frame — and a test says so.**
     Pool every reusable `Pen`, `Brush`, and `Geometry`, clip geometries included; cache
-    `FormattedText` with every glyph-affecting input in the key. **"None" is literal and it
-    is measured** — but measured as *pool and cache misses*, never as bytes: every pool and cache
-    carries a miss counter, and a render pass after the first must record zero. Counting bytes
+    **shaped text** (`TextLayout`) with every glyph-affecting input in the key, and never draw
+    `FormattedText` in a render path — a cached `FormattedText` re-shapes its text on every draw,
+    so its cache never misses while every visible string is shaped every frame. **"None" is
+    literal and it is measured** — but measured as *pool and cache misses*, never as bytes: every
+    pool and cache carries a miss counter, and a render pass after the first must record zero.
+    `GraphTextShapingTests` asserts zero pool and text misses on a second pass, and
+    `ShapedTextRenderPathTests` fails on a `DrawText` call in the render-path files. Counting bytes
     cannot work here — the rendering stack allocates its own per-frame buffers however correct
     the pooling is, so a frame-to-frame byte delta stays perfectly flat while a per-frame `new`
     goes on happening, and a gate that passes while the rule is broken is worse than none.
