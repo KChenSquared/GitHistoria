@@ -6,9 +6,13 @@ namespace Historia.Services.Theming;
 /// chrome, the generated resource dictionary, and the graph renderer. Every theme
 /// defines exactly the same token set; <c>PaletteParityTests</c> asserts it.
 /// <para>
-/// Dark and Light are Visual Studio Code Dark Modern / Light Modern. Every entry
-/// carries its VS Code key (Table A, verified verbatim from the theme JSON) or its derivation
-/// (Table B, recomputed from Table A) so re-verification is a diff against upstream.
+/// Both themes start from Visual Studio Code Dark Modern / Light Modern. Dark replaces the
+/// neutral greys with a navy family (Table S) so the chrome, graph and editor share one cool
+/// field under the neon lane colours. Light is Light Modern on one pure-white field: <c>bg</c>,
+/// <c>chrome</c>, <c>surface</c>, <c>surface-2</c> and <c>term-bg</c> are all white, with no
+/// near-white panels, and every text token is pure black. Every other entry carries its VS Code
+/// key (Table A, verified verbatim from the theme JSON) or its derivation (Table B, recomputed
+/// from the others).
 /// </para>
 /// </summary>
 public static class HistoriaPalette
@@ -38,8 +42,7 @@ public static class HistoriaPalette
         "conflict-ours-hl", "conflict-theirs-hl",
         // code editor selection
         "code-selection",
-        // graph ref badge label — white in dark/HC, near-black in light. The web
-        // layer never consumes it, but parity keeps the two copies honest.
+        // graph ref badge label and icons — white in every theme, on every lane colour.
         "ref-label",
         // terminal
         "term-bg", "term-fg", "term-cursor", "term-selection",
@@ -58,34 +61,34 @@ public static class HistoriaPalette
 
     public static Rgb Get(EffectiveTheme theme, string token) => For(theme)[token];
 
-    // ── Dark Modern ──────────────────────────────────────────────────────────────────────
+    // ── Dark ────────────────────────────────────────────────────────────────────────────
     private static readonly IReadOnlyDictionary<string, Rgb> Dark = Build(
-        ("bg",            "#1F1F1F"),   // A: editor.background
-        ("chrome",        "#181818"),   // A: sideBar/titleBar/statusBar/panel .background
-        ("surface",       "#202020"),   // A: editorWidget.background
-        ("surface-2",     "#313131"),   // A: input.background, dropdown.background
-        ("border",        "#2B2B2B"),   // A: panel.border, sideBar.border, titleBar.border
-        ("border-strong", "#3C3C3C"),   // A: input.border, dropdown.border
+        ("bg",            "#191925"),   // S: navy field under the neon lane colours
+        ("chrome",        "#13131D"),   // S: bg one step darker (sidebars, title bar, panels)
+        ("surface",       "#1E1E2D"),   // S: bg one step lighter (popups, widgets)
+        ("surface-2",     "#2A2A3D"),   // S: inputs, dropdowns
+        ("border",        "#272739"),   // S: panel / sidebar / title bar dividers
+        ("border-strong", "#3B3B55"),   // S: input / dropdown outlines
         ("primary",       "#0078D4"),   // A: focusBorder, button.background
         ("primary-h",     "#026EC1"),   // A: button.hoverBackground
         ("accent",        "#4DAAFC"),   // A: textLink.foreground
-        ("text",          "#CCCCCC"),   // A: foreground
-        ("text-muted",    "#9D9D9D"),   // A: descriptionForeground
-        ("text-faint",    "#6E7681"),   // A: editorLineNumber.foreground
-        ("caption-text",  "#CCCCCC"),   // A: titleBar.activeForeground
+        ("text",          "#CFCFDC"),   // S: cool off-white
+        ("text-muted",    "#9D9DB5"),   // S: cool grey
+        ("text-faint",    "#6D6F8C"),   // S: line numbers, hints
+        ("caption-text",  "#CFCFDC"),   // B: = text
         ("danger",        "#F85149"),   // A: errorForeground
         ("warning",       "#BB8009"),   // B: settings.modifiedItemIndicator, alpha dropped
         ("success",       "#2EA043"),   // B: = git-added
-        ("list-hover",    "#2B2B2B"),   // B: = border (Dark Modern's one-step-up surface)
+        ("list-hover",    "#272739"),   // B: = border (one-step-up surface)
         ("list-active",   "#0078D433"), // B: primary @ 20% alpha
-        ("list-inactive", "#2B2B2B"),   // B: = list-hover
-        ("scrollbar",     "#9D9D9D66"), // B: text-muted @ 40% alpha
+        ("list-inactive", "#272739"),   // B: = list-hover
+        ("scrollbar",     "#9D9DB566"), // B: text-muted @ 40% alpha
         ("git-added",     "#2EA043"),   // A: editorGutter.addedBackground
         ("git-deleted",   "#F85149"),   // A: editorGutter.deletedBackground
         ("git-modified",  "#E2C08D"),   // A: chat.editedFileForeground
         ("git-untracked", "#2EA043"),   // B: = git-added (no hue distinction)
         ("git-conflict",  "#F85149"),   // B: = danger
-        ("git-ignored",   "#9D9D9D"),   // B: = text-muted
+        ("git-ignored",   "#9D9DB5"),   // B: = text-muted
         ("diff-add-bg",   "#2EA04326"), // B: git-added @ 15% alpha
         ("diff-del-bg",   "#F8514926"), // B: git-deleted @ 15% alpha
         ("diff-add-hl",   "#2EA04359"), // B: git-added @ 35% alpha (stronger intra-line wash)
@@ -93,17 +96,17 @@ public static class HistoriaPalette
         ("diff-empty-bg", "#80808014"), // B: neutral padding row wash
         ("conflict-ours-bg",     "#0078D433"), // B: primary @ 20% alpha
         ("conflict-theirs-bg",   "#BB800933"), // B: warning @ 20% alpha
-        ("conflict-base-bg",     "#9D9D9D26"), // B: text-muted @ 15% alpha
-        ("conflict-marker-bg",   "#3C3C3C4D"), // B: border-strong @ 30% alpha
+        ("conflict-base-bg",     "#9D9DB526"), // B: text-muted @ 15% alpha
+        ("conflict-marker-bg",   "#3B3B554D"), // B: border-strong @ 30% alpha
         ("conflict-resolved-bg", "#2EA04326"), // B: success @ 15% alpha
         ("conflict-ours-hl",     "#0078D466"), // B: primary @ 40% alpha
         ("conflict-theirs-hl",   "#BB800966"), // B: warning @ 40% alpha
-        ("code-selection",       "#264F78"),   // A: editor.selectionBackground
+        ("code-selection",       "#2C3C78"),   // S: indigo-leaning selection
         ("ref-label",     "#FFFFFF"),  // graph ref badge label
         // terminal. term-* are role aliases (B); the ANSI set is VS Code dark_vs
         // terminal.ansi* verbatim (A).
-        ("term-bg",         "#1F1F1F"), // B: = bg
-        ("term-fg",         "#CCCCCC"), // B: = text
+        ("term-bg",         "#191925"), // B: = bg
+        ("term-fg",         "#CFCFDC"), // B: = text
         ("term-cursor",     "#4DAAFC"), // B: = accent
         ("term-selection",  "#0078D433"),// B: = list-active
         ("ansi-black",      "#000000"), // A: terminal.ansiBlack (dark_vs)
@@ -123,34 +126,34 @@ public static class HistoriaPalette
         ("ansi-br-cyan",    "#29B8DB"), // A: terminal.ansiBrightCyan
         ("ansi-br-white",   "#E5E5E5")); // A: terminal.ansiBrightWhite
 
-    // ── Light Modern ─────────────────────────────────────────────────────────────────────
+    // ── Light ───────────────────────────────────────────────────────────────────────────
     private static readonly IReadOnlyDictionary<string, Rgb> Light = Build(
         ("bg",            "#FFFFFF"),   // A: editor.background
-        ("chrome",        "#F8F8F8"),   // A: sideBar/titleBar/statusBar/panel .background
-        ("surface",       "#F8F8F8"),   // A: editorWidget.background
+        ("chrome",        "#FFFFFF"),   // B: = bg (one white field, no near-white panels)
+        ("surface",       "#FFFFFF"),   // B: = bg
         ("surface-2",     "#FFFFFF"),   // A: input.background, dropdown.background
         ("border",        "#E5E5E5"),   // A: panel.border, sideBar.border, titleBar.border
         ("border-strong", "#CECECE"),   // A: input.border, dropdown.border
         ("primary",       "#005FB8"),   // A: focusBorder, button.background
         ("primary-h",     "#0258A8"),   // A: button.hoverBackground
         ("accent",        "#005FB8"),   // A: textLink.foreground
-        ("text",          "#3B3B3B"),   // A: foreground
-        ("text-muted",    "#616161"),   // A: activityBar.inactiveForeground (descriptionForeground is unusable — = foreground)
-        ("text-faint",    "#6E7681"),   // A: editorLineNumber.foreground
-        ("caption-text",  "#1E1E1E"),   // A: titleBar.activeForeground
+        ("text",          "#000000"),   // B: pure black body text
+        ("text-muted",    "#000000"),   // B: = text (no grey text in Light)
+        ("text-faint",    "#000000"),   // B: = text
+        ("caption-text",  "#000000"),   // B: = text
         ("danger",        "#F85149"),   // A: errorForeground (Light Modern uses the same red as dark)
         ("warning",       "#BB8009"),   // B: settings.modifiedItemIndicator, alpha dropped
         ("success",       "#2EA043"),   // B: = git-added
         ("list-hover",    "#F2F2F2"),   // A: list.hoverBackground
         ("list-active",   "#E8E8E8"),   // A: list.activeSelectionBackground
         ("list-inactive", "#E4E6F1"),   // B: modernActivityBarItem.activeBackground
-        ("scrollbar",     "#61616166"), // B: text-muted @ 40% alpha
+        ("scrollbar",     "#61616166"), // B: neutral grey #616161 @ 40% alpha
         ("git-added",     "#2EA043"),   // A: editorGutter.addedBackground
         ("git-deleted",   "#F85149"),   // A: editorGutter.deletedBackground
         ("git-modified",  "#895503"),   // A: chat.editedFileForeground
         ("git-untracked", "#2EA043"),   // B: = git-added
         ("git-conflict",  "#F85149"),   // B: = danger
-        ("git-ignored",   "#616161"),   // B: = text-muted
+        ("git-ignored",   "#616161"),   // B: neutral grey — ignored files stay de-emphasised
         ("diff-add-bg",   "#2EA04326"), // B: git-added @ 15% alpha
         ("diff-del-bg",   "#F8514926"), // B: git-deleted @ 15% alpha
         ("diff-add-hl",   "#2EA0434D"), // B: git-added @ 30% alpha (stronger intra-line wash)
@@ -158,17 +161,17 @@ public static class HistoriaPalette
         ("diff-empty-bg", "#80808014"), // B: neutral padding row wash
         ("conflict-ours-bg",     "#005FB826"), // B: primary @ 15% alpha
         ("conflict-theirs-bg",   "#BB800926"), // B: warning @ 15% alpha
-        ("conflict-base-bg",     "#61616126"), // B: text-muted @ 15% alpha
+        ("conflict-base-bg",     "#61616126"), // B: neutral grey #616161 @ 15% alpha
         ("conflict-marker-bg",   "#CECECE4D"), // B: border-strong @ 30% alpha
         ("conflict-resolved-bg", "#2EA04326"), // B: success @ 15% alpha
         ("conflict-ours-hl",     "#005FB84D"), // B: primary @ 30% alpha
         ("conflict-theirs-hl",   "#BB80094D"), // B: warning @ 30% alpha
         ("code-selection",       "#ADD6FF"),   // A: editor.selectionBackground
-        ("ref-label",     "#1F1F1F"),  // near-black on the light field
+        ("ref-label",     "#FFFFFF"),  // graph ref badge label
         // terminal. term-* are role aliases (B); the ANSI set is VS Code light_vs
         // terminal.ansi* verbatim (A).
         ("term-bg",         "#FFFFFF"), // B: = bg
-        ("term-fg",         "#3B3B3B"), // B: = text
+        ("term-fg",         "#000000"), // B: = text
         ("term-cursor",     "#005FB8"), // B: = accent
         ("term-selection",  "#E8E8E8"), // B: = list-active
         ("ansi-black",      "#000000"), // A: terminal.ansiBlack (light_vs)

@@ -366,8 +366,6 @@ public sealed partial class CommitGraphControl : Control
     private readonly Dictionary<int, SolidColorBrush> _laneBrushes = [];
     private readonly Dictionary<int, Pen> _emphPens = [];
     private readonly Dictionary<int, Pen> _pillBorders = [];
-    // badge label/icon ink — one of two shared brushes per lane colour's luminance.
-    private readonly Dictionary<int, SolidColorBrush> _badgeInk = [];
     // faint 1 DIP pen per lane colour for the non-HEAD badge→node connector.
     private readonly Dictionary<int, Pen> _faintConnectorPens = [];
     // per-frame row -> right edge (screen x) of the primary drawn badge.
@@ -394,8 +392,6 @@ public sealed partial class CommitGraphControl : Control
     private SolidColorBrush _text = new(Colors.Gray);
     private SolidColorBrush _textMuted = new(Colors.DimGray);
     private SolidColorBrush _pillText = new(Colors.White);
-    private readonly SolidColorBrush _badgeInkDark = new(AvColor.FromRgb(0x1F, 0x1F, 0x1F));
-    private readonly SolidColorBrush _badgeInkLight = new(AvColor.FromRgb(0xFF, 0xFF, 0xFF));
     private SolidColorBrush _headerText = new(Colors.DimGray);
     private SolidColorBrush _selectionFill = new(Colors.SlateBlue);
     private SolidColorBrush _selectionBar = new(Colors.SlateBlue);
@@ -1530,7 +1526,6 @@ public sealed partial class CommitGraphControl : Control
         _lanePens.Clear();
         _laneBrushes.Clear();
         _emphPens.Clear();
-        _badgeInk.Clear();
         _faintConnectorPens.Clear();
         _pillBorders.Clear();
         _laneFills.Clear();
@@ -1611,20 +1606,13 @@ public sealed partial class CommitGraphControl : Control
     private Pen EmphPen(int colorIndex) => Pooled(_emphPens, colorIndex,
         static (g, i) => new Pen(new SolidColorBrush(ToColor(g.LaneRgb(i))), 3.0, lineCap: PenLineCap.Square));
 
-    /// <summary>the badge is a solid opaque lane-colour fill, so its label and icons
-    /// need ink that contrasts against that hue — near-black on a light badge, near-white on a
-    /// dark one. Two shared brush instances keep <see cref="Text"/>'s cache keying correct.</summary>
-    private SolidColorBrush BadgeInk(int colorIndex) => Pooled(_badgeInk, colorIndex,
-        static (g, i) => GraphLanePalette.PrefersDarkInk(g.LaneRgb(i)) ? g._badgeInkDark : g._badgeInkLight);
-
     private Pen PillBorder(int colorIndex) => Pooled(_pillBorders, colorIndex,
         static (g, i) => new Pen(new SolidColorBrush(ToColor(g.LaneRgb(i))), 1.5));
 
     private SolidColorBrush LaneFill(int colorIndex) => Pooled(_laneFills, colorIndex, static (g, i) =>
     {
         var c = g.LaneRgb(i);
-        byte a = g._themeMode == EffectiveTheme.Light ? (byte)0x2E : (byte)0x3A;
-        return new SolidColorBrush(AvColor.FromArgb(a, c.R, c.G, c.B));
+        return new SolidColorBrush(AvColor.FromArgb(GraphLanePalette.WashAlpha(g._themeMode), c.R, c.G, c.B));
     });
 
     private SolidColorBrush LaneTick(int colorIndex) => Pooled(_laneTicks, colorIndex,
@@ -3757,7 +3745,8 @@ public sealed partial class CommitGraphControl : Control
             headRing ? _hoverPen : PillBorder(d.ColorIndex),
             rect, BadgeCornerRadius, BadgeCornerRadius);
 
-        var ink = BadgeInk(d.ColorIndex);
+        // every badge label and icon uses the theme's ref-label ink, whatever the lane colour.
+        var ink = _pillText;
         var (rightExtras, _, _) = BadgeMetrics(d);
         var plus = BadgePlusText(d);
         var plusW = plus is null ? 0 : Text(plus, ink, size: BadgeLabelSize).Width;
