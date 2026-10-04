@@ -65,6 +65,31 @@ public sealed class TerminalSession : IDisposable
     public event EventHandler? StateChanged;
     public event EventHandler? TitleChanged;
 
+    /// <summary>A program asked to write the system clipboard (OSC 52). Raised on the UI
+    /// dispatcher; whether to honour it is the service's call.</summary>
+    public event EventHandler<TerminalClipboardWriteEventArgs>? ClipboardWriteRequested;
+
+    /// <summary>Largest decoded clipboard write passed on; anything larger is dropped.</summary>
+    public const int MaxClipboardWriteBytes = 1024 * 1024;
+
+    /// <summary>The Kitty keyboard state the child has negotiated, read under the gate.</summary>
+    public TerminalKeyboardProtocol KeyboardProtocol
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (!_term.KittyKeyboardActive)
+                    return default;
+                var flags = _term.KittyKeyboardState.Flags;
+                return new TerminalKeyboardProtocol(
+                    KittyActive: true,
+                    ReportsEventTypes: (flags & XTermLib.Input.KittyKeyboardFlags.ReportEventTypes) != 0,
+                    ReportsAllKeys: (flags & XTermLib.Input.KittyKeyboardFlags.ReportAllKeysAsEscapeCodes) != 0);
+            }
+        }
+    }
+
     public TerminalSession(
         TerminalOrigin origin,
         IPtyConnection pty,
@@ -72,7 +97,8 @@ public sealed class TerminalSession : IDisposable
         int columns,
         int rows,
         int scrollbackLines,
-        string? startupNotice = null)
+        string? startupNotice = null,
+        bool kittyKeyboard = false)
     {
         Origin = origin ?? throw new ArgumentNullException(nameof(origin));
         _pty = pty ?? throw new ArgumentNullException(nameof(pty));
@@ -88,15 +114,18 @@ public sealed class TerminalSession : IDisposable
             Rows = rows,
             Scrollback = Math.Max(0, scrollbackLines),
             TermName = "xterm-256color",
+            KittyKeyboardEnabled = kittyKeyboard,
+            // Writes always reach ClipboardWriteRequested; the service applies the user's
+            // setting. Reads stay off: a program never sees the clipboard.
+            ClipboardWriteEnabled = true,
+            ClipboardReadEnabled = false,
+            MaxClipboardBytes = MaxClipboardWriteBytes,
             // Historia neither renders nor handles these protocols, so the emulator must not
             // advertise or answer them.
-            KittyKeyboardEnabled = false,
             KittyGraphicsEnabled = false,
             ITerm2ImagesEnabled = false,
             KittyNotificationsEnabled = false,
             PointerShapesEnabled = false,
-            ClipboardWriteEnabled = false,
-            ClipboardReadEnabled = false,
         });
 
         _coalesceTimer = _dispatcher.CreateTimer(TimeSpan.FromMilliseconds(16), OnCoalesceTick);
@@ -105,6 +134,7 @@ public sealed class TerminalSession : IDisposable
         _term.OscReceived += OnEmulatorOsc;
         _term.HyperlinkChanged += (_, e) => LastHyperlink = e.IsCleared ? null : e.Url;
         _term.DataReceived += OnEmulatorData;
+        _term.ClipboardWriteRequested += OnEmulatorClipboardWrite;
 
         // Before subscribing: the pty may already hold the shell's first output, and attaching
         // releases it, so the notice must be in the buffer first to stay the first line.
@@ -144,6 +174,45 @@ public sealed class TerminalSession : IDisposable
     }
 
     public void Kill() => _pty.Kill();
+
+    /// <summary>
+    /// Encodes a key under the Kitty keyboard protocol. False when the protocol is not active, and
+    /// the caller encodes it the legacy way. True with empty <paramref name="bytes"/> means the
+    /// key sends nothing (a bare modifier, or a release the flags do not report).
+    /// </summary>
+    public bool TryEncodeKittyKey(TerminalKeyInput input, TerminalKeyEventKind kind, out byte[] bytes)
+    {
+        var ev = new XTermLib.Options.KeyEvent
+        {
+            Key = input.Key ?? string.Empty,
+            Code = input.Code ?? string.Empty,
+            ShiftKey = input.Modifiers.HasFlag(TerminalModifiers.Shift),
+            AltKey = input.Modifiers.HasFlag(TerminalModifiers.Alt),
+            CtrlKey = input.Modifiers.HasFlag(TerminalModifiers.Control),
+        };
+        var type = kind switch
+        {
+            TerminalKeyEventKind.Repeat => XTermLib.Input.KittyKeyboardEventType.Repeat,
+            TerminalKeyEventKind.Release => XTermLib.Input.KittyKeyboardEventType.Release,
+            _ => XTermLib.Input.KittyKeyboardEventType.Press,
+        };
+
+        string? encoded;
+        // One gate acquisition for the check and the encode, so a CSI < u that lands in between
+        // cannot encode a key under flags that were already popped.
+        lock (_gate)
+        {
+            if (Volatile.Read(ref _disposed) != 0 || !_term.KittyKeyboardActive)
+            {
+                bytes = [];
+                return false;
+            }
+            encoded = _term.GenerateKittyKeyInput(ev, type);
+        }
+
+        bytes = string.IsNullOrEmpty(encoded) ? [] : Encoding.UTF8.GetBytes(encoded);
+        return true;
+    }
 
     // ── buffer read (under the gate) ────────────────────────────────────────────────────────
 
@@ -276,10 +345,33 @@ public sealed class TerminalSession : IDisposable
             case 0 or 2:
                 ApplyReportedTitle(e.Data);
                 break;
-            case 52:
-                // Clipboard write from the child — deliberately ignored.
-                break;
         }
+    }
+
+    // Runs inside _term.Write, under the gate: filter here, raise on the dispatcher.
+    private void OnEmulatorClipboardWrite(object? sender, XTermLib.Events.TerminalEvents.ClipboardWriteEventArgs e)
+    {
+        var plain = e.Formats.FirstOrDefault(f => f.MimeType == "text/plain");
+        if (ClipboardTextFrom(plain.Data) is not { } text)
+            return;
+
+        var args = new TerminalClipboardWriteEventArgs(text);
+        _dispatcher.Post(() =>
+        {
+            if (Volatile.Read(ref _disposed) == 0)
+                ClipboardWriteRequested?.Invoke(this, args);
+        });
+    }
+
+    /// <summary>The text a clipboard write carries, or null when it must be dropped: no data,
+    /// over <see cref="MaxClipboardWriteBytes"/>, or nothing left once NULs are stripped. An empty
+    /// write is xterm's "clear" idiom, which Historia never honours.</summary>
+    internal static string? ClipboardTextFrom(byte[]? data)
+    {
+        if (data is null || data.Length == 0 || data.Length > MaxClipboardWriteBytes)
+            return null;
+        var text = Encoding.UTF8.GetString(data).Replace("\0", string.Empty, StringComparison.Ordinal);
+        return text.Length == 0 ? null : text;
     }
 
     private void ApplyReportedTitle(string? raw)
@@ -376,6 +468,7 @@ public sealed class TerminalSession : IDisposable
         _term.TitleChanged -= OnEmulatorTitleChanged;
         _term.OscReceived -= OnEmulatorOsc;
         _term.DataReceived -= OnEmulatorData;
+        _term.ClipboardWriteRequested -= OnEmulatorClipboardWrite;
 
         try { _coalesceTimer.Dispose(); } catch { /* best effort */ }
         try { _pty.Dispose(); } catch { /* best effort */ }

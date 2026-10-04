@@ -46,4 +46,9 @@ public interface ITerminalSessionService
 
     /// <summary>Raised when an entry point wants the dock brought into view.</summary>
     event EventHandler? ActivationRequested;
+
+    /// <summary>A session's program wrote the clipboard (OSC 52) and
+    /// <see cref="AppSettings.TerminalAllowClipboardWrite"/> allows it. Raised on the UI
+    /// thread. There is no read counterpart.</summary>
+    event EventHandler<TerminalClipboardWriteEventArgs>? ClipboardWriteRequested;
 }
