@@ -213,17 +213,103 @@ public sealed class GitGatewayTransportFallbackTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task An_insteadOf_rewrite_of_the_retry_is_described_as_a_retry_not_https()
+    public async Task An_insteadOf_rewrite_back_to_the_failed_ssh_url_is_not_retried()
     {
         await using var ctx = Open("git@github-alias:o/r.git");
-        var cli = new ScriptedCli(Fail(Unreachable), Fail(Unreachable)) { ExpandedUrl = "git@github-alias:o/r.git" };
+        var cli = new ScriptedCli(Fail(Unreachable), Fail(Unreachable))
+        {
+            Rewrite = (url, _) => url.StartsWith("https://github.com/", StringComparison.Ordinal) ? "git@github-alias:o/r.git" : url,
+        };
 
         var ex = await Assert.ThrowsAsync<HistoriaGitException>(
             () => Gateway(ctx, cli, new FakeHosts { ["github-alias"] = "github.com" }).PushAsync("origin", Push, null));
 
-        Assert.Contains("Retry attempt (git@github-alias:o/r.git):", ex.Details);
-        Assert.Contains("rewrote https://github.com/o/r.git", ex.Details);
+        Assert.Single(cli.NetworkCalls);
+        Assert.Equal(GitErrorKind.NetworkUnreachable, ex.Kind);
+        Assert.DoesNotContain("Retry", ex.Details);
+    }
+
+    [Fact]
+    public async Task A_non_alias_fallback_rewritten_back_to_ssh_is_not_retried()
+    {
+        await using var ctx = Open("git@example.invalid:o/r.git");
+        var cli = new ScriptedCli(Fail(Unreachable), Fail(Unreachable))
+        {
+            Rewrite = (url, _) => url == "https://example.invalid/o/r.git" ? "git@example.invalid:o/r.git" : url,
+        };
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => Gateway(ctx, cli, new FakeHosts()).PushAsync("origin", Push, null));
+
+        Assert.Single(cli.NetworkCalls);
+    }
+
+    [Fact]
+    public async Task A_stored_ssh_pushurl_is_not_pushed_to_twice()
+    {
+        await using var ctx = Open("git@example.invalid:o/r.git");
+        var cli = new ScriptedCli(Fail(Unreachable), Fail(Unreachable))
+        {
+            Rewrite = (url, push) => push ? "git@stored.invalid:o/r.git" : url,
+        };
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => Gateway(ctx, cli, new FakeHosts()).PushAsync("origin", Push, null));
+
+        Assert.Single(cli.NetworkCalls);
+    }
+
+    [Fact]
+    public async Task A_rewrite_to_another_ssh_url_is_retried_with_the_ssh_environment()
+    {
+        await using var ctx = Open("git@github-alias:o/r.git");
+        var cli = new ScriptedCli(Fail(Unreachable), Fail(Unreachable))
+        {
+            Rewrite = (url, _) => url.StartsWith("https://github.com/", StringComparison.Ordinal) ? "git@other.invalid:o/r.git" : url,
+        };
+
+        var ex = await Assert.ThrowsAsync<HistoriaGitException>(
+            () => Gateway(ctx, cli, new FakeHosts { ["github-alias"] = "github.com" }).PushAsync("origin", Push, null));
+
+        Assert.Equal(2, cli.NetworkCalls.Count);
+        var env = cli.NetworkCalls[1].ExtraEnvironment;
+        Assert.NotNull(env);
+        Assert.Contains("ConnectTimeout=", env!["GIT_SSH_COMMAND"]);
+        Assert.False(env.ContainsKey("HISTORIA_ASKPASS_HOST"));
+        Assert.Contains("Retry attempt (git@other.invalid:o/r.git):", ex.Details);
+        Assert.Contains("sends https://github.com/o/r.git there", ex.Details);
         Assert.DoesNotContain("Retried over HTTPS", ex.Details);
+    }
+
+    [Fact]
+    public async Task A_push_asks_git_for_its_push_url_and_a_fetch_for_its_fetch_url()
+    {
+        await using var ctx = Open("git@example.invalid:o/r.git");
+        var pushCli = new ScriptedCli(Fail(Unreachable), Fail(AuthFailed));
+        var fetchCli = new ScriptedCli(Fail(Unreachable), Fail(AuthFailed));
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => Gateway(ctx, pushCli, new FakeHosts()).PushAsync("origin", Push, null));
+        await Assert.ThrowsAsync<HistoriaGitException>(
+            () => Gateway(ctx, fetchCli, new FakeHosts()).FetchAsync("origin", new GitFetchOptions(), null));
+
+        Assert.NotEmpty(pushCli.GetUrlCalls);
+        Assert.All(pushCli.GetUrlCalls, c => Assert.True(c.Push));
+        Assert.NotEmpty(fetchCli.GetUrlCalls);
+        Assert.All(fetchCli.GetUrlCalls, c => Assert.False(c.Push));
+    }
+
+    [Fact]
+    public async Task The_surfaced_error_is_not_logged_again_on_top_of_each_attempt()
+    {
+        using var dir = new StateDir();
+        // Flow-local: the process-wide log would also capture every test running in parallel.
+        using var session = AppLog.StartSessionForTesting(dir.Path);
+        await using var ctx = Open("git@example.invalid:o/r.git");
+        var cli = new ScriptedCli(Fail(Unreachable), Fail(AuthFailed));
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => Gateway(ctx, cli, new FakeHosts()).PushAsync("origin", Push, null));
+
+        session.Dispose(); // close the session writer before reading the file back
+        var text = File.ReadAllText(session.SessionPath);
+        Assert.Equal(2, Regex.Matches(text, Regex.Escape("[git-error]")).Count);
     }
 
     [Theory]
@@ -247,14 +333,15 @@ public sealed class GitGatewayTransportFallbackTests : IAsyncDisposable
     }
 
     /// <summary>Answers each network invocation (push / pull / fetch) with the next scripted
-    /// result; answers <c>ls-remote --get-url</c> with <see cref="ExpandedUrl"/>, or with the
-    /// override URL unchanged.</summary>
+    /// result; answers <c>remote get-url [--push]</c> with <see cref="Rewrite"/> applied to the
+    /// override URL, or with the override URL unchanged.</summary>
     private sealed class ScriptedCli(params GitCliResult[] results) : IGitCliService
     {
         private int _next;
 
         public List<GitCliRequest> NetworkCalls { get; } = [];
-        public string? ExpandedUrl { get; init; }
+        public List<(string Url, bool Push)> GetUrlCalls { get; } = [];
+        public Func<string, bool, string>? Rewrite { get; init; }
         public bool IsGitAvailable => true;
 
         public Task<GitCliResult> RunAsync(GitCliRequest request, CancellationToken ct = default)
@@ -264,11 +351,13 @@ public sealed class GitGatewayTransportFallbackTests : IAsyncDisposable
             GitCliRequest request, IProgress<GitProgress>? progress, Action<string>? onStdoutLine, CancellationToken ct = default)
         {
             var args = request.Arguments;
-            if (args.Contains("ls-remote") && args.Contains("--get-url"))
+            if (args.Contains("remote") && args.Contains("get-url"))
             {
-                var url = ExpandedUrl ?? args.Last(a => a.StartsWith("remote.", StringComparison.Ordinal) && !a.EndsWith('='))
-                    .Split('=', 2)[1];
-                return Task.FromResult(new GitCliResult(0, url + "\n", "", GitErrorKind.None, TimeSpan.Zero));
+                var url = args.Last(a => a.StartsWith("remote.", StringComparison.Ordinal) && !a.EndsWith('=')).Split('=', 2)[1];
+                var push = args.Contains("--push");
+                GetUrlCalls.Add((url, push));
+                var contacted = Rewrite?.Invoke(url, push) ?? url;
+                return Task.FromResult(new GitCliResult(0, contacted + "\n", "", GitErrorKind.None, TimeSpan.Zero));
             }
             if (!args.Any(a => a is "push" or "pull" or "fetch"))
                 return Task.FromResult(Ok());

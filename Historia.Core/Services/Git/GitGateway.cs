@@ -306,6 +306,8 @@ public sealed partial class GitGateway(
     /// attempt's; its Details carry each attempt's text under a transport-and-URL header.
     /// An HTTPS fallback from an SSH URL whose host is an <c>~/.ssh/config</c> alias retries
     /// against the alias's real host name — except on a background fetch, which stops after SSH.
+    /// When git's own URL configuration sends that fallback to an SSH URL, it runs with the SSH
+    /// environment, or not at all when that URL is the one the SSH attempt already tried.
     /// </summary>
     private async Task RunNetworkAsync(
         IReadOnlyList<string> args, string operation, string? remote,
@@ -341,6 +343,7 @@ public sealed partial class GitGateway(
             };
             string? note = null;
             string? displayUrl = null;
+            var envTransport = transport;
 
             // Only reached after the SSH attempt failed — never on the success path, and never
             // with SSH Only on, whose plan has no HTTPS step.
@@ -359,21 +362,39 @@ public sealed partial class GitGateway(
                     }
 
                     effectiveUrl = a.HttpsUrl;
-                    var gitUrl = await ExpandRemoteUrlAsync(remote, effectiveUrl, ct).ConfigureAwait(false);
-                    if (gitUrl is not null && !string.Equals(gitUrl, effectiveUrl, StringComparison.Ordinal))
+                    note = $"Retried over HTTPS as {a.HostName} using the profile token or Git's credential helper — "
+                        + "this may be a different account than the SSH alias selects. Turn on SSH Only to prevent this.";
+                }
+
+                // url.<base>.insteadOf, and for a push pushInsteadOf and a stored pushurl, apply to
+                // the per-call override too, so git may contact another URL than the HTTPS one.
+                var push = args.Count > 0 && args[0] == "push";
+                var contacted = await ContactedUrlAsync(remote, effectiveUrl!, push, ct).ConfigureAwait(false);
+                if (contacted is not null && !string.Equals(contacted, effectiveUrl, StringComparison.Ordinal))
+                {
+                    envTransport = RemoteUrlConverter.Classify(contacted) switch
                     {
-                        // url.<base>.insteadOf applies to the per-call override too, so git
-                        // contacts the rewritten URL, not the HTTPS one.
-                        label = "Retry";
-                        note = $"Retried with {gitUrl} — git's url.insteadOf configuration rewrote {effectiveUrl}. "
-                            + "Turn on SSH Only to skip this retry.";
-                        displayUrl = gitUrl;
-                    }
-                    else
+                        RemoteUrlKind.ScpLike or RemoteUrlKind.SshUrl => RouteTransport.Ssh,
+                        RemoteUrlKind.Https => RouteTransport.Https,
+                        _ => RouteTransport.AsIs,
+                    };
+
+                    if (envTransport == RouteTransport.Ssh)
                     {
-                        note = $"Retried over HTTPS as {a.HostName} using the profile token or Git's credential helper — "
-                            + "this may be a different account than the SSH alias selects. Turn on SSH Only to prevent this.";
+                        var sshUrl = RemoteUrlConverter.ToSsh(remoteUrl!).ConvertedUrl ?? remoteUrl!;
+                        var sshContacted = await ContactedUrlAsync(remote, sshUrl, push, ct).ConfigureAwait(false);
+                        if (string.Equals(contacted, sshContacted, StringComparison.Ordinal))
+                        {
+                            AppLog.Write(AppLogLevel.Info, "network",
+                                $"HTTPS fallback skipped: git's URL configuration sends {effectiveUrl} to {contacted}, which the SSH attempt already tried");
+                            continue;
+                        }
                     }
+
+                    label = "Retry";
+                    note = $"Retried with {contacted} — git's URL configuration (url.insteadOf, pushInsteadOf or a "
+                        + $"remote pushurl) sends {effectiveUrl} there. Turn on SSH Only to skip this retry.";
+                    displayUrl = contacted;
                 }
             }
 
@@ -382,9 +403,9 @@ public sealed partial class GitGateway(
                 ? WithRemoteUrlOverride(remote, effectiveUrl, args)
                 : args;
 
-            var env = transport switch
+            var env = envTransport switch
             {
-                RouteTransport.Https => await BuildCredentialEnvAsync(effectiveUrl, ct).ConfigureAwait(false),
+                RouteTransport.Https => await BuildCredentialEnvAsync(displayUrl ?? effectiveUrl, ct).ConfigureAwait(false),
                 RouteTransport.Ssh => SshEnv(),
                 _ => null, // AsIs — defer entirely to Git's own transport / credential resolution.
             };
@@ -432,10 +453,7 @@ public sealed partial class GitGateway(
             ? chosen.Error.Details
             : string.Join("\n\n", attempts.Where(a => a != chosen).Prepend(chosen).Select(AttemptBlock));
 
-        return new HistoriaGitException(chosen.Error.Kind, chosen.Error.Message, details)
-        {
-            FallbackToLocalConfigAvailable = offerLocalConfig,
-        };
+        return chosen.Error.WithDetails(details, offerLocalConfig);
     }
 
     private static string AttemptBlock(NetworkAttempt a)
@@ -486,14 +504,16 @@ public sealed partial class GitGateway(
     }
 
     /// <summary>The URL git will contact for <paramref name="remote"/> when its URL is
-    /// overridden with <paramref name="url"/>, after <c>url.&lt;base&gt;.insteadOf</c>
-    /// rewriting (<c>git ls-remote --get-url</c> — local, never talks to the remote); null when
-    /// git cannot say.</summary>
-    private async Task<string?> ExpandRemoteUrlAsync(string remote, string url, CancellationToken ct)
+    /// overridden with <paramref name="url"/>: after <c>url.&lt;base&gt;.insteadOf</c> and, for a
+    /// push, after <c>pushInsteadOf</c> or a stored <c>remote.&lt;name&gt;.pushurl</c>
+    /// (<c>git remote get-url [--push]</c> — local, never talks to the remote); null when git
+    /// cannot say.</summary>
+    private async Task<string?> ContactedUrlAsync(string remote, string url, bool push, CancellationToken ct)
     {
+        string[] getUrl = push ? ["remote", "get-url", "--push", remote] : ["remote", "get-url", remote];
         var result = await cli.RunAsync(new GitCliRequest
         {
-            Arguments = WithRemoteUrlOverride(remote, url, ["ls-remote", "--get-url", remote]),
+            Arguments = WithRemoteUrlOverride(remote, url, getUrl),
             WorkingDirectory = context.RepositoryPath,
         }, ct).ConfigureAwait(false);
 

@@ -9,10 +9,17 @@ namespace Historia.Services.Git;
 public sealed class HistoriaGitException : Exception
 {
     public HistoriaGitException(GitErrorKind kind, string message, string? details = null)
+        : this(kind, message, details, log: true)
+    {
+    }
+
+    private HistoriaGitException(GitErrorKind kind, string message, string? details, bool log)
         : base(message)
     {
         Kind = kind;
         Details = details;
+        if (!log)
+            return;
 
         // every classified git failure lands in the developer log the moment it is
         // created, whether or not a caller turns it into a notification. No-op unless enabled.
@@ -30,6 +37,11 @@ public sealed class HistoriaGitException : Exception
     /// the repository to <i>Local config</i> and retry once.
     /// </summary>
     public bool FallbackToLocalConfigAvailable { get; init; }
+
+    /// <summary>The same failure with other Details (e.g. every transport attempt's text), not
+    /// logged again — this one was logged, with its own summary line, when it was created.</summary>
+    internal HistoriaGitException WithDetails(string? details, bool fallbackToLocalConfigAvailable) =>
+        new(Kind, Message, details, log: false) { FallbackToLocalConfigAvailable = fallbackToLocalConfigAvailable };
 
     /// <summary>
     /// Builds the exception for a failed CLI call: a Historia-authored message
