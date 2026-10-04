@@ -95,7 +95,7 @@ public sealed class ThemesView : UserControl, IDisposable
     {
         var t = _themes.NewFrom(baseName);
         LoadDraft(t);
-        _ = _themes.SaveAsync(t);
+        _ = SaveThemeAsync(t);
         Rebuild();
     }
 
@@ -115,8 +115,21 @@ public sealed class ThemesView : UserControl, IDisposable
             SplashImagePath = t.SplashImagePath,
             SplashSeconds = t.SplashSeconds,
         };
-        _ = _themes.SaveAsync(copy);
+        _ = SaveThemeAsync(copy);
         Rebuild();
+    }
+
+    /// <summary>Saves <paramref name="theme"/>, then selects it in the theme service when it is
+    /// the selected theme (so its id and base re-resolve) or when the custom-theme override is on
+    /// with no saved theme selected (so the first theme renders as soon as it exists).</summary>
+    private async Task SaveThemeAsync(CustomTheme theme)
+    {
+        await _themes.SaveAsync(theme);
+        var settings = _cfg.Current;
+        var stored = settings.CustomThemeId;
+        var noneSelected = string.IsNullOrEmpty(stored) || _themes.Get(stored) is null;
+        if (stored == theme.Id || (settings.UseCustomTheme && noneSelected))
+            await _theme.SelectCustomThemeAsync(theme.Id);
     }
 
     private async Task DeleteAsync(CustomTheme t)
@@ -297,11 +310,7 @@ public sealed class ThemesView : UserControl, IDisposable
             SplashImagePath = string.IsNullOrWhiteSpace(_draftSplashPath) ? null : _draftSplashPath!.Trim(),
             SplashSeconds = Math.Clamp(_draftSplashSeconds, 0, 10),
         };
-        await _themes.SaveAsync(updated);
-
-        // If this theme is the selected one, re-point the service so the id/base re-resolve.
-        if (_cfg.Current.CustomThemeId == updated.Id)
-            await _theme.SelectCustomThemeAsync(updated.Id);
+        await SaveThemeAsync(updated);
 
         _editing = null;
         Rebuild();

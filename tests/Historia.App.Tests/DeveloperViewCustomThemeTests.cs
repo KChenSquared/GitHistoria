@@ -202,7 +202,11 @@ internal sealed class InMemoryCustomThemeService(params CustomTheme[] themes) : 
         return Task.CompletedTask;
     }
 
-    public CustomTheme NewFrom(string baseName) => throw new NotSupportedException();
+    /// <summary>A fresh theme with a unique id; not saved until <see cref="SaveAsync"/>.</summary>
+    public CustomTheme NewFrom(string baseName) =>
+        new() { Id = $"new-{++_created}", Name = $"Custom {_themes.Count + 1}", Base = baseName };
+
+    private int _created;
 
     public ResolvedPalette Compose(CustomTheme theme) => new CustomThemeService().Compose(theme);
 }
