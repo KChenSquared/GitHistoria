@@ -17,7 +17,7 @@ public sealed record RepoStateSnapshot(
 /// On-disk cache of a repository's enumerated state so the sidebar can paint immediately on the
 /// next launch, before the real <c>git</c> enumeration completes. There is no
 /// fingerprint: the always-following async refresh overwrites any staleness within a second.
-/// A no-op when the "Store a local repository cache" setting is off (but <see cref="WipeAll"/>
+/// A no-op when the "Cache sidebar between launches" setting is off (but <see cref="WipeAll"/>
 /// still runs, so turning it off cleans up).
 /// </summary>
 public interface IRepoStateCache
