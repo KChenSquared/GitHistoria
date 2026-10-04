@@ -25,6 +25,7 @@ global using Avalonia.Markup.Xaml.MarkupExtensions;
 global using Avalonia.Media;
 global using Avalonia.Media.Imaging;
 global using Avalonia.Media.Immutable;
+global using Avalonia.Media.TextFormatting;
 global using Avalonia.Platform;
 global using Avalonia.Platform.Storage;
 global using Avalonia.Styling;

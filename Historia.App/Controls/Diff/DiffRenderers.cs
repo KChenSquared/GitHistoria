@@ -28,9 +28,18 @@ public sealed class DiffLineNumberMargin : AbstractMargin
 {
     private readonly bool _isOld;
     private readonly DiffPresenterBase _presenter;
-    private readonly Dictionary<string, FormattedText> _textCache = new(StringComparer.Ordinal);
+    private readonly ShapedTextCache _textCache = new(TextCacheCapacity);
     private Typeface _typeface;
     private double _lastFontSize;
+
+    /// <summary>
+    /// Line-number layouts kept per margin. A viewport shows well under 200 lines even on a tall
+    /// display at a small font, so this holds several viewports: steady scrolling shapes only the
+    /// numbers it reveals, and scrolling back finds the ones it passed.
+    /// </summary>
+    internal const int TextCacheCapacity = 1024;
+
+    internal ShapedTextCache TextCacheForTesting => _textCache;
 
     public DiffLineNumberMargin(DiffPresenterBase presenter, bool isOld)
     {
@@ -72,10 +81,11 @@ public sealed class DiffLineNumberMargin : AbstractMargin
         var rows = _presenter.Rows;
         var foregroundBrush = PaletteBrushes.Get("ColorTextFaint");
 
-        if (_presenter.FontSize != _lastFontSize)
+        var typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
+        if (_presenter.FontSize != _lastFontSize || !typeface.Equals(_typeface))
         {
             _lastFontSize = _presenter.FontSize;
-            _typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
+            _typeface = typeface;
             _textCache.Clear();
         }
 
@@ -100,23 +110,8 @@ public sealed class DiffLineNumberMargin : AbstractMargin
             }
 
             var y = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineMiddle) - view.VerticalOffset;
-
-            if (!_textCache.TryGetValue(lineNumber, out var txt))
-            {
-                txt = new FormattedText(
-                    lineNumber,
-                    CultureInfo.InvariantCulture,
-                    FlowDirection.LeftToRight,
-                    _typeface,
-                    _presenter.FontSize,
-                    foregroundBrush);
-                if (_textCache.Count < 5000)
-                {
-                    _textCache[lineNumber] = txt;
-                }
-            }
-
-            context.DrawText(txt, new Point(Bounds.Width - txt.Width, y - (txt.Height * 0.5)));
+            var txt = _textCache.Get(lineNumber, _typeface, _lastFontSize, foregroundBrush);
+            txt.Draw(context, new Point(Bounds.Width - txt.Width, y - (txt.Height * 0.5)));
         }
     }
 
@@ -148,10 +143,11 @@ public sealed class DiffLineNumberMargin : AbstractMargin
 public sealed class DiffLineModifyTypeMargin : AbstractMargin
 {
     private readonly DiffPresenterBase _presenter;
+    private readonly ShapedTextCache _textCache = new(capacity: 4);
     private Typeface _typeface;
     private double _lastFontSize;
-    private FormattedText? _addText;
-    private FormattedText? _delText;
+
+    internal ShapedTextCache TextCacheForTesting => _textCache;
 
     public DiffLineModifyTypeMargin(DiffPresenterBase presenter)
     {
@@ -171,20 +167,14 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         PaletteBrushes.Changed -= OnPaletteChanged;
-        ClearCache();
+        _textCache.Clear();
         base.OnDetachedFromVisualTree(e);
     }
 
     private void OnPaletteChanged(object? sender, EventArgs e)
     {
-        ClearCache();
+        _textCache.Clear();
         InvalidateVisual();
-    }
-
-    private void ClearCache()
-    {
-        _addText = null;
-        _delText = null;
     }
 
     public override void Render(DrawingContext context)
@@ -197,12 +187,16 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
 
         var rows = _presenter.Rows;
 
-        if (_presenter.FontSize != _lastFontSize)
+        var typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
+        if (_presenter.FontSize != _lastFontSize || !typeface.Equals(_typeface))
         {
             _lastFontSize = _presenter.FontSize;
-            _typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
-            ClearCache();
+            _typeface = typeface;
+            _textCache.Clear();
         }
+
+        var addBrush = PaletteBrushes.Get("ColorGitAdded");
+        var delBrush = PaletteBrushes.Get("ColorGitDeleted");
 
         foreach (var line in view.VisualLines)
         {
@@ -218,35 +212,17 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
             }
 
             var row = rows[index - 1];
-            FormattedText? indicator = null;
-            var y = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineMiddle) - view.VerticalOffset;
-
-            if (row.Type == DiffDisplayLineType.Addition)
+            TextLayout? indicator = row.Type switch
             {
-                _addText ??= new FormattedText(
-                    "+",
-                    CultureInfo.InvariantCulture,
-                    FlowDirection.LeftToRight,
-                    _typeface,
-                    _presenter.FontSize,
-                    PaletteBrushes.Get("ColorGitAdded"));
-                indicator = _addText;
-            }
-            else if (row.Type == DiffDisplayLineType.Deletion)
-            {
-                _delText ??= new FormattedText(
-                    "-",
-                    CultureInfo.InvariantCulture,
-                    FlowDirection.LeftToRight,
-                    _typeface,
-                    _presenter.FontSize,
-                    PaletteBrushes.Get("ColorGitDeleted"));
-                indicator = _delText;
-            }
+                DiffDisplayLineType.Addition => _textCache.Get("+", _typeface, _lastFontSize, addBrush),
+                DiffDisplayLineType.Deletion => _textCache.Get("-", _typeface, _lastFontSize, delBrush),
+                _ => null,
+            };
 
             if (indicator != null)
             {
-                context.DrawText(indicator, new Point(0, y - (indicator.Height * 0.5)));
+                var y = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineMiddle) - view.VerticalOffset;
+                indicator.Draw(context, new Point(0, y - (indicator.Height * 0.5)));
             }
         }
     }
