@@ -10,10 +10,17 @@ namespace HistoriaApp.Tests;
 [Trait("tier", "ui")]
 public sealed class SettingsHelpHintTests
 {
+    private const string AppearanceHint = "Graph columns are set in Repository settings: click the cog in the graph's GRAPH header.";
+
+    /// <summary>The Appearance hint's second paragraph, shown only in developer mode. The
+    /// <c>enableDevMode</c> marker is copied next to every build of the App — this test
+    /// assembly's output included — so which text applies is read from <see cref="DevMode"/>.</summary>
+    private const string AppearanceDevModeParagraph = "In developer mode, a custom theme from the Developer panel overrides Light, Dark and System.";
+
     /// <summary>Anchor label → full hint text, for every hint on the page.</summary>
     private static readonly Dictionary<string, string> ExpectedHints = new()
     {
-        ["Appearance"] = "Graph columns are set in Repository settings: click the cog in the graph's GRAPH header.",
+        ["Appearance"] = DevMode.Enabled ? AppearanceHint + "\n\n" + AppearanceDevModeParagraph : AppearanceHint,
         ["High contrast"] = "Overrides every other theme. Also turns on when Windows high contrast is on.",
         ["Wrap tabs onto more rows"] = "When tabs don't fit, they wrap to a new row instead of scrolling.",
         ["Fixed tab width"] = "When off, each tab fits its name, up to about 25 characters.",
@@ -311,6 +318,32 @@ public sealed class SettingsHelpHintTests
         view.Dispose();
     }
 
+    [AvaloniaFact]
+    public void Appearance_offers_only_light_dark_system()
+    {
+        var sp = CreateServices();
+        var cfg = sp.GetRequiredService<ISettingsService>();
+
+        // Even with the custom-theme override on, the page offers no custom-theme controls.
+        WithSettings(cfg, s => s with { UseCustomTheme = true, CustomThemeId = "theme-1" }, () =>
+        {
+            var view = new SettingsView(sp);
+
+            var themeLabel = view.GetLogicalDescendants().OfType<TextBlock>().Single(t => t.Text == "Theme");
+            var row = (Panel)themeLabel.Parent!;
+            var options = row.Children.OfType<Panel>().Single().Children
+                .Select(c => (string)Assert.IsType<Button>(c).Content!)
+                .ToList();
+            Assert.Equal(new[] { "Light", "Dark", "System" }, options);
+
+            var labels = VisibleLabels(view);
+            Assert.DoesNotContain("Custom", labels);
+            Assert.DoesNotContain("Manage themes", labels);
+            Assert.DoesNotContain("Use custom theme", labels);
+            view.Dispose();
+        });
+    }
+
     /// <summary>Every user-visible label string: text, control content, combo options and
     /// input watermarks.</summary>
     private static HashSet<string> VisibleLabels(Control view)
@@ -353,7 +386,8 @@ internal static class HelpHintMap
            ?? throw new InvalidOperationException("Hint badge has no TextBlock tooltip.");
 
     /// <summary>The label of the setting a badge sits beside: a checkbox's, toggle's or
-    /// button's content, a labelled row's first text, or a heading's text.</summary>
+    /// button's content, a labelled row's first text, a heading's text, or the content of the
+    /// checkbox that leads a row of controls.</summary>
     public static string AnchorLabel(Control badge)
     {
         var row = badge.Parent as Panel ?? throw new InvalidOperationException("Hint badge has no row.");
@@ -363,6 +397,7 @@ internal static class HelpHintMap
             ContentControl { Content: string s } => s,
             TextBlock { Text: { } s } => s,
             Panel p when p.Children.OfType<TextBlock>().FirstOrDefault() is { Text: { } s } => s,
+            Panel p when p.Children.FirstOrDefault() is CheckBox { Content: string s } => s,
             _ => throw new InvalidOperationException($"Unrecognised hint anchor: {setting.GetType().Name}"),
         };
     }

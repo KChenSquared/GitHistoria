@@ -5,8 +5,6 @@ public sealed class SettingsView : UserControl, IDisposable
 {
     private readonly ISettingsService _cfg;
     private readonly IThemeService _theme;
-    private readonly ICustomThemeService _customThemes;
-    private readonly Historia.Services.UI.INavigationBus _nav;
     private readonly IDialogService _dialogs;
     private readonly IGraphLayoutService _graph;
     private readonly Historia.Services.Storage.IRepoStateCache _repoCache;
@@ -20,8 +18,6 @@ public sealed class SettingsView : UserControl, IDisposable
     {
         _cfg = sp.GetRequiredService<ISettingsService>();
         _theme = sp.GetRequiredService<IThemeService>();
-        _customThemes = sp.GetRequiredService<ICustomThemeService>();
-        _nav = sp.GetRequiredService<Historia.Services.UI.INavigationBus>();
         _dialogs = sp.GetRequiredService<IDialogService>();
         _graph = sp.GetRequiredService<IGraphLayoutService>();
         _repoCache = sp.GetRequiredService<Historia.Services.Storage.IRepoStateCache>();
@@ -76,51 +72,19 @@ public sealed class SettingsView : UserControl, IDisposable
         _root.Children.Add(Text("Settings", "ColorText", 24, FontWeight.SemiBold));
 
         // ── Appearance ──
-        _root.Children.Add(WithHint(Section("Appearance"),
-            "Graph columns are set in Repository settings: click the cog in the graph's GRAPH header."));
+        // The custom-theme override lives in the Developer panel, so only developer mode
+        // mentions it here.
+        var appearanceHint = "Graph columns are set in Repository settings: click the cog in the graph's GRAPH header.";
+        if (Historia.Platform.DevMode.Enabled)
+            appearanceHint += "\n\nIn developer mode, a custom theme from the Developer panel overrides Light, Dark and System.";
+        _root.Children.Add(WithHint(Section("Appearance"), appearanceHint));
         var themeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         foreach (var m in new[] { ThemeMode.Light, ThemeMode.Dark, ThemeMode.System })
         {
             var mode = m;
             themeRow.Children.Add(TextButton(m.ToString(), () => _ = _theme.ApplyModeAsync(mode), primary: _theme.CurrentMode == m));
         }
-
-        // a 4th "Custom" option. With ≥ 1 saved theme it activates the last-selected
-        // (or first) one; with none it routes straight to the Themes panel.
-        var savedThemes = _customThemes.List();
-        themeRow.Children.Add(TextButton("Custom", () =>
-        {
-            if (savedThemes.Count == 0)
-            {
-                _nav.RequestNavigate("themes");
-                return;
-            }
-            var stored = _cfg.Current.CustomThemeId;
-            var pick = savedThemes.FirstOrDefault(t => t.Id == stored)?.Id ?? savedThemes[0].Id;
-            _ = _theme.ApplyCustomThemeAsync(pick);
-        }, primary: _theme.CurrentMode == ThemeMode.Custom));
         _root.Children.Add(LabeledRow("Theme", themeRow));
-
-        if (_theme.CurrentMode == ThemeMode.Custom)
-        {
-            var customRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            if (savedThemes.Count > 0)
-            {
-                var names = savedThemes.Select(t => t.Name).ToList();
-                var combo = new ComboBox { Width = 220, ItemsSource = names };
-                var activeIdx = savedThemes.ToList().FindIndex(t => t.Id == _cfg.Current.CustomThemeId);
-                combo.SelectedIndex = activeIdx >= 0 ? activeIdx : 0;
-                combo.SelectionChanged += (_, _) =>
-                {
-                    var i = combo.SelectedIndex;
-                    if (i >= 0 && i < savedThemes.Count && savedThemes[i].Id != _cfg.Current.CustomThemeId)
-                        _ = _theme.ApplyCustomThemeAsync(savedThemes[i].Id);
-                };
-                customRow.Children.Add(combo);
-            }
-            customRow.Children.Add(TextButton("Manage themes", () => _nav.RequestNavigate("themes")));
-            _root.Children.Add(customRow);
-        }
         _root.Children.Add(WithHint(Check("High contrast", _theme.HighContrastEnabled, v => _ = _theme.SetHighContrastAsync(v)),
             "Overrides every other theme. Also turns on when Windows high contrast is on."));
         _root.Children.Add(WithHint(Check("Wrap tabs onto more rows", c.EnableMultiLineTabs,

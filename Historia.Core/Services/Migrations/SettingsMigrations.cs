@@ -297,4 +297,26 @@ public sealed class SettingsV19ToV20 : IJsonMigration
     }
 }
 
+/// <summary>v20 → v21: a custom theme is an override of Light / Dark / System, switched on by
+/// <c>useCustomTheme</c>, not a fourth <c>appTheme</c>. A stored <c>appTheme</c> of
+/// <c>custom</c> (any casing) becomes <c>system</c> with <c>useCustomTheme</c> on;
+/// <c>customThemeId</c> and every other value are kept.</summary>
+public sealed class SettingsV20ToV21 : IJsonMigration
+{
+    public int FromVersion => 20;
+    public int ToVersion => 21;
+
+    public void Apply(JsonObject document)
+    {
+        if (document["appTheme"] is JsonValue theme
+            && theme.TryGetValue<string>(out var name)
+            && string.Equals(name, "custom", StringComparison.OrdinalIgnoreCase))
+        {
+            document["appTheme"] = "system";
+            document["useCustomTheme"] = true;
+        }
+        document["schemaVersion"] = 21;
+    }
+}
+
 

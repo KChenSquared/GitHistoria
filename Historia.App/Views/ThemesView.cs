@@ -1,7 +1,7 @@
 namespace Historia.Views;
 
 /// <summary>
-/// the manage-themes panel — a peer of <see cref="SettingsView"/>. Lists the user's
+/// the manage-themes panel, opened from and closing to the Developer panel. Lists the user's
 /// custom themes (one file each under <c>themes/</c>), and edits one in place: name, Dark/Light
 /// base, every <see cref="HistoriaPalette"/> token, and the nine lane colours. A hex that fails to
 /// parse shows inline and blocks Save. Saving is the apply — if the edited theme is active the
@@ -34,7 +34,7 @@ public sealed class ThemesView : UserControl, IDisposable
         _cfg = sp.GetRequiredService<ISettingsService>();
         _dialogs = sp.GetRequiredService<IDialogService>();
 
-        Content = ClosablePane(new ScrollViewer { Content = _root }, sp, closeTo: "settings");
+        Content = ClosablePane(new ScrollViewer { Content = _root }, sp, closeTo: "dev");
         this.Dyn(BackgroundProperty, "ColorChrome");
         Rebuild();
     }
@@ -74,7 +74,7 @@ public sealed class ThemesView : UserControl, IDisposable
         {
             var theme = t;
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-            var active = _theme.CurrentMode == ThemeMode.Custom && _cfg.Current.CustomThemeId == theme.Id;
+            var active = _theme.CustomThemeActive && _cfg.Current.CustomThemeId == theme.Id;
             row.Children.Add(new Border
             {
                 Width = 18, Height = 18, CornerRadius = new CornerRadius(4),
@@ -124,10 +124,10 @@ public sealed class ThemesView : UserControl, IDisposable
         if (!await _dialogs.ConfirmDestructiveAsync("Delete theme", $"Delete “{t.Name}”? This cannot be undone.", "Delete"))
             return;
 
-        var wasActive = _theme.CurrentMode == ThemeMode.Custom && _cfg.Current.CustomThemeId == t.Id;
+        var wasSelected = _cfg.Current.CustomThemeId == t.Id;
         await _themes.DeleteAsync(t.Id);
-        if (wasActive)
-            await _theme.ApplyModeAsync(ThemeMode.Dark);
+        if (wasSelected)
+            await _theme.SetCustomThemeEnabledAsync(false);
         Rebuild();
     }
 
@@ -299,9 +299,9 @@ public sealed class ThemesView : UserControl, IDisposable
         };
         await _themes.SaveAsync(updated);
 
-        // If this theme is the active one, re-point the service so the id/base re-resolve.
-        if (_theme.CurrentMode == ThemeMode.Custom && _cfg.Current.CustomThemeId == updated.Id)
-            await _theme.ApplyCustomThemeAsync(updated.Id);
+        // If this theme is the selected one, re-point the service so the id/base re-resolve.
+        if (_cfg.Current.CustomThemeId == updated.Id)
+            await _theme.SelectCustomThemeAsync(updated.Id);
 
         _editing = null;
         Rebuild();

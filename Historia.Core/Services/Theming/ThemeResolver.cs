@@ -17,9 +17,6 @@ public static class ThemeResolver
             ThemeMode.Light => EffectiveTheme.Light,
             ThemeMode.Dark => EffectiveTheme.Dark,
             ThemeMode.System => osLight ? EffectiveTheme.Light : EffectiveTheme.Dark,
-            // ThemeService translates Custom to its Dark/Light base before calling this;
-            // a bare Custom here (e.g. from a test) falls back to Dark.
-            ThemeMode.Custom => EffectiveTheme.Dark,
             _ => EffectiveTheme.Dark,
         };
     }

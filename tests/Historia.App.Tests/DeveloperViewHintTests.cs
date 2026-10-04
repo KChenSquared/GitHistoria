@@ -18,6 +18,7 @@ public sealed class DeveloperViewHintTests
     private static Dictionary<string, string> ExpectedHints() => new()
     {
         ["Developer"] = "Shown only when an enableDevMode file is next to Historia.exe.",
+        ["Use custom theme"] = "Replaces the Light / Dark / System choice while a theme is selected. High Contrast still wins. Turned off when Historia starts without developer mode.",
         ["Throw test exception"] = "Throws an unhandled error to test crash handling.",
         ["Show sample toast"] = "Shows a success toast. It closes after 2 s and has no Copy button.",
         ["Performance log"] = $"Records startup and repository-open timings to {Historia.Diagnostics.PerfLog.LogPath}. Stays on across launches; also on when HISTORIA_PERF is set.",
@@ -31,11 +32,11 @@ public sealed class DeveloperViewHintTests
     private static (DeveloperView View, FakeDialogService Dialogs) CreateView()
     {
         var dialogs = new FakeDialogService();
-        var sc = new ServiceCollection();
-        sc.AddSingleton<INavigationBus, NavigationBus>();
-        sc.AddSingleton<IWorkspaceService, FakeWorkspaceService>();
-        sc.AddSingleton<IDialogService>(dialogs);
-        var view = new DeveloperView(sc.BuildServiceProvider());
+        var settings = new InMemorySettingsService();
+        var customThemes = new InMemoryCustomThemeService();
+        var theme = new ThemeService(settings, new FixedThemeProbe(), customThemes);
+        var sp = DeveloperViewServices.Build(settings, theme, customThemes, new NavigationBus(), dialogs);
+        var view = new DeveloperView(sp);
         view.Measure(new Size(800, 600));
         view.Arrange(new Rect(0, 0, 800, 600));
         return (view, dialogs);
@@ -125,27 +126,5 @@ public sealed class DeveloperViewHintTests
         public Task<string?> PickFolderAsync(string title, string? initialDirectory = null) => Task.FromResult<string?>(null);
         public Task<string?> PromptAsync(string title, string message, string? defaultValue = null, string confirmLabel = "OK", bool primaryConfirm = false) => Task.FromResult<string?>(null);
         public Task ShowMessageAsync(string title, string message) => Task.CompletedTask;
-    }
-
-    private sealed class FakeWorkspaceService : IWorkspaceService
-    {
-        public RepositoryContext? Focused => null;
-        public IReadOnlyList<RepositoryContext> OpenRepositories => [];
-
-#pragma warning disable CS0067
-        public event EventHandler<FocusedRepositoryChangedEventArgs>? FocusedRepositoryChanged;
-        public event EventHandler<OpenRepositoriesChangedEventArgs>? OpenRepositoriesChanged;
-#pragma warning restore CS0067
-
-        public void Focus(RepositoryContext context) { }
-        public Task<RepositoryContext> OpenAsync(string repositoryPath, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<RepositoryContext> InitAsync(string path, string? initialBranch, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<RepositoryContext> CloneAsync(string url, string targetDirectory, CloneOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<RepositoryContext> OpenSubmoduleAsync(RepositoryContext owner, SubmoduleInfo submodule, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task CloseAsync(RepositoryContext context) => Task.CompletedTask;
-        public void EnsureInitialized(RepositoryContext context) { }
-        public void Move(RepositoryContext context, int newIndex) { }
-        public Task RestoreSessionAsync(CancellationToken ct = default) => Task.CompletedTask;
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

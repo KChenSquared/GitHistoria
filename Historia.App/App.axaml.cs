@@ -38,6 +38,9 @@ public sealed class App : Application
         AppPaths.EnsureCreated();
         AppLog.Write(AppLogLevel.Info, "app", $"start — pid {Environment.ProcessId}, {Environment.OSVersion}");
         _settings = SettingsService.Load();
+        // Without developer mode, developer-only options are switched off before any theme is resolved.
+        if (!Historia.Platform.DevMode.Enabled && _settings.Current.UseCustomTheme)
+            _settings.UpdateAsync(s => s.WithoutDevOnlyOptions()).GetAwaiter().GetResult();
 
         var services = new ServiceCollection();
         ConfigureServices(services, _settings);
@@ -265,16 +268,17 @@ public sealed class App : Application
     }
 
     /// <summary>
-    /// Pick the launch splash. A custom theme (not overridden by High Contrast) uses its own
-    /// image and its 0–10 s duration, where 0 means "no splash". Every built-in theme uses the
-    /// <see cref="AppSettings.ShowSplashScreen"/> toggle with the 2 s light / dark splash.
+    /// Pick the launch splash. An active custom theme (<c>IThemeService.CustomThemeActive</c>)
+    /// uses its own image and its 0–10 s duration, where 0 means "no splash". Every built-in
+    /// theme uses the <see cref="AppSettings.ShowSplashScreen"/> toggle with the 2 s light / dark
+    /// splash.
     /// </summary>
     private (bool Enabled, bool Dark, string ImageUri, TimeSpan Duration) ResolveSplash()
     {
         var sp = _provider!;
         var theme = sp.GetRequiredService<IThemeService>();
 
-        if (theme.CurrentMode == Historia.Models.ThemeMode.Custom && !theme.HighContrastEnabled
+        if (theme.CustomThemeActive
             && sp.GetRequiredService<Historia.Services.Theming.ICustomThemeService>()
                  .Get(_settings!.Current.CustomThemeId ?? "") is { } ct)
         {

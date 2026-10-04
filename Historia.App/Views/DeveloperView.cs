@@ -12,6 +12,8 @@ public sealed class DeveloperView : UserControl
         root.Children.Add(WithHint(Text("Developer", "ColorText", 24, FontWeight.SemiBold),
             "Shown only when an enableDevMode file is next to Historia.exe."));
 
+        root.Children.Add(CustomThemeRow(sp));
+
         root.Children.Add(WithHint(TextButton("Throw test exception", () =>
             throw new InvalidOperationException("Developer panel: deliberate test exception.")),
             "Throws an unhandled error to test crash handling."));
@@ -72,6 +74,57 @@ public sealed class DeveloperView : UserControl
 
         Content = ClosablePane(new ScrollViewer { Content = root }, sp);
         this.Dyn(BackgroundProperty, "ColorChrome");
+    }
+
+    /// <summary>
+    /// The custom-theme override: <c>[Use custom theme] [saved themes ▾] [Manage themes]</c>.
+    /// The dropdown shows only when a theme is saved and stores the selection whether or not the
+    /// box is ticked; ticking with no saved themes also opens the Themes panel. The panel is
+    /// rebuilt on every navigation, so the row reads the settings once and needs no
+    /// subscription.
+    /// </summary>
+    private static Control CustomThemeRow(IServiceProvider sp)
+    {
+        var settings = sp.GetRequiredService<ISettingsService>();
+        var theme = sp.GetRequiredService<IThemeService>();
+        var nav = sp.GetRequiredService<INavigationBus>();
+        var saved = sp.GetRequiredService<ICustomThemeService>().List();
+
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+
+        var use = new CheckBox
+        {
+            Content = "Use custom theme",
+            IsChecked = settings.Current.UseCustomTheme,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        use.IsCheckedChanged += (_, _) =>
+        {
+            var on = use.IsChecked == true;
+            _ = theme.SetCustomThemeEnabledAsync(on);
+            if (on && saved.Count == 0)
+                nav.RequestNavigate("themes");
+        };
+        row.Children.Add(use);
+
+        if (saved.Count > 0)
+        {
+            var combo = new ComboBox { Width = 220, ItemsSource = saved.Select(t => t.Name).ToList() };
+            var stored = saved.ToList().FindIndex(t => t.Id == settings.Current.CustomThemeId);
+            combo.SelectedIndex = stored >= 0 ? stored : 0;
+            combo.SelectionChanged += (_, _) =>
+            {
+                var i = combo.SelectedIndex;
+                if (i >= 0 && i < saved.Count && saved[i].Id != settings.Current.CustomThemeId)
+                    _ = theme.SelectCustomThemeAsync(saved[i].Id);
+            };
+            row.Children.Add(combo);
+        }
+
+        row.Children.Add(TextButton("Manage themes", () => nav.RequestNavigate("themes")));
+
+        return WithHint(row,
+            "Replaces the Light / Dark / System choice while a theme is selected. High Contrast still wins. Turned off when Historia starts without developer mode.");
     }
 
     /// <summary>The developer-log hint: what is logged, then where — the second paragraph
