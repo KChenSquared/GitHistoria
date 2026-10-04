@@ -42,6 +42,12 @@ public sealed class TerminalControl : Control
     private IUiTimer? _blinkTimer;
     private bool _blinkOn = true;
 
+    // Keys whose press went through the Kitty encoder and are still held; a second KeyDown is a
+    // repeat, and only these keys get a release.
+    private readonly HashSet<int> _kittyKeysDown = [];
+    // The text of a key the Kitty encoder already sent, so its TextInput is not sent again.
+    private string? _swallowTextInput;
+
     private readonly RenderResourceCache<uint, IBrush> _brushes;
     private readonly RenderResourceCache<PenKey, IPen> _pens;
     private readonly RenderResourceCache<int, GlyphMetric> _glyphs;
@@ -95,6 +101,8 @@ public sealed class TerminalControl : Control
         _session = session;
         _scrollOffsetLines = 0;
         _selAnchor = _selHead = null;
+        _kittyKeysDown.Clear();
+        _swallowTextInput = null;
 
         if (_session is not null)
         {
@@ -526,12 +534,21 @@ public sealed class TerminalControl : Control
     protected override void OnLostFocus(RoutedEventArgs e)
     {
         base.OnLostFocus(e);
+        // Keys released elsewhere never reach OnKeyUp; no synthetic releases are sent.
+        _kittyKeysDown.Clear();
+        _swallowTextInput = null;
         InvalidateVisual();
     }
 
     protected override void OnTextInput(TextInputEventArgs e)
     {
         base.OnTextInput(e);
+        if (_swallowTextInput is not null && _swallowTextInput == e.Text)
+        {
+            _swallowTextInput = null;
+            e.Handled = true;
+            return;
+        }
         if (_session is null || string.IsNullOrEmpty(e.Text))
             return;
         _session.Write(System.Text.Encoding.UTF8.GetBytes(e.Text));
@@ -541,6 +558,7 @@ public sealed class TerminalControl : Control
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        _swallowTextInput = null;
         if (_session is null)
         {
             base.OnKeyDown(e);
@@ -568,6 +586,9 @@ public sealed class TerminalControl : Control
             else if (e.Key == Key.V) { _ = PasteAsync(); e.Handled = true; }
             return;
         }
+
+        if (TrySendKittyKey(e, mods))
+            return;
 
         var modes = ReadModes();
 
@@ -620,6 +641,59 @@ public sealed class TerminalControl : Control
         }
     }
 
+    /// <summary>
+    /// Sends the key through the Kitty encoder when the child has turned the protocol on. A key
+    /// that types text stays on <see cref="OnTextInput"/> (so IME, AltGr and dead keys work)
+    /// unless the child asked for every key as an escape code.
+    /// </summary>
+    private bool TrySendKittyKey(KeyEventArgs e, TerminalModifiers mods)
+    {
+        var protocol = _session!.KeyboardProtocol;
+        if (!protocol.KittyActive)
+            return false;
+
+        var textKey = IsTextKey(e.KeyModifiers, e.KeySymbol);
+        if (textKey && !protocol.ReportsAllKeys)
+            return false;
+
+        var key = ToBrowserKey(e.Key, e.KeySymbol);
+        if (key.Length == 0)
+            return false;
+
+        var id = KeyId(e);
+        var kind = _kittyKeysDown.Contains(id) ? TerminalKeyEventKind.Repeat : TerminalKeyEventKind.Press;
+        if (!_session.TryEncodeKittyKey(new TerminalKeyInput(key, ToBrowserCode(e.PhysicalKey), mods), kind, out var bytes))
+            return false;
+
+        if (bytes.Length > 0)
+        {
+            _session.Write(bytes);
+            _scrollOffsetLines = 0;
+        }
+        _kittyKeysDown.Add(id);
+        if (textKey)
+            _swallowTextInput = e.KeySymbol;
+        e.Handled = true;
+        return true;
+    }
+
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        base.OnKeyUp(e);
+        if (_session is null || !_kittyKeysDown.Remove(KeyId(e)))
+            return;
+        e.Handled = true;
+
+        if (!_session.KeyboardProtocol.ReportsEventTypes)
+            return;
+        var input = new TerminalKeyInput(ToBrowserKey(e.Key, e.KeySymbol), ToBrowserCode(e.PhysicalKey), ToModifiers(e.KeyModifiers));
+        if (_session.TryEncodeKittyKey(input, TerminalKeyEventKind.Release, out var bytes) && bytes.Length > 0)
+            _session.Write(bytes);
+    }
+
+    private static int KeyId(KeyEventArgs e)
+        => e.PhysicalKey != PhysicalKey.None ? (int)e.PhysicalKey : -1 - (int)e.Key;
+
     private TerminalModes ReadModes() => _session?.CurrentModes ?? default;
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
@@ -631,6 +705,7 @@ public sealed class TerminalControl : Control
         var isAlt = _session.ReadBuffer(v => v.IsAlternateBuffer);
         if (isAlt)
         {
+            // Legacy arrows are right under Kitty too: the protocol keeps them unless flag 8 is set.
             var key = e.Delta.Y > 0 ? TerminalKey.Up : TerminalKey.Down;
             for (var i = 0; i < 3; i++)
                 _session.Write(KeyEncoder.Encode(key, TerminalModifiers.None, ReadModes()));
@@ -878,6 +953,116 @@ public sealed class TerminalControl : Control
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// <see cref="ClaimsChord"/>, plus the chords the Kitty protocol exists to tell apart: while
+    /// the child has it on, a modified Enter, Tab, Backspace, Escape or Space goes to the child
+    /// (Ctrl+Enter in Neovim), not to an application accelerator.
+    /// </summary>
+    internal bool ClaimsChordNow(Key key, KeyModifiers modifiers)
+    {
+        if (ClaimsChord(key, modifiers))
+            return true;
+        return modifiers != KeyModifiers.None
+            && key is Key.Enter or Key.Tab or Key.Back or Key.Escape or Key.Space
+            && _session?.KeyboardProtocol.KittyActive == true;
+    }
+
+    /// <summary>
+    /// A key that types text: a printable <paramref name="keySymbol"/> with neither Ctrl nor Alt,
+    /// or with both, which is how Windows reports AltGr.
+    /// </summary>
+    internal static bool IsTextKey(KeyModifiers modifiers, string? keySymbol)
+    {
+        if (string.IsNullOrEmpty(keySymbol) || char.IsControl(keySymbol[0]))
+            return false;
+        return modifiers.HasFlag(KeyModifiers.Control) == modifiers.HasFlag(KeyModifiers.Alt);
+    }
+
+    /// <summary>
+    /// The browser <c>KeyboardEvent.key</c> name the Kitty encoder expects. Named keys map by
+    /// <paramref name="key"/>; others use a printable <paramref name="keySymbol"/>, falling back to
+    /// the US character for the key when a modifier turned the symbol into a control code.
+    /// Empty when the key has no name.
+    /// </summary>
+    internal static string ToBrowserKey(Key key, string? keySymbol)
+    {
+        var named = key switch
+        {
+            Key.Enter => "Enter",
+            Key.Tab => "Tab",
+            Key.Back => "Backspace",
+            Key.Escape => "Escape",
+            Key.Up => "ArrowUp",
+            Key.Down => "ArrowDown",
+            Key.Left => "ArrowLeft",
+            Key.Right => "ArrowRight",
+            Key.Home => "Home",
+            Key.End => "End",
+            Key.PageUp => "PageUp",
+            Key.PageDown => "PageDown",
+            Key.Insert => "Insert",
+            Key.Delete => "Delete",
+            Key.LeftShift or Key.RightShift => "Shift",
+            Key.LeftCtrl or Key.RightCtrl => "Control",
+            Key.LeftAlt or Key.RightAlt => "Alt",
+            Key.LWin or Key.RWin => "Meta",
+            Key.CapsLock => "CapsLock",
+            Key.NumLock => "NumLock",
+            Key.Scroll => "ScrollLock",
+            Key.PrintScreen => "PrintScreen",
+            Key.Pause => "Pause",
+            Key.Apps => "ContextMenu",
+            >= Key.F1 and <= Key.F24 => "F" + (key - Key.F1 + 1),
+            _ => null,
+        };
+        if (named is not null)
+            return named;
+
+        if (!string.IsNullOrEmpty(keySymbol) && !char.IsControl(keySymbol[0]))
+            return keySymbol;
+
+        if (key is >= Key.A and <= Key.Z)
+            return ((char)('a' + (key - Key.A))).ToString();
+        if (key is >= Key.D0 and <= Key.D9)
+            return ((char)('0' + (key - Key.D0))).ToString();
+        if (key is >= Key.NumPad0 and <= Key.NumPad9)
+            return ((char)('0' + (key - Key.NumPad0))).ToString();
+
+        return key switch
+        {
+            Key.Space => " ",
+            Key.OemMinus or Key.Subtract => "-",
+            Key.OemPlus => "=",
+            Key.OemOpenBrackets => "[",
+            Key.OemCloseBrackets => "]",
+            Key.OemPipe or Key.OemBackslash => "\\",
+            Key.OemSemicolon => ";",
+            Key.OemQuotes => "'",
+            Key.OemComma => ",",
+            Key.OemPeriod or Key.Decimal => ".",
+            Key.OemQuestion or Key.Divide => "/",
+            Key.OemTilde => "`",
+            Key.Multiply => "*",
+            Key.Add => "+",
+            _ => "",
+        };
+    }
+
+    /// <summary>
+    /// The browser <c>KeyboardEvent.code</c> name for a physical key. Avalonia's names follow the
+    /// same spec except letters (<c>A</c> → <c>KeyA</c>) and the numpad (<c>NumPad7</c> →
+    /// <c>Numpad7</c>). Empty when the key is unknown, which the encoder allows.
+    /// </summary>
+    internal static string ToBrowserCode(PhysicalKey key)
+    {
+        if (key == PhysicalKey.None)
+            return "";
+        if (key is >= PhysicalKey.A and <= PhysicalKey.Z)
+            return "Key" + (char)('A' + (key - PhysicalKey.A));
+        var name = key.ToString();
+        return name.StartsWith("NumPad", StringComparison.Ordinal) ? "Numpad" + name[6..] : name;
     }
 
     // ── small helpers ───────────────────────────────────────────────────────────────────────
