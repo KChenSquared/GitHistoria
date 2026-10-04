@@ -1,7 +1,7 @@
 {
   "repos": {
     "linux": {
-      "head": "4d7d9486c04d917265f64c55bd23b2cc4fe7749c",
+      "head": "a74306e2e676f9775457366fc047a660fbf02f26",
       "diff": {
         "commit": "91c93c090dfc58a3dcc97bb5e43b27892e043e9f",
         "path": "drivers/gpu/drm/amd/include/asic_reg/gc/gc_12_1_0_sh_mask.h"
