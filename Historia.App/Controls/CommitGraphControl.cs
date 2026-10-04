@@ -377,7 +377,8 @@ public sealed partial class CommitGraphControl : Control
     // Every string the render path draws, shaped once. Keyed by brush reference, so a palette
     // swap can never reuse a stale-coloured layout; cleared (and disposed) on a theme change.
     private readonly ShapedTextCache _textCache = new(TextCacheCapacity);
-    // Builds by any Pooled(...) pool since the last reset: zero on a repeat frame.
+    // Builds by any Pooled(...) pool or the elbow geometry cache since the last reset: zero on
+    // a repeat frame.
     private int _poolMisses;
     // Reused every frame to merge vertical lane pieces into runs (counts its growths).
     private readonly LaneRunBuilder _laneRuns = new();
@@ -1578,13 +1579,14 @@ public sealed partial class CommitGraphControl : Control
 
     // every per-lane-colour Pen/Brush is memoised in its own dictionary (all cleared
     // together by RebuildThemeResources on a theme change). One shape: look it up, else build
-    // it once and cache. The build lambda runs only on a miss, which is counted.
-    private T Pooled<T>(Dictionary<int, T> pool, int colorIndex, Func<int, T> build)
+    // it once and cache. The build lambda runs only on a miss, which is counted. Builders are
+    // static lambdas handed the control, so a hit allocates no delegate.
+    private T Pooled<T>(Dictionary<int, T> pool, int colorIndex, Func<CommitGraphControl, int, T> build)
     {
         if (pool.TryGetValue(colorIndex, out var v))
             return v;
         _poolMisses++;
-        return pool[colorIndex] = build(colorIndex);
+        return pool[colorIndex] = build(this, colorIndex);
     }
 
     // Lane and emphasis pens use a square cap: each piece overhangs its ends by half the pen
@@ -1592,41 +1594,41 @@ public sealed partial class CommitGraphControl : Control
     // fractional y, where anti-aliasing would leave a faint seam. The overhang at a line's
     // real end sits under its commit dot or is clipped by the row area.
     private Pen LanePen(int colorIndex) => Pooled(_lanePens, colorIndex,
-        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), LaneStrokeWidth, lineCap: PenLineCap.Square));
+        static (g, i) => new Pen(new SolidColorBrush(ToColor(g.LaneRgb(i))), LaneStrokeWidth, lineCap: PenLineCap.Square));
 
     /// <summary>a thin, faint version of the lane colour for a non-HEAD badge→node
     /// connector. 1 DIP at 45% alpha — the crisp, stable equivalent of "thin and faint" (a
     /// sub-pixel stroke rounds away under layout rounding).</summary>
-    private Pen FaintConnectorPen(int colorIndex) => Pooled(_faintConnectorPens, colorIndex, i =>
+    private Pen FaintConnectorPen(int colorIndex) => Pooled(_faintConnectorPens, colorIndex, static (g, i) =>
     {
-        var c = LaneRgb(i);
+        var c = g.LaneRgb(i);
         return new Pen(new SolidColorBrush(AvColor.FromArgb(0x73, c.R, c.G, c.B)), 1.0);
     });
 
     private SolidColorBrush LaneBrush(int colorIndex) => Pooled(_laneBrushes, colorIndex,
-        i => new SolidColorBrush(ToColor(LaneRgb(i))));
+        static (g, i) => new SolidColorBrush(ToColor(g.LaneRgb(i))));
 
     private Pen EmphPen(int colorIndex) => Pooled(_emphPens, colorIndex,
-        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 3.0, lineCap: PenLineCap.Square));
+        static (g, i) => new Pen(new SolidColorBrush(ToColor(g.LaneRgb(i))), 3.0, lineCap: PenLineCap.Square));
 
     /// <summary>the badge is a solid opaque lane-colour fill, so its label and icons
     /// need ink that contrasts against that hue — near-black on a light badge, near-white on a
     /// dark one. Two shared brush instances keep <see cref="Text"/>'s cache keying correct.</summary>
     private SolidColorBrush BadgeInk(int colorIndex) => Pooled(_badgeInk, colorIndex,
-        i => GraphLanePalette.PrefersDarkInk(LaneRgb(i)) ? _badgeInkDark : _badgeInkLight);
+        static (g, i) => GraphLanePalette.PrefersDarkInk(g.LaneRgb(i)) ? g._badgeInkDark : g._badgeInkLight);
 
     private Pen PillBorder(int colorIndex) => Pooled(_pillBorders, colorIndex,
-        i => new Pen(new SolidColorBrush(ToColor(LaneRgb(i))), 1.5));
+        static (g, i) => new Pen(new SolidColorBrush(ToColor(g.LaneRgb(i))), 1.5));
 
-    private SolidColorBrush LaneFill(int colorIndex) => Pooled(_laneFills, colorIndex, i =>
+    private SolidColorBrush LaneFill(int colorIndex) => Pooled(_laneFills, colorIndex, static (g, i) =>
     {
-        var c = LaneRgb(i);
-        byte a = _themeMode == EffectiveTheme.Light ? (byte)0x2E : (byte)0x3A;
+        var c = g.LaneRgb(i);
+        byte a = g._themeMode == EffectiveTheme.Light ? (byte)0x2E : (byte)0x3A;
         return new SolidColorBrush(AvColor.FromArgb(a, c.R, c.G, c.B));
     });
 
     private SolidColorBrush LaneTick(int colorIndex) => Pooled(_laneTicks, colorIndex,
-        i => new SolidColorBrush(ToColor(LaneRgb(i))));
+        static (g, i) => new SolidColorBrush(ToColor(g.LaneRgb(i))));
 
     // ── Layout / arrange ──
 
@@ -3892,6 +3894,7 @@ public sealed partial class CommitGraphControl : Control
     {
         if (_elbowGeometryCache.TryGetValue((laneDelta, kind), out var cached))
             return cached;
+        _poolMisses++;
 
         var geo = new StreamGeometry();
         var dx = laneDelta * _laneWidth;
