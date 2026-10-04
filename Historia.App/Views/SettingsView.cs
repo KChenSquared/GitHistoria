@@ -76,7 +76,8 @@ public sealed class SettingsView : UserControl, IDisposable
         _root.Children.Add(Text("Settings", "ColorText", 24, FontWeight.SemiBold));
 
         // ── Appearance ──
-        _root.Children.Add(Section("Appearance"));
+        _root.Children.Add(WithHint(Section("Appearance"),
+            "Graph columns are set in Repository settings: click the cog in the graph's GRAPH header."));
         var themeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         foreach (var m in new[] { ThemeMode.Light, ThemeMode.Dark, ThemeMode.System })
         {
@@ -98,7 +99,7 @@ public sealed class SettingsView : UserControl, IDisposable
             var pick = savedThemes.FirstOrDefault(t => t.Id == stored)?.Id ?? savedThemes[0].Id;
             _ = _theme.ApplyCustomThemeAsync(pick);
         }, primary: _theme.CurrentMode == ThemeMode.Custom));
-        _root.Children.Add(themeRow);
+        _root.Children.Add(LabeledRow("Theme", themeRow));
 
         if (_theme.CurrentMode == ThemeMode.Custom)
         {
@@ -120,18 +121,21 @@ public sealed class SettingsView : UserControl, IDisposable
             customRow.Children.Add(TextButton("Manage themes", () => _nav.RequestNavigate("themes")));
             _root.Children.Add(customRow);
         }
-        _root.Children.Add(Check("High Contrast mode", _theme.HighContrastEnabled, v => _ = _theme.SetHighContrastAsync(v)));
-        _root.Children.Add(Check("Multi-line repository tabs", c.EnableMultiLineTabs,
-            v => _ = _cfg.UpdateAsync(s => s with { EnableMultiLineTabs = v })));
+        _root.Children.Add(WithHint(Check("High contrast", _theme.HighContrastEnabled, v => _ = _theme.SetHighContrastAsync(v)),
+            "Overrides every other theme. Also turns on when Windows high contrast is on."));
+        _root.Children.Add(WithHint(Check("Wrap tabs onto more rows", c.EnableMultiLineTabs,
+            v => _ = _cfg.UpdateAsync(s => s with { EnableMultiLineTabs = v })),
+            "When tabs don't fit, they wrap to a new row instead of scrolling."));
         if (c.EnableMultiLineTabs)
         {
             var maxRows = new NumericUpDown { Minimum = 2, Maximum = 5, Value = c.MaxTabRows, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
             WireNumericCommit(maxRows, c.MaxTabRows, v => Math.Clamp(v, 2, 5),
                 next => _ = _cfg.UpdateAsync(s => s with { MaxTabRows = next }));
-            _root.Children.Add(LabeledRow("Max tab rows", maxRows));
+            _root.Children.Add(LabeledRow("Maximum rows", maxRows));
         }
-        _root.Children.Add(Check("Fixed-width repository tabs", c.TabWidthMode == TabWidthMode.Fixed,
-            v => _ = _cfg.UpdateAsync(s => s with { TabWidthMode = v ? TabWidthMode.Fixed : TabWidthMode.Dynamic })));
+        _root.Children.Add(WithHint(Check("Fixed tab width", c.TabWidthMode == TabWidthMode.Fixed,
+            v => _ = _cfg.UpdateAsync(s => s with { TabWidthMode = v ? TabWidthMode.Fixed : TabWidthMode.Dynamic })),
+            "When off, each tab fits its name, up to about 25 characters."));
         if (c.TabWidthMode == TabWidthMode.Fixed)
         {
             var tabLen = new NumericUpDown
@@ -148,16 +152,12 @@ public sealed class SettingsView : UserControl, IDisposable
                 next => _ = _cfg.UpdateAsync(s => s with { FixedTabWidth = next }));
             _root.Children.Add(LabeledRow("Tab width (px)", tabLen));
         }
-        else
-        {
-            _root.Children.Add(Muted("Tabs shrink to fit short repository names and grow up to ~25 characters for longer ones."));
-        }
-        _root.Children.Add(Muted("Graph-panel columns are configured per repository — the wrench on a repo tab."));
-        _root.Children.Add(WithCaption(Check("Show author date instead of commit date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })), "The graph is always sorted by commit date. This only changes which date the Date column and commit details show."));
+        _root.Children.Add(WithHint(Check("Show author date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })),
+            "Shows when a commit was written, not when it was committed. The graph stays sorted by commit date."));
 
         // Mouse-wheel / trackpad scroll direction for the graph and the tab strip.
         var wheelDir = new ComboBox { Width = 220 };
-        wheelDir.Items.Add(new ComboBoxItem { Content = "Match system (natural / inverted)", Tag = WheelScrollDirection.Auto });
+        wheelDir.Items.Add(new ComboBoxItem { Content = "Match system", Tag = WheelScrollDirection.Auto });
         wheelDir.Items.Add(new ComboBoxItem { Content = "Standard", Tag = WheelScrollDirection.Standard });
         wheelDir.Items.Add(new ComboBoxItem { Content = "Inverted", Tag = WheelScrollDirection.Inverted });
         wheelDir.SelectedIndex = c.WheelScrollDirection switch
@@ -171,52 +171,55 @@ public sealed class SettingsView : UserControl, IDisposable
             if ((wheelDir.SelectedItem as ComboBoxItem)?.Tag is WheelScrollDirection wd)
                 _ = _cfg.UpdateAsync(s => s with { WheelScrollDirection = wd });
         };
-        _root.Children.Add(LabeledRow("Scroll direction", wheelDir));
-        _root.Children.Add(Muted("Windows always scrolls standard. On macOS and Linux, \"Match system\" follows the OS natural-scroll setting."));
-        _root.Children.Add(WithCaption(Check("Store a local repository cache", c.PersistRepoCache,
+        _root.Children.Add(WithHint(LabeledRow("Scroll direction", wheelDir),
+            "Applies to the graph and the tab strip. On Windows, Match system is always Standard."));
+        _root.Children.Add(WithHint(Check("Cache sidebar between launches", c.PersistRepoCache,
             v =>
             {
                 _ = _cfg.UpdateAsync(s => s with { PersistRepoCache = v });
                 if (!v)
                     _repoCache.WipeAll(); // turning it off also clears what's on disk
             }),
-            "Caches this repository's local branches, remotes, tags, stashes, submodules and worktrees so the sidebar appears instantly on the next launch. The real data is still read from Git and replaces it."));
+            "Saves each repository's branches, tags, stashes and more so the sidebar appears instantly, then refreshes from Git. Turning it off deletes the cache."));
 
         // ── Privacy & Network ──
-        _root.Children.Add(Section("Privacy & Network"));
-        _root.Children.Add(Muted("Network routing is per repository — pick an identity, and toggle \"SSH only\", in that repository's settings (the cog in the graph's GRAPH column header, or right-click that header)."));
-        _root.Children.Add(Check("Automatically fetch open repositories", c.AutoFetchEnabled,
-            v => _ = _cfg.UpdateAsync(s => s with { AutoFetchEnabled = v })));
-        _root.Children.Add(Muted("Periodically runs “git fetch” on every open repository (about every 5 minutes plus 1 minute per open tab)."));
+        _root.Children.Add(WithHint(Section("Privacy & Network"),
+            "Identity and SSH-only are set per repository, in Repository settings."));
+        _root.Children.Add(WithHint(Check("Auto-fetch open repositories", c.AutoFetchEnabled,
+            v => _ = _cfg.UpdateAsync(s => s with { AutoFetchEnabled = v })),
+            "Fetches each open repository in turn: a 5-minute pause, then one repository a minute. Turn off to stop all background network traffic."));
 
-        // ── Diff & Editor ──
-        _root.Children.Add(Section("Diff & Editor"));
+        // ── Diff viewer ──
+        _root.Children.Add(Section("Diff viewer"));
         var diffView = new ComboBox { Width = 160 };
         diffView.Items.Add(new ComboBoxItem { Content = "Unified", Tag = DiffViewMode.Unified });
-        diffView.Items.Add(new ComboBoxItem { Content = "Side-by-Side", Tag = DiffViewMode.SideBySide });
+        diffView.Items.Add(new ComboBoxItem { Content = "Side by side", Tag = DiffViewMode.SideBySide });
         diffView.SelectedIndex = c.DefaultDiffView == DiffViewMode.SideBySide ? 1 : 0;
         diffView.SelectionChanged += (_, _) =>
         {
             if ((diffView.SelectedItem as ComboBoxItem)?.Tag is DiffViewMode dv)
                 _ = _cfg.UpdateAsync(s => s with { DefaultDiffView = dv });
         };
-        _root.Children.Add(LabeledRow("Default diff view", diffView));
+        _root.Children.Add(WithHint(LabeledRow("Layout", diffView),
+            "Also changes when you switch layout in the diff viewer."));
         var ctxLines = new NumericUpDown { Minimum = 0, Maximum = 20, Value = c.DiffContextLines, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
         WireNumericCommit(ctxLines, c.DiffContextLines, v => v,
             next => _ = _cfg.UpdateAsync(s => s with { DiffContextLines = next }));
-        _root.Children.Add(LabeledRow("Context lines", ctxLines));
-        _root.Children.Add(Check("Word-wrap diff lines", c.DiffWordWrap,
-            v => _ = _cfg.UpdateAsync(s => s with { DiffWordWrap = v })));
+        _root.Children.Add(WithHint(LabeledRow("Context lines", ctxLines),
+            "Unchanged lines shown around each change."));
+        _root.Children.Add(WithHint(Check("Wrap long lines", c.DiffWordWrap,
+            v => _ = _cfg.UpdateAsync(s => s with { DiffWordWrap = v })),
+            "Unified layout only."));
 
         // ── Issue autolinks ──
-        _root.Children.Add(Section("Issue autolinks"));
-        _root.Children.Add(Muted("Turn issue keys in commit messages into links. $1, $2… are the regex capture groups."));
+        _root.Children.Add(WithHint(Section("Issue autolinks"),
+            "Turns issue keys in commit messages into links. In the URL, $1, $2… insert the pattern's capture groups."));
         for (var i = 0; i < c.IssueAutolinks.Count; i++)
         {
             var idx = i;
             var rule = c.IssueAutolinks[idx];
-            var pat = new TextBox { Text = rule.Pattern, Watermark = "pattern (regex)", Width = 200 };
-            var url = new TextBox { Text = rule.UrlTemplate, Watermark = "URL template", Width = 300 };
+            var pat = new TextBox { Text = rule.Pattern, Watermark = "Pattern (regex)", Width = 200 };
+            var url = new TextBox { Text = rule.UrlTemplate, Watermark = "Link URL ($1 = first group)", Width = 300 };
             pat.LostFocus += (_, _) => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks.Select((r, j) => j == idx ? r with { Pattern = pat.Text ?? "" } : r)] });
             url.LostFocus += (_, _) => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks.Select((r, j) => j == idx ? r with { UrlTemplate = url.Text ?? "" } : r)] });
             var rm = TextButton("Remove", () => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks.Where((_, j) => j != idx)] }));
@@ -228,12 +231,14 @@ public sealed class SettingsView : UserControl, IDisposable
 
         // ── Git ──
         _root.Children.Add(Section("Git"));
-        _root.Children.Add(Check("Prune deleted remote branches on fetch", c.PruneOnFetch, v => _ = _cfg.UpdateAsync(s => s with { PruneOnFetch = v })));
-        _root.Children.Add(Check("Pull with rebase by default", c.PullWithRebase, v => _ = _cfg.UpdateAsync(s => s with { PullWithRebase = v })));
-        _root.Children.Add(Check("Reopen previous repository tabs on launch", c.RestoreSessionTabs, v => _ = _cfg.UpdateAsync(s => s with { RestoreSessionTabs = v })));
-        _root.Children.Add(WithCaption(Check("Use custom stash names", c.UseCustomStashNames,
+        _root.Children.Add(WithHint(Check("Prune deleted remote branches on fetch", c.PruneOnFetch, v => _ = _cfg.UpdateAsync(s => s with { PruneOnFetch = v })),
+            "On fetch and pull, removes remote branches that no longer exist on the server. Your local branches aren't touched."));
+        _root.Children.Add(WithHint(Check("Pull with rebase", c.PullWithRebase, v => _ = _cfg.UpdateAsync(s => s with { PullWithRebase = v })),
+            "Puts your local commits on top of the remote ones instead of creating a merge commit."));
+        _root.Children.Add(Check("Reopen tabs on launch", c.RestoreSessionTabs, v => _ = _cfg.UpdateAsync(s => s with { RestoreSessionTabs = v })));
+        _root.Children.Add(WithHint(Check("Ask for a stash message", c.UseCustomStashNames,
             v => _ = _cfg.UpdateAsync(s => s with { UseCustomStashNames = v })),
-            "When on, the \"Stash all\" buttons ask you for a message. When off, they name the stash \"Stash of <branch>\"."));
+            "When off, the Stash button names the stash \"Stash of <branch>\"."));
 
         // ── Terminal — collapsed ──
         var termBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
@@ -250,17 +255,18 @@ public sealed class SettingsView : UserControl, IDisposable
             }
         });
         var shellRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        shellRow.Children.Add(Text("Shell path", "ColorText", 13));
+        shellRow.Children.Add(Text("Shell", "ColorText", 13));
         shellRow.Children.Add(shellPath);
         shellRow.Children.Add(browse);
         termBody.Children.Add(shellRow);
 
-        var shellArgs = new TextBox { Text = string.Join(' ', c.TerminalShellArgs), Watermark = "(space separated)", Width = 360, HorizontalAlignment = HorizontalAlignment.Left };
+        var shellArgs = new TextBox { Text = string.Join(' ', c.TerminalShellArgs), Watermark = "Separated by spaces", Width = 360, HorizontalAlignment = HorizontalAlignment.Left };
         shellArgs.LostFocus += (_, _) => _ = _cfg.UpdateAsync(s => s with
         {
             TerminalShellArgs = shellArgs.Text?.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [],
         });
-        termBody.Children.Add(LabeledRow("Shell arguments", shellArgs));
+        termBody.Children.Add(WithHint(LabeledRow("Shell arguments", shellArgs),
+            "Quotes aren't supported — each space starts a new argument."));
 
         var fontFamily = new TextBox { Text = c.TerminalFontFamily ?? "", Watermark = OperatingSystem.IsWindows() ? "Cascadia Mono, Consolas" : "platform monospace", Width = 280, HorizontalAlignment = HorizontalAlignment.Left };
         fontFamily.LostFocus += (_, _) => _ = _cfg.UpdateAsync(s => s with { TerminalFontFamily = string.IsNullOrWhiteSpace(fontFamily.Text) ? null : fontFamily.Text.Trim() });
@@ -283,12 +289,12 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         WireNumericCommit(scrollback, c.TerminalScrollbackLines, AppSettings.ClampTerminalScrollback,
             next => _ = _cfg.UpdateAsync(s => s with { TerminalScrollbackLines = next }));
-        termBody.Children.Add(WithCaption(LabeledRow("Scrollback lines", scrollback),
-            "Memory ≈ lines × columns × ~8 bytes, per session — a 5,000-line buffer on a 120-column grid is ~5 MB, and this multiplies by the number of open terminal sessions."));
-        termBody.Children.Add(WithCaption(Check("Enhanced keyboard (Kitty protocol)", c.TerminalKittyKeyboard,
+        termBody.Children.Add(WithHint(LabeledRow("Scrollback (lines)", scrollback),
+            "Lines kept above the screen. 5,000 lines take about 5 MB per open terminal."));
+        termBody.Children.Add(WithHint(Check("Enhanced keyboard (Kitty protocol)", c.TerminalKittyKeyboard,
             v => _ = _cfg.UpdateAsync(s => s with { TerminalKittyKeyboard = v })),
             "Lets editors such as Neovim and Helix tell apart keys like Ctrl+Enter and Shift+Enter. Applies to new terminals."));
-        termBody.Children.Add(WithCaption(Check("Allow programs to copy to the clipboard (OSC 52)", c.TerminalAllowClipboardWrite,
+        termBody.Children.Add(WithHint(Check("Allow programs to copy to the clipboard (OSC 52)", c.TerminalAllowClipboardWrite,
             v => _ = _cfg.UpdateAsync(s => s with { TerminalAllowClipboardWrite = v })),
             "Lets copy in Vim or tmux reach the system clipboard, including over SSH. Programs can never read the clipboard."));
 
@@ -302,26 +308,24 @@ public sealed class SettingsView : UserControl, IDisposable
                 _ = _cfg.UpdateAsync(s => s with { TerminalCursorStyle = st });
         };
         termBody.Children.Add(LabeledRow("Cursor style", cursorStyle));
-        termBody.Children.Add(Check("Blink the cursor", c.TerminalCursorBlink, v => _ = _cfg.UpdateAsync(s => s with { TerminalCursorBlink = v })));
+        termBody.Children.Add(Check("Blinking cursor", c.TerminalCursorBlink, v => _ = _cfg.UpdateAsync(s => s with { TerminalCursorBlink = v })));
 
         AddCollapsibleSection("Terminal", termBody, () => _terminalExpanded, v => _terminalExpanded = v);
-
-        // Profiles & Accounts moved to its own page (route "profiles"), opened from the app
-        // menu's Profile ▸ Manage profiles… entry — see ProfilesView.
 
         // ── Advanced (collapsed) ──
         var advBody = new StackPanel { Spacing = 8 };
 
-        advBody.Children.Add(Check("Show the splash screen on launch", c.ShowSplashScreen,
-            v => _ = _cfg.UpdateAsync(s => s with { ShowSplashScreen = v })));
+        advBody.Children.Add(WithHint(Check("Show splash screen", c.ShowSplashScreen,
+            v => _ = _cfg.UpdateAsync(s => s with { ShowSplashScreen = v })),
+            "A custom theme uses its own splash instead."));
 
-        advBody.Children.Add(WithCaption(Check("Read graph metadata from disk instead of memory", c.GraphMetadataFromDisk,
+        advBody.Children.Add(WithHint(Check("Keep commit details on disk", c.GraphMetadataFromDisk,
             v => _ = _cfg.UpdateAsync(s => s with { GraphMetadataFromDisk = v })),
-            "Pages commit metadata (messages, author, dates) from the local cache folder to minimize memory usage on large repositories. Applies after restart of Historia."));
+            "Reads commit messages, authors and dates from a disk cache to save memory on large repositories. Takes effect after restart."));
 
-        advBody.Children.Add(WithCaption(Check("Splice new commits into the graph cache instead of re-walking (large repositories, experimental)", c.EnableGraphSplice,
+        advBody.Children.Add(WithHint(Check("Fast graph updates (experimental)", c.EnableGraphSplice,
             v => _ = _cfg.UpdateAsync(s => s with { EnableGraphSplice = v })),
-            "Applies after restart of Historia."));
+            "On large repositories, adds new commits to the saved graph instead of rebuilding it. Takes effect after restart."));
 
         var silentCrawlCap = new NumericUpDown
         {
@@ -335,8 +339,8 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         WireNumericCommit(silentCrawlCap, c.SilentCrawlRowCap, AppSettings.ClampSilentCrawlRowCap,
             next => _ = _cfg.UpdateAsync(s => s with { SilentCrawlRowCap = next }));
-        advBody.Children.Add(WithCaption(LabeledRow("Background auto-load row cap", silentCrawlCap),
-            "How many rows the graph silently pre-loads in the background after first paint, and loads another this many each time you scroll past them. 0 means uncapped. Applies after restart of Historia."));
+        advBody.Children.Add(WithHint(LabeledRow("Background preload (rows)", silentCrawlCap),
+            "Rows loaded in the background after the graph opens, and again each time you scroll past them. 0 = no limit. Takes effect after restart."));
 
         var residentRowCap = new NumericUpDown
         {
@@ -350,11 +354,11 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         WireResidentRowCapCommit(residentRowCap, c.ResidentRowCap, _dialogs,
             next => _cfg.UpdateAsync(s => s with { ResidentRowCap = next }));
-        advBody.Children.Add(WithCaption(LabeledRow("Resident row cap", residentRowCap),
-            "The absolute ceiling on how many rows the graph will keep resident for one repository, regardless of scrolling. Applies after restart of Historia."));
+        advBody.Children.Add(WithHint(LabeledRow("Max rows in memory", residentRowCap),
+            "Most rows the graph keeps loaded per repository. Only used when commit details are on disk; otherwise 500,000. Takes effect after restart."));
         advBody.Margin = new Thickness(0, 10, 0, 0);
 
-        AddCollapsibleSection("Advanced settings", advBody, () => _advExpanded, v => _advExpanded = v);
+        AddCollapsibleSection("Advanced", advBody, () => _advExpanded, v => _advExpanded = v);
     }
 
     /// <summary>
@@ -510,16 +514,6 @@ public sealed class SettingsView : UserControl, IDisposable
         }, handledEventsToo: true);
     }
 
-    private static Control Muted(string text) { var t = Text(text, "ColorTextMuted", 11); t.TextWrapping = TextWrapping.Wrap; return t; }
-
-    private static Control WithCaption(Control control, string caption)
-    {
-        var panel = new StackPanel { Spacing = 2 };
-        panel.Children.Add(control);
-        panel.Children.Add(Muted(caption));
-        return panel;
-    }
-
     private static Control Check(string label, bool value, Action<bool> onChange, bool enabled = true)
     {
         var cb = new CheckBox { Content = label, IsChecked = value, IsEnabled = enabled };
@@ -609,8 +603,8 @@ public sealed class RepoSettingsView : UserControl, IDisposable
         if (ctx is not null)
         {
             // ── Identity ──
-            _root.Children.Add(Text("Identity", "ColorTextMuted", 13, FontWeight.SemiBold));
-            _root.Children.Add(Text("Git author and signing identity used for commits in this repository.", "ColorTextMuted", 11));
+            _root.Children.Add(WithHint(Text("Identity", "ColorTextMuted", 13, FontWeight.SemiBold),
+                "Name, email and signing key used for commits in this repository."));
 
             var key = ctx.IdentityKey;
             string label;
@@ -650,16 +644,12 @@ public sealed class RepoSettingsView : UserControl, IDisposable
                 Cursor = new Cursor(StandardCursorType.Hand),
             };
             sshOnly.IsCheckedChanged += (_, _) => _ = OnSshOnlyToggledAsync(sshOnly.IsChecked == true, ctx);
-            _root.Children.Add(sshOnly);
-            var sshDesc = Text("Force SSH for fetch / push / pull; never fall back to HTTPS.", "ColorTextMuted", 11);
-            sshDesc.TextWrapping = TextWrapping.Wrap;
-            _root.Children.Add(sshDesc);
+            _root.Children.Add(WithHint(sshOnly,
+                "Fetch, pull and push always use SSH, even for HTTPS remotes. HTTPS is never tried."));
         }
 
-        _root.Children.Add(Text("Graph columns", "ColorTextMuted", 13, FontWeight.SemiBold));
-        var hint = Text("Order and visibility apply to every repository. Widths are per repository — drag the column headers — and reset on every launch.", "ColorTextMuted", 11);
-        hint.TextWrapping = TextWrapping.Wrap;
-        _root.Children.Add(hint);
+        _root.Children.Add(WithHint(Text("Graph columns", "ColorTextMuted", 13, FontWeight.SemiBold),
+            "Order and visibility apply to all repositories. Widths are per repository and reset on restart."));
 
         // the editor works on the application-wide column set and shows even with no repo.
         var columns = _repoLayout.GlobalColumns;

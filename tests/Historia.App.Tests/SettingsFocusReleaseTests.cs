@@ -143,7 +143,7 @@ public sealed class SettingsFocusReleaseTests
     {
         var (view, window, box) = CreateView();
         var otherBox = view.GetVisualDescendants().OfType<TextBox>()
-            .FirstOrDefault(t => t.Watermark == "(space separated)") // the shell-args field
+            .FirstOrDefault(t => t.Watermark == "Separated by spaces") // the shell-args field
             ?? throw new InvalidOperationException("Terminal shell args TextBox not found.");
 
         ClickOn(window, box);

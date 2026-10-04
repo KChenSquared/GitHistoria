@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>
 /// Developer-only tools panel. Only routed to when <see cref="Historia.Platform.DevMode"/>
@@ -9,111 +9,90 @@ public sealed class DeveloperView : UserControl
     public DeveloperView(IServiceProvider sp)
     {
         var root = new StackPanel { Spacing = 18, Margin = new Thickness(32), MaxWidth = 640 };
-        root.Children.Add(Text("Developer", "ColorText", 24, FontWeight.SemiBold));
-        root.Children.Add(Text("Internal tools. Not shown in release builds.", "ColorTextMuted", 13));
+        root.Children.Add(WithHint(Text("Developer", "ColorText", 24, FontWeight.SemiBold),
+            "Shown only when an enableDevMode file is next to Historia.exe."));
 
-        var throwBtn = TextButton("Throw test exception", () =>
-            throw new InvalidOperationException("Developer panel: deliberate test exception."));
-        throwBtn.HorizontalAlignment = HorizontalAlignment.Left;
-        root.Children.Add(throwBtn);
+        root.Children.Add(WithHint(TextButton("Throw test exception", () =>
+            throw new InvalidOperationException("Developer panel: deliberate test exception.")),
+            "Throws an unhandled error to test crash handling."));
 
-        var commitAlert = TextButton("Show commit alert", () =>
+        root.Children.Add(WithHint(TextButton("Show sample toast", () =>
             sp.GetRequiredService<INotificationService>().Publish(
-                NotificationSeverity.Success, "Commit created."));
-        commitAlert.HorizontalAlignment = HorizontalAlignment.Left;
-        root.Children.Add(commitAlert);
-        root.Children.Add(Text(
-            "Fires a sample success toast — no Copy button, auto-dismisses after 2 s.",
-            "ColorTextMuted", 12));
+                NotificationSeverity.Success, "Commit created.")),
+            "Shows a success toast. It closes after 2 s and has no Copy button."));
 
-        var perf = new CheckBox { Content = "Enable performance logging", IsChecked = PerfLog.Enabled };
+        var perf = new CheckBox { Content = "Performance log", IsChecked = PerfLog.Enabled };
         perf.IsCheckedChanged += (_, _) => PerfLog.Enabled = perf.IsChecked == true;
-        root.Children.Add(perf);
-        root.Children.Add(Text($"Appended to {PerfLog.LogPath}", "ColorTextMuted", 12));
+        root.Children.Add(WithHint(perf,
+            $"Records startup and repository-open timings to {PerfLog.LogPath}. Stays on across launches; also on when HISTORIA_PERF is set."));
 
-        var devLog = new CheckBox { Content = "Enable developer log", IsChecked = AppLog.Enabled };
-        var devLogPath = Text(DevLogCaption(), "ColorTextMuted", 12);
+        var devLog = new CheckBox { Content = "Developer log", IsChecked = AppLog.Enabled };
+        var devLogRow = WithHint(devLog, DevLogHint());
         devLog.IsCheckedChanged += (_, _) =>
         {
             AppLog.Enabled = devLog.IsChecked == true;
-            devLogPath.Text = DevLogCaption();
+            SetHintText(devLogRow, DevLogHint());
         };
-        root.Children.Add(devLog);
-        root.Children.Add(devLogPath);
-        root.Children.Add(Text(
-            "Records unhandled and surfaced errors, every git operation and git CLI call with its "
-            + "outcome, and repo open/close. Terminal I/O is not logged. One file per session in the "
-            + "logs folder; the newest 10 are kept. Also on when the HISTORIA_LOG env var is set.",
-            "ColorTextMuted", 12));
+        root.Children.Add(devLogRow);
 
         var openLogs = TextButton("Open logs folder", () =>
             sp.GetRequiredService<IExternalLauncher>().OpenFolder(AppPaths.LogsDirectory));
         openLogs.HorizontalAlignment = HorizontalAlignment.Left;
         root.Children.Add(openLogs);
 
-        static string DevLogCaption() => AppLog.Enabled
-            ? $"Writing to {AppLog.CurrentLogPath}"
-            : $"Saved under {AppPaths.LogsDirectory} when enabled";
-
         var afViz = new CheckBox
         {
-            Content = "Auto-fetch visuals (tab colour bars)",
+            Content = "Show auto-fetch status on tabs",
             IsChecked = Historia.Platform.AutoFetchDebug.Enabled,
         };
         afViz.IsCheckedChanged += (_, _) => Historia.Platform.AutoFetchDebug.Enabled = afViz.IsChecked == true;
-        root.Children.Add(afViz);
-        root.Children.Add(Text(
-            "Draws a 4 px bar on the left of each app-band tab: red = auto-fetch loop not started, "
-            + "yellow = started but this repo not fetched this cycle, green = fetched this cycle.",
-            "ColorTextMuted", 12));
+        root.Children.Add(WithHint(afViz,
+            "Adds a colour bar to each tab: red = auto-fetch not running, yellow = not fetched yet this round, green = fetched this round."));
 
-        var wipe = TextButton("Wipe persisted graph cache", () =>
+        root.Children.Add(WithHint(TextButton("Clear graph cache", () =>
         {
             var removed = sp.GetRequiredService<IGraphLayoutService>().ClearPersistentCache();
             sp.GetRequiredService<INotificationService>().Publish(
                 NotificationSeverity.Success,
                 removed == 0 ? "No persisted graph cache to remove." : $"Removed {removed} cached graph file(s).");
-        });
-        wipe.HorizontalAlignment = HorizontalAlignment.Left;
-        root.Children.Add(wipe);
-        root.Children.Add(Text(
-            "Deletes the on-disk graph walk cache; the next repo open re-walks from scratch.",
-            "ColorTextMuted", 12));
+        }), "Deletes saved graph layouts. Each repository rebuilds its graph next time it opens."));
 
-        var wipeRepo = TextButton("Wipe persisted repo cache", () =>
+        root.Children.Add(WithHint(TextButton("Clear sidebar cache", () =>
         {
             var removed = sp.GetRequiredService<IRepoStateCache>().WipeAll();
             sp.GetRequiredService<INotificationService>().Publish(
                 NotificationSeverity.Success,
                 removed == 0 ? "No persisted repo cache to remove." : $"Removed {removed} cached repo file(s).");
-        });
-        wipeRepo.HorizontalAlignment = HorizontalAlignment.Left;
-        root.Children.Add(wipeRepo);
-        root.Children.Add(Text(
-            "Deletes the on-disk repo-state cache (branches, tags, stashes, submodules, worktrees); the next repo open re-enumerates.",
-            "ColorTextMuted", 12));
+        }), "Deletes saved sidebar data (branches, tags, stashes, submodules, worktrees). It's rebuilt from Git next time."));
 
-        var wipeAll = TextButton("Wipe all Historia local data", () => _ = WipeAllAsync(sp));
-        wipeAll.HorizontalAlignment = HorizontalAlignment.Left;
-        wipeAll.Margin = new Thickness(0, 8, 0, 0);
-        root.Children.Add(wipeAll);
-        root.Children.Add(Text(
-            "Deletes every Historia setting, profile, repo binding, theme, session, cache file and log " +
-            "from both state folders. Irreversible; restart Historia afterwards.",
-            "ColorTextMuted", 12));
+        var deleteAll = WithHint(TextButton("Delete all Historia data", () => _ = DeleteAllAsync(sp)),
+            "Deletes all settings, profiles, themes, sessions, caches and logs. Can't be undone. Restart Historia afterwards.");
+        deleteAll.Margin = new Thickness(0, 8, 0, 0);
+        root.Children.Add(deleteAll);
 
         Content = ClosablePane(new ScrollViewer { Content = root }, sp);
         this.Dyn(BackgroundProperty, "ColorChrome");
     }
 
-    private static async Task WipeAllAsync(IServiceProvider sp)
+    /// <summary>The developer-log hint: what is logged, then where — the second paragraph
+    /// follows <see cref="AppLog.Enabled"/>, so it is rebuilt whenever the box is toggled.</summary>
+    internal static string DevLogHint() =>
+        "Records errors, every Git command with its result, and repository open/close. Terminal "
+        + "input/output isn't logged. One file per session; the newest 10 are kept. Also on when "
+        + "HISTORIA_LOG is set.\n\n" + DevLogCaption();
+
+    internal static string DevLogCaption() => AppLog.Enabled
+        ? $"Writing to {AppLog.CurrentLogPath}"
+        : $"Saved under {AppPaths.LogsDirectory} when enabled";
+
+    private static async Task DeleteAllAsync(IServiceProvider sp)
     {
         var confirmed = await sp.GetRequiredService<IDialogService>().ConfirmDestructiveAsync(
-            "Wipe all Historia local data?",
+            "Delete all Historia data?",
             "This permanently deletes every Historia setting, profile, repo binding, theme, saved "
             + "session, cached repository/graph file and log from Historia's data and cache folders. "
             + "It cannot be undone. Restart Historia afterwards.",
-            "Wipe");
+            "Delete");
         if (!confirmed)
             return;
 
