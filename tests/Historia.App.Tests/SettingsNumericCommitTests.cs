@@ -1,14 +1,3 @@
-using System.Reflection;
-using Avalonia.Controls;
-using Avalonia.Headless.XUnit;
-using Avalonia.Input;
-using Avalonia.Interactivity;
-using Avalonia.Threading;
-using Historia.Models;
-using Historia.Services.UI;
-using Historia.Views;
-using Xunit;
-
 namespace HistoriaApp.Tests;
 
 /// <summary>

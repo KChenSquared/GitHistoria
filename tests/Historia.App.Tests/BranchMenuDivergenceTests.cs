@@ -1,5 +1,3 @@
-using LibGit2Sharp;
-
 namespace HistoriaApp.Tests;
 
 /// <summary><c>BranchMenu.BuildDivergenceItemsAsync</c> — the push/pull/fast-forward menu

@@ -1,6 +1,4 @@
-﻿using Avalonia.Headless;
-
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 
 /// <summary>The app-band tab strip shows a pending tab for the duration of a clone,
 /// driven through a stub <see cref="ICloneService"/> rather than a real clone.</summary>

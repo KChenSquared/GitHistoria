@@ -1,5 +1,3 @@
-using Avalonia.Headless;
-
 namespace HistoriaApp.Tests;
 
 /// <summary>

@@ -1,7 +1,4 @@
-﻿using System.Reflection;
-using Avalonia.Headless;
-
-namespace HistoriaApp.Tests;
+﻿namespace HistoriaApp.Tests;
 
 /// <summary>A settings textbox commits on <c>LostFocus</c>, but clicking a non-focusable
 /// label or blank space never moves focus on its own — <see cref="SettingsView"/>'s root now

@@ -1,8 +1,3 @@
-using Avalonia;
-using Avalonia.Headless.XUnit;
-using Historia.Controls;
-using Xunit;
-
 namespace HistoriaApp.Tests;
 
 /// <summary>
