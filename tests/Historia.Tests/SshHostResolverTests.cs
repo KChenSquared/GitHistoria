@@ -1,0 +1,76 @@
+namespace Historia.Tests;
+
+/// <summary>Skips a test when no OpenSSH client is on PATH.</summary>
+[AttributeUsage(AttributeTargets.Method)]
+public sealed class SshFactAttribute : FactAttribute
+{
+    public SshFactAttribute()
+    {
+        if (SshHostResolver.FindSshOnPath() is null)
+            Skip = "No ssh on PATH.";
+    }
+}
+
+/// <summary>Runs the real OpenSSH client's <c>ssh -G</c> against a temporary config file; skipped
+/// when no <c>ssh</c> is on PATH.</summary>
+[Trait("tier", "git")]
+public sealed class SshHostResolverTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "historia-ssh-g-" + Guid.NewGuid().ToString("N"));
+    private readonly string _config;
+
+    public SshHostResolverTests()
+    {
+        Directory.CreateDirectory(_dir);
+        _config = Path.Combine(_dir, "config");
+        File.WriteAllText(_config, "Host alias-x\n    HostName example.invalid\n    User git\n");
+    }
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
+    }
+
+    [SshFact]
+    public async Task An_alias_resolves_to_its_host_name()
+    {
+        var resolver = new SshHostResolver(_config);
+
+        Assert.Equal("example.invalid", await resolver.ResolveHostNameAsync("alias-x", CancellationToken.None));
+    }
+
+    [SshFact]
+    public async Task An_unlisted_host_resolves_to_itself()
+    {
+        var resolver = new SshHostResolver(_config);
+
+        Assert.Equal("github.com-work", await resolver.ResolveHostNameAsync("github.com-work", CancellationToken.None));
+    }
+
+    [SshFact]
+    public async Task A_second_lookup_is_served_from_the_cache()
+    {
+        var resolver = new SshHostResolver(_config);
+
+        await resolver.ResolveHostNameAsync("alias-x", CancellationToken.None);
+        await resolver.ResolveHostNameAsync("alias-x", CancellationToken.None);
+
+        Assert.Equal(1, resolver.ProcessLaunches);
+    }
+
+    [Theory]
+    [InlineData("-oProxyCommand=calc")]
+    [InlineData("")]
+    [InlineData("two words")]
+    public async Task An_option_like_or_malformed_host_is_never_passed_to_ssh(string host)
+    {
+        var resolver = new SshHostResolver(_config);
+
+        Assert.Null(await resolver.ResolveHostNameAsync(host, CancellationToken.None));
+        Assert.Equal(0, resolver.ProcessLaunches);
+    }
+
+    [Fact]
+    public void The_hostname_line_is_parsed_from_ssh_G_output()
+        => Assert.Equal("github.com", SshHostResolver.ParseHostName("user git\r\nhostname github.com\r\nport 22\r\n"));
+}
