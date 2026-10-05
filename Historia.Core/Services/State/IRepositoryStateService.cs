@@ -6,7 +6,10 @@ public sealed record RevealCommitEventArgs(GitObjectId CommitId);
 public sealed record RefsChangedEventArgs(
     IReadOnlyList<BranchInfo> Branches,
     IReadOnlyList<TagInfo> Tags,
-    IReadOnlyList<RemoteInfo> Remotes);
+    IReadOnlyList<RemoteInfo> Remotes)
+{
+    public long StashStamp { get; init; }
+}
 public sealed record ProfileChangedEventArgs(GitProfile? Profile);
 public sealed record OperationStateChangedEventArgs(OperationState State);
 public sealed record OpenDiffChangedEventArgs(DiffRequest? Request);
@@ -30,6 +33,7 @@ public interface IRepositoryStateService
     IReadOnlyList<BranchInfo> Branches { get; }
     IReadOnlyList<TagInfo> Tags { get; }
     IReadOnlyList<RemoteInfo> Remotes { get; }
+    long StashStamp { get; }
     GitObjectId? SelectedCommitId { get; }
     IReadOnlyList<string> SelectedPaths { get; }
     GitProfile? ActiveProfile { get; }

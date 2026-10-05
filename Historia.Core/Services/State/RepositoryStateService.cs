@@ -16,6 +16,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     private IReadOnlyList<BranchInfo> _branches = [];
     private IReadOnlyList<TagInfo> _tags = [];
     private IReadOnlyList<RemoteInfo> _remotes = [];
+    private long _stashStamp;
     private GitObjectId? _selectedCommitId;
     private IReadOnlyList<string> _selectedPaths = [];
     private GitProfile? _activeProfile;
@@ -50,6 +51,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         _statusCoalescer = new(() => _context.Lifetime);
         _ui = ui;
         _repoCache = repoCache;
+        _stashStamp = RefStateToken.StashStamp(context.GitDirectory);
         _repository = new RepositoryInfo
         {
             WorkingDirectory = context.RepositoryPath,
@@ -70,6 +72,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public IReadOnlyList<BranchInfo> Branches { get { lock (_sync) return _branches; } }
     public IReadOnlyList<TagInfo> Tags { get { lock (_sync) return _tags; } }
     public IReadOnlyList<RemoteInfo> Remotes { get { lock (_sync) return _remotes; } }
+    public long StashStamp { get { lock (_sync) return _stashStamp; } }
     public GitObjectId? SelectedCommitId { get { lock (_sync) return _selectedCommitId; } }
     public IReadOnlyList<string> SelectedPaths { get { lock (_sync) return _selectedPaths; } }
     public DiffRequest? OpenDiff { get { lock (_sync) return _openDiff; } }
@@ -292,18 +295,22 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     private async Task DoRefreshRefsAsync(Action markDataRead, CancellationToken ct)
     {
         using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshRefsAsync({_context.DisplayName})");
+        var stamp = RefStateToken.StashStamp(_context.GitDirectory);
         var branches = await _gateway.GetBranchesAsync(ct).ConfigureAwait(false);
         var remotes = await _gateway.GetRemotesAsync(ct).ConfigureAwait(false);
 
         markDataRead();
 
         bool branchesOrRemotesChanged;
+        bool stashChanged;
         IReadOnlyList<TagInfo> existingTags;
         lock (_sync)
         {
             // BranchInfo / RemoteInfo are records — structural comparison.
             branchesOrRemotesChanged = !branches.SequenceEqual(_branches)
                                       || !remotes.SequenceEqual(_remotes);
+            stashChanged = stamp != _stashStamp;
+            _stashStamp = stamp;
             _branches = branches;
             _remotes = remotes;
             existingTags = _tags;
@@ -311,8 +318,8 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
 
         // publish branches and remotes first so the sidebar populates in ~57ms rather than waiting
         // seconds on thousands of tags to project.
-        if (branchesOrRemotesChanged)
-            Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, existingTags, remotes)));
+        if (branchesOrRemotesChanged || stashChanged)
+            Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, existingTags, remotes) { StashStamp = stamp }));
 
         var tags = await _gateway.GetTagsAsync(ct).ConfigureAwait(false);
 
@@ -329,7 +336,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
 
         // Raise second time if tags changed.
         if (tagsChanged)
-            Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, tags, remotes)));
+            Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, tags, remotes) { StashStamp = stamp }));
     }
 
     public void SeedFromCache() => SeedFrom(_repoCache?.TryLoad(_context.RepositoryPath));
