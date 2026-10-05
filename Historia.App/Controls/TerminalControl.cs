@@ -235,18 +235,29 @@ public sealed class TerminalControl : Control
 
     // ── sizing ──────────────────────────────────────────────────────────────────────────────
 
+    internal static bool HasUsableSize(Size bounds, double cellWidth, double cellHeight)
+        => cellWidth > 0 && cellHeight > 0 && bounds.Width >= cellWidth && bounds.Height >= cellHeight;
+
     protected override Size MeasureOverride(Size availableSize) => availableSize;
 
     protected override void OnSizeChanged(SizeChangedEventArgs e)
     {
         base.OnSizeChanged(e);
+        if (!HasUsableSize(e.PreviousSize, _cellWidth, _cellHeight)
+            && HasUsableSize(e.NewSize, _cellWidth, _cellHeight))
+        {
+            _resizeDebounce?.Stop();
+            PushResizeToSession();
+            return;
+        }
+
         RecomputeGrid();
         DebouncePushResize();
     }
 
     private void RecomputeGrid()
     {
-        if (_cellWidth <= 0 || _cellHeight <= 0)
+        if (!HasUsableSize(Bounds.Size, _cellWidth, _cellHeight))
             return;
         _cols = Math.Clamp((int)(Bounds.Width / _cellWidth), MinGrid, MaxGrid);
         _rows = Math.Clamp((int)(Bounds.Height / _cellHeight), MinGrid, MaxGrid);
@@ -270,7 +281,14 @@ public sealed class TerminalControl : Control
     private void PushResizeToSession()
     {
         RecomputeGrid();
-        _session?.Resize(_cols, _rows);
+
+        // Trap: an unlaid-out dock has 0×0 bounds; resizing to that shrinks ConPTY to 1×1,
+        // and since ConPTY keeps no scrollback, a prompt the shell has already printed is
+        // lost. The session keeps its spawn size until the control has real bounds, and
+        // OnSizeChanged delivers them.
+        if (HasUsableSize(Bounds.Size, _cellWidth, _cellHeight))
+            _session?.Resize(_cols, _rows);
+
         InvalidateVisual();
     }
 
