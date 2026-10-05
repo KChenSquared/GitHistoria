@@ -81,6 +81,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     /// XORed with "has this path been toggled".</summary>
     private bool IsOpen(string path, int depth) => (depth == 0) ^ _expanded.Contains(path);
 
+    private static readonly TimeSpan PowerToolsPaintCeiling = TimeSpan.FromSeconds(8);
+
     // Cached power-tool lists — null = not loaded yet. Filled once per bind / RefsChanged so a
     // section toggle re-renders synchronously instead of flashing empty during a re-fetch.
     private IReadOnlyList<StashEntry>? _stashList;
@@ -88,6 +90,11 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private IReadOnlyList<WorktreeInfo>? _worktreeList;
     private bool _submodulesFetched;
     private bool _worktreesFetched;
+
+    private long? _loadedStashStamp;
+    private IReadOnlyList<BranchInfo>? _powerToolsBranches;
+    private IReadOnlyList<RemoteInfo>? _powerToolsRemotes;
+    private int _stashListGen;
 
     // Submodule paths (or AllSubmodulesBusyKey for "Update all") with an in-flight
     // "Init & update" — the row renders a busy label instead of its menu while present.
@@ -173,18 +180,60 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             _repo.State.RefsChanged += OnRefsChanged;
         Rebuild();
         if (_repo is not null)
-            _ = LoadPowerToolsAsync(_repo);
+        {
+            _loadedStashStamp = _repo.State.StashStamp;
+            _powerToolsBranches = _repo.State.Branches;
+            _powerToolsRemotes = _repo.State.Remotes;
+            _ = LoadPowerToolsAsync(_repo, listStashes: true);
+        }
+        else
+        {
+            _loadedStashStamp = null;
+            _powerToolsBranches = null;
+            _powerToolsRemotes = null;
+        }
     }
 
     private void OnRefsChanged(object? s, RefsChangedEventArgs e)
         => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
         {
-            _submodulesFetched = false;
-            _worktreesFetched = false;
-            SeedPowerToolsFromCache();
+            if (_repo is null)
+                return;
+
+            var stashChanged = _loadedStashStamp is null || e.StashStamp != _loadedStashStamp;
+            var refsChanged = _powerToolsBranches is null || _powerToolsRemotes is null
+                || !e.Branches.SequenceEqual(_powerToolsBranches)
+                || !e.Remotes.SequenceEqual(_powerToolsRemotes);
+
+            // Stashes depend only on the stash stamp, and submodules and worktrees don't depend on tags.
+            // When neither changed (a tags-only refresh), just rebuild the tree.
+            if (!stashChanged && !refsChanged)
+            {
+                Rebuild();
+                return;
+            }
+
+            if (stashChanged)
+                _loadedStashStamp = e.StashStamp;
+            if (refsChanged)
+            {
+                _powerToolsBranches = e.Branches;
+                _powerToolsRemotes = e.Remotes;
+                _submodulesFetched = false;
+                _worktreesFetched = false;
+            }
+
+            var snap = _repoCache.TryLoad(_repo.RepositoryPath);
+            if (stashChanged)
+                _stashList = snap?.Stashes;
+            if (refsChanged)
+            {
+                _submoduleList = snap?.Submodules;
+                _worktreeList = snap?.Worktrees;
+            }
+
             Rebuild();
-            if (_repo is not null)
-                _ = LoadPowerToolsAsync(_repo);
+            _ = LoadPowerToolsAsync(_repo, listStashes: stashChanged);
         });
 
     /// <summary>Show last-known stash / submodule / worktree lists from the on-disk cache while
@@ -197,18 +246,32 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         _worktreeList = snap?.Worktrees;
     }
 
-    private async Task LoadPowerToolsAsync(RepositoryContext repo)
+    private async Task LoadPowerToolsAsync(RepositoryContext repo, bool listStashes = true)
     {
-        var stashTask = Safe(() => _stashes.ListAsync(repo, repo.Lifetime));
+        await Task.WhenAny(repo.FirstGraphPaint, Task.Delay(PowerToolsPaintCeiling, repo.Lifetime));
+        if (!ReferenceEquals(repo, _repo) || repo.Lifetime.IsCancellationRequested)
+            return;
+
+        int stashGen = 0;
+        Task<IReadOnlyList<StashEntry>?>? stashTask = null;
+        if (listStashes)
+        {
+            stashGen = ++_stashListGen;
+            stashTask = Safe(() => _stashes.ListAsync(repo, repo.Lifetime));
+        }
+
         var subsTask = _submodulesOpen ? Safe(() => _submodules.ListAsync(repo, repo.Lifetime)) : Task.FromResult<IReadOnlyList<SubmoduleInfo>?>(_submoduleList);
         var wtsTask = _worktreesOpen ? Safe(() => _worktrees.ListAsync(repo, repo.Lifetime)) : Task.FromResult<IReadOnlyList<WorktreeInfo>?>(_worktreeList);
 
-        var stash = await stashTask;
+        var stash = stashTask is not null ? await stashTask : null;
         var subs = await subsTask;
         var wts = await wtsTask;
-        if (!ReferenceEquals(repo, _repo))
+        if (!ReferenceEquals(repo, _repo) || repo.Lifetime.IsCancellationRequested)
             return;
-        _stashList = stash ?? _stashList ?? [];
+
+        if (listStashes && stashGen == _stashListGen)
+            _stashList = stash ?? _stashList ?? [];
+
         if (_submodulesOpen)
         {
             _submoduleList = subs ?? _submoduleList ?? [];

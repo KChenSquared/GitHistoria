@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public sealed class RefNavigatorLayoutTests
@@ -148,6 +148,7 @@ public sealed class RefNavigatorLayoutTests
         var sp = CreateServices();
         var ws = sp.GetRequiredService<IWorkspaceService>();
         var ctx = ws.OpenAsync(fixture.Path).GetAwaiter().GetResult();
+        ctx.MarkFirstGraphPaintDone();
         ctx.State.RefreshRefsAsync().GetAwaiter().GetResult();
         ws.Focus(ctx);
         var view = new RefNavigatorView(sp);
