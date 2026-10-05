@@ -311,7 +311,15 @@ public sealed partial class CommitGraphControl : Control
     private int? _contentRowCountOverrideForTesting;
     /// <summary>Test-only: receives the <c>graph-scroll</c> lines in place of <see cref="AppLog"/>.</summary>
     internal IAppLog? ScrollLogForTesting { get; set; }
-    private bool ScrollLogOn => ScrollLogForTesting is not null || AppLog.Enabled;
+
+    /// <summary>
+    /// Set to <see langword="true"/> and rebuild to write <c>[graph-scroll]</c> Debug lines
+    /// (one per vertical thumb move, scroll-range changes mid-drag, and drag end) to the developer
+    /// log, which also must be enabled.
+    /// </summary>
+    internal static readonly bool TraceScrollDrags = false;
+
+    private bool ScrollLogOn => ScrollLogForTesting is not null || (TraceScrollDrags && AppLog.Enabled);
     private void LogScroll(string message) => (ScrollLogForTesting ?? AppLog.Current).Debug("graph-scroll", message);
 
     /// <summary>Test-only: simulates a horizontal scroll/pan without driving the real

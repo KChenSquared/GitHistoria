@@ -57,6 +57,12 @@ public sealed class GraphScrollbarDragTests
     private static double Density(Track track, ScrollBar bar)
         => (bar.Maximum - bar.Minimum) / (track.Bounds.Height - track.Thumb!.Bounds.Height);
 
+    [Fact]
+    public void Scroll_drag_trace_is_off_by_default()
+    {
+        Assert.False(CommitGraphControl.TraceScrollDrags);
+    }
+
     [AvaloniaFact]
     public void Thumb_drag_writes_graph_scroll_lines()
     {
