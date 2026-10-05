@@ -48,6 +48,7 @@ public class CommitMessageReflowTests
         Lists,
         Verbatim,
         Trailers,
+        Trailers + "\n  \n\t",
         "one\r\ntwo\r\n\r\nthree\r\n",
         "single line",
         "",
@@ -111,6 +112,16 @@ public class CommitMessageReflowTests
             "Signed-off-by: A Person <a@example.com>\n" +
             "Co-Authored-By: B Person <b@example.com>",
             CommitMessageReflow.Reflow(Trailers));
+    }
+
+    [Fact]
+    public void Keeps_trailer_block_when_the_message_ends_in_a_whitespace_line()
+    {
+        Assert.Equal(
+            "subject\n\nbody line one body line two\n\n" +
+            "Signed-off-by: A Person <a@example.com>\n" +
+            "Co-Authored-By: B Person <b@example.com>",
+            CommitMessageReflow.Reflow(Trailers + "\n  \n\t"));
     }
 
     [Fact]

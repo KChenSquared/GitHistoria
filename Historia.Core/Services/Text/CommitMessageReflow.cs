@@ -28,11 +28,18 @@ public static class CommitMessageReflow
         if (string.IsNullOrEmpty(message))
             return "";
 
-        var text = message.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n');
-        if (text.Length == 0)
-            return "";
-
+        var text = message.Replace("\r\n", "\n").Replace('\r', '\n');
         var lines = text.Split('\n');
+
+        // Trailing whitespace-only lines would otherwise hide a final trailer block.
+        var count = lines.Length;
+        while (count > 0 && string.IsNullOrWhiteSpace(lines[count - 1]))
+            count--;
+        if (count == 0)
+            return "";
+        if (count < lines.Length)
+            lines = lines[..count];
+
         var trailerStart = FindTrailerStart(lines);
         var sb = new StringBuilder(text.Length);
         var prev = LineKind.Blank;
