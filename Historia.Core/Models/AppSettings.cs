@@ -12,7 +12,7 @@ public sealed record AppSettings
     /// v5: multi-line tab strip; v6: persistent graph cache toggle; v7: graph
     /// row hard cap; v8: local repo-state cache toggle; v9: terminal; v10: tab-width mode;
     /// v11: custom-theme id; v12: splash-screen toggle.</summary>
-    public int SchemaVersion { get; init; } = 19;
+    public int SchemaVersion { get; init; } = 21;
 
     // ── Profile &amp; Identity ──
     /// <summary>the default profile — the clone-dialog pre-selection and what an opened
@@ -21,28 +21,30 @@ public sealed record AppSettings
     public Guid? DefaultProfileId { get; init; }
 
     // ── Network &amp; Privacy ──
-    /// <summary>Gates background polling / hosting-API calls; effective only while a
-    /// token-bearing profile is the active per-repo selection.</summary>
-    public bool EnableBackgroundPolling { get; init; } = true;
-
     /// <summary>drives <c>IAutoFetchService</c>'s <c>[InitialFetch]</c> + <c>[AutoFetch]</c>
-    /// loop, which periodically <c>git fetch</c>es every open repository. Unlike
-    /// <see cref="EnableBackgroundPolling"/> it is <b>not</b> gated to a token-bearing profile —
-    /// it fetches SSH and <i>Local config</i> repos too — so this toggle is the single opt-out
-    /// that lets a user guarantee no unsolicited network traffic. Default on.</summary>
+    /// loop, which periodically <c>git fetch</c>es every open repository. It is not gated to a
+    /// token-bearing profile — it fetches SSH and <i>Local config</i> repos too — so this toggle
+    /// is the single opt-out that lets a user guarantee no unsolicited network traffic. Default
+    /// on.</summary>
     public bool AutoFetchEnabled { get; init; } = true;
 
     // ── UI preferences ──
-    /// <summary>User choice; <c>EffectiveTheme</c> is derived. New installs follow the
-    /// OS; existing users keep whatever they had (no migration).</summary>
+    /// <summary>The Light / Dark / System choice; <c>EffectiveTheme</c> is derived. New installs
+    /// follow the OS. <see cref="UseCustomTheme"/> can override it.</summary>
     public ThemeMode AppTheme { get; init; } = ThemeMode.System;
 
     /// <summary>Independent override; wins over <see cref="AppTheme"/>.</summary>
     public bool HighContrastOverride { get; init; }
 
-    /// <summary>the id of the active custom theme (a file stem under
-    /// <c>themes/</c>). Only meaningful while <see cref="AppTheme"/> is
-    /// <see cref="ThemeMode.Custom"/>; null otherwise.</summary>
+    /// <summary>The Developer panel's custom-theme override. The theme named by
+    /// <see cref="CustomThemeId"/> renders in place of <see cref="AppTheme"/> only while this
+    /// is on, that id resolves to a saved theme and High Contrast is off; otherwise
+    /// <see cref="AppTheme"/> renders. Turned off at startup without developer mode.</summary>
+    public bool UseCustomTheme { get; init; }
+
+    /// <summary>The custom theme selected in the Developer panel (a file stem under
+    /// <c>themes/</c>). Used while <see cref="UseCustomTheme"/> is on; kept when it is turned
+    /// off, so turning it back on restores the same theme.</summary>
     public string? CustomThemeId { get; init; }
 
     public DiffViewMode DefaultDiffView { get; init; } = DiffViewMode.Unified;
@@ -95,7 +97,6 @@ public sealed record AppSettings
 
     // ── Diff &amp; editor ──
     public int DiffContextLines { get; init; } = 3;
-    public int TabWidth { get; init; } = 4;
 
     // ── Git &amp; repository ──
     /// <summary>Overrides discovery.</summary>
@@ -203,10 +204,8 @@ public sealed record AppSettings
     public int TerminalScrollbackLines { get; init; } = 5_000;
 
     public double TerminalDockHeight { get; init; } = 260;
-    public bool TerminalDockOpen { get; init; }
     public TerminalCursorStyle TerminalCursorStyle { get; init; } = TerminalCursorStyle.Block;
     public bool TerminalCursorBlink { get; init; } = true;
-    public TerminalBellStyle TerminalBellStyle { get; init; } = TerminalBellStyle.None;
 
     /// <summary>Lets programs turn on the Kitty keyboard protocol. Read when a session starts.</summary>
     public bool TerminalKittyKeyboard { get; init; } = true;
@@ -220,4 +219,9 @@ public sealed record AppSettings
     /// <summary>Math.Clamp to the accepted <see cref="TerminalScrollbackLines"/> range. Follows
     /// the house style for a bounded numeric setting.</summary>
     public static int ClampTerminalScrollback(int value) => Math.Clamp(value, MinTerminalScrollback, MaxTerminalScrollback);
+
+    /// <summary>These settings with every option only the Developer panel can change turned
+    /// off — applied at startup when developer mode is off, so no developer-only option stays
+    /// in force where it cannot be seen or changed. <see cref="CustomThemeId"/> is kept.</summary>
+    public AppSettings WithoutDevOnlyOptions() => this with { UseCustomTheme = false };
 }

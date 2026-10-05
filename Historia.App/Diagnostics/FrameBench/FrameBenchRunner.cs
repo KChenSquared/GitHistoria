@@ -104,7 +104,6 @@ internal static class FrameBenchRunner
         var settings = new AppSettings
         {
             AutoFetchEnabled = false,
-            EnableBackgroundPolling = false,
             RestoreSessionTabs = false,
             ShowSplashScreen = false,
             AppTheme = ThemeMode.Dark,
@@ -112,7 +111,6 @@ internal static class FrameBenchRunner
             DefaultDiffView = DiffViewMode.Unified,
             DiffWordWrap = false,
             EnableGraphSplice = false,
-            TerminalDockOpen = false,
         };
         if (options.Mode == FrameBenchMode.Terminal)
         {

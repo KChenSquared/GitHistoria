@@ -8,13 +8,3 @@ public enum TerminalCursorStyle
     Underline,
     Bar,
 }
-
-/// <summary>How the terminal reacts to a BEL (<c>\a</c>) from the child.</summary>
-public enum TerminalBellStyle
-{
-    /// <summary>Ignore it entirely.</summary>
-    None,
-
-    /// <summary>A single low-alpha frame flash of <c>term-fg</c> (open question 3).</summary>
-    Visual,
-}

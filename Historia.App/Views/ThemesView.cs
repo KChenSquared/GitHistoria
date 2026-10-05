@@ -1,7 +1,7 @@
 namespace Historia.Views;
 
 /// <summary>
-/// the manage-themes panel — a peer of <see cref="SettingsView"/>. Lists the user's
+/// the manage-themes panel, opened from and closing to the Developer panel. Lists the user's
 /// custom themes (one file each under <c>themes/</c>), and edits one in place: name, Dark/Light
 /// base, every <see cref="HistoriaPalette"/> token, and the nine lane colours. A hex that fails to
 /// parse shows inline and blocks Save. Saving is the apply — if the edited theme is active the
@@ -34,7 +34,7 @@ public sealed class ThemesView : UserControl, IDisposable
         _cfg = sp.GetRequiredService<ISettingsService>();
         _dialogs = sp.GetRequiredService<IDialogService>();
 
-        Content = ClosablePane(new ScrollViewer { Content = _root }, sp, closeTo: "settings");
+        Content = ClosablePane(new ScrollViewer { Content = _root }, sp, closeTo: "dev");
         this.Dyn(BackgroundProperty, "ColorChrome");
         Rebuild();
     }
@@ -74,7 +74,7 @@ public sealed class ThemesView : UserControl, IDisposable
         {
             var theme = t;
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-            var active = _theme.CurrentMode == ThemeMode.Custom && _cfg.Current.CustomThemeId == theme.Id;
+            var active = _theme.CustomThemeActive && _cfg.Current.CustomThemeId == theme.Id;
             row.Children.Add(new Border
             {
                 Width = 18, Height = 18, CornerRadius = new CornerRadius(4),
@@ -95,7 +95,7 @@ public sealed class ThemesView : UserControl, IDisposable
     {
         var t = _themes.NewFrom(baseName);
         LoadDraft(t);
-        _ = _themes.SaveAsync(t);
+        _ = SaveThemeAsync(t);
         Rebuild();
     }
 
@@ -115,8 +115,21 @@ public sealed class ThemesView : UserControl, IDisposable
             SplashImagePath = t.SplashImagePath,
             SplashSeconds = t.SplashSeconds,
         };
-        _ = _themes.SaveAsync(copy);
+        _ = SaveThemeAsync(copy);
         Rebuild();
+    }
+
+    /// <summary>Saves <paramref name="theme"/>, then selects it in the theme service when it is
+    /// the selected theme (so its id and base re-resolve) or when the custom-theme override is on
+    /// with no saved theme selected (so the first theme renders as soon as it exists).</summary>
+    private async Task SaveThemeAsync(CustomTheme theme)
+    {
+        await _themes.SaveAsync(theme);
+        var settings = _cfg.Current;
+        var stored = settings.CustomThemeId;
+        var noneSelected = string.IsNullOrEmpty(stored) || _themes.Get(stored) is null;
+        if (stored == theme.Id || (settings.UseCustomTheme && noneSelected))
+            await _theme.SelectCustomThemeAsync(theme.Id);
     }
 
     private async Task DeleteAsync(CustomTheme t)
@@ -124,10 +137,10 @@ public sealed class ThemesView : UserControl, IDisposable
         if (!await _dialogs.ConfirmDestructiveAsync("Delete theme", $"Delete “{t.Name}”? This cannot be undone.", "Delete"))
             return;
 
-        var wasActive = _theme.CurrentMode == ThemeMode.Custom && _cfg.Current.CustomThemeId == t.Id;
+        var wasSelected = _cfg.Current.CustomThemeId == t.Id;
         await _themes.DeleteAsync(t.Id);
-        if (wasActive)
-            await _theme.ApplyModeAsync(ThemeMode.Dark);
+        if (wasSelected)
+            await _theme.SetCustomThemeEnabledAsync(false);
         Rebuild();
     }
 
@@ -297,11 +310,7 @@ public sealed class ThemesView : UserControl, IDisposable
             SplashImagePath = string.IsNullOrWhiteSpace(_draftSplashPath) ? null : _draftSplashPath!.Trim(),
             SplashSeconds = Math.Clamp(_draftSplashSeconds, 0, 10),
         };
-        await _themes.SaveAsync(updated);
-
-        // If this theme is the active one, re-point the service so the id/base re-resolve.
-        if (_theme.CurrentMode == ThemeMode.Custom && _cfg.Current.CustomThemeId == updated.Id)
-            await _theme.ApplyCustomThemeAsync(updated.Id);
+        await SaveThemeAsync(updated);
 
         _editing = null;
         Rebuild();

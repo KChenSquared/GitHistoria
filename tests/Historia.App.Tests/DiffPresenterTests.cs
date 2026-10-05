@@ -16,7 +16,9 @@ public class DiffPresenterTests
 #pragma warning restore CS0067
 
         public Task ApplyModeAsync(ThemeMode mode, CancellationToken ct = default) => Task.CompletedTask;
-        public Task ApplyCustomThemeAsync(string themeId, CancellationToken ct = default) => Task.CompletedTask;
+        public bool CustomThemeActive => false;
+        public Task SetCustomThemeEnabledAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;
+        public Task SelectCustomThemeAsync(string themeId, CancellationToken ct = default) => Task.CompletedTask;
         public Task SetHighContrastAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;
     }
 
