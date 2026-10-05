@@ -80,11 +80,10 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private bool _suppressTextChanged;
 
     // Controls
-    private readonly TextBlock _headerTitle = Text("", "ColorText", 13, FontWeight.SemiBold);
     private readonly TextBlock _headerOurs = Text("", "ColorTextMuted", 11);
     private readonly TextBlock _headerTheirs = Text("", "ColorTextMuted", 11);
 
-    private readonly StackPanel _opBar = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+    private readonly StackPanel _opBar = new() { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
     private readonly Button _continueBtn;
     private readonly Button _skipBtn;
     private readonly Button _abortBtn;
@@ -93,9 +92,18 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private readonly Border _changedOnDiskBanner = new();
     private readonly TextBlock _damagedMarkersHint = Text("", "ColorWarning", 11);
 
-    private readonly Button _saveBtn;
     private readonly Button _saveAndResolveBtn;
-    private readonly TextBlock _conflictsCountText = Text("", "ColorTextMuted", 11);
+    private readonly Button _resolveFileBtn;
+    private readonly List<MenuItem> _resolveFileMenuItems = [];
+    private readonly Button _prevConflictBtn;
+    private readonly Button _nextConflictBtn;
+    private readonly TextBlock _conflictsCountText = new TextBlock
+    {
+        FontSize = 11,
+        MinWidth = 44,
+        TextAlignment = TextAlignment.Center,
+        VerticalAlignment = VerticalAlignment.Center,
+    }.Dyn(TextBlock.ForegroundProperty, "ColorTextMuted");
 
     private readonly ConflictPaneEditor _oursEditor = new() { IsReadOnly = true };
     private readonly ConflictPaneEditor _theirsEditor = new() { IsReadOnly = true };
@@ -128,6 +136,14 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         return btn;
     }
 
+    private Button TextActionIconButton(string icon, string tip, Action onClick)
+    {
+        var btn = IconButton(icon, tip, onClick);
+        btn.IsEnabled = !_isBusy && _isEditable;
+        _textActionButtons.Add(btn);
+        return btn;
+    }
+
     private Button DynamicActionButton(string text, Action onClick, bool primary = false)
     {
         var btn = TextButton(text, onClick, primary: primary);
@@ -152,6 +168,12 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         {
             b.IsEnabled = textEnabled;
         }
+
+        // Whole-file actions need a loaded file; the navigation arrows need a conflict to go to.
+        _resolveFileBtn.IsEnabled = enabled && _currentFile != null;
+        bool canNavigate = textEnabled && NavigableRegions().Count > 0;
+        _prevConflictBtn.IsEnabled = canNavigate;
+        _nextConflictBtn.IsEnabled = canNavigate;
     }
 
     private bool _isBusy;
@@ -181,8 +203,13 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     internal Button SkipButtonForTesting => _skipBtn;
     internal Button AbortButtonForTesting => _abortBtn;
     internal StackPanel OpBarForTesting => _opBar;
-    internal Button SaveButtonForTesting => _saveBtn;
     internal Button SaveAndResolveButtonForTesting => _saveAndResolveBtn;
+    internal Button ResolveFileButtonForTesting => _resolveFileBtn;
+    internal IReadOnlyList<MenuItem> ResolveFileMenuItemsForTesting => _resolveFileMenuItems;
+    internal Button PrevConflictButtonForTesting => _prevConflictBtn;
+    internal Button NextConflictButtonForTesting => _nextConflictBtn;
+    internal TextBlock OursCaptionForTesting => _headerOurs;
+    internal TextBlock TheirsCaptionForTesting => _headerTheirs;
     internal IReadOnlyList<Button> ActionButtonsForTesting => _actionButtons;
     internal IReadOnlyList<Button> TextActionButtonsForTesting => _textActionButtons;
     internal TextBlock ConflictsCountTextForTesting => _conflictsCountText;
@@ -238,10 +265,13 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _resultEditor.Document.TextChanged += OnResultDocumentTextChanged;
         _resultEditor.TextArea.Caret.PositionChanged += OnResultCaretPositionChanged;
 
-        // Operation bar
+        // Operation actions (toolbar, right)
         _continueBtn = ActionButton("Continue", () => _ = ContinueAsync(), primary: true);
         _skipBtn = ActionButton("Skip", () => _ = SkipAsync());
         _abortBtn = ActionButton("Abort", () => _ = AbortAsync());
+        ToolTip.SetTip(_continueBtn, "Finish the operation once every file is resolved.");
+        ToolTip.SetTip(_skipBtn, "Drop this commit and move to the next one.");
+        ToolTip.SetTip(_abortBtn, "Cancel the operation and restore the state before it started.");
 
         _opBar.Children.Add(_continueBtn);
         _opBar.Children.Add(_skipBtn);
@@ -265,21 +295,46 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         diskMsgPanel.Children.Add(ActionButton("Keep mine", () => _ = KeepMineAsync()));
         _changedOnDiskBanner.Child = diskMsgPanel;
 
-        // Toolbar
-        _saveBtn = TextActionButton("Save", () => _ = SaveCurrentFileAsync(stage: false));
+        // File actions (toolbar, left)
         _saveAndResolveBtn = TextActionButton("Save & mark resolved", () => _ = SaveAndMarkResolvedAsync(), primary: true);
+        ToolTip.SetTip(_saveAndResolveBtn, "Save this file and mark it resolved (git add). Ctrl+S saves without marking.");
 
-        var toolbar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(8, 4) };
-        toolbar.Children.Add(TextActionButton("Prev conflict", () => GoToPreviousConflict()));
-        toolbar.Children.Add(TextActionButton("Next conflict", () => GoToNextConflict()));
-        toolbar.Children.Add(_conflictsCountText);
-        toolbar.Children.Add(_damagedMarkersHint);
-        toolbar.Children.Add(_saveBtn);
-        toolbar.Children.Add(_saveAndResolveBtn);
-        toolbar.Children.Add(ActionButton("Take ours", () => _ = TakeOursCurrentAsync()));
-        toolbar.Children.Add(ActionButton("Take theirs", () => _ = TakeTheirsCurrentAsync()));
-        toolbar.Children.Add(ActionButton("Re-create with base", () => _ = RecreateConflictAsync()));
-        toolbar.Children.Add(ActionButton("External tool", () => _ = LaunchExternalToolAsync()));
+        var resolveFileMenu = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+        var resolveFileItems = new List<Control>
+        {
+            ResolveFileMenuItem("Take ours (whole file)", () => _ = TakeOursCurrentAsync()),
+            ResolveFileMenuItem("Take theirs (whole file)", () => _ = TakeTheirsCurrentAsync()),
+            new Separator(),
+            ResolveFileMenuItem("Reset file to conflicted", () => _ = RecreateConflictAsync()),
+            new Separator(),
+            ResolveFileMenuItem("Open in external tool", () => _ = LaunchExternalToolAsync()),
+        };
+        resolveFileMenu.ItemsSource = resolveFileItems;
+        _resolveFileBtn = TextButton("Resolve file ▾", () => { });
+        _resolveFileBtn.Flyout = resolveFileMenu;
+        _resolveFileBtn.IsEnabled = false;
+        ToolTip.SetTip(_resolveFileBtn, "Whole-file actions");
+
+        var fileActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        fileActions.Children.Add(_saveAndResolveBtn);
+        fileActions.Children.Add(_resolveFileBtn);
+        fileActions.Children.Add(_damagedMarkersHint);
+
+        // Conflict navigation (toolbar, centre)
+        _prevConflictBtn = TextActionIconButton("arrow_upward", "Previous conflict", GoToPreviousConflict);
+        _nextConflictBtn = TextActionIconButton("arrow_downward", "Next conflict", GoToNextConflict);
+        var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        navigation.Children.Add(_prevConflictBtn);
+        navigation.Children.Add(_conflictsCountText);
+        navigation.Children.Add(_nextConflictBtn);
+
+        var toolbar = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,*"), Margin = new Thickness(8, 4) };
+        Grid.SetColumn(fileActions, 0);
+        Grid.SetColumn(navigation, 1);
+        Grid.SetColumn(_opBar, 2);
+        toolbar.Children.Add(fileActions);
+        toolbar.Children.Add(navigation);
+        toolbar.Children.Add(_opBar);
 
         // Floating region action box
         _floatingRegionBox = new Border
@@ -296,16 +351,26 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _floatingRegionBox.Dyn(Border.BackgroundProperty, "ColorSurface2")
                           .Dyn(Border.BorderBrushProperty, "ColorBorder");
 
-        // Two-column Ours | Theirs grid
+        // Two-column Ours | Theirs grid, each pane under a caption naming its side
         var topPanesGrid = new Grid
         {
+            RowDefinitions = new RowDefinitions("Auto,*"),
             ColumnDefinitions = new ColumnDefinitions("*,Auto,*"),
         };
+        var oursCaption = PaneCaption(_headerOurs);
+        var theirsCaption = PaneCaption(_headerTheirs);
+        Grid.SetColumn(oursCaption, 0);
+        Grid.SetColumn(theirsCaption, 2);
+        Grid.SetRow(_oursEditor, 1);
         Grid.SetColumn(_oursEditor, 0);
         var sep = new Rectangle { Width = 1, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Stretch };
         sep.Dyn(Shape.FillProperty, "ColorBorder");
         Grid.SetColumn(sep, 1);
+        Grid.SetRowSpan(sep, 2);
+        Grid.SetRow(_theirsEditor, 1);
         Grid.SetColumn(_theirsEditor, 2);
+        topPanesGrid.Children.Add(oursCaption);
+        topPanesGrid.Children.Add(theirsCaption);
         topPanesGrid.Children.Add(_oursEditor);
         topPanesGrid.Children.Add(sep);
         topPanesGrid.Children.Add(_theirsEditor);
@@ -313,21 +378,26 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         // Editor layout: TopPanes / Splitter / Result
         var splitGrid = new Grid
         {
-            RowDefinitions = new RowDefinitions("*,3,*"),
+            RowDefinitions = new RowDefinitions("*,5,*"),
             ColumnDefinitions = new ColumnDefinitions("*,12"),
         };
         Grid.SetRow(topPanesGrid, 0);
         Grid.SetColumn(topPanesGrid, 0);
 
+        // A 1 px line marks the boundary; the transparent splitter over it stays the drag target.
+        var hDivider = new Rectangle { Height = 1, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Center };
+        hDivider.Dyn(Shape.FillProperty, "ColorBorder");
+        Grid.SetRow(hDivider, 1);
+        Grid.SetColumn(hDivider, 0);
+
         var hSplitter = new GridSplitter
         {
-            Height = 3,
+            Height = 5,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             Background = Brushes.Transparent,
             Focusable = false,
         };
-        hSplitter.Dyn(Border.BorderBrushProperty, "ColorBorder");
         Grid.SetRow(hSplitter, 1);
         Grid.SetColumn(hSplitter, 0);
 
@@ -339,6 +409,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         Grid.SetColumn(_minimap, 1);
 
         splitGrid.Children.Add(topPanesGrid);
+        splitGrid.Children.Add(hDivider);
         splitGrid.Children.Add(hSplitter);
         splitGrid.Children.Add(_resultEditor);
         splitGrid.Children.Add(_minimap);
@@ -347,20 +418,11 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _editorOverlay.Children.Add(_floatingRegionBox);
         _editorArea.Content = _editorOverlay;
 
-        // Main header & banner container
-        var rightTop = new StackPanel { Spacing = 4, Margin = new Thickness(12, 6) };
-        var labelsGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*") };
-        Grid.SetColumn(_headerOurs, 0);
-        Grid.SetColumn(_headerTheirs, 1);
-        labelsGrid.Children.Add(_headerOurs);
-        labelsGrid.Children.Add(_headerTheirs);
-
-        rightTop.Children.Add(_headerTitle);
-        rightTop.Children.Add(labelsGrid);
-        rightTop.Children.Add(_opBar);
+        // Toolbar & banner container
+        var rightTop = new StackPanel { Spacing = 4, Margin = new Thickness(4, 2) };
+        rightTop.Children.Add(toolbar);
         rightTop.Children.Add(_externalEndedBanner);
         rightTop.Children.Add(_changedOnDiskBanner);
-        rightTop.Children.Add(toolbar);
 
         var rightDock = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(rightTop, Dock.Top);
@@ -370,9 +432,68 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         Content = rightDock;
         this.Dyn(BackgroundProperty, "ColorBg");
 
+        AddHandler(KeyDownEvent, OnViewKeyDown, RoutingStrategies.Tunnel);
+
         _ctx.State.StatusChanged += OnStatusChanged;
         _ctx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
         _ = LoadAsync();
+    }
+
+    private MenuItem ResolveFileMenuItem(string header, Action onClick)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => onClick();
+        _resolveFileMenuItems.Add(item);
+        return item;
+    }
+
+    private static Border PaneCaption(TextBlock text)
+    {
+        text.Margin = default;
+        var caption = new Border
+        {
+            Child = text,
+            Padding = new Thickness(8, 2),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+        };
+        caption.Dyn(Border.BorderBrushProperty, "ColorBorder");
+        return caption;
+    }
+
+    private void SetSideCaptions(ConflictSideLabels labels)
+    {
+        _headerOurs.Text = $"Ours · {labels.OursTitle}";
+        _headerTheirs.Text = $"Theirs · {labels.TheirsTitle}";
+        ToolTip.SetTip(_headerOurs, labels.OursDetail);
+        ToolTip.SetTip(_headerTheirs, labels.TheirsDetail);
+    }
+
+    /// <summary>Ctrl+S saves the file without marking it resolved.</summary>
+    private void OnViewKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.S && e.KeyModifiers == KeyModifiers.Control)
+        {
+            if (_isEditable && !_isBusy)
+            {
+                _ = SaveCurrentFileAsync(stage: false);
+            }
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>The single primary (blue) button is the next step: Save &amp; mark resolved
+    /// while conflicted files remain, Continue once none do.</summary>
+    private void UpdatePrimaryAction()
+    {
+        bool filesRemain = _conflictedFiles.Count > 0;
+        SetPrimary(_saveAndResolveBtn, filesRemain);
+        SetPrimary(_continueBtn, !filesRemain);
+    }
+
+    private static void SetPrimary(Button button, bool primary)
+    {
+        button.Classes.Set("primary", primary);
+        button.Classes.Set("secondary", !primary);
     }
 
     private void OnStatusChanged(object? s, StatusChangedEventArgs e)
@@ -414,10 +535,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             if (_disposed) return;
             bool stopChanged = _stopId != null && labels.StopId != _stopId;
             _stopId = labels.StopId;
-            _headerOurs.Text = $"Ours: {labels.OursTitle}";
-            _headerTheirs.Text = $"Theirs: {labels.TheirsTitle}";
-            ToolTip.SetTip(_headerOurs, labels.OursDetail);
-            ToolTip.SetTip(_headerTheirs, labels.TheirsDetail);
+            SetSideCaptions(labels);
 
             var op = _ctx.State.PendingOperation;
             if (op == OperationState.None)
@@ -556,10 +674,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         {
             var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
             _stopId = labels.StopId;
-            _headerOurs.Text = $"Ours: {labels.OursTitle}";
-            _headerTheirs.Text = $"Theirs: {labels.TheirsTitle}";
-            ToolTip.SetTip(_headerOurs, labels.OursDetail);
-            ToolTip.SetTip(_headerTheirs, labels.TheirsDetail);
+            SetSideCaptions(labels);
 
             var op = _ctx.State.PendingOperation;
             if (op == OperationState.None)
@@ -612,16 +727,12 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         if (_disposed) return;
         _conflictedFiles.Clear();
         _conflictedFiles.AddRange(files);
-
-        _headerTitle.Text = _conflictedFiles.Count == 0
-            ? "All conflicts resolved — you can continue the operation."
-            : $"{_conflictedFiles.Count} conflicted file(s)";
+        UpdatePrimaryAction();
     }
 
     private void ShowAllConflictsResolvedCard()
     {
         _isEditable = false;
-        UpdateActionButtonsEnabled();
         _debounceCts?.Cancel();
         _parse = null;
         _parseVersion = null;
@@ -636,6 +747,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _currentFile = null;
         _workingCopy = null;
         _diskHash = null;
+        UpdateActionButtonsEnabled();
         _suppressTextChanged = true;
         try
         {
@@ -647,10 +759,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
         _oursEditor.Text = string.Empty;
         _theirsEditor.Text = string.Empty;
-        _headerTitle.Text = "All conflicts resolved — you can continue the operation.";
         var card = new StackPanel { Spacing = 10, Margin = new Thickness(24) };
         card.Children.Add(Text("✓ All conflicts resolved", "ColorSuccess", 14, FontWeight.Bold));
-        card.Children.Add(Text("You can continue the operation using the Continue button above.", "ColorTextMuted", 12));
+        card.Children.Add(Text("Press Continue to finish the operation.", "ColorTextMuted", 12));
         _editorArea.Content = card;
         _ctx.State.SetSelectedConflictPath(null);
     }
@@ -685,6 +796,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _currentFile = file;
         _workingCopy = copy;
         _diskHash = copy.DiskHash;
+        UpdateActionButtonsEnabled();
         _changedOnDiskBanner.IsVisible = false;
         _snapshot = null;
         _oursEditor.FilePath = file.FilePath;
@@ -963,14 +1075,59 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         return side == ConflictSide.Ours ? _snapshot?.OursLines : _snapshot?.TheirsLines;
     }
 
+    /// <summary>The conflicts the arrows and the counter step through, by document line, in order.</summary>
+    internal IReadOnlyList<(int Start, int End)> NavigableRegions()
+    {
+        if (_parse == null || _parse.Regions.Count == 0)
+        {
+            return [];
+        }
+
+        var regions = new (int Start, int End)[_parse.Regions.Count];
+        for (int i = 0; i < regions.Length; i++)
+        {
+            regions[i] = (_parse.Regions[i].StartLine, _parse.Regions[i].EndLine);
+        }
+        return regions;
+    }
+
+    /// <summary>
+    /// The 0-based index of the conflict the caret is in; otherwise of the next one below the
+    /// caret; the last one when the caret is below them all. -1 when there are none.
+    /// </summary>
+    internal int CurrentRegionIndex() => CurrentRegionIndex(NavigableRegions());
+
+    private int CurrentRegionIndex(IReadOnlyList<(int Start, int End)> regions)
+    {
+        if (regions.Count == 0)
+        {
+            return -1;
+        }
+
+        int caretLine = _resultEditor.TextArea.Caret.Line - 1;
+        for (int i = 0; i < regions.Count; i++)
+        {
+            if (caretLine <= regions[i].End)
+            {
+                return i;
+            }
+        }
+        return regions.Count - 1;
+    }
+
     private void UpdateConflictsCount()
     {
-        _conflictsCountText.IsVisible = true;
-        int remaining = _parse?.Regions.Count ?? 0;
+        var regions = NavigableRegions();
+        int total = regions.Count;
         int malformed = _parse?.MalformedAt.Count ?? 0;
-        int total = remaining + malformed;
+        int current = CurrentRegionIndex(regions) + 1;
 
-        _conflictsCountText.Text = total == 1 ? "1 conflict left" : $"{total} conflicts left";
+        _conflictsCountText.IsVisible = total > 0;
+        _conflictsCountText.Text = total > 0 ? $"{current}/{total}" : string.Empty;
+        ToolTip.SetTip(_conflictsCountText, total > 0 ? $"Conflict {current} of {total} in this file" : null);
+        bool canNavigate = !_isBusy && _isEditable && total > 0;
+        _prevConflictBtn.IsEnabled = canNavigate;
+        _nextConflictBtn.IsEnabled = canNavigate;
 
         if (malformed > 0)
         {
@@ -987,6 +1144,10 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private void OnResultCaretPositionChanged(object? sender, EventArgs e)
     {
         UpdateFloatingRegionBar();
+        if (_isEditable)
+        {
+            UpdateConflictsCount();
+        }
     }
 
     private void UpdateFloatingRegionBar()
@@ -1131,28 +1292,30 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     public void GoToNextConflict()
     {
-        if (_parse == null || _parse.Regions.Count == 0)
+        var regions = NavigableRegions();
+        if (regions.Count == 0)
         {
             return;
         }
 
         int currentLine = _resultEditor.TextArea.Caret.Line - 1;
-        var next = _parse.Regions.FirstOrDefault(r => r.StartLine > currentLine) ?? _parse.Regions[0];
-        _resultEditor.ScrollToLine(next.StartLine + 1);
-        _resultEditor.TextArea.Caret.Line = next.StartLine + 1;
+        var next = regions.FirstOrDefault(r => r.Start > currentLine, regions[0]);
+        _resultEditor.ScrollToLine(next.Start + 1);
+        _resultEditor.TextArea.Caret.Line = next.Start + 1;
     }
 
     public void GoToPreviousConflict()
     {
-        if (_parse == null || _parse.Regions.Count == 0)
+        var regions = NavigableRegions();
+        if (regions.Count == 0)
         {
             return;
         }
 
         int currentLine = _resultEditor.TextArea.Caret.Line - 1;
-        var prev = _parse.Regions.LastOrDefault(r => r.EndLine < currentLine) ?? _parse.Regions[^1];
-        _resultEditor.ScrollToLine(prev.StartLine + 1);
-        _resultEditor.TextArea.Caret.Line = prev.StartLine + 1;
+        var prev = regions.LastOrDefault(r => r.End < currentLine, regions[^1]);
+        _resultEditor.ScrollToLine(prev.Start + 1);
+        _resultEditor.TextArea.Caret.Line = prev.Start + 1;
     }
 
     public async Task<bool> SaveCurrentFileAsync(bool stage)
@@ -1320,9 +1483,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         try
         {
             if (!await _dialogs.ConfirmDestructiveAsync(
-                    "Re-create conflict",
-                    $"Re-create conflict markers for {path} with base section? Any edits to this file will be lost.",
-                    "Re-create"))
+                    "Reset file to conflicted",
+                    $"Rewrite {path} back to its conflicted state, including the common-ancestor (base) section? Any edits to this file will be lost.",
+                    "Reset"))
             {
                 return;
             }
@@ -1347,7 +1510,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Re-create conflict"), ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Reset file to conflicted"), ex.NotificationDetails());
         }
         finally
         {

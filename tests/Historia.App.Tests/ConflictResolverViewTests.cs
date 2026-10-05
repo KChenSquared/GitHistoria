@@ -1021,7 +1021,8 @@ public class ConflictResolverViewTests : IDisposable
         await Task.Delay(50);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal("Ours: Ours2", view.GetLogicalDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Text?.StartsWith("Ours:") == true)?.Text);
+        Assert.Equal("Ours · Ours2", view.OursCaptionForTesting.Text);
+        Assert.Equal("Theirs · Theirs2", view.TheirsCaptionForTesting.Text);
     }
 
     [AvaloniaFact]
@@ -1668,12 +1669,11 @@ public class ConflictResolverViewTests : IDisposable
         Assert.NotEmpty(view.TextActionButtonsForTesting);
         Assert.All(view.TextActionButtonsForTesting, b => Assert.False(b.IsEnabled));
 
-        var targetLabels = new[] { "Take ours", "Take theirs", "Re-create with base", "External tool" };
-        var toolbarActions = view.ActionButtonsForTesting
-            .Where(b => targetLabels.Contains(b.Content as string))
-            .ToList();
-        Assert.Equal(4, toolbarActions.Count);
-        Assert.All(toolbarActions, b => Assert.True(b.IsEnabled));
+        Assert.True(view.ResolveFileButtonForTesting.IsEnabled);
+        Assert.Equal(
+            new[] { "Take ours (whole file)", "Take theirs (whole file)", "Reset file to conflicted", "Open in external tool" },
+            view.ResolveFileMenuItemsForTesting.Select(m => m.Header as string));
+        Assert.All(view.ResolveFileMenuItemsForTesting, m => Assert.True(m.IsEnabled));
     }
 
     [AvaloniaFact]
@@ -1692,9 +1692,8 @@ public class ConflictResolverViewTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         _dialogs.ConfirmDestructiveResult = true;
-        var recreateButton = view.ActionButtonsForTesting.Single(b => b.Content as string == "Re-create with base");
-        Assert.True(recreateButton.IsEnabled);
-        recreateButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.True(view.ResolveFileButtonForTesting.IsEnabled);
+        ClickMenuItem(view, "Reset file to conflicted");
 
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (_conflicts.RecreatedCalls.Count == 0 && DateTime.UtcNow < deadline)
@@ -1704,7 +1703,7 @@ public class ConflictResolverViewTests : IDisposable
         }
 
         Assert.Single(_dialogs.ConfirmDestructiveCalls);
-        Assert.Equal("Re-create conflict", _dialogs.ConfirmDestructiveCalls[0].Title);
+        Assert.Equal("Reset file to conflicted", _dialogs.ConfirmDestructiveCalls[0].Title);
         Assert.Single(_conflicts.RecreatedCalls);
         Assert.Equal("binary.png", _conflicts.RecreatedCalls[0]);
     }
@@ -2447,6 +2446,171 @@ public class ConflictResolverViewTests : IDisposable
             }
             catch { }
         }
+    }
+
+    #endregion
+
+    #region Toolbar
+
+    private static void ClickMenuItem(ConflictResolverView view, string header)
+    {
+        var item = view.ResolveFileMenuItemsForTesting.Single(m => m.Header as string == header);
+        item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+    }
+
+    private async Task<ConflictResolverView> LoadTwoConflictViewAsync()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+        return view;
+    }
+
+    [AvaloniaFact]
+    public async Task Take_ours_menu_item_confirms_before_resolving()
+    {
+        var view = await LoadTwoConflictViewAsync();
+
+        _dialogs.ConfirmDestructiveResult = false;
+        ClickMenuItem(view, "Take ours (whole file)");
+        for (int i = 0; i < 10; i++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(10);
+        }
+
+        var call = Assert.Single(_dialogs.ConfirmDestructiveCalls);
+        Assert.Equal("Take ours", call.Title);
+        Assert.Empty(_conflicts.ResolvedWithSideCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task Resolve_file_disabled_on_all_resolved_card()
+    {
+        _conflicts.Conflicts = [];
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(view.CurrentFileForTesting);
+        Assert.False(view.ResolveFileButtonForTesting.IsEnabled);
+    }
+
+    [AvaloniaFact]
+    public async Task Counter_shows_region_under_caret_then_next_region()
+    {
+        var view = await LoadTwoConflictViewAsync();
+        var caret = view.ResultEditorForTesting.TextArea.Caret;
+
+        caret.Line = 3; // "ours 1", inside region 1
+        Assert.Equal(0, view.CurrentRegionIndex());
+        Assert.Equal("1/2", view.ConflictsCountTextForTesting.Text);
+
+        caret.Line = 7; // "middle", between the regions
+        Assert.Equal("2/2", view.ConflictsCountTextForTesting.Text);
+
+        caret.Line = 1; // "header", above both
+        Assert.Equal("1/2", view.ConflictsCountTextForTesting.Text);
+
+        view.GoToNextConflict(); // from above both: the first region
+        Assert.Equal(2, caret.Line);
+        Assert.Equal("1/2", view.ConflictsCountTextForTesting.Text);
+
+        view.GoToNextConflict();
+        Assert.Equal(8, caret.Line);
+        Assert.Equal("2/2", view.ConflictsCountTextForTesting.Text);
+
+        caret.Line = 13; // "footer", below both
+        Assert.Equal("2/2", view.ConflictsCountTextForTesting.Text);
+    }
+
+    [AvaloniaFact]
+    public async Task Nav_buttons_disabled_without_regions()
+    {
+        var view = await LoadTwoConflictViewAsync();
+        Assert.True(view.PrevConflictButtonForTesting.IsEnabled);
+        Assert.True(view.NextConflictButtonForTesting.IsEnabled);
+        Assert.True(view.ConflictsCountTextForTesting.IsVisible);
+
+        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+
+        Assert.Empty(view.NavigableRegions());
+        Assert.False(view.PrevConflictButtonForTesting.IsEnabled);
+        Assert.False(view.NextConflictButtonForTesting.IsEnabled);
+        Assert.False(view.ConflictsCountTextForTesting.IsVisible);
+    }
+
+    private static void PressCtrlS(ConflictResolverView view)
+        => view.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.S, KeyModifiers = KeyModifiers.Control });
+
+    [AvaloniaFact]
+    public async Task Ctrl_S_saves_without_staging()
+    {
+        var view = await LoadTwoConflictViewAsync();
+        view.ResultEditorForTesting.Document.Insert(0, "edit\n");
+        Dispatcher.UIThread.RunJobs();
+
+        PressCtrlS(view);
+        for (int i = 0; i < 20 && _conflicts.SaveResolutionCalls.Count == 0; i++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(10);
+        }
+
+        var call = Assert.Single(_conflicts.SaveResolutionCalls);
+        Assert.False(call.Stage);
+        Assert.StartsWith("edit\n", call.Text);
+    }
+
+    [AvaloniaFact]
+    public async Task Ctrl_S_does_nothing_when_not_editable()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "binary.png", Status = ConflictStatus.BothModified, IsBinary = true }];
+        _conflicts.WorkingCopies["binary.png"] = new ConflictWorkingCopy { Path = "binary.png", IsBinary = true, DiskHash = "hash1" };
+        var view = new ConflictResolverView(_sp, _context);
+        await view.LoadAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        PressCtrlS(view);
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(20);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(_conflicts.SaveResolutionCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task Continue_becomes_primary_when_all_files_resolved()
+    {
+        _context.State.SetKeepConflictResolverOpen(true);
+        var view = await LoadTwoConflictViewAsync();
+        Assert.Contains("primary", view.SaveAndResolveButtonForTesting.Classes);
+        Assert.DoesNotContain("primary", view.ContinueButtonForTesting.Classes);
+
+        _dialogs.ConfirmResult = true;
+        await view.SaveAndMarkResolvedAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(view.ConflictedFilesForTesting);
+        Assert.Contains("primary", view.ContinueButtonForTesting.Classes);
+        Assert.DoesNotContain("primary", view.SaveAndResolveButtonForTesting.Classes);
+        Assert.Contains("secondary", view.SaveAndResolveButtonForTesting.Classes);
+    }
+
+    [AvaloniaFact]
+    public async Task Header_has_no_file_count_and_captions_show_side_titles()
+    {
+        _conflicts.SideLabels = _conflicts.SideLabels with { OursTitle = "main", TheirsTitle = "feature", TheirsDetail = "abc1234 Add feature" };
+        var view = await LoadTwoConflictViewAsync();
+
+        Assert.Equal("Ours · main", view.OursCaptionForTesting.Text);
+        Assert.Equal("Theirs · feature", view.TheirsCaptionForTesting.Text);
+        Assert.Equal("abc1234 Add feature", ToolTip.GetTip(view.TheirsCaptionForTesting));
+        var texts = view.GetLogicalDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty).ToList();
+        Assert.DoesNotContain(texts, t => t.Contains("conflicted file", StringComparison.Ordinal));
     }
 
     #endregion
