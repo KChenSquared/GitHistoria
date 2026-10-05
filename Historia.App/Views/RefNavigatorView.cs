@@ -197,7 +197,9 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private void OnRefsChanged(object? s, RefsChangedEventArgs e)
         => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
         {
-            if (_repo is null)
+            // A raise posted just before a rebind belongs to the previous repo; comparing it
+            // against this repo's baselines would overwrite them with the old repo's state.
+            if (_repo is null || !ReferenceEquals(s, _repo.State))
                 return;
 
             var stashChanged = _loadedStashStamp is null || e.StashStamp != _loadedStashStamp;

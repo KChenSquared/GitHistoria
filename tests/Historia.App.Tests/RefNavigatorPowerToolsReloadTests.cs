@@ -385,17 +385,73 @@ public sealed class RefNavigatorPowerToolsReloadTests
             var ctx2 = await ws.OpenAsync(fixture2.Path);
             ctx2.MarkFirstGraphPaintDone();
             ws.Focus(ctx2);
-            Dispatcher.UIThread.RunJobs();
+
+            // The counter sees every repo's lists: let the second repo's bind list land first.
+            for (var i = 0; i < 50 && setup.Counter.ListCount == 1; i++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                await Task.Delay(20);
+            }
+            Assert.Equal(2, setup.Counter.ListCount);
 
             ws.Focus(setup.Context);
 
+            for (var i = 0; i < 50 && setup.Counter.ListCount == 2; i++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                await Task.Delay(20);
+            }
+
+            Assert.Equal(3, setup.Counter.ListCount);
+            await ctx2.DisposeAsync();
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    /// <summary>A raise from the previously bound repo that lands after a rebind (it was posted
+    /// before the unsubscribe ran) is ignored: nothing is listed and the new repo's baselines
+    /// stay its own.</summary>
+    [AvaloniaFact]
+    public async Task Raise_from_the_previous_repo_after_a_rebind_is_ignored()
+    {
+        var setup = CreateView(markPaintDone: true);
+        using var fixture2 = new TestRepoFixture();
+        try
+        {
+            for (var i = 0; i < 50 && setup.Counter.ListCount == 0; i++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                await Task.Delay(20);
+            }
+            Assert.Equal(1, setup.Counter.ListCount);
+
+            var ws = setup.Sp.GetRequiredService<IWorkspaceService>();
+            var ctx2 = await ws.OpenAsync(fixture2.Path);
+            ctx2.MarkFirstGraphPaintDone();
+            ws.Focus(ctx2);
             for (var i = 0; i < 50 && setup.Counter.ListCount == 1; i++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                await Task.Delay(20);
+            }
+            Assert.Equal(2, setup.Counter.ListCount);
+
+            var stale = new RefsChangedEventArgs([], [], []) { StashStamp = ctx2.State.StashStamp + 1 };
+            typeof(RefNavigatorView).GetMethod("OnRefsChanged", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(setup.View, [setup.Context.State, stale]);
+            for (var i = 0; i < 10; i++)
             {
                 Dispatcher.UIThread.RunJobs();
                 await Task.Delay(20);
             }
 
             Assert.Equal(2, setup.Counter.ListCount);
+            var baseline = typeof(RefNavigatorView).GetField("_loadedStashStamp", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .GetValue(setup.View);
+            Assert.Equal(ctx2.State.StashStamp, (long?)baseline);
             await ctx2.DisposeAsync();
         }
         finally
