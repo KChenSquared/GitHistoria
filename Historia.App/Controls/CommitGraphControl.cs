@@ -3484,13 +3484,6 @@ public sealed partial class CommitGraphControl : Control
         if (_state?.CurrentBranch?.TipCommitId is { } tip && layout.TryGetRow(tip, out var r))
             return r;
 
-        for (var i = 0; i < layout.Decorations.Length; i++)
-        {
-            ref readonly var d = ref layout.Decorations[i];
-            if (d.IsHead || d.Type == DecorationType.Head)
-                return d.RowIndex;
-        }
-
         return -1;
     }
 
@@ -3498,7 +3491,16 @@ public sealed partial class CommitGraphControl : Control
     {
         var hoverLane = _hoverRow >= 0 && _hoverRow < layout.RowCount ? layout.Rows[_hoverRow].LaneIndex : -1;
 
-        var selectedRow = _selectedRow >= 0 ? _selectedRow : (_multiSelect.Count > 0 ? _multiSelect.First() : -1);
+        // foreach uses HashSet's struct enumerator; LINQ First() would box it every frame.
+        var selectedRow = _selectedRow;
+        if (selectedRow < 0)
+        {
+            foreach (var r in _multiSelect)
+            {
+                selectedRow = r;
+                break;
+            }
+        }
         int focusLane = -1;
         if (selectedRow >= 0 && selectedRow < layout.RowCount)
         {
@@ -3519,9 +3521,9 @@ public sealed partial class CommitGraphControl : Control
         var maxVisibleX = Math.Min(colX + _graphColWidth, viewportWidth) + 4;
 
         // Plain elbows go BEFORE the lane runs, so every vertical lane line paints over the
-        // horizontals that cross it. Emphasised elbows go after, so the emphasis stays
-        // unbroken where they cross other lanes.
-        DrawRowElbows(dc, layout, first, last, minVisibleX, maxVisibleX, focusLane, hoverLane, emphasised: false);
+        // horizontals that cross it. Emphasised elbows are queued and drawn after, so the
+        // emphasis stays unbroken where they cross other lanes.
+        DrawRowElbows(dc, layout, first, last, minVisibleX, maxVisibleX, focusLane, hoverLane);
 
         // Vertical lane pieces of the visible rows are merged into maximal same-colour runs and
         // drawn as one line each — about lanes plus lane breaks, not rows × lanes. Where several
@@ -3554,8 +3556,7 @@ public sealed partial class CommitGraphControl : Control
         _lanePiecesSeen = piecesSeen;
         _laneRunsDrawn = runsDrawn;
 
-        if (focusLane >= 0 || hoverLane >= 0)
-            DrawRowElbows(dc, layout, first, last, minVisibleX, maxVisibleX, focusLane, hoverLane, emphasised: true);
+        DrawQueuedEmphasisedElbows(dc);
 
         // The right-edge lane tick sits ON TOP of the lines, broken per-row with WashRowGap
         // to match the row wash beside it.
@@ -3837,9 +3838,12 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
+    /// <summary>Draws the plain elbows of the visible rows and queues the emphasised ones, in
+    /// paint order, for <see cref="DrawQueuedEmphasisedElbows"/>.</summary>
     private void DrawRowElbows(DrawingContext dc, GraphLayout layout, int first, int last,
-        double minVisibleX, double maxVisibleX, int focusLane, int hoverLane, bool emphasised)
+        double minVisibleX, double maxVisibleX, int focusLane, int hoverLane)
     {
+        _emphElbowCount = 0;
         for (var row = first; row <= last; row++)
         {
             var y = RowY(row);
@@ -3857,10 +3861,6 @@ public sealed partial class CommitGraphControl : Control
 
             foreach (var elbow in elbows)
             {
-                var isEmph = IsElbowEmphasised(elbow, focusLane, hoverLane);
-                if (isEmph != emphasised)
-                    continue;
-
                 var fromX = LaneX(elbow.FromLane);
                 var toX = LaneX(elbow.ToLane);
                 // An elbow spans [min(fromX, toX), max(fromX, toX)]; skip it only when that
@@ -3868,13 +3868,35 @@ public sealed partial class CommitGraphControl : Control
                 if (Math.Max(fromX, toX) < minVisibleX || Math.Min(fromX, toX) > maxVisibleX)
                     continue;
 
-                var pen = isEmph ? EmphPen(elbow.ColorIndex) : LanePen(elbow.ColorIndex);
-                DrawElbow(dc, pen, elbow.FromLane, elbow.ToLane, fromX, y, elbow.Kind);
+                if (IsElbowEmphasised(elbow, focusLane, hoverLane))
+                {
+                    if (_emphElbowCount == _emphElbows.Length)
+                        Array.Resize(ref _emphElbows, Math.Max(16, _emphElbows.Length * 2));
+                    _emphElbows[_emphElbowCount++] = new QueuedElbow(elbow, fromX, y);
+                    continue;
+                }
+
+                DrawElbow(dc, LanePen(elbow.ColorIndex), elbow.FromLane, elbow.ToLane, fromX, y, elbow.Kind);
             }
         }
     }
 
+    /// <summary>Draws the elbows <see cref="DrawRowElbows"/> queued, in the order queued: rows
+    /// top to bottom, and within a row the order <see cref="OrderElbowsForPaint"/> gave.</summary>
+    private void DrawQueuedEmphasisedElbows(DrawingContext dc)
+    {
+        for (var i = 0; i < _emphElbowCount; i++)
+        {
+            ref readonly var q = ref _emphElbows[i];
+            DrawElbow(dc, EmphPen(q.Elbow.ColorIndex), q.Elbow.FromLane, q.Elbow.ToLane, q.FromX, q.Y, q.Elbow.Kind);
+        }
+    }
+
+    private readonly record struct QueuedElbow(RowElbow Elbow, double FromX, double Y);
+
     private RowElbow[] _elbowScratch = Array.Empty<RowElbow>();
+    private QueuedElbow[] _emphElbows = Array.Empty<QueuedElbow>();
+    private int _emphElbowCount;
 
     /// <summary>The lane an elbow's vertical leg runs in: the child's lane for a branch-out
     /// (falls from the row top), the merged-in parent's lane for a merge (rises from the row
