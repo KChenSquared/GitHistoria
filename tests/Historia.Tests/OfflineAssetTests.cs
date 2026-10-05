@@ -26,6 +26,7 @@ public class OfflineAssetTests
         "https://developer.microsoft.com/microsoft-edge/webview2/", // its manual-install fallback
         "https://github.com/owner/repo.git",                        // clone-dialog input watermark (not fetched)
         "https://github.com/settings/tokens/new?scopes=repo&description=Historia", // "Sign in with GitHub" — user-initiated browser open
+        "https://GitHistoria.com/autolink?issue=$1",                // Issue autolinks hint example (display text, not fetched)
     };
 
     private static readonly string[] BinaryExtensions =
