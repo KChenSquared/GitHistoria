@@ -54,13 +54,15 @@ public sealed class GraphTextShapingTests
     }
 
     /// <summary><see cref="Branches"/> long-lived branches off one root, commits interleaved by
-    /// date, every branch tip a ref badge. Built with one <c>git fast-import</c> run.</summary>
+    /// date, every branch tip a ref badge. Built with one <c>git fast-import</c> run. With
+    /// <c>twoRemotes</c>, every branch is also on <c>origin</c> and <c>upstream</c>, so each badge
+    /// draws two numbered clouds.</summary>
     private sealed class ParallelBranchesRepo : IDisposable
     {
         public string Path { get; }
         public int CommitCount => 1 + Branches * CommitsPerBranch;
 
-        public ParallelBranchesRepo()
+        public ParallelBranchesRepo(bool twoRemotes = false)
         {
             Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-textshape-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Path);
@@ -85,6 +87,18 @@ public sealed class GraphTextShapingTests
             sb.Append("done\n");
             RunGit(Path, sb.ToString(), "fast-import", "--quiet", "--done");
             RunGit(Path, null, "symbolic-ref", "HEAD", "refs/heads/main");
+            if (twoRemotes)
+            {
+                foreach (var remote in new[] { "origin", "upstream" })
+                {
+                    RunGit(Path, null, "remote", "add", remote, $"git@example.com:o/{remote}.git");
+                    for (var k = 0; k < Branches; k++)
+                    {
+                        var branch = k == 0 ? "main" : $"b{k}";
+                        RunGit(Path, null, "update-ref", $"refs/remotes/{remote}/{branch}", $"refs/heads/{branch}");
+                    }
+                }
+            }
         }
 
         private static void AppendCommit(System.Text.StringBuilder sb, string branch, int mark, int? from, long when, string message)
@@ -211,9 +225,9 @@ public sealed class GraphTextShapingTests
     }
 
     /// <summary>A graph showing every column (Refs, Graph, Message, Author, Date, SHA).</summary>
-    private static Setup CreateGraph(double width = 1600, double height = 900)
+    private static Setup CreateGraph(double width = 1600, double height = 900, bool twoRemotes = false)
     {
-        var repo = new ParallelBranchesRepo();
+        var repo = new ParallelBranchesRepo(twoRemotes);
         var theme = new SwitchableThemeService();
         var sp = CreateServices(theme);
         sp.GetRequiredService<IRepoLayoutService>()
@@ -264,6 +278,20 @@ public sealed class GraphTextShapingTests
 
         RenderFrame(s.Graph);
         Assert.True(s.Graph.TextMissesForTesting > 0, "the first frame must shape the visible strings");
+
+        s.Graph.ResetMissCountersForTesting();
+        RenderFrame(s.Graph);
+
+        Assert.Equal(0, s.Graph.TextMissesForTesting);
+        Assert.Equal(0, s.Graph.PoolMissesForTesting);
+    }
+
+    [AvaloniaFact]
+    public void A_repeat_frame_with_numbered_remote_clouds_shapes_no_text_and_builds_no_pooled_object()
+    {
+        using var s = CreateGraph(twoRemotes: true);
+        RenderFrame(s.Graph);
+        Assert.Contains(s.Graph.IconRectsForTesting, r => r.Tip == "2 · upstream");
 
         s.Graph.ResetMissCountersForTesting();
         RenderFrame(s.Graph);

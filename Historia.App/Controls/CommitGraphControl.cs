@@ -290,6 +290,10 @@ public sealed partial class CommitGraphControl : Control
     internal int PoolMissesForTesting => _poolMisses;
     internal int TextMissesForTesting => _textCache.Misses;
     internal int TextCacheCountForTesting => _textCache.Count;
+    internal IReadOnlyList<(Rect Rect, string Tip)> IconRectsForTesting => _iconRects;
+    internal IReadOnlyList<(Rect Rect, int Row, GraphDecoration Deco)> PillRectsForTesting => _pillRects;
+    internal IReadOnlyDictionary<int, double> BadgeRightEdgesForTesting => _badgeRightEdge;
+    internal RemoteNumbering RemoteNumberingForTesting => _remoteNumbering;
     internal void ResetMissCountersForTesting()
     {
         _poolMisses = 0;
@@ -361,7 +365,19 @@ public sealed partial class CommitGraphControl : Control
 
     private Geometry _icoLocal = new PathGeometry();
     private Geometry _icoRemote = new PathGeometry();
+    private Geometry _icoRemoteFilled = new PathGeometry();
     private Geometry _icoTag = new PathGeometry();
+
+    // Numbers for the configured remotes; with two or more, a branch badge draws one numbered
+    // cloud per remote instead of a single plain cloud. Rebuilt when the remote names change.
+    private RemoteNumbering _remoteNumbering = RemoteNumbering.Empty;
+    private string[] _remoteNumberingNames = [];
+    // A badge's joined remote names for the single plain cloud's tooltip, built once per
+    // decoration array rather than every frame.
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<string[], string> _joinedRemoteTips = new();
+    private static readonly string[] NumberStrings =
+        Enumerable.Range(0, 256).Select(i => i.ToString(CultureInfo.InvariantCulture)).ToArray();
+    private readonly Typeface _digitTypeface = new(FontFamily.Default, weight: FontWeight.SemiBold);
 
     private Point _dragStart;
     private int _dragRow = -1;
@@ -383,8 +399,8 @@ public sealed partial class CommitGraphControl : Control
     // Every string the render path draws, shaped once. Keyed by brush reference, so a palette
     // swap can never reuse a stale-coloured layout; cleared (and disposed) on a theme change.
     private readonly ShapedTextCache _textCache = new(TextCacheCapacity);
-    // Builds by any Pooled(...) pool or the elbow geometry cache since the last reset: zero on
-    // a repeat frame.
+    // Builds by any Pooled(...) pool, the elbow geometry cache or the joined remote-tooltip
+    // cache since the last reset: zero on a repeat frame.
     private int _poolMisses;
     // Reused every frame to merge vertical lane pieces into runs (counts its growths).
     private readonly LaneRunBuilder _laneRuns = new();
@@ -576,6 +592,7 @@ public sealed partial class CommitGraphControl : Control
 
         _icoLocal = ParseBadgeIcon(IconPaths.Get("hard_drive"));
         _icoRemote = ParseBadgeIcon(IconPaths.Get("cloud"));
+        _icoRemoteFilled = RemoteCloudGlyph.CreateFilledGeometry(NumberedCloudBox);
         _icoTag = ParseBadgeIcon(IconPaths.Get("sell"));
         _icoFilter = ParseHeaderIcon(IconPaths.Get("filter_alt"));
         _icoSearch = ParseHeaderIcon(IconPaths.Get("search"));
@@ -734,6 +751,7 @@ public sealed partial class CommitGraphControl : Control
         _refsPendingRecompute = false;
         _context = context;
         _state = context?.State;
+        UpdateRemoteNumbering(_state?.Remotes ?? []);
 
         if (context is not null)
         {
@@ -856,6 +874,9 @@ public sealed partial class CommitGraphControl : Control
         if (_context is not { } ctx)
             return;
 
+        if (UpdateRemoteNumbering(e.Remotes))
+            InvalidateVisual();
+
         if (_refsRecomputeInFlight)
         {
             _refsPendingRecompute = true;
@@ -863,6 +884,20 @@ public sealed partial class CommitGraphControl : Control
         }
 
         ActiveRefsRecomputeTask = RunCoalescedRefsRecomputeAsync(ctx);
+    }
+
+    /// <summary>Renumbers the remotes when their names changed; true when it did.</summary>
+    private bool UpdateRemoteNumbering(IReadOnlyList<RemoteInfo> remotes)
+    {
+        var same = remotes.Count == _remoteNumberingNames.Length;
+        for (var i = 0; same && i < remotes.Count; i++)
+            same = string.Equals(remotes[i].Name, _remoteNumberingNames[i], StringComparison.Ordinal);
+        if (same)
+            return false;
+
+        _remoteNumberingNames = remotes.Select(r => r.Name).ToArray();
+        _remoteNumbering = RemoteNumbering.From(_remoteNumberingNames);
+        return true;
     }
 
     private async Task RunCoalescedRefsRecomputeAsync(RepositoryContext context)
@@ -3008,7 +3043,16 @@ public sealed partial class CommitGraphControl : Control
         {
             if (isLocal)
                 icons.Children.Add(Historia.Views.ViewKit.Icon("hard_drive", 12, "ColorTextMuted"));
-            if (remotes is { Length: > 0 })
+            if (remotes is { Length: > 0 } && _remoteNumbering.IsActive)
+            {
+                foreach (var r in remotes.OrderBy(r => _remoteNumbering.NumberOf(r) is > 0 and var n ? n : int.MaxValue))
+                {
+                    var cloud = RemoteCloudGlyph.CreateIcon(_remoteNumbering.NumberOf(r), 14, "ColorTextMuted", "ColorSurface");
+                    ToolTip.SetTip(cloud, _remoteNumbering.TooltipOf(r));
+                    icons.Children.Add(cloud);
+                }
+            }
+            else if (remotes is { Length: > 0 })
                 icons.Children.Add(Historia.Views.ViewKit.Icon("cloud", 12, "ColorTextMuted"));
         }
 
@@ -3641,6 +3685,8 @@ public sealed partial class CommitGraphControl : Control
 
     private const double IconBox = 12;
     private const double IconGap = 4;
+    // A numbered remote cloud is wider than the other badge icons so its digit stays legible.
+    private const double NumberedCloudBox = 16;
     private const double BadgePadX = 2;
     private const double BadgeClusterGap = 4;
     /// <summary>Ref-badge / overflow-chip corner radius — near-square (was 7).</summary>
@@ -3649,19 +3695,44 @@ public sealed partial class CommitGraphControl : Control
     private const double BadgeTextSlack = 1;
     private const double BadgeMinBranchWidth = 130;
 
-    private int BadgeIconCount(GraphDecoration d) => d.Type switch
-    {
-        DecorationType.Tag => 1,
-        DecorationType.LocalBranch or DecorationType.RemoteBranch =>
-            (d.IsLocal ? 1 : 0) + (d.Remotes.Length > 0 ? 1 : 0),
-        _ => 0,
-    };
+    /// <summary>True when a branch badge draws one numbered cloud per remote rather than a
+    /// single plain cloud.</summary>
+    private bool NumberedClouds(GraphDecoration d) => _remoteNumbering.IsActive && d.Remotes.Length > 0;
 
     private static bool IsBranchBadge(GraphDecoration d) =>
         d.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch or DecorationType.Head;
 
-    private static double IconClusterWidth(int icons) =>
-        icons <= 0 ? 0 : icons * IconBox + (icons - 1) * IconGap;
+    /// <summary>The width of the badge's right-hand icon cluster. Measuring and drawing both read
+    /// this, so a badge's measured width always matches what is drawn.</summary>
+    private double IconClusterWidth(GraphDecoration d)
+    {
+        double width = 0;
+        var icons = 0;
+        if (d.Type == DecorationType.Tag)
+        {
+            width = IconBox;
+            icons = 1;
+        }
+        else if (d.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
+        {
+            if (d.IsLocal)
+            {
+                width += IconBox;
+                icons++;
+            }
+            if (NumberedClouds(d))
+            {
+                width += d.Remotes.Length * NumberedCloudBox;
+                icons += d.Remotes.Length;
+            }
+            else if (d.Remotes.Length > 0)
+            {
+                width += IconBox;
+                icons++;
+            }
+        }
+        return icons == 0 ? 0 : width + (icons - 1) * IconGap;
+    }
 
     private static string? BadgePlusText(GraphDecoration d) =>
         d.SiblingsOrNull is { Length: > 0 } sibs ? $"+{sibs.Length + 1}" : null;
@@ -3671,12 +3742,12 @@ public sealed partial class CommitGraphControl : Control
         var label = d.Type == DecorationType.Head ? "HEAD" : d.Label;
         var labelW = Text(label, _pillText, size: BadgeLabelSize).Width;
 
-        var icons = BadgeIconCount(d);
+        var cluster = IconClusterWidth(d);
         var plus = BadgePlusText(d);
         var plusW = plus is null ? 0 : Text(plus, _pillText, size: BadgeLabelSize).Width;
 
         var rightExtras =
-            (icons > 0 ? BadgeClusterGap + IconClusterWidth(icons) : 0) +
+            (cluster > 0 ? BadgeClusterGap + cluster : 0) +
             (plus is not null ? BadgeClusterGap + plusW : 0);
 
         var content = BadgePadX + labelW + BadgeTextSlack + rightExtras + BadgePadX;
@@ -3785,7 +3856,6 @@ public sealed partial class CommitGraphControl : Control
         var (rightExtras, _, _) = BadgeMetrics(d);
         var plus = BadgePlusText(d);
         var plusW = plus is null ? 0 : Text(plus, ink, size: BadgeLabelSize).Width;
-        var icons = BadgeIconCount(d);
 
         var label = d.Type == DecorationType.Head ? "HEAD" : d.Label;
         var textBudget = Math.Max(4, w - BadgePadX * 2 - rightExtras);
@@ -3803,7 +3873,7 @@ public sealed partial class CommitGraphControl : Control
         // right edge with a fixed order and a guaranteed gap, so the cloud glyph can never be
         // clipped or hidden behind +N. If the badge is pathologically narrow, the label is what
         // yields (its budget already floors low), never the right-edge cluster.
-        var ix = x + w - BadgePadX - (plus is not null ? plusW + BadgeClusterGap : 0) - IconClusterWidth(icons);
+        var ix = x + w - BadgePadX - (plus is not null ? plusW + BadgeClusterGap : 0) - IconClusterWidth(d);
         ix = Math.Max(ix, x + BadgePadX + Math.Min(ft.Width, BadgeMinTextWidth));
         var iy = midY - 6;
         if (d.Type == DecorationType.Tag)
@@ -3818,12 +3888,66 @@ public sealed partial class CommitGraphControl : Control
                 _iconRects.Add((new Rect(ix, iy, IconBox, IconBox), "local"));
                 ix += IconBox + IconGap;
             }
-            if (d.Remotes.Length > 0)
+            if (NumberedClouds(d))
+                DrawNumberedClouds(dc, d, ix, midY, ink);
+            else if (d.Remotes.Length > 0)
             {
                 DrawBadgeIcon(dc, _icoRemote, ix, iy, ink);
-                _iconRects.Add((new Rect(ix, iy, IconBox, IconBox), string.Join(", ", d.RemotesOrNull!)));
+                _iconRects.Add((new Rect(ix, iy, IconBox, IconBox), RemotesTip(d.RemotesOrNull!)));
             }
         }
+    }
+
+    /// <summary>One filled cloud per remote in ascending number order, unnumbered (stale) remotes
+    /// last, each with its number knocked out in the badge's lane colour and its own tooltip.</summary>
+    private void DrawNumberedClouds(DrawingContext dc, GraphDecoration d, double ix, double midY, IBrush ink)
+    {
+        var remotes = d.Remotes;
+        Span<int> order = remotes.Length <= 32 ? stackalloc int[remotes.Length] : new int[remotes.Length];
+        for (var i = 0; i < order.Length; i++)
+        {
+            var key = SortKey(remotes[i]);
+            var j = i;
+            for (; j > 0 && SortKey(remotes[order[j - 1]]) > key; j--)
+                order[j] = order[j - 1];
+            order[j] = i;
+        }
+
+        var iy = midY - NumberedCloudBox / 2;
+        var band = RemoteCloudGlyph.DigitBand(NumberedCloudBox);
+        var knockout = LaneBrush(d.ColorIndex);
+        foreach (var k in order)
+        {
+            var name = remotes[k];
+            DrawBadgeIcon(dc, _icoRemoteFilled, ix, iy, ink);
+            var n = _remoteNumbering.NumberOf(name);
+            if (n > 0)
+            {
+                var size = RemoteCloudGlyph.DigitFontSize(n, NumberedCloudBox);
+                var digit = _textCache.Get(n < NumberStrings.Length ? NumberStrings[n] : n.ToString(CultureInfo.InvariantCulture),
+                    _digitTypeface, size, knockout, double.PositiveInfinity, TextTrimming.CharacterEllipsis, maxLines: 1);
+                digit.Draw(dc, new Point(ix + band.X + (band.Width - digit.Width) / 2,
+                    CenteredTextY(digit, iy + band.Y, band.Height, size)));
+            }
+            _iconRects.Add((new Rect(ix, iy, NumberedCloudBox, NumberedCloudBox), _remoteNumbering.TooltipOf(name)));
+            ix += NumberedCloudBox + IconGap;
+        }
+
+        int SortKey(string name) => _remoteNumbering.NumberOf(name) is > 0 and var n ? n : int.MaxValue;
+    }
+
+    /// <summary>The single plain cloud's tooltip: the remote's name, or every name joined
+    /// (computed once per decoration array).</summary>
+    private string RemotesTip(string[] remotes)
+    {
+        if (remotes.Length == 1)
+            return remotes[0];
+        if (_joinedRemoteTips.TryGetValue(remotes, out var tip))
+            return tip;
+        _poolMisses++;
+        tip = string.Join(", ", remotes);
+        _joinedRemoteTips.AddOrUpdate(remotes, tip);
+        return tip;
     }
 
     private void DrawBadgeIcon(DrawingContext dc, Geometry g, double x, double y, IBrush ink)
