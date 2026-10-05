@@ -158,7 +158,11 @@ public sealed class DagLayoutEngine
                 flags |= RowFlags.HasDecorations;
                 // HEAD is per-badge now (IsHead), but a standalone detached-HEAD badge
                 // still uses DecorationType.Head. Either marks the row.
-                if (deco.Any(x => x.Type == DecorationType.Head || x.IsHead)) flags |= RowFlags.IsHead;
+                if (deco.Any(x => x.Type == DecorationType.Head || x.IsHead))
+                {
+                    flags |= RowFlags.IsHead;
+                    s.HeadRow = row;
+                }
             }
 
             s.Rows.Add(new GraphRow
@@ -248,6 +252,7 @@ public sealed class DagLayoutEngine
             EdgeCount = s.RealEdges.Count + offWindow.Length,
             TotalLaneCount = s.NextCompactedLane,
             IsComplete = complete && s.Reservations.Count == 0,
+            HeadRow = s.HeadRow,
             // 2 / S4: share the accumulator's dictionary instead of copying it wholesale
             // on every Build — it only ever grows, and a lookup against an older snapshot is
             // bounds-checked by the caller against that snapshot's own RowCount.

@@ -38,11 +38,10 @@ public enum ElbowKind : byte
     /// a branch-out makes at the commit it rejoins.</summary>
     EnterTop = 0,
 
-    /// <summary>Leaves the node (mid-row) in <see cref="RowElbow.FromLane"/>, turns near the
-    /// row's bottom edge, exits horizontally toward <see cref="RowElbow.ToLane"/> where a
-    /// vertical pass-through segment picks it up on the next row. The bend a merge edge makes at
-    /// the merge commit's own row instead of deferring the jog down to its far
-    /// parent.</summary>
+    /// <summary>Rises vertically in <see cref="RowElbow.ToLane"/> from the row's bottom edge,
+    /// turns at node height, and runs horizontally into the merge commit's node in
+    /// <see cref="RowElbow.FromLane"/>. The bend a merge edge makes on the merge commit's
+    /// row.</summary>
     LeaveBottom = 1,
 }
 
@@ -334,6 +333,9 @@ public sealed class GraphLayout : IDisposable
     public required int EdgeCount { get; init; }
     public required int TotalLaneCount { get; init; }
     public required bool IsComplete { get; init; }
+
+    /// <summary>The row index carrying HEAD, or -1 when HEAD has not been placed in this layout.</summary>
+    public int HeadRow { get; init; } = -1;
 
     /// <summary>
     /// Maps <see cref="GitObjectId"/> → row index. Built once; used for selection sync only.

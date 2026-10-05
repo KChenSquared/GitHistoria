@@ -61,6 +61,7 @@ public sealed class GraphLayoutState
     internal readonly List<GraphEdge> RealEdges = [];
     internal readonly List<GraphDecoration> Decorations = [];
     internal readonly Dictionary<GitObjectId, int> RowByCommitId = [];
+    internal int HeadRow = -1;
 
     /// <summary>2 crossing index: boundary rows are multiples of this stride. Sized so a
     /// window's checkpoint lookup costs about (concurrent lanes) work, not (total rows) — linux

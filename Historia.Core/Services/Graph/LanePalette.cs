@@ -1,4 +1,4 @@
-﻿
+
 namespace Historia.Services.Graph;
 
 /// <summary>
@@ -6,52 +6,52 @@ namespace Historia.Services.Graph;
 /// this maps an index to a concrete <see cref="Rgb"/>.
 /// </summary>
 /// <remarks>
-/// One table per theme: a nine-colour rainbow
-/// (<c>docs/9-color-rainbow-palette.png</c>) for the dark/System-dark theme, plus a
-/// hand-picked darker, still mutually-distinct nine-colour set for the light theme and a
-/// lifted set for high contrast. No two lanes share a colour <i>within</i> a theme
-/// (asserted by <c>PaletteParityTests</c> with a CIE76 ΔE floor). This is the graph layer's
-/// palette only — <see cref="Historia.Services.Theming.HistoriaPalette"/> still owns the theme tokens.
-/// These are "the available colors" for the <b>solid</b> lane lines and the branch/tag pill
-/// borders, so <see cref="EdgeColorFor"/> is the identity. Backgrounds (the lane-square
-/// fill, the pill fills) derive a translucent tint from <see cref="ColorFor"/>. Each renumber
-/// (here 10 -> 9) breaks the colour-index stability guarantee — existing repos re-seed
-/// their lane colours on next open.
+/// One table per theme. Dark is a neon set drawn on the dark navy field. Light is a retro set
+/// on a white field that deliberately includes two pale hues (Tangerine and Goldenrod): their
+/// 2 DIP lines are faint, so the translucent lane wash carries their lane identity. High
+/// contrast is a rainbow lifted until every hue clears AA on black. No two lanes share a
+/// colour <i>within</i> a theme (asserted by <c>PaletteParityTests</c> with a CIE76 ΔE floor).
+/// This is the graph layer's palette only — <see cref="Historia.Services.Theming.HistoriaPalette"/>
+/// still owns the theme tokens. These are "the available colors" for the <b>solid</b> lane
+/// lines and the branch/tag pill borders, so <see cref="EdgeColorFor"/> is the identity.
+/// Backgrounds (the lane-square fill, the pill fills) derive a translucent tint from
+/// <see cref="ColorFor"/>. Changing <see cref="Size"/> breaks the colour-index stability
+/// guarantee — existing repos re-seed their lane colours on next open.
 /// </remarks>
 public static class LanePalette
 {
     public const int Size = 9;
 
-    // Dark theme: the 9-colour rainbow, image verbatim (docs/9-color-rainbow-palette.png).
-    private static readonly Rgb[] RainbowDark =
+    // Dark theme: Synthwave Sunset — saturated neon hues that glow on the navy field.
+    private static readonly Rgb[] SynthwaveDark =
     [
-        Rgb.FromRgb(0xFF, 0x00, 0x00), // Red
-        Rgb.FromRgb(0xFF, 0x7F, 0x00), // Orange
-        Rgb.FromRgb(0xFF, 0xFF, 0x00), // Yellow
-        Rgb.FromRgb(0x00, 0xFF, 0x00), // Green
-        Rgb.FromRgb(0x00, 0xCE, 0xD1), // Turquoise
-        Rgb.FromRgb(0x00, 0x00, 0xFF), // Blue
-        Rgb.FromRgb(0x4B, 0x00, 0x82), // Indigo
-        Rgb.FromRgb(0x94, 0x00, 0xD3), // Violet
-        Rgb.FromRgb(0xFF, 0x14, 0x93), // Pink
+        Rgb.FromRgb(0xE0, 0x9E, 0x1D), // Cyber Yellow
+        Rgb.FromRgb(0xFF, 0x5E, 0x00), // Neon Orange
+        Rgb.FromRgb(0xFF, 0x00, 0x3C), // Laser Red
+        Rgb.FromRgb(0xFF, 0x00, 0xA0), // Synthwave Pink
+        Rgb.FromRgb(0xB5, 0x00, 0xFF), // Hyper Magenta
+        Rgb.FromRgb(0x5D, 0x00, 0xFF), // Electric Indigo
+        Rgb.FromRgb(0x00, 0x88, 0xFF), // Azure Glow
+        Rgb.FromRgb(0x00, 0xB5, 0xB5), // Grid Cyan
+        Rgb.FromRgb(0x00, 0x8D, 0x64), // Matrix Mint
     ];
 
-    // Light theme: each hue keeps its rainbow identity but is dark enough to read as a
-    // 2 DIP line on #FFFFFF, and all nine are mutually distinct (ΔE >= 12).
-    private static readonly Rgb[] RainbowLight =
+    // Light theme: Retro Sunset — muted retro hues on the white field. Tangerine and
+    // Goldenrod are intentionally pale; the lane wash keeps them traceable.
+    private static readonly Rgb[] RetroLight =
     [
-        Rgb.FromRgb(0xD9, 0x1E, 0x1E), // Red
-        Rgb.FromRgb(0xC2, 0x56, 0x0A), // Orange — burnt, separated from gold
-        Rgb.FromRgb(0x8A, 0x7A, 0x00), // Yellow — dark gold; pure yellow cannot render on white
-        Rgb.FromRgb(0x1E, 0x8E, 0x2F), // Green
-        Rgb.FromRgb(0x0A, 0x7C, 0x8C), // Turquoise — teal, separated from green and blue
-        Rgb.FromRgb(0x1A, 0x38, 0xD8), // Blue
-        Rgb.FromRgb(0x3B, 0x0A, 0x8C), // Indigo
-        Rgb.FromRgb(0x93, 0x17, 0xC4), // Violet — bluer->redder, brighter than indigo
-        Rgb.FromRgb(0xC7, 0x12, 0x77), // Pink — magenta-pink, separated from red
+        Rgb.FromRgb(0xD9, 0x04, 0x29), // Vintage Crimson
+        Rgb.FromRgb(0xF4, 0xA2, 0x61), // Tangerine
+        Rgb.FromRgb(0xE9, 0xC4, 0x6A), // Goldenrod
+        Rgb.FromRgb(0x2A, 0x9D, 0x8F), // Muted Teal
+        Rgb.FromRgb(0x45, 0x7B, 0x9D), // Steel Blue
+        Rgb.FromRgb(0x02, 0x3E, 0x8A), // Ocean Depth
+        Rgb.FromRgb(0x72, 0x09, 0xB7), // Plum Purple
+        Rgb.FromRgb(0xB5, 0x17, 0x9E), // Vibrant Fuchsia
+        Rgb.FromRgb(0xF7, 0x25, 0x85), // Retro Pink
     ];
 
-    // High contrast: the dark rainbow lifted until every entry clears >= 4.5:1 on #000000.
+    // High contrast: a rainbow lifted until every entry clears >= 4.5:1 on #000000.
     private static readonly Rgb[] RainbowHc =
     [
         Rgb.FromRgb(0xFF, 0x55, 0x55), // Red
@@ -67,9 +67,9 @@ public static class LanePalette
 
     private static Rgb[] TableFor(EffectiveTheme theme) => theme switch
     {
-        EffectiveTheme.Light => RainbowLight,
+        EffectiveTheme.Light => RetroLight,
         EffectiveTheme.HighContrast => RainbowHc,
-        _ => RainbowDark,
+        _ => SynthwaveDark,
     };
 
     public static Rgb ColorFor(int colorIndex, EffectiveTheme theme)

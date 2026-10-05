@@ -1,7 +1,7 @@
 namespace Historia.Tests;
 
 /// <summary>The lane-colour maths lifted out of
-/// <c>CommitGraphControl.LaneRgb</c> / <c>BadgeInk</c>.</summary>
+/// <c>CommitGraphControl.LaneRgb</c> / <c>LaneFill</c>.</summary>
 [Trait("tier", "unit")]
 public class GraphLanePaletteTests
 {
@@ -53,12 +53,11 @@ public class GraphLanePaletteTests
     }
 
     [Theory]
-    [InlineData(255, 255, 255, true)]   // white — luminance 1.0
-    [InlineData(0, 0, 0, false)]        // black — luminance 0
-    [InlineData(255, 255, 0, true)]     // yellow — well above 0.55
-    [InlineData(0, 0, 255, false)]      // blue — well below 0.55
-    public void PrefersDarkInk_splits_on_relative_luminance(byte r, byte g, byte b, bool dark)
+    [InlineData(EffectiveTheme.Light, 0x59)]
+    [InlineData(EffectiveTheme.Dark, 0x66)]
+    [InlineData(EffectiveTheme.HighContrast, 0x3A)]
+    public void WashAlpha_per_theme(EffectiveTheme theme, byte alpha)
     {
-        Assert.Equal(dark, GraphLanePalette.PrefersDarkInk(Rgb.FromRgb(r, g, b)));
+        Assert.Equal(alpha, GraphLanePalette.WashAlpha(theme));
     }
 }

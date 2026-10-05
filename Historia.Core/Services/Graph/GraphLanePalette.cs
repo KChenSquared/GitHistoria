@@ -32,8 +32,13 @@ public static class GraphLanePalette
         return Rgb.FromRgb((byte)(c.R * factor), (byte)(c.G * factor), (byte)(c.B * factor));
     }
 
-    /// <summary>the badge is a solid opaque lane-colour fill, so its label/icon ink
-    /// must contrast against that hue — near-black when the lane colour is light enough,
-    /// near-white otherwise. Threshold at 0.55 relative luminance.</summary>
-    public static bool PrefersDarkInk(Rgb laneColor) => laneColor.RelativeLuminance() > 0.55;
+    /// <summary>Alpha of the per-row lane wash, a translucent band of the lane hue behind the
+    /// graph. Light runs lower because pastel hues on white need less to read; high contrast
+    /// keeps a faint wash so it never competes with its lifted lines.</summary>
+    public static byte WashAlpha(EffectiveTheme mode) => mode switch
+    {
+        EffectiveTheme.Light => 0x59,
+        EffectiveTheme.HighContrast => 0x3A,
+        _ => 0x66,
+    };
 }

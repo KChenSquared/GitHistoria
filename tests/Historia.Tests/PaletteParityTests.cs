@@ -32,14 +32,12 @@ public class PaletteParityTests
         }
     }
 
+    // badge labels and icons are white in every theme, whatever the lane colour.
     [Fact]
-    public void RefLabelToken_exists_in_every_native_theme()
+    public void RefLabelToken_is_white_in_every_native_theme()
     {
         foreach (var theme in new[] { EffectiveTheme.Dark, EffectiveTheme.Light, EffectiveTheme.HighContrast })
-            Assert.True(HistoriaPalette.For(theme).ContainsKey("ref-label"));
-
-        Assert.Equal(Color.FromRgb(0xFF, 0xFF, 0xFF), HistoriaPalette.Get(EffectiveTheme.Dark, "ref-label"));
-        Assert.Equal(Color.FromRgb(0x1F, 0x1F, 0x1F), HistoriaPalette.Get(EffectiveTheme.Light, "ref-label"));
+            Assert.Equal(Color.FromRgb(0xFF, 0xFF, 0xFF), HistoriaPalette.Get(theme, "ref-label"));
     }
 
     // the palette hues are the SOLID line and pill-border colour, so EdgeColorFor
@@ -54,20 +52,30 @@ public class PaletteParityTests
             Assert.Equal(LanePalette.ColorFor(i, theme), LanePalette.EdgeColorFor(i, theme));
     }
 
-    // the dark theme is the 9-colour rainbow (docs/9-color-rainbow-palette.png) verbatim.
-    [Fact]
-    public void RainbowDark_matches_the_palette_image()
+    // dark is Synthwave Sunset and light is Retro Sunset, each verbatim in index order.
+    [Theory]
+    [InlineData(EffectiveTheme.Dark, 0, "#E09E1D")] // Cyber Yellow
+    [InlineData(EffectiveTheme.Dark, 1, "#FF5E00")] // Neon Orange
+    [InlineData(EffectiveTheme.Dark, 2, "#FF003C")] // Laser Red
+    [InlineData(EffectiveTheme.Dark, 3, "#FF00A0")] // Synthwave Pink
+    [InlineData(EffectiveTheme.Dark, 4, "#B500FF")] // Hyper Magenta
+    [InlineData(EffectiveTheme.Dark, 5, "#5D00FF")] // Electric Indigo
+    [InlineData(EffectiveTheme.Dark, 6, "#0088FF")] // Azure Glow
+    [InlineData(EffectiveTheme.Dark, 7, "#00B5B5")] // Grid Cyan
+    [InlineData(EffectiveTheme.Dark, 8, "#008D64")] // Matrix Mint
+    [InlineData(EffectiveTheme.Light, 0, "#D90429")] // Vintage Crimson
+    [InlineData(EffectiveTheme.Light, 1, "#F4A261")] // Tangerine
+    [InlineData(EffectiveTheme.Light, 2, "#E9C46A")] // Goldenrod
+    [InlineData(EffectiveTheme.Light, 3, "#2A9D8F")] // Muted Teal
+    [InlineData(EffectiveTheme.Light, 4, "#457B9D")] // Steel Blue
+    [InlineData(EffectiveTheme.Light, 5, "#023E8A")] // Ocean Depth
+    [InlineData(EffectiveTheme.Light, 6, "#7209B7")] // Plum Purple
+    [InlineData(EffectiveTheme.Light, 7, "#B5179E")] // Vibrant Fuchsia
+    [InlineData(EffectiveTheme.Light, 8, "#F72585")] // Retro Pink
+    public void Dark_and_light_lanes_match_the_specified_palettes(EffectiveTheme theme, int index, string hex)
     {
         Assert.Equal(9, LanePalette.Size);
-        Assert.Equal(Color.FromRgb(0xFF, 0x00, 0x00), LanePalette.ColorFor(0, EffectiveTheme.Dark)); // Red
-        Assert.Equal(Color.FromRgb(0xFF, 0x7F, 0x00), LanePalette.ColorFor(1, EffectiveTheme.Dark)); // Orange
-        Assert.Equal(Color.FromRgb(0xFF, 0xFF, 0x00), LanePalette.ColorFor(2, EffectiveTheme.Dark)); // Yellow
-        Assert.Equal(Color.FromRgb(0x00, 0xFF, 0x00), LanePalette.ColorFor(3, EffectiveTheme.Dark)); // Green
-        Assert.Equal(Color.FromRgb(0x00, 0xCE, 0xD1), LanePalette.ColorFor(4, EffectiveTheme.Dark)); // Turquoise
-        Assert.Equal(Color.FromRgb(0x00, 0x00, 0xFF), LanePalette.ColorFor(5, EffectiveTheme.Dark)); // Blue
-        Assert.Equal(Color.FromRgb(0x4B, 0x00, 0x82), LanePalette.ColorFor(6, EffectiveTheme.Dark)); // Indigo
-        Assert.Equal(Color.FromRgb(0x94, 0x00, 0xD3), LanePalette.ColorFor(7, EffectiveTheme.Dark)); // Violet
-        Assert.Equal(Color.FromRgb(0xFF, 0x14, 0x93), LanePalette.ColorFor(8, EffectiveTheme.Dark)); // Pink
+        Assert.Equal(Rgb.Parse(hex), LanePalette.ColorFor(index, theme));
     }
 
     // no two lanes may share a colour within a theme; keep them perceptually apart.
@@ -88,23 +96,41 @@ public class PaletteParityTests
         }
     }
 
-    // a 2 DIP line of each light-theme lane must clear ~3:1 on white; each
-    // high-contrast lane must clear WCAG AA (4.5:1) on black.
+    // a light-theme lane must stay visible on the light field, but pale lanes are
+    // intended (the lane wash carries them), so the floor is 1.5:1; each high-contrast lane
+    // must clear WCAG AA (4.5:1) on black.
     [Fact]
     public void Light_and_hc_lane_lines_meet_contrast()
     {
-        var white = Color.FromRgb(0xFF, 0xFF, 0xFF);
+        var lightBg = HistoriaPalette.Get(EffectiveTheme.Light, "bg");
         var black = Color.FromRgb(0x00, 0x00, 0x00);
         for (var i = 0; i < LanePalette.Size; i++)
         {
             var light = LanePalette.ColorFor(i, EffectiveTheme.Light);
-            Assert.True(ContrastRatio(light, white) >= 3.0,
-                $"light lane {i} ({light.ToHex()}) contrast {ContrastRatio(light, white):F2} < 3.0 on white");
+            Assert.True(ContrastRatio(light, lightBg) >= 1.5,
+                $"light lane {i} ({light.ToHex()}) contrast {ContrastRatio(light, lightBg):F2} < 1.5 on the light bg");
 
             var hc = LanePalette.ColorFor(i, EffectiveTheme.HighContrast);
             Assert.True(ContrastRatio(hc, black) >= 4.5,
                 $"HC lane {i} ({hc.ToHex()}) contrast {ContrastRatio(hc, black):F2} < 4.5 on black");
         }
+    }
+
+    // the light theme is one pure-white field: graph, panels, popups, inputs and the terminal.
+    [Fact]
+    public void Light_background_tokens_are_white()
+    {
+        var white = Rgb.Parse("#FFFFFF");
+        foreach (var token in new[] { "bg", "chrome", "surface", "surface-2", "term-bg" })
+            Assert.Equal(white, HistoriaPalette.Get(EffectiveTheme.Light, token));
+    }
+
+    [Fact]
+    public void Light_text_stays_readable_on_white()
+    {
+        var bg = HistoriaPalette.Get(EffectiveTheme.Light, "bg");
+        Assert.True(ContrastRatio(HistoriaPalette.Get(EffectiveTheme.Light, "text"), bg) >= 7.0);
+        Assert.True(ContrastRatio(HistoriaPalette.Get(EffectiveTheme.Light, "text-faint"), bg) >= 4.0);
     }
 
     private static double SrgbToLinear(double c)
