@@ -11,8 +11,9 @@ public class CommitDetailMessageTests : IAsyncDisposable
             ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, $"Commit {id} not found.");
 
         var fullMessage = commit.Message ?? "";
-        var firstBreak = fullMessage.IndexOf('\n');
-        var messageBody = firstBreak >= 0 ? fullMessage[(firstBreak + 1)..].Trim() : "";
+        var lines = fullMessage.Replace("\r\n", "\n").Split('\n');
+        var blank = lines.Length > 1 ? Array.FindIndex(lines, 1, string.IsNullOrWhiteSpace) : -1;
+        var messageBody = blank >= 0 ? string.Join('\n', lines[(blank + 1)..]).Trim() : "";
 
         return new CommitDetail
         {
@@ -79,6 +80,7 @@ public class CommitDetailMessageTests : IAsyncDisposable
         Assert.Equal("a\nb\n\nbody", detail.Message);
         Assert.NotEqual(detail.Message, detail.MessageShort);
         Assert.Equal("a b", detail.MessageShort);
+        Assert.Equal("body", detail.MessageBody);
 
         await using var ctx = _host.Open(repo.Path);
         var cliDetail = await ctx.Gateway.GetCommitDetailAsync(commitId);
