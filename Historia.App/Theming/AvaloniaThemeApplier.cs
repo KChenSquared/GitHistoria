@@ -53,6 +53,66 @@ public sealed class AvaloniaThemeApplier : IDisposable
             dict[key] = new ImmutableSolidColorBrush(color);
             dict[key + "Color"] = color;
         }
+
+        var surfaceBrush = (IBrush)dict[HistoriaPalette.ResourceKey("surface")]!;
+        var surface2Brush = (IBrush)dict[HistoriaPalette.ResourceKey("surface-2")]!;
+        var borderBrush = (IBrush)dict[HistoriaPalette.ResourceKey("border")]!;
+        var textBrush = (IBrush)dict[HistoriaPalette.ResourceKey("text")]!;
+        var textMutedBrush = (IBrush)dict[HistoriaPalette.ResourceKey("text-muted")]!;
+        var hoverBrush = (IBrush)dict[HistoriaPalette.ResourceKey("list-hover")]!;
+
+        // Fluent Menu, ContextMenu & Flyout tokens
+        dict["MenuFlyoutPresenterBackground"] = surfaceBrush;
+        dict["MenuFlyoutPresenterBorderBrush"] = borderBrush;
+        dict["MenuFlyoutItemBackground"] = Brushes.Transparent;
+        dict["MenuFlyoutItemForeground"] = textBrush;
+        dict["MenuFlyoutItemBackgroundPointerOver"] = hoverBrush;
+        dict["MenuFlyoutItemForegroundPointerOver"] = textBrush;
+        dict["MenuFlyoutItemBackgroundPressed"] = surface2Brush;
+        dict["MenuFlyoutItemForegroundPressed"] = textBrush;
+        dict["MenuFlyoutItemBackgroundDisabled"] = Brushes.Transparent;
+        dict["MenuFlyoutItemForegroundDisabled"] = textMutedBrush;
+        dict["MenuFlyoutSubItemChevron"] = textMutedBrush;
+        dict["MenuFlyoutSubItemChevronPointerOver"] = textBrush;
+        dict["MenuFlyoutItemKeyboardAcceleratorTextForeground"] = textMutedBrush;
+        dict["MenuFlyoutItemKeyboardAcceleratorTextForegroundPointerOver"] = textBrush;
+
+        dict["FlyoutPresenterBackground"] = surfaceBrush;
+
+        // Fluent ToolTip tokens
+        dict["ToolTipBackground"] = surfaceBrush;
+        dict["ToolTipForeground"] = textBrush;
+        dict["ToolTipBorderBrush"] = borderBrush;
+
+        // Fluent ScrollBar tokens
+        var scrollbarBrush = (IBrush)dict[HistoriaPalette.ResourceKey("scrollbar")]!;
+        dict["ScrollBarPanningThumbBackground"] = scrollbarBrush;
+        dict["ScrollBarThumbBackgroundColor"] = scrollbarBrush;
+        dict["ScrollBarThumbFillPointerOver"] = textMutedBrush;
+        dict["ScrollBarThumbFillPressed"] = textBrush;
+        dict["ScrollBarThumbFillDisabled"] = borderBrush;
+
+        dict["ScrollBarBackground"] = Brushes.Transparent;
+        dict["ScrollBarBackgroundPointerOver"] = Brushes.Transparent;
+        dict["ScrollBarBorderBrush"] = Brushes.Transparent;
+        dict["ScrollBarTrackFill"] = Brushes.Transparent;
+        dict["ScrollBarTrackStroke"] = Brushes.Transparent;
+        dict["ScrollBarTrackFillPointerOver"] = Brushes.Transparent;
+        dict["ScrollBarTrackStrokePointerOver"] = Brushes.Transparent;
+
+        dict["ScrollBarButtonBackground"] = Brushes.Transparent;
+        dict["ScrollBarButtonBorderBrush"] = Brushes.Transparent;
+        dict["ScrollBarButtonArrowForeground"] = textMutedBrush;
+        dict["ScrollBarButtonArrowForegroundPointerOver"] = textBrush;
+        dict["ScrollBarButtonBackgroundPointerOver"] = hoverBrush;
+        dict["ScrollBarButtonBorderBrushPointerOver"] = Brushes.Transparent;
+        dict["ScrollBarButtonArrowForegroundPressed"] = textBrush;
+        dict["ScrollBarButtonBackgroundPressed"] = surface2Brush;
+        dict["ScrollBarButtonBorderBrushPressed"] = Brushes.Transparent;
+        dict["ScrollBarButtonArrowForegroundDisabled"] = borderBrush;
+        dict["ScrollBarButtonBackgroundDisabled"] = Brushes.Transparent;
+        dict["ScrollBarButtonBorderBrushDisabled"] = Brushes.Transparent;
+
         return dict;
     }
 
