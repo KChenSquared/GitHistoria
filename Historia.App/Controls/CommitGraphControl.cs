@@ -3826,7 +3826,7 @@ public sealed partial class CommitGraphControl : Control
 
             foreach (var elbow in elbows)
             {
-                var isEmph = hoverLane >= 0 && (elbow.FromLane == hoverLane || elbow.ToLane == hoverLane);
+                var isEmph = IsElbowEmphasised(elbow, hoverLane);
                 if (isEmph != emphasised)
                     continue;
 
@@ -3845,14 +3845,27 @@ public sealed partial class CommitGraphControl : Control
 
     private RowElbow[] _elbowScratch = Array.Empty<RowElbow>();
 
+    /// <summary>The lane an elbow's vertical leg runs in: the child's lane for a branch-out
+    /// (falls from the row top), the merged-in parent's lane for a merge (rises from the row
+    /// bottom). The other end is the horizontal leg into a node.</summary>
+    internal static int ElbowVerticalLane(in RowElbow e) =>
+        e.Kind == ElbowKind.EnterTop ? e.FromLane : e.ToLane;
+
+    /// <summary>An elbow belongs to the hovered line only when its vertical leg runs in that
+    /// lane — it is that line turning into another commit. An elbow that merely ends its
+    /// horizontal leg on the hovered lane belongs to the other line and stays plain, so the
+    /// bold stroke never stops at a bend into a thin vertical.</summary>
+    internal static bool IsElbowEmphasised(in RowElbow e, int hoverLane) =>
+        hoverLane >= 0 && ElbowVerticalLane(e) == hoverLane;
+
     /// <summary>Copies <paramref name="source"/> into <paramref name="dest"/> in paint order:
-    /// elbows touching <paramref name="hoverLane"/> last, and within each group the widest lane
-    /// span first. Stable, so equal spans keep their layout order.</summary>
+    /// elbows whose vertical leg is in <paramref name="hoverLane"/> last, and within each group the
+    /// widest lane span first. Stable, so equal spans keep their layout order.</summary>
     internal static void OrderElbowsForPaint(ReadOnlySpan<RowElbow> source, Span<RowElbow> dest, int hoverLane)
     {
         static int Key(in RowElbow e, int hoverLane)
         {
-            var emph = hoverLane >= 0 && (e.FromLane == hoverLane || e.ToLane == hoverLane);
+            var emph = IsElbowEmphasised(e, hoverLane);
             // Higher key paints later: emphasised above plain, shorter above longer.
             return (emph ? 1 << 20 : 0) - Math.Abs(e.ToLane - e.FromLane);
         }

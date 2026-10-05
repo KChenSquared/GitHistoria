@@ -2,12 +2,16 @@ namespace HistoriaApp.Tests;
 
 /// <summary>Elbows on one row overlap along the node-height horizontal, so the Graph column
 /// paints them widest span first: each stretch then shows the colour of the nearest branch
-/// still running past it. Hover-emphasised elbows paint last so their thicker pen stays whole.</summary>
+/// still running past it. Elbows whose vertical leg is in the hovered lane paint last so their
+/// thicker pen stays whole.</summary>
 public sealed class GraphElbowPaintOrderTests
 {
-    private static RowElbow E(int from, int to, int color) => new()
+    private static RowElbow E(int from, int to, int color) =>
+        E(from, to, color, ElbowKind.EnterTop);
+
+    private static RowElbow E(int from, int to, int color, ElbowKind kind) => new()
     {
-        FromLane = from, ToLane = to, ColorIndex = color, Kind = ElbowKind.EnterTop,
+        FromLane = from, ToLane = to, ColorIndex = color, Kind = kind,
     };
 
     private static int[] Order(RowElbow[] source, int hoverLane)
@@ -37,5 +41,59 @@ public sealed class GraphElbowPaintOrderTests
     {
         var source = new[] { E(2, 1, 20), E(6, 1, 60), E(4, 1, 40) };
         Assert.Equal(new[] { 40, 20, 60 }, Order(source, hoverLane: 6));
+    }
+
+    [Fact]
+    public void EnterTop_HoverOnVerticalLane_IsEmphasised()
+    {
+        var elbow = E(6, 1, 0, ElbowKind.EnterTop);
+        Assert.True(CommitGraphControl.IsElbowEmphasised(elbow, hoverLane: 6));
+    }
+
+    [Fact]
+    public void EnterTop_HoverOnHorizontalEnd_IsPlain()
+    {
+        var elbow = E(6, 1, 0, ElbowKind.EnterTop);
+        Assert.False(CommitGraphControl.IsElbowEmphasised(elbow, hoverLane: 1));
+    }
+
+    [Fact]
+    public void LeaveBottom_HoverOnVerticalLane_IsEmphasised()
+    {
+        var elbow = E(1, 4, 0, ElbowKind.LeaveBottom);
+        Assert.True(CommitGraphControl.IsElbowEmphasised(elbow, hoverLane: 4));
+    }
+
+    [Fact]
+    public void LeaveBottom_HoverOnHorizontalEnd_IsPlain()
+    {
+        var elbow = E(1, 4, 0, ElbowKind.LeaveBottom);
+        Assert.False(CommitGraphControl.IsElbowEmphasised(elbow, hoverLane: 1));
+    }
+
+    [Fact]
+    public void NoHover_NothingEmphasised()
+    {
+        Assert.False(CommitGraphControl.IsElbowEmphasised(E(6, 1, 0, ElbowKind.EnterTop), hoverLane: -1));
+        Assert.False(CommitGraphControl.IsElbowEmphasised(E(1, 4, 0, ElbowKind.LeaveBottom), hoverLane: -1));
+    }
+
+    [Fact]
+    public void HoveredNodeElbowsKeepSpanOrder()
+    {
+        var source = new[] { E(3, 1, 30), E(7, 1, 70), E(5, 1, 50), E(0, 1, 0) };
+        Assert.Equal(Order(source, hoverLane: -1), Order(source, hoverLane: 1));
+    }
+
+    [Fact]
+    public void LeaveBottomOnHoveredVerticalPaintsLast()
+    {
+        var source = new[]
+        {
+            E(1, 4, 40, ElbowKind.LeaveBottom),
+            E(6, 1, 60, ElbowKind.EnterTop),
+            E(2, 1, 20, ElbowKind.EnterTop),
+        };
+        Assert.Equal(new[] { 60, 20, 40 }, Order(source, hoverLane: 4));
     }
 }
