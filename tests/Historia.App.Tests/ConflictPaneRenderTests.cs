@@ -206,4 +206,229 @@ public sealed class ConflictPaneRenderTests
             window.Close();
         }
     }
+
+    private static (Window Window, TextEditor Editor, ConflictToggleMargin Margin) ShowToggleMargin(Func<int, ConflictToggleGlyph> glyph)
+    {
+        var editor = new TextEditor
+        {
+            Document = new TextDocument(string.Join('\n', Enumerable.Range(1, 200).Select(i => $"line {i}"))),
+        };
+        var margin = new ConflictToggleMargin(editor, glyph);
+        editor.TextArea.LeftMargins.Insert(0, margin);
+        var window = new Window { Width = 600, Height = 500, Content = editor };
+        window.Show();
+        window.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+        editor.TextArea.TextView.EnsureVisualLines();
+        return (window, editor, margin);
+    }
+
+    private static ConflictToggleGlyph CycleGlyphs(int line) => (line % 4) switch
+    {
+        0 => ConflictToggleGlyph.None,
+        1 => ConflictToggleGlyph.Unchecked,
+        2 => ConflictToggleGlyph.Partial,
+        _ => ConflictToggleGlyph.Checked,
+    };
+
+    [AvaloniaFact]
+    public void Toggle_margin_repeat_frame_shapes_nothing()
+    {
+        var (window, _, margin) = ShowToggleMargin(CycleGlyphs);
+        try
+        {
+            RenderMargin(margin);
+            Assert.True(margin.PoolMissesForTesting > 0, "the first frame must build the glyphs");
+
+            margin.ResetPoolCountersForTesting();
+            RenderMargin(margin);
+            Assert.Equal(0, margin.PoolMissesForTesting);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Toggle_margin_click_raises_line_index()
+    {
+        var (window, editor, margin) = ShowToggleMargin(line => line == 2 ? ConflictToggleGlyph.Unchecked : ConflictToggleGlyph.None);
+        try
+        {
+            var raised = new List<int>();
+            margin.ToggleClicked += (_, line) => raised.Add(line);
+            var view = editor.TextArea.TextView;
+            double LineMiddle(int lineNumber) => view.GetVisualTopByDocumentLine(lineNumber) - view.VerticalOffset + view.DefaultLineHeight / 2;
+
+            var onLine3 = margin.TranslatePoint(new Point(margin.Bounds.Width / 2, LineMiddle(3)), window)!.Value;
+            window.MouseDown(onLine3, MouseButton.Left);
+            window.MouseUp(onLine3, MouseButton.Left);
+            Assert.Equal(new[] { 2 }, raised);
+
+            var onLine1 = margin.TranslatePoint(new Point(margin.Bounds.Width / 2, LineMiddle(1)), window)!.Value;
+            window.MouseDown(onLine1, MouseButton.Left);
+            window.MouseUp(onLine1, MouseButton.Left);
+            Assert.Equal(new[] { 2 }, raised);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Toggle_margin_palette_change_invalidates()
+    {
+        var theme = new StubThemeService { Effective = EffectiveTheme.Dark };
+        using var applier = new AvaloniaThemeApplier(theme);
+        var (window, editor, margin) = ShowToggleMargin(CycleGlyphs);
+        try
+        {
+            RenderMargin(margin);
+            margin.ResetPoolCountersForTesting();
+
+            theme.Effective = EffectiveTheme.Light;
+            applier.Apply(EffectiveTheme.Light);
+            editor.TextArea.TextView.EnsureVisualLines();
+            RenderMargin(margin);
+
+            Assert.True(margin.PoolMissesForTesting > 0, "a palette change must re-resolve the pens and brushes");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Excluded_colorizer_marks_only_excluded_lines()
+    {
+        var editor = new TextEditor { Document = new TextDocument("kept\nstruck\nkept too\n") };
+        editor.TextArea.TextView.LineTransformers.Add(new ConflictExcludedLineColorizer(line => line == 1));
+        var window = new Window { Width = 400, Height = 300, Content = editor };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            var view = editor.TextArea.TextView;
+            view.EnsureVisualLines();
+
+            TextDecorationCollection? Decorations(int lineNumber)
+            {
+                var visual = view.GetOrConstructVisualLine(editor.Document.GetLineByNumber(lineNumber));
+                return visual.Elements[0].TextRunProperties.TextDecorations;
+            }
+
+            Assert.True(Decorations(2) is { Count: > 0 }, "the excluded line must be struck through");
+            Assert.True(Decorations(1) is null or { Count: 0 });
+            Assert.True(Decorations(3) is null or { Count: 0 });
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private static (Window Window, TextEditor Editor, ConflictBackgroundRenderer Renderer) ShowResultRenderer(
+        string text, Func<int, ConflictRowVisual>? rowVisual)
+    {
+        var editor = new TextEditor { Document = new TextDocument(text) };
+        var parse = ConflictMarkerParser.Parse(text);
+        var renderer = new ConflictBackgroundRenderer(editor, () => null, () => parse, getRowVisual: rowVisual);
+        editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
+        var window = new Window { Width = 400, Height = 300, Content = editor };
+        window.Show();
+        window.UpdateLayout();
+        editor.TextArea.TextView.EnsureVisualLines();
+        return (window, editor, renderer);
+    }
+
+    private static void RenderBackground(TextEditor editor, ConflictBackgroundRenderer renderer)
+    {
+        using var bitmap = new Avalonia.Media.Imaging.RenderTargetBitmap(new PixelSize(400, 300));
+        using var dc = bitmap.CreateDrawingContext();
+        renderer.Draw(editor.TextArea.TextView, dc);
+    }
+
+    [AvaloniaFact]
+    public void Result_renderer_without_row_visuals_matches_today()
+    {
+        var (window, editor, renderer) = ShowResultRenderer("top\n<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\nbottom", null);
+        try
+        {
+            RenderBackground(editor, renderer);
+            Assert.Equal(5, renderer.RegionLinesDrawnForTesting);
+            Assert.Equal(0, renderer.RowLinesDrawnForTesting);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Result_renderer_draws_rows_with_no_marker_regions()
+    {
+        var visuals = new[]
+        {
+            ConflictRowVisual.None,
+            ConflictRowVisual.Ours | ConflictRowVisual.RegionTop,
+            ConflictRowVisual.Theirs | ConflictRowVisual.Excluded | ConflictRowVisual.RegionBottom,
+            ConflictRowVisual.None,
+        };
+        var (window, editor, renderer) = ShowResultRenderer("top\nours\ntheirs\nbottom", line => line < visuals.Length ? visuals[line] : ConflictRowVisual.None);
+        try
+        {
+            RenderBackground(editor, renderer);
+            Assert.Equal(2, renderer.RowLinesDrawnForTesting);
+            Assert.Equal(0, renderer.RegionLinesDrawnForTesting);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Minimap_resolved_ranges_unchanged_value_invalidates_nothing()
+    {
+        var (window, minimap) = ShowMinimap(ManyConflicts(20));
+        try
+        {
+            minimap.ResolvedRanges = new[] { (0, 3), (10, 12) };
+            Pump();
+            var bars = minimap.BarsRenderCountForTesting;
+
+            minimap.ResolvedRanges = new[] { (0, 3), (10, 12) };
+            Pump();
+            Assert.Equal(bars, minimap.BarsRenderCountForTesting);
+
+            minimap.ResolvedRanges = new[] { (0, 3) };
+            Pump();
+            Assert.Equal(bars + 1, minimap.BarsRenderCountForTesting);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Minimap_draws_resolved_ranges()
+    {
+        var (window, minimap) = ShowMinimap(ConflictMarkerParser.Parse(string.Join('\n', Enumerable.Range(0, 100).Select(i => $"line {i}"))));
+        try
+        {
+            Assert.Equal(0, minimap.ResolvedRectCountForTesting);
+            minimap.ResolvedRanges = new[] { (10, 14), (60, 65) };
+            Pump();
+            Assert.Equal(2, minimap.ResolvedRectCountForTesting);
+            Assert.Equal(0, minimap.BarRectCountForTesting);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }
