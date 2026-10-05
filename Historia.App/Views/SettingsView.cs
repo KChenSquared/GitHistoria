@@ -11,10 +11,10 @@ public sealed class SettingsView : UserControl, IDisposable
     private readonly StackPanel _root = new() { Spacing = 18, Margin = new Thickness(32), MaxWidth = 640 };
 
     // Survives the full Rebuild() that fires on every settings change.
-    private bool _appearanceExpanded = true;
-    private bool _networkExpanded = true;
-    private bool _diffExpanded = true;
-    private bool _gitExpanded = true;
+    private bool _appearanceExpanded;
+    private bool _networkExpanded;
+    private bool _diffExpanded;
+    private bool _gitExpanded;
     private bool _advExpanded;
     private bool _terminalExpanded;
 
@@ -75,7 +75,7 @@ public sealed class SettingsView : UserControl, IDisposable
         _root.Children.Clear();
         _root.Children.Add(Text("Settings", "ColorText", 24, FontWeight.SemiBold));
 
-        // ── Appearance (expanded) ──
+        // ── Appearance ──
         var appearanceBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
         // The custom-theme override lives in the Developer panel, so only developer mode
         // mentions it here.
@@ -154,7 +154,7 @@ public sealed class SettingsView : UserControl, IDisposable
             "Saves each repository's branches, tags, stashes and more so the sidebar appears instantly, then refreshes from Git. Turning it off deletes the cache."));
         AddCollapsibleSection("Appearance", appearanceBody, () => _appearanceExpanded, v => _appearanceExpanded = v, appearanceHint);
 
-        // ── Privacy & Network (expanded) ──
+        // ── Privacy & Network ──
         var networkBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
         networkBody.Children.Add(WithHint(Check("Auto-fetch open repositories", c.AutoFetchEnabled,
             v => _ = _cfg.UpdateAsync(s => s with { AutoFetchEnabled = v })),
@@ -162,7 +162,7 @@ public sealed class SettingsView : UserControl, IDisposable
         AddCollapsibleSection("Privacy & Network", networkBody, () => _networkExpanded, v => _networkExpanded = v,
             "Identity and SSH-only are set per repository, in Repository settings.");
 
-        // ── Diff viewer (expanded) ──
+        // ── Diff viewer ──
         var diffBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
         var diffView = new ComboBox { Width = 160 };
         diffView.Items.Add(new ComboBoxItem { Content = "Unified", Tag = DiffViewMode.Unified });
@@ -185,25 +185,7 @@ public sealed class SettingsView : UserControl, IDisposable
             "Unified layout only."));
         AddCollapsibleSection("Diff viewer", diffBody, () => _diffExpanded, v => _diffExpanded = v);
 
-        // ── Issue autolinks ──
-        _root.Children.Add(WithHint(Section("Issue autolinks"),
-            "Turns issue keys in commit messages into links. In the URL, $1, $2… insert the pattern's capture groups."));
-        for (var i = 0; i < c.IssueAutolinks.Count; i++)
-        {
-            var idx = i;
-            var rule = c.IssueAutolinks[idx];
-            var pat = new TextBox { Text = rule.Pattern, Watermark = "Pattern (regex)", Width = 200 };
-            var url = new TextBox { Text = rule.UrlTemplate, Watermark = "Link URL ($1 = first group)", Width = 300 };
-            pat.LostFocus += (_, _) => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks.Select((r, j) => j == idx ? r with { Pattern = pat.Text ?? "" } : r)] });
-            url.LostFocus += (_, _) => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks.Select((r, j) => j == idx ? r with { UrlTemplate = url.Text ?? "" } : r)] });
-            var rm = TextButton("Remove", () => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks.Where((_, j) => j != idx)] }));
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            row.Children.Add(pat); row.Children.Add(url); row.Children.Add(rm);
-            _root.Children.Add(row);
-        }
-        _root.Children.Add(TextButton("Add rule", () => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks, new IssueAutolinkRule { Pattern = "", UrlTemplate = "" }] })));
-
-        // ── Git (expanded) ──
+        // ── Git ──
         var gitBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
         gitBody.Children.Add(WithHint(Check("Prune deleted remote branches on fetch", c.PruneOnFetch, v => _ = _cfg.UpdateAsync(s => s with { PruneOnFetch = v })),
             "On fetch and pull, removes remote branches that no longer exist on the server. Your local branches aren't touched."));
@@ -215,7 +197,7 @@ public sealed class SettingsView : UserControl, IDisposable
             "When off, the Stash button names the stash \"Stash of <branch>\"."));
         AddCollapsibleSection("Git", gitBody, () => _gitExpanded, v => _gitExpanded = v);
 
-        // ── Terminal — collapsed ──
+        // ── Terminal ──
         var termBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
 
         var shellPath = new TextBox { Text = c.TerminalShellPath ?? "", Watermark = "Platform default (pwsh / zsh / bash)", Width = 360, HorizontalAlignment = HorizontalAlignment.Left };
@@ -287,7 +269,7 @@ public sealed class SettingsView : UserControl, IDisposable
 
         AddCollapsibleSection("Terminal", termBody, () => _terminalExpanded, v => _terminalExpanded = v);
 
-        // ── Advanced (collapsed) ──
+        // ── Advanced ──
         var advBody = new StackPanel { Spacing = 8 };
 
         advBody.Children.Add(WithHint(Check("Keep commit details on disk", c.GraphMetadataFromDisk,
@@ -327,6 +309,30 @@ public sealed class SettingsView : UserControl, IDisposable
             next => _cfg.UpdateAsync(s => s with { ResidentRowCap = next }));
         advBody.Children.Add(WithHint(LabeledRow("Max rows in memory", residentRowCap),
             "Most rows the graph keeps loaded per repository. Only used when commit details are on disk; otherwise 500,000. Takes effect after restart."));
+
+        var autolinkHint = "Turns issue keys in commit messages into links. In the URL, $1, $2… insert the pattern's capture groups."
+            + "\n\nExample: pattern #(\\d+) with URL https://GitHistoria.com/autolink?issue=$1 turns #42 into a link.";
+        var autolinkHeading = WithHint(Section("Issue autolinks"), autolinkHint);
+        autolinkHeading.Margin = new Thickness(0, 8, 0, 0);
+        advBody.Children.Add(autolinkHeading);
+
+        for (var i = 0; i < c.IssueAutolinks.Count; i++)
+        {
+            var idx = i;
+            var rule = c.IssueAutolinks[idx];
+            var pat = new TextBox { Text = rule.Pattern, Watermark = "Pattern (regex)", Width = 200 };
+            var url = new TextBox { Text = rule.UrlTemplate, Watermark = "Link URL ($1 = first group)", Width = 300 };
+            pat.LostFocus += (_, _) => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks.Select((r, j) => j == idx ? r with { Pattern = pat.Text ?? "" } : r)] });
+            url.LostFocus += (_, _) => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks.Select((r, j) => j == idx ? r with { UrlTemplate = url.Text ?? "" } : r)] });
+            var rm = TextButton("Remove", () => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks.Where((_, j) => j != idx)] }));
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            row.Children.Add(pat); row.Children.Add(url); row.Children.Add(rm);
+            advBody.Children.Add(row);
+        }
+        var addRule = TextButton("Add rule", () => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks, new IssueAutolinkRule { Pattern = "", UrlTemplate = "" }] }));
+        addRule.HorizontalAlignment = HorizontalAlignment.Left;
+        advBody.Children.Add(addRule);
+
         advBody.Margin = new Thickness(0, 10, 0, 0);
 
         AddCollapsibleSection("Advanced", advBody, () => _advExpanded, v => _advExpanded = v);

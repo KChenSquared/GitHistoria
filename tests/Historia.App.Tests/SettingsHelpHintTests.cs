@@ -32,7 +32,8 @@ public sealed class SettingsHelpHintTests
         ["Layout"] = "Also changes when you switch layout in the diff viewer.",
         ["Context lines"] = "Unchanged lines shown around each change.",
         ["Wrap long lines"] = "Unified layout only.",
-        ["Issue autolinks"] = "Turns issue keys in commit messages into links. In the URL, $1, $2… insert the pattern's capture groups.",
+        ["Issue autolinks"] = "Turns issue keys in commit messages into links. In the URL, $1, $2… insert the pattern's capture groups."
+            + "\n\nExample: pattern #(\\d+) with URL https://GitHistoria.com/autolink?issue=$1 turns #42 into a link.",
         ["Prune deleted remote branches on fetch"] = "On fetch and pull, removes remote branches that no longer exist on the server. Your local branches aren't touched.",
         ["Pull with rebase"] = "Puts your local commits on top of the remote ones instead of creating a merge commit.",
         ["Ask for a stash message"] = "When off, the Stash button names the stash \"Stash of <branch>\".",
@@ -274,6 +275,10 @@ public sealed class SettingsHelpHintTests
     {
         var sp = CreateServices();
         var view = new SettingsView(sp);
+        SetPrivate(view, "_appearanceExpanded", true);
+        SetPrivate(view, "_networkExpanded", true);
+        SetPrivate(view, "_diffExpanded", true);
+        SetPrivate(view, "_gitExpanded", true);
         SetPrivate(view, "_terminalExpanded", true);
         SetPrivate(view, "_advExpanded", true);
         Rebuild(view);
@@ -362,7 +367,9 @@ public sealed class SettingsHelpHintTests
     [InlineData("Privacy & Network")]
     [InlineData("Diff viewer")]
     [InlineData("Git")]
-    public void Main_sections_start_expanded_and_collapse_on_header_click(string title)
+    [InlineData("Terminal")]
+    [InlineData("Advanced")]
+    public void Sections_start_collapsed_and_expand_on_header_click(string title)
     {
         var sp = CreateServices();
         var view = new SettingsView(sp);
@@ -371,7 +378,7 @@ public sealed class SettingsHelpHintTests
         Dispatcher.UIThread.RunJobs();
 
         var body = SectionBody(view, title);
-        Assert.True(body.IsVisible, $"{title} should start expanded.");
+        Assert.False(body.IsVisible, $"{title} should start collapsed.");
 
         var header = SectionHeader(view, title);
         var titleText = header.GetLogicalDescendants().OfType<TextBlock>().First(t => t.Text == title);
@@ -380,13 +387,13 @@ public sealed class SettingsHelpHintTests
         {
             // The ? beside the title shows its hint; pressing it doesn't toggle the section.
             Press(window, badge);
-            Assert.True(body.IsVisible, $"Pressing {title}'s ? collapsed the section.");
+            Assert.False(body.IsVisible, $"Pressing {title}'s ? expanded the section.");
         }
 
         Press(window, titleText);
-        Assert.False(body.IsVisible, $"{title} didn't collapse.");
+        Assert.True(body.IsVisible, $"{title} didn't expand.");
         Press(window, titleText);
-        Assert.True(body.IsVisible, $"{title} didn't expand again.");
+        Assert.False(body.IsVisible, $"{title} didn't collapse again.");
 
         window.Close();
         view.Dispose();
@@ -400,6 +407,45 @@ public sealed class SettingsHelpHintTests
                 new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonPressed), KeyModifiers.None));
             Dispatcher.UIThread.RunJobs();
         }
+    }
+
+    [AvaloniaFact]
+    public void Issue_autolinks_sit_last_in_advanced()
+    {
+        var sp = CreateServices();
+        var cfg = sp.GetRequiredService<ISettingsService>();
+
+        WithSettings(cfg, s => s with
+        {
+            IssueAutolinks = [new IssueAutolinkRule { Pattern = "", UrlTemplate = "" }],
+        }, () =>
+        {
+            var view = new SettingsView(sp);
+            var advBody = SectionBody(view, "Advanced");
+            var children = advBody.Children.ToList();
+
+            var maxRowsIdx = children.FindIndex(c =>
+                c.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Max rows in memory"));
+            Assert.True(maxRowsIdx >= 0, "Max rows in memory not found in Advanced.");
+
+            var autolinkHeadingIdx = children.FindIndex(c =>
+                c.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Issue autolinks"));
+            Assert.True(autolinkHeadingIdx > maxRowsIdx, "Issue autolinks heading should come after Max rows in memory.");
+
+            var ruleRowIdx = children.FindIndex(c =>
+                c.GetLogicalDescendants().OfType<TextBox>().Any(tb => tb.Watermark == "Pattern (regex)"));
+            Assert.True(ruleRowIdx > autolinkHeadingIdx, "Rule row should come after Issue autolinks heading.");
+
+            var lastChild = children.LastOrDefault();
+            var isAddRuleButton = lastChild is Button b && (b.Content as string) == "Add rule";
+            Assert.True(isAddRuleButton, "The last child in Advanced should be the 'Add rule' button.");
+
+            var root = Root(view);
+            Assert.DoesNotContain(root.Children, c => !ReferenceEquals(c, advBody) && c.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Issue autolinks"));
+            Assert.DoesNotContain(root.Children, c => c is Button b && (b.Content as string) == "Add rule");
+
+            view.Dispose();
+        });
     }
 
     /// <summary>The clickable header of a collapsible section.</summary>

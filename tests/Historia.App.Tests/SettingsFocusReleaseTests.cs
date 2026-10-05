@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 /// <summary>A settings textbox commits on <c>LostFocus</c>, but clicking a non-focusable
 /// label or blank space never moves focus on its own — <see cref="SettingsView"/>'s root now
@@ -70,16 +70,20 @@ public sealed class SettingsFocusReleaseTests
         return sc.BuildServiceProvider();
     }
 
-    /// <summary>The terminal shell-path TextBox lives in the "Terminal" section, which starts
-    /// collapsed (<c>_terminalExpanded = false</c>) — its content is IsVisible=false and neither
-    /// focusable nor hit-testable until expanded. Flip the private field and re-run the private
+    /// <summary>The terminal shell-path TextBox and the Add rule button live in the "Terminal"
+    /// and "Advanced" sections, which start collapsed (<c>_terminalExpanded = false</c>,
+    /// <c>_advExpanded = false</c>) — their content is IsVisible=false and neither focusable
+    /// nor hit-testable until expanded. Flip the private fields and re-run the private
     /// Rebuild() directly, the same reflection approach <c>SettingsNumericCommitTests</c> uses
     /// for other private members, rather than simulating a click on the section header.</summary>
-    private static void ExpandTerminalSection(SettingsView view)
+    private static void ExpandSections(SettingsView view)
     {
-        var field = typeof(SettingsView).GetField("_terminalExpanded", BindingFlags.NonPublic | BindingFlags.Instance)
+        var termField = typeof(SettingsView).GetField("_terminalExpanded", BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("SettingsView._terminalExpanded not found — renamed?");
-        field.SetValue(view, true);
+        termField.SetValue(view, true);
+        var advField = typeof(SettingsView).GetField("_advExpanded", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("SettingsView._advExpanded not found — renamed?");
+        advField.SetValue(view, true);
         var rebuild = typeof(SettingsView).GetMethod("Rebuild", BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("SettingsView.Rebuild not found — renamed?");
         rebuild.Invoke(view, null);
@@ -89,9 +93,9 @@ public sealed class SettingsFocusReleaseTests
     {
         var sp = CreateServices();
         var view = new SettingsView(sp);
-        ExpandTerminalSection(view);
+        ExpandSections(view);
         // Tall enough that every section, including the collapsed-then-expanded Terminal
-        // section near the bottom, lands inside the viewport without needing to scroll —
+        // and Advanced sections near the bottom, lands inside the viewport without needing to scroll —
         // clicking a point outside the ScrollViewer's viewport does not reach the control.
         var window = new Window { Width = 900, Height = 2400, Content = view };
         window.Show();
@@ -161,7 +165,7 @@ public sealed class SettingsFocusReleaseTests
         var (view, window, box) = CreateView();
         ClickOn(window, box);
 
-        // "Add rule" (Issue autolinks) is a plain TextButton with no side effect beyond a
+        // "Add rule" (Issue autolinks in Advanced) is a plain TextButton with no side effect beyond a
         // config update — safe to click, unlike "Browse…" which opens a real file picker.
         var button = view.GetVisualDescendants().OfType<Button>().FirstOrDefault(b => (b.Content as string) == "Add rule")
             ?? throw new InvalidOperationException("'Add rule' button not found.");
