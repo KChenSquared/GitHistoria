@@ -2,7 +2,7 @@ namespace Historia.Views;
 
 /// <summary>
 /// The context menu on a remote's row in the sidebar: Open In Browser · Fetch · Prune · Edit… ·
-/// Set Push URL… · Delete… · Copy URL. Fetch and Prune go through <see cref="IRepoActionBus"/>
+/// Set Push URL… · Delete… · Copy URL, plus the Add remote flow behind the Remotes header's button. Fetch and Prune go through <see cref="IRepoActionBus"/>
 /// so they share the network runner's progress, busy guard and credential fallback; Prune's
 /// confirmation lives in that runner. Delete confirms here, in the method that removes the remote.
 /// </summary>
@@ -116,11 +116,11 @@ internal static class RemoteMenu
     /// way so it shows whatever was applied.</summary>
     private static async Task EditAsync(RemoteInfo remote, RepositoryContext ctx, INotificationService notifications)
     {
-        var otherNames = ctx.State.Remotes
+        var others = ctx.State.Remotes
             .Where(r => !string.Equals(r.Name, remote.Name, StringComparison.Ordinal))
-            .Select(r => r.Name)
             .ToList();
-        var edit = await EditRemoteDialog.ShowAsync(remote, otherNames);
+        var edit = await EditRemoteDialog.ShowAsync(remote, others.Select(r => r.Name).ToList(),
+            EditRemoteDialog.UrlOwners(others));
         if (edit is null)
             return;
 
@@ -157,6 +157,31 @@ internal static class RemoteMenu
                 $"Edit remote failed while {step}: {ex.Message}", ex.NotificationDetails());
         }
         await RefreshAsync(ctx);
+    }
+
+    /// <summary>Adds a remote from the Add remote dialog. When the user asked for it, the new
+    /// remote is then fetched through <see cref="IRepoActionBus"/>, so the fetch shares the network
+    /// runner's progress, busy guard and credential fallback.</summary>
+    internal static async Task AddAsync(RepositoryContext ctx, INotificationService notifications, IRepoActionBus actions)
+    {
+        var add = await AddRemoteDialog.ShowAsync(ctx.State.Remotes);
+        if (add is null)
+            return;
+
+        try
+        {
+            await ctx.Gateway.AddRemoteAsync(add.Name, add.Url, ctx.Lifetime);
+            await RefreshAsync(ctx);
+            notifications.Publish(NotificationSeverity.Success, $"Added remote '{add.Name}'.");
+            if (add.Fetch)
+                actions.RequestNetworkAction(new RepoNetworkRequest(RepoNetworkAction.Fetch, add.Name, null, Repo: ctx));
+        }
+        catch (OperationCanceledException) { /* tab closed or torn down mid-operation — not a failure */ }
+        catch (Exception ex)
+        {
+            notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Add remote"), ex.NotificationDetails());
+            await RefreshAsync(ctx);
+        }
     }
 
     private static async Task DeleteAsync(

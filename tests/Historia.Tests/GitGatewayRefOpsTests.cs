@@ -367,6 +367,47 @@ public sealed class GitGatewayRefOpsTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task AddRemoteAsync_name_starting_with_dash_is_not_parsed_as_option()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("remote-ops-seed", b =>
+        {
+            b.WriteFile("a.txt", "1\n").Stage().Commit("c1");
+        });
+        var ctx = _host.Open(repo.Path);
+
+        // Without the separator git reads "-x" as an unknown switch and exits with usage.
+        try
+        {
+            await ctx.Gateway.AddRemoteAsync("-x", "git@example.com:o/x.git");
+            var remotes = await ctx.Gateway.GetRemotesAsync();
+            Assert.Contains(remotes, r => r.Name == "-x" && r.Url == "git@example.com:o/x.git");
+        }
+        catch (HistoriaGitException ex)
+        {
+            Assert.DoesNotContain("unknown switch", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("usage:", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public async Task RenameRemoteAsync_still_renames()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("remote-ops-seed", b =>
+        {
+            b.WriteFile("a.txt", "1\n").Stage().Commit("c1");
+        });
+        var ctx = _host.Open(repo.Path);
+
+        await ctx.Gateway.AddRemoteAsync("upstream", "git@example.com:o/up.git");
+        var unupdated = await ctx.Gateway.RenameRemoteAsync("upstream", "fork");
+
+        Assert.Empty(unupdated);
+        var remotes = await ctx.Gateway.GetRemotesAsync();
+        Assert.Contains(remotes, r => r.Name == "fork" && r.Url == "git@example.com:o/up.git");
+        Assert.DoesNotContain(remotes, r => r.Name == "upstream");
+    }
+
+    [Fact]
     public async Task Checkout_in_repo_with_smudge_filter_runs_filter()
     {
         using var repo = TestRepositoryBuilder.FromTemplate("smudge-seed", b =>
