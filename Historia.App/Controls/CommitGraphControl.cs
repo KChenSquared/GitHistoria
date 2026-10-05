@@ -3221,8 +3221,8 @@ public sealed partial class CommitGraphControl : Control
                 // and runs right to the column edge, rather than beginning half a lane to its
                 // left and covering the whole lane band.
                 var fillLeft = Math.Max(gx, NodeX(gr.LaneIndex, out _));
-                // Inset half the gap top and bottom so adjacent rows' washes are separated by
-                // WashRowGap px; the right-edge tick and the lane lines stay continuous.
+                // Inset half the gap top and bottom so adjacent rows' washes and right-edge ticks
+                // are separated by WashRowGap px; the lane lines stay continuous.
                 if (washRight > fillLeft)
                     dc.DrawRectangle(LaneFill(colorIndex), null,
                         new Rect(fillLeft, y + WashRowGap / 2, washRight - fillLeft, _rowHeight - WashRowGap));
@@ -3526,22 +3526,17 @@ public sealed partial class CommitGraphControl : Control
         if (hoverLane >= 0)
             DrawRowElbows(dc, layout, first, last, minVisibleX, maxVisibleX, hoverLane, emphasised: true);
 
-        // The right-edge lane tick sits ON TOP of the lines. Consecutive same-colour rows are
-        // drawn as one rectangle, and each rectangle runs 1px into the next (which paints over
-        // it), so the tick has no anti-aliased seams at fractional row boundaries.
+        // The right-edge lane tick sits ON TOP of the lines, broken per-row with WashRowGap
+        // to match the row wash beside it.
         if (_graphColWidth > 0)
         {
             var tickX = colX + _graphColWidth - TickWidth;
-            var runStart = first;
             for (var row = first; row <= last; row++)
             {
                 var color = layout.Rows[row].ColorIndex;
-                if (row < last && layout.Rows[row + 1].ColorIndex == color)
-                    continue;
-                var top = RowY(runStart);
-                var bottom = RowY(row + 1) + (row < last ? 1 : 0);
-                dc.DrawRectangle(LaneTick(color), null, new Rect(tickX, top, TickWidth, bottom - top));
-                runStart = row + 1;
+                var y = RowY(row);
+                dc.DrawRectangle(LaneTick(color), null,
+                    new Rect(tickX, y + WashRowGap / 2, TickWidth, _rowHeight - WashRowGap));
             }
         }
     }

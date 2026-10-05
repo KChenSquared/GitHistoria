@@ -54,15 +54,15 @@ public class PaletteParityTests
 
     // dark is Synthwave Sunset and light is Retro Sunset, each verbatim in index order.
     [Theory]
-    [InlineData(EffectiveTheme.Dark, 0, "#FFEA00")] // Cyber Yellow
+    [InlineData(EffectiveTheme.Dark, 0, "#E09E1D")] // Cyber Yellow
     [InlineData(EffectiveTheme.Dark, 1, "#FF5E00")] // Neon Orange
     [InlineData(EffectiveTheme.Dark, 2, "#FF003C")] // Laser Red
     [InlineData(EffectiveTheme.Dark, 3, "#FF00A0")] // Synthwave Pink
     [InlineData(EffectiveTheme.Dark, 4, "#B500FF")] // Hyper Magenta
     [InlineData(EffectiveTheme.Dark, 5, "#5D00FF")] // Electric Indigo
     [InlineData(EffectiveTheme.Dark, 6, "#0088FF")] // Azure Glow
-    [InlineData(EffectiveTheme.Dark, 7, "#00E5FF")] // Grid Cyan
-    [InlineData(EffectiveTheme.Dark, 8, "#00FFB2")] // Matrix Mint
+    [InlineData(EffectiveTheme.Dark, 7, "#00B5B5")] // Grid Cyan
+    [InlineData(EffectiveTheme.Dark, 8, "#008D64")] // Matrix Mint
     [InlineData(EffectiveTheme.Light, 0, "#D90429")] // Vintage Crimson
     [InlineData(EffectiveTheme.Light, 1, "#F4A261")] // Tangerine
     [InlineData(EffectiveTheme.Light, 2, "#E9C46A")] // Goldenrod

@@ -1,4 +1,4 @@
-﻿
+
 namespace Historia.Services.Graph;
 
 /// <summary>
@@ -25,15 +25,15 @@ public static class LanePalette
     // Dark theme: Synthwave Sunset — saturated neon hues that glow on the navy field.
     private static readonly Rgb[] SynthwaveDark =
     [
-        Rgb.FromRgb(0xFF, 0xEA, 0x00), // Cyber Yellow
+        Rgb.FromRgb(0xE0, 0x9E, 0x1D), // Cyber Yellow
         Rgb.FromRgb(0xFF, 0x5E, 0x00), // Neon Orange
         Rgb.FromRgb(0xFF, 0x00, 0x3C), // Laser Red
         Rgb.FromRgb(0xFF, 0x00, 0xA0), // Synthwave Pink
         Rgb.FromRgb(0xB5, 0x00, 0xFF), // Hyper Magenta
         Rgb.FromRgb(0x5D, 0x00, 0xFF), // Electric Indigo
         Rgb.FromRgb(0x00, 0x88, 0xFF), // Azure Glow
-        Rgb.FromRgb(0x00, 0xE5, 0xFF), // Grid Cyan
-        Rgb.FromRgb(0x00, 0xFF, 0xB2), // Matrix Mint
+        Rgb.FromRgb(0x00, 0xB5, 0xB5), // Grid Cyan
+        Rgb.FromRgb(0x00, 0x8D, 0x64), // Matrix Mint
     ];
 
     // Light theme: Retro Sunset — muted retro hues on the white field. Tangerine and
