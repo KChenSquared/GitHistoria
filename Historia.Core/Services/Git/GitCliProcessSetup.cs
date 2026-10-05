@@ -12,12 +12,18 @@ namespace Historia.Services.Git;
 internal static class GitCliProcessSetup
 {
     /// <summary>Prepended to every invocation so output is machine-parseable and read-only
-    /// commands never take the index lock.</summary>
+    /// commands never take the index lock. <c>merge.conflictStyle=zdiff3</c> makes every conflict
+    /// Historia creates (merge, pull, rebase and its <c>--continue</c> stops, cherry-pick, revert,
+    /// stash apply/pop, <c>checkout -m</c>) carry the common-ancestor section, so the resolver can
+    /// offer "Use base". Being on the command line it overrides the user's own
+    /// <c>merge.conflictStyle</c> only inside Historia-launched processes; their terminal is
+    /// unaffected.</summary>
     public static readonly string[] DeterministicPrefix =
     [
         "-c", "color.ui=false",
         "-c", "core.pager=cat",
         "-c", "core.quotepath=false",
+        "-c", "merge.conflictStyle=zdiff3",
         "--no-optional-locks",
     ];
 
