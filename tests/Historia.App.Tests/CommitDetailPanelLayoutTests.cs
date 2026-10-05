@@ -25,9 +25,36 @@ public class CommitDetailPanelLayoutTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task Message_section_shows_the_raw_message()
+    public async Task Message_section_shows_the_reflowed_message()
     {
         const string rawMessage = "feat: title line 1\ntitle line 2\n\nbody paragraph 1\n\n- bullet item";
+        var inlinesText = await LoadMessageTextAsync(rawMessage, assertNoModeButtons: true);
+        Assert.Equal("feat: title line 1 title line 2\n\nbody paragraph 1\n\n- bullet item", inlinesText);
+    }
+
+    [AvaloniaFact]
+    public async Task Message_section_keeps_list_items_and_trailers_on_their_own_lines()
+    {
+        const string rawMessage =
+            "fix: keep the graph responsive\n\n" +
+            "The hard-wrapped explanation of the change runs past the column the\n" +
+            "editor wrapped it at and continues here.\n\n" +
+            "- first bullet\n" +
+            "- second bullet that wraps\n  onto a continuation line\n\n" +
+            "Co-Authored-By: Someone <someone@example.com>";
+
+        var inlinesText = await LoadMessageTextAsync(rawMessage, assertNoModeButtons: false);
+
+        Assert.Equal(CommitMessageReflow.Reflow(rawMessage), inlinesText);
+        var lines = inlinesText.Split('\n');
+        Assert.Contains("The hard-wrapped explanation of the change runs past the column the editor wrapped it at and continues here.", lines);
+        Assert.Contains("- first bullet", lines);
+        Assert.Contains("- second bullet that wraps onto a continuation line", lines);
+        Assert.Contains("Co-Authored-By: Someone <someone@example.com>", lines);
+    }
+
+    private async Task<string> LoadMessageTextAsync(string rawMessage, bool assertNoModeButtons)
+    {
         _fixture.CreateCommitWithRawMessage(rawMessage);
         await _context.State.RefreshStatusAsync();
         var headId = _fixture.HeadCommitId;
@@ -40,11 +67,12 @@ public class CommitDetailPanelLayoutTests : IDisposable
             await WaitForCommitLoadedAsync(view);
 
             var tb = Assert.IsType<SelectableTextBlock>(view.MessageHostForTesting.Content);
-            var inlinesText = string.Concat(tb.Inlines!.OfType<Avalonia.Controls.Documents.Run>().Select(r => r.Text));
-            Assert.Equal(rawMessage, inlinesText);
-
-            var allButtons = view.GetVisualDescendants().OfType<Button>().ToList();
-            Assert.DoesNotContain(allButtons, b => b.Content is "Raw" or "Rendered");
+            if (assertNoModeButtons)
+            {
+                var allButtons = view.GetVisualDescendants().OfType<Button>().ToList();
+                Assert.DoesNotContain(allButtons, b => b.Content is "Raw" or "Rendered");
+            }
+            return string.Concat(tb.Inlines!.OfType<Avalonia.Controls.Documents.Run>().Select(r => r.Text));
         }
         finally
         {
