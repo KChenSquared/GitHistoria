@@ -182,44 +182,44 @@ public sealed partial class CommitGraphControl : Control
     private readonly DispatcherTimer _hoverDwellTimer;
     private CancellationTokenSource? _hoverFetchCts;
 
-    // LRU cache for commit message bodies, bounded with oldest-25% eviction.
-    private readonly Dictionary<GitObjectId, string> _msgBodyCache = new();
-    private readonly LinkedList<GitObjectId> _msgBodyLru = new();
-    private const int MsgBodyCacheCapacity = 512;
+    // LRU cache of full, raw commit messages, bounded with oldest-25% eviction.
+    private readonly Dictionary<GitObjectId, string> _msgCache = new();
+    private readonly LinkedList<GitObjectId> _msgLru = new();
+    private const int MsgCacheCapacity = 512;
 
-    private bool TryGetCachedBody(GitObjectId id, out string body)
+    private bool TryGetCachedMessage(GitObjectId id, out string message)
     {
-        if (_msgBodyCache.TryGetValue(id, out body!))
+        if (_msgCache.TryGetValue(id, out message!))
         {
-            _msgBodyLru.Remove(id);
-            _msgBodyLru.AddLast(id);
+            _msgLru.Remove(id);
+            _msgLru.AddLast(id);
             return true;
         }
         return false;
     }
 
-    private void CacheMessageBody(GitObjectId id, string body)
+    private void CacheMessage(GitObjectId id, string message)
     {
-        if (_msgBodyCache.TryGetValue(id, out _))
+        if (_msgCache.TryGetValue(id, out _))
         {
-            _msgBodyLru.Remove(id);
-            _msgBodyLru.AddLast(id);
-            _msgBodyCache[id] = body;
+            _msgLru.Remove(id);
+            _msgLru.AddLast(id);
+            _msgCache[id] = message;
             return;
         }
 
-        if (_msgBodyCache.Count >= MsgBodyCacheCapacity)
+        if (_msgCache.Count >= MsgCacheCapacity)
         {
-            var toEvict = MsgBodyCacheCapacity / 4;
-            for (var i = 0; i < toEvict && _msgBodyLru.First is { } node; i++)
+            var toEvict = MsgCacheCapacity / 4;
+            for (var i = 0; i < toEvict && _msgLru.First is { } node; i++)
             {
-                _msgBodyCache.Remove(node.Value);
-                _msgBodyLru.RemoveFirst();
+                _msgCache.Remove(node.Value);
+                _msgLru.RemoveFirst();
             }
         }
 
-        _msgBodyCache[id] = body;
-        _msgBodyLru.AddLast(id);
+        _msgCache[id] = message;
+        _msgLru.AddLast(id);
     }
 
     private GitObjectId? _hoverMsgId;
@@ -281,7 +281,10 @@ public sealed partial class CommitGraphControl : Control
     internal HoverTarget? PendingHoverTargetForTesting => _hoverDwell.Pending;
     internal HoverTarget? ShownHoverTargetForTesting => _hoverDwell.Shown;
     internal bool MsgFetchInFlightForTesting => _msgFetchInFlight is not null;
-    internal int MsgBodyCacheCountForTesting => _msgBodyCache.Count;
+    internal int MsgCacheCountForTesting => _msgCache.Count;
+    internal string? CachedMessageForTesting(int row) =>
+        _layout is { } lay && row >= 0 && row < lay.Layout.Commits.Count
+            && _msgCache.TryGetValue(lay.Layout.Commits[row].Id, out var m) ? m : null;
     internal void FireHoverDwellTimerForTesting() => HandleHoverDwellElapsed();
     internal int LaneRunsDrawnForTesting => _laneRunsDrawn;
     internal int LanePiecesSeenForTesting => _lanePiecesSeen;
@@ -454,6 +457,8 @@ public sealed partial class CommitGraphControl : Control
 
         _hoverDwellTimer = new DispatcherTimer { Interval = GraphHoverDwell.Delay };
         _hoverDwellTimer.Tick += (_, _) => HandleHoverDwellElapsed();
+        ToolTip.SetPlacement(this, PlacementMode.Custom);
+        ToolTip.SetCustomPopupPlacementCallback(this, PlaceTip);
 
         _scrollBar = new ScrollBar { Orientation = Orientation.Vertical, Width = 12, IsVisible = false, [Grid.ColumnProperty] = 0 };
         // While the user is dragging the thumb, background row-loading keeps triggering
@@ -2732,55 +2737,196 @@ public sealed partial class CommitGraphControl : Control
         }
     }
 
-    /// <summary>Show the full commit message for a Message-column cell. The body is
-    /// fetched lazily via <see cref="IGitGateway.GetCommitDetailAsync"/> and cached;
-    /// until it resolves the subject alone is shown.</summary>
+    // Graph tooltips open under the pointer, or flip above it, and never slide vertically: a
+    // tip that ends up over the pointer makes the graph get PointerExited and closes at once.
+    // The gaps live in the anchor rect rather than the offset because the positioner adds the
+    // offset unflipped, so a flipped Pointer-placed tip would land back over the pointer.
+    private const double TipGapAbove = 8;
+    private const double TipGapBelow = 20;
+    private const double TipScreenMargin = 8;
+
+    internal const PopupPositionerConstraintAdjustment TipConstraintAdjustment =
+        PopupPositionerConstraintAdjustment.FlipX | PopupPositionerConstraintAdjustment.FlipY
+        | PopupPositionerConstraintAdjustment.SlideX | PopupPositionerConstraintAdjustment.ResizeY;
+
+    // Message tooltip geometry. The chrome must match the ToolTip style in App.axaml (padding
+    // 8,4) and Fluent's ToolTip theme (border 1, content max width 320, font size 12).
+    internal const double MessageTipMaxWidth = 320;
+    internal const double MessageTipMaxHeight = 500;
+    private const double MessageTipFontSize = 12;
+    private const double MessageTipHintFontSize = 11;
+    private const double MessageTipHintGap = 4;
+    private const double TipPadH = 8;
+    private const double TipPadV = 4;
+    private const double TipBorder = 1;
+    internal const double MessageTipTextWidth = MessageTipMaxWidth - 2 * TipPadH - 2 * TipBorder;
+    internal const double MessageTipChromeHeight = 2 * TipPadV + 2 * TipBorder;
+    internal const string MessageTipHint = "Full message in the commit panel";
+
+    private (string Text, double Budget, int MaxLines, bool Truncated)? _msgTipMeasure;
+    private double _msgTipBudget = double.NaN;
+
+    /// <summary>The tooltip anchor around a pointer at <paramref name="p"/> (TopLevel
+    /// coordinates): from <see cref="TipGapAbove"/> above it to <see cref="TipGapBelow"/> below.</summary>
+    internal static Rect TipAnchorRect(Point p) =>
+        new(p.X, p.Y - TipGapAbove, 1, TipGapAbove + TipGapBelow);
+
+    private void PlaceTip(CustomPopupPlacement placement)
+    {
+        if (TopLevel.GetTopLevel(this) is not { } top || this.TranslatePoint(_lastPointerPos, top) is not { } p)
+            return;
+        placement.AnchorRectangle = TipAnchorRect(p);
+        placement.Anchor = PopupAnchor.BottomLeft;
+        placement.Gravity = PopupGravity.BottomRight;
+        placement.Offset = default;
+        placement.ConstraintAdjustment = TipConstraintAdjustment;
+    }
+
+    /// <summary>The message tooltip's outer height: at most <see cref="MessageTipMaxHeight"/>,
+    /// and no taller than the roomier side of the pointer's anchor less a screen margin. Room
+    /// is infinite when the screen can't be resolved.</summary>
+    internal static double MessageTipOuterHeight(double roomBelow, double roomAbove) =>
+        Math.Min(MessageTipMaxHeight, Math.Max(roomBelow, roomAbove) - TipScreenMargin);
+
+    private double MessageTipContentBudget()
+    {
+        double below = double.PositiveInfinity, above = double.PositiveInfinity;
+        try
+        {
+            if (TopLevel.GetTopLevel(this)?.Screens?.ScreenFromVisual(this) is { Scaling: > 0 } screen)
+            {
+                var pointerY = this.PointToScreen(_lastPointerPos).Y / screen.Scaling;
+                var work = screen.WorkingArea;
+                below = work.Bottom / screen.Scaling - (pointerY + TipGapBelow);
+                above = pointerY - TipGapAbove - work.Y / screen.Scaling;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // Not attached to a visual root: fall back to the fixed cap.
+        }
+        return MessageTipOuterHeight(below, above) - MessageTipChromeHeight;
+    }
+
+    /// <summary>How many wrapped lines of <paramref name="text"/> fit in
+    /// <paramref name="budget"/> with the hint line below them; 0 when the whole text fits.
+    /// Shapes text, so it runs when a tip is shown and never from the render path.</summary>
+    private (int MaxLines, bool Truncated) MeasureMessageTip(string text, double budget)
+    {
+        if (_msgTipMeasure is { } m && string.Equals(m.Text, text, StringComparison.Ordinal) && m.Budget == budget)
+            return (m.MaxLines, m.Truncated);
+
+        var typeface = new Typeface(FontFamily.Default);
+        int maxLines = 0;
+        var truncated = false;
+        using (var layout = new TextLayout(text, typeface, MessageTipFontSize, null,
+                   textWrapping: TextWrapping.Wrap, maxWidth: MessageTipTextWidth))
+        {
+            var total = 0.0;
+            foreach (var line in layout.TextLines)
+                total += line.Height;
+
+            if (Math.Ceiling(total) > budget)
+            {
+                // Layout rounding sizes each TextBlock up to a whole pixel, so compare ceilings.
+                double hintHeight;
+                using (var hint = new TextLayout(MessageTipHint, typeface, MessageTipHintFontSize, null,
+                           textWrapping: TextWrapping.Wrap, maxWidth: MessageTipTextWidth))
+                    hintHeight = Math.Ceiling(hint.Height) + MessageTipHintGap;
+
+                var avail = budget - hintHeight;
+                var used = 0.0;
+                foreach (var line in layout.TextLines)
+                {
+                    if (Math.Ceiling(used + line.Height) > avail)
+                        break;
+                    used += line.Height;
+                    maxLines++;
+                }
+                maxLines = Math.Max(1, maxLines);
+                truncated = true;
+            }
+        }
+
+        _msgTipMeasure = (text, budget, maxLines, truncated);
+        return (maxLines, truncated);
+    }
+
+    /// <summary>Show the full commit message for a Message-column cell, reflowed and capped in
+    /// height. The message is fetched lazily via <see cref="IGitGateway.GetCommitDetailAsync"/>
+    /// and cached; until it resolves the subject alone is shown.</summary>
     private void ShowMessageTooltip(GitObjectId id, string subject)
     {
-        var text = subject;
-        if (TryGetCachedBody(id, out var body))
+        string text;
+        if (TryGetCachedMessage(id, out var message))
         {
-            text = string.IsNullOrEmpty(body) ? subject : subject + "\n\n" + body;
+            text = CommitMessageReflow.Reflow(message);
         }
         else
         {
+            text = CommitMessageReflow.Reflow(subject);
             CancelHoverFetch();
             if (_context is { } ctx)
             {
                 _hoverFetchCts = CancellationTokenSource.CreateLinkedTokenSource(ctx.Lifetime);
-                _ = FetchMessageBodyAsync(id, subject, _hoverFetchCts.Token);
+                _ = FetchMessageAsync(id, subject, _hoverFetchCts.Token);
             }
         }
 
         _hoverMsgId = id;
-        if (string.Equals(_msgTipText, text, StringComparison.Ordinal))
+        var budget = MessageTipContentBudget();
+        if (string.Equals(_msgTipText, text, StringComparison.Ordinal) && _msgTipBudget == budget)
         {
             ToolTip.SetIsOpen(this, true);
             return;
         }
 
         _msgTipText = text;
+        _msgTipBudget = budget;
         _lastTip = null;
-        ToolTip.SetTip(this, new TextBlock
+
+        var (maxLines, truncated) = MeasureMessageTip(text, budget);
+        var panel = new StackPanel();
+        panel.Children.Add(new TextBlock
         {
             Text = text,
+            FontFamily = FontFamily.Default,
+            FontSize = MessageTipFontSize,
             TextWrapping = TextWrapping.Wrap,
-            MaxWidth = 520,
+            MaxWidth = MessageTipMaxWidth,
+            TextTrimming = truncated ? TextTrimming.CharacterEllipsis : TextTrimming.None,
+            MaxLines = maxLines,
         });
+        if (truncated)
+        {
+            var hint = new TextBlock
+            {
+                Text = MessageTipHint,
+                FontFamily = FontFamily.Default,
+                FontSize = MessageTipHintFontSize,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = MessageTipMaxWidth,
+                Margin = new Thickness(0, MessageTipHintGap, 0, 0),
+            };
+            Dyn(hint, TextBlock.ForegroundProperty, "ColorTextMuted");
+            panel.Children.Add(hint);
+        }
+
+        ToolTip.SetTip(this, panel);
         ToolTip.SetIsOpen(this, false);
         ToolTip.SetIsOpen(this, true);
     }
 
-    private async Task FetchMessageBodyAsync(GitObjectId id, string subject, CancellationToken ct)
+    private async Task FetchMessageAsync(GitObjectId id, string subject, CancellationToken ct)
     {
-        if (_context is not { } ctx || _msgBodyCache.ContainsKey(id) || id.Equals(_msgFetchInFlight))
+        if (_context is not { } ctx || _msgCache.ContainsKey(id) || id.Equals(_msgFetchInFlight))
             return;
         _msgFetchInFlight = id;
         try
         {
             ct.ThrowIfCancellationRequested();
             var detail = await ctx.Gateway.GetCommitDetailAsync(id, ct).ConfigureAwait(true);
-            CacheMessageBody(id, detail.MessageBody ?? "");
+            CacheMessage(id, detail.Message);
             if (id.Equals(_hoverMsgId) && IsPointerOver && !ct.IsCancellationRequested)
                 ShowMessageTooltip(id, subject);
         }

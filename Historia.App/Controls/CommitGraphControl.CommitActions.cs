@@ -434,15 +434,13 @@ public sealed partial class CommitGraphControl
     private void CopyText(string s)
         => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(s);
 
-    /// <summary>Copies the full commit message (subject + body). Uses the message-body cache
+    /// <summary>Copies the full commit message exactly as committed. Uses the message cache
     /// when warm, else fetches the detail once.</summary>
     private void CopyCommitMessage(GitObjectId id)
     {
-        // _msgBodyCache holds the body only; combine with the subject.
-        if (TryGetCachedBody(id, out var body))
+        if (TryGetCachedMessage(id, out var message))
         {
-            var subject = FindSubject(id);
-            CopyText(body.Length > 0 ? subject + "\n\n" + body : subject);
+            CopyText(message);
             return;
         }
         if (_context is not { } ctx)
@@ -452,25 +450,13 @@ public sealed partial class CommitGraphControl
             try
             {
                 var d = await ctx.Gateway.GetCommitDetailAsync(id, ctx.Lifetime);
-                CacheMessageBody(id, d.MessageBody ?? "");
-                CopyText(string.IsNullOrEmpty(d.MessageBody)
-                    ? d.MessageShort
-                    : d.MessageShort + "\n\n" + d.MessageBody);
+                CacheMessage(id, d.Message);
+                CopyText(d.Message);
             }
             catch (Exception ex)
             {
                 _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Copy message"), ex.NotificationDetails());
             }
         });
-    }
-
-    private string FindSubject(GitObjectId id)
-    {
-        if (_layout is { } lay && lay.Layout.RowByCommitId.TryGetValue(id, out var row)
-            && row >= 0 && row < lay.Layout.Commits.Count)
-        {
-            return lay.Layout.Commits[row].MessageShort;
-        }
-        return id.ToShortString(7);
     }
 }
