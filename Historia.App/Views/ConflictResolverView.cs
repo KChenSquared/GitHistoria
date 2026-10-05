@@ -498,8 +498,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         ToolTip.SetTip(_headerTheirs, labels.TheirsDetail);
     }
 
-    /// <summary>Ctrl+S saves the file without marking it resolved; Ctrl+Space keeps or drops the
-    /// managed row under the Result caret.</summary>
+    /// <summary>Ctrl+S saves the file without marking it resolved; Ctrl+Space, pressed in the
+    /// Result, keeps or drops the managed row under its caret.</summary>
     private void OnViewKeyDown(object? sender, KeyEventArgs e)
     {
         _swallowNextSpace = false;
@@ -513,7 +513,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
         else if (e.Key == Key.Space && e.KeyModifiers == KeyModifiers.Control)
         {
-            if (_isEditable && !_isBusy && _session.ToggleRow(_resultEditor.TextArea.Caret.Line - 1))
+            if (_isEditable && !_isBusy
+                && e.Source is Visual source && _resultEditor.IsVisualAncestorOf(source)
+                && _session.ToggleRow(_resultEditor.TextArea.Caret.Line - 1))
             {
                 e.Handled = true;
                 _swallowNextSpace = true;

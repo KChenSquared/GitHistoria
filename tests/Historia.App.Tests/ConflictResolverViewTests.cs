@@ -2684,10 +2684,12 @@ public class ConflictResolverViewTests : IDisposable
         return doc.Lines.First(l => doc.GetText(l.Offset, l.Length) == text).LineNumber - 1;
     }
 
-    private static void PressCtrlSpace(ConflictResolverView view, out bool handled)
+    /// <summary>Presses Ctrl+Space with <paramref name="target"/> as the focused element, so the
+    /// view's tunnelling handler sees it as the event source.</summary>
+    private static void PressCtrlSpace(Interactive target, out bool handled)
     {
         var args = new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Space, KeyModifiers = KeyModifiers.Control };
-        view.RaiseEvent(args);
+        target.RaiseEvent(args);
         handled = args.Handled;
     }
 
@@ -2939,30 +2941,65 @@ public class ConflictResolverViewTests : IDisposable
     [AvaloniaFact]
     public async Task Ctrl_Space_toggles_row_at_caret()
     {
-        var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
-        int theirs1 = LineOf(view, "theirs 1");
-        Assert.True(view.SessionForTesting.IsExcluded(theirs1));
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+            int theirs1 = LineOf(view, "theirs 1");
+            Assert.True(view.SessionForTesting.IsExcluded(theirs1));
 
-        view.ResultEditorForTesting.TextArea.Caret.Line = theirs1 + 1;
-        PressCtrlSpace(view, out bool handled);
+            view.ResultEditorForTesting.TextArea.Caret.Line = theirs1 + 1;
+            PressCtrlSpace(view.ResultEditorForTesting.TextArea, out bool handled);
 
-        Assert.True(handled);
-        Assert.False(view.SessionForTesting.IsExcluded(theirs1));
+            Assert.True(handled);
+            Assert.False(view.SessionForTesting.IsExcluded(theirs1));
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     [AvaloniaFact]
     public async Task Ctrl_Space_outside_managed_row_does_nothing()
     {
-        var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
-        var text = view.ComposedTextForTesting;
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+            var text = view.ComposedTextForTesting;
 
-        view.ResultEditorForTesting.TextArea.Caret.Line = 1; // "header"
-        PressCtrlSpace(view, out bool handled);
+            view.ResultEditorForTesting.TextArea.Caret.Line = 1; // "header"
+            PressCtrlSpace(view.ResultEditorForTesting.TextArea, out bool handled);
 
-        Assert.False(handled);
-        Assert.Equal(text, view.ComposedTextForTesting);
+            Assert.False(handled);
+            Assert.Equal(text, view.ComposedTextForTesting);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Ctrl_Space_in_a_top_pane_does_not_toggle_the_result_row()
+    {
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+            int theirs1 = LineOf(view, "theirs 1");
+            view.ResultEditorForTesting.TextArea.Caret.Line = theirs1 + 1;
+
+            PressCtrlSpace(view.OursEditorForTesting.TextArea, out bool handled);
+
+            Assert.False(handled);
+            Assert.True(view.SessionForTesting.IsExcluded(theirs1));
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     [AvaloniaFact]

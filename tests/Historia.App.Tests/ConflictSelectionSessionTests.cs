@@ -181,6 +181,30 @@ public sealed class ConflictSelectionSessionTests
     }
 
     [AvaloniaFact]
+    public void Line_typed_below_the_last_row_stays_outside_the_region()
+    {
+        var (doc, session) = Make();
+        var region = session.Activate(Region(doc), s =>
+        {
+            s.SetHunk(ConflictSide.Ours, true);
+            s.SetHunk(ConflictSide.Theirs, true);
+        })!;
+        int lastRow = LineOf(doc, "theirs 1");
+        Assert.Equal(lastRow, region.EndLine);
+
+        doc.Insert(Line(doc, "theirs 1").EndOffset, "\n");
+        Pump();
+        Assert.Equal(lastRow, session.Regions[0].EndLine);
+        Assert.Equal(ConflictRowVisual.None, session.RowVisual(lastRow + 1));
+
+        doc.Insert(doc.GetLineByNumber(lastRow + 2).Offset, "typed"); // typing on it changes nothing
+        Pump();
+        Assert.Equal(lastRow, session.Regions[0].EndLine);
+        Assert.Equal(ConflictRowVisual.None, session.RowVisual(LineOf(doc, "typed")));
+        Assert.Contains("theirs 1\ntyped\nbottom\n", session.ComposeOutput());
+    }
+
+    [AvaloniaFact]
     public void Excluded_rows_are_read_only()
     {
         var (doc, session) = Make();

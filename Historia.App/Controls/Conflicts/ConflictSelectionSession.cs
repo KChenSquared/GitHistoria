@@ -368,17 +368,15 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
             return false;
         }
 
-        // The last row's segment may have grown over new lines typed at its end; they are part of
-        // the region. Every row is then re-anchored to exactly its own line.
-        var last = region.Rows[^1];
-        int lastLine = _document.GetLineByOffset(Math.Max(last.StartOffset, last.EndOffset - 1)).LineNumber;
+        // Every row is re-anchored to exactly its own line. The region ends at its last row, so a
+        // line typed below that row is outside it, like any line typed below a conflict.
         foreach (var row in region.Rows)
         {
             var line = _document.GetLineByOffset(row.StartOffset);
             AttachToLine(row, line);
         }
         region.StartLine = _document.GetLineByOffset(region.Rows[0].StartOffset).LineNumber - 1;
-        region.EndLine = Math.Max(lastLine, _document.GetLineByOffset(last.StartOffset).LineNumber) - 1;
+        region.EndLine = _document.GetLineByOffset(region.Rows[^1].StartOffset).LineNumber - 1;
         return true;
     }
 
