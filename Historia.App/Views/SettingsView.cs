@@ -419,6 +419,11 @@ public sealed class SettingsView : UserControl, IDisposable
         }, handledEventsToo: true);
     }
 
+    /// <summary>
+    /// Commits the Max rows in memory field behind a destructive confirm, plus a second one when
+    /// the new value is above <see cref="AppSettings.ResidentRowCapWarnThreshold"/>. Cancelling
+    /// either restores the saved value.
+    /// </summary>
     internal static void WireResidentRowCapCommit(
         NumericUpDown residentRowCap,
         int initial,
@@ -475,6 +480,18 @@ public sealed class SettingsView : UserControl, IDisposable
                     "Change the resident row cap?",
                     "Changing this value affects how many rows the graph will keep resident in memory for large repositories. Applies after restart of Historia.",
                     "Continue");
+
+                // Intentional double warning: above the threshold a second, heavier confirm
+                // follows the first, so a large cap is never saved on one reflexive click.
+                if (proceed && next > AppSettings.ResidentRowCapWarnThreshold)
+                {
+                    // Same key-up race as above if the first dialog was confirmed from the keyboard.
+                    await Task.Delay(150);
+                    proceed = await dialogs.ConfirmDestructiveAsync(
+                        "Keep this many rows in memory?",
+                        $"Keeping more than {AppSettings.ResidentRowCapWarnThreshold:N0} rows in memory could drain memory heavily on large repositories. Do you really want to save {next:N0} rows?",
+                        "Save anyway");
+                }
 
                 if (!proceed)
                 {

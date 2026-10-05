@@ -9,7 +9,7 @@ namespace Historia.Services.Graph;
 /// <c>GraphLayoutState.Rows</c> grow to millions of entries across many small Extend calls
 /// without <c>DagLayoutEngine.Build</c> having to copy the WHOLE accumulator into a fresh array on
 /// every single call (quadratic allocation in the number of extends; ~100 MB
-/// per extend at 2M rows, worse at the 10M <c>ResidentRowCap</c> maximum).
+/// per extend at 2M rows, worse at higher <c>ResidentRowCap</c> settings).
 /// <para>
 /// <b>Concurrency contract:</b> <see cref="Add"/> is single-writer — every caller already holds
 /// <c>lock (GraphLayoutState)</c> around the whole Consume/Build pass that appends rows (see

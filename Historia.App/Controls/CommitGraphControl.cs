@@ -45,7 +45,7 @@ public sealed partial class CommitGraphControl : Control
     // takes effect on the next launch, and GraphLayoutService snapshots it at construction.
     // Snapshot it here too so the control's resident-row ceiling always matches the service's —
     // a mid-session toggle must not make the control cap at the configurable disk-mode ceiling
-    // (AppSettings.ResidentRowCap, clamped to 500k..10M) while metadata is still fully resident
+    // (AppSettings.ResidentRowCap, floored at 500k) while metadata is still fully resident
     // (the 500k memory limit exists precisely to bound that allocation).
     private bool _graphMetaFromDisk;
     private bool _showAuthorDate;
@@ -55,9 +55,9 @@ public sealed partial class CommitGraphControl : Control
     // the silent background crawler pre-loads only this many rows into the
     // resident layout after first paint, advancing in discrete threshold steps as the user
     // scrolls. Deeper history reaches disk in full via the background spill
-    // regardless of this cap. Crawling all the way to ResidentRowCap (2,000,000 on a big
+    // regardless of this cap. Crawling all the way to ResidentRowCap (2,500,000 on a big
     // repo) built a multi-GB GraphRow[] and consumed CPU/memory for minutes right after first paint.
-    // Configurable (AppSettings.SilentCrawlRowCap, default 100,000); 0 means uncapped, i.e. the
+    // Configurable (AppSettings.SilentCrawlRowCap, default 500,000); 0 means uncapped, i.e. the
     // crawler runs to ResidentRowCap same as an explicit scroll would. Snapshotted at
     // construction like _graphMetaFromDisk — a mid-session change takes effect on next launch.
     private int _silentCrawlRowCap;

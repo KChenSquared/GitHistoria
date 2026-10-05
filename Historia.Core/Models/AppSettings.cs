@@ -144,15 +144,15 @@ public sealed record AppSettings
     /// loaded threshold, advancing another this many rows each step. Deeper history
     /// reaches disk in full via the background spill regardless of this cap.
     /// <c>0</c> means uncapped — the crawler runs all the way to the resident-row ceiling
-    /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 100,000.
+    /// (<see cref="GraphLimits.GetMaxResidentRows"/>). Default 500,000.
     /// </summary>
-    public int SilentCrawlRowCap { get; init; } = 100_000;
+    public int SilentCrawlRowCap { get; init; } = 500_000;
 
     public const int MinSilentCrawlRowCap = 0;
 
     /// <summary>
-    /// The same ceiling as <see cref="MaxResidentRowCap"/> (10,000,000), so any crawl cap up to
-    /// the resident-cap maximum can be set directly, not only through <c>0</c> (uncapped).
+    /// The same ceiling as <see cref="MaxResidentRowCap"/> (no app-imposed limit), so any crawl
+    /// cap up to the resident cap can be set directly, not only through <c>0</c> (uncapped).
     /// </summary>
     public const int MaxSilentCrawlRowCap = MaxResidentRowCap;
 
@@ -167,12 +167,19 @@ public sealed record AppSettings
     /// background crawler/spill. Raising it lets a very large repository's full history become
     /// reachable at the cost of more resident memory; lowering it tightens the memory ceiling at
     /// the cost of capping history earlier. Read once at startup — a change takes effect on the
-    /// next launch. Default 2,000,000 (<see cref="GraphLimits.MaxResidentRowsDisk"/>).
+    /// next launch. Default 2,500,000 (<see cref="GraphLimits.MaxResidentRowsDisk"/>). There is
+    /// no app-imposed upper limit; Settings asks for a second confirmation above
+    /// <see cref="ResidentRowCapWarnThreshold"/>.
     /// </summary>
     public int ResidentRowCap { get; init; } = GraphLimits.MaxResidentRowsDisk;
 
     public const int MinResidentRowCap = GraphLimits.MaxResidentRowsMemory;
-    public const int MaxResidentRowCap = 10_000_000;
+
+    /// <summary>No app-imposed ceiling — only the <see cref="int"/> range bounds it.</summary>
+    public const int MaxResidentRowCap = int.MaxValue;
+
+    /// <summary>Settings shows an extra heavy-memory warning for a value above this.</summary>
+    public const int ResidentRowCapWarnThreshold = 5_000_000;
 
     /// <summary>Math.Clamp to the accepted <see cref="ResidentRowCap"/> range.</summary>
     public static int ClampResidentRowCap(int value) => Math.Clamp(value, MinResidentRowCap, MaxResidentRowCap);
