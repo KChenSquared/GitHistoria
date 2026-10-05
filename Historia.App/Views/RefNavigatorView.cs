@@ -719,10 +719,21 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         Grid.SetColumn(name, 1);
         grid.Children.Add(name);
 
-        var b = new Border { Child = grid, Height = 24, Cursor = new Cursor(StandardCursorType.Hand), Padding = new Thickness(0, 0, RowRightGutter, 0) };
+        // Transparent, not null: the whole row (caret gutter and the space past the name) is the
+        // click and context-menu target, not just the glyphs.
+        var b = new Border
+        {
+            Child = grid, Height = 24, Background = Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.Hand), Padding = new Thickness(0, 0, RowRightGutter, 0),
+        };
         ToolTip.SetTip(b, segment);
+        // Trap: only a left press toggles. The context menu opens on the right button's release,
+        // and Rebuild() replaces every row, so rebuilding on a right press detaches this row (and
+        // moves pointer capture to the root panel) before the menu can open.
         b.PointerPressed += (_, e) =>
         {
+            if (!e.GetCurrentPoint(b).Properties.IsLeftButtonPressed)
+                return;
             e.Handled = true;
             if (!_expanded.Remove(path)) _expanded.Add(path);
             Rebuild();

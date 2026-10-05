@@ -203,6 +203,74 @@ public sealed class RefNavigatorRemoteRowTests
         }
     }
 
+    private static string Caret(Border row) =>
+        row.GetVisualDescendants().OfType<TextBlock>().First().Text!;
+
+    private static void Click(Window window, Border row, MouseButton button)
+    {
+        var at = row.TranslatePoint(new Point(row.Bounds.Width / 2, row.Bounds.Height / 2), window)!.Value;
+        // Hit testing reads the composed scene, so let a render tick publish the current tree.
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
+        window.MouseDown(at, button);
+        Dispatcher.UIThread.RunJobs();
+        window.MouseUp(at, button);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    [AvaloniaFact]
+    public void Right_click_on_remote_root_opens_its_menu()
+    {
+        var setup = CreateView();
+        try
+        {
+            var row = FolderRowNamed(setup.View, "origin")!;
+            Click(setup.Window, row, MouseButton.Right);
+
+            Assert.NotNull(row.GetVisualRoot());
+            Assert.True(row.ContextMenu!.IsOpen);
+            row.ContextMenu.Close();
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Right_click_does_not_toggle_the_remote_folder()
+    {
+        var setup = CreateView();
+        try
+        {
+            var before = Caret(FolderRowNamed(setup.View, "origin")!);
+            Click(setup.Window, FolderRowNamed(setup.View, "origin")!, MouseButton.Right);
+            FolderRowNamed(setup.View, "origin")!.ContextMenu?.Close();
+
+            Assert.Equal(before, Caret(FolderRowNamed(setup.View, "origin")!));
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Left_click_still_toggles_the_remote_folder()
+    {
+        var setup = CreateView();
+        try
+        {
+            Assert.Equal("▾", Caret(FolderRowNamed(setup.View, "origin")!));
+            Click(setup.Window, FolderRowNamed(setup.View, "origin")!, MouseButton.Left);
+            Assert.Equal("▸", Caret(FolderRowNamed(setup.View, "origin")!));
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
     [AvaloniaFact]
     public void Stale_tracking_group_renders_without_a_remote_menu()
     {
