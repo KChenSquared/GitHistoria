@@ -78,6 +78,14 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private bool _statusRefreshRunning;
     private bool _statusRefreshPending;
     private bool _suppressTextChanged;
+    private bool _inResultTextChanged;
+    private bool _swallowNextSpace;
+
+    private readonly ConflictSelectionSession _session;
+    private readonly ConflictToggleMargin _oursToggleMargin;
+    private readonly ConflictToggleMargin _theirsToggleMargin;
+    private readonly ConflictToggleMargin _resultToggleMargin;
+    private readonly ConflictExcludedLineColorizer _excludedColorizer;
 
     // Controls
     private readonly TextBlock _headerOurs = Text("", "ColorTextMuted", 11);
@@ -223,6 +231,11 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     internal ConflictFile? CurrentFileForTesting => _currentFile;
     internal IReadOnlyList<ConflictFile> ConflictedFilesForTesting => _conflictedFiles;
     internal ContentControl EditorAreaForTesting => _editorArea;
+    internal ConflictSelectionSession SessionForTesting => _session;
+    internal ConflictToggleMargin OursToggleMarginForTesting => _oursToggleMargin;
+    internal ConflictToggleMargin TheirsToggleMarginForTesting => _theirsToggleMargin;
+    internal ConflictToggleMargin ResultToggleMarginForTesting => _resultToggleMargin;
+    internal string ComposedTextForTesting => _session.ComposeOutput();
 
     public ConflictResolverView(IServiceProvider sp, RepositoryContext ctx)
     {
@@ -236,18 +249,34 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _theirsEditor.ServicesProvider = sp;
         _resultEditor.ServicesProvider = sp;
 
+        // Managed conflicts: kept / struck rows over the Result document
+        _session = new ConflictSelectionSession(_resultEditor.Document);
+        _session.Changed += OnSessionChanged;
+
         // Margins and Renderers
+        _oursToggleMargin = new ConflictToggleMargin(_oursEditor, line => _session.HunkGlyph(ConflictSide.Ours, line), _ => "Use these ours lines");
+        _oursToggleMargin.ToggleClicked += (_, line) => OnHunkToggleClicked(ConflictSide.Ours, line);
+        _oursEditor.TextArea.LeftMargins.Add(_oursToggleMargin);
         _oursEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_oursEditor, () => GetPaneLines(ConflictSide.Ours)));
         _oursEditor.TextArea.TextView.BackgroundRenderers.Add(
             new ConflictBackgroundRenderer(_oursEditor, () => ConflictSide.Ours, () => _parse, () => GetPaneLines(ConflictSide.Ours), () => _snapshot?.Analyses));
 
+        _theirsToggleMargin = new ConflictToggleMargin(_theirsEditor, line => _session.HunkGlyph(ConflictSide.Theirs, line), _ => "Use these theirs lines");
+        _theirsToggleMargin.ToggleClicked += (_, line) => OnHunkToggleClicked(ConflictSide.Theirs, line);
+        _theirsEditor.TextArea.LeftMargins.Add(_theirsToggleMargin);
         _theirsEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_theirsEditor, () => GetPaneLines(ConflictSide.Theirs)));
         _theirsEditor.TextArea.TextView.BackgroundRenderers.Add(
             new ConflictBackgroundRenderer(_theirsEditor, () => ConflictSide.Theirs, () => _parse, () => GetPaneLines(ConflictSide.Theirs), () => _snapshot?.Analyses));
 
+        _resultToggleMargin = new ConflictToggleMargin(_resultEditor, _session.RowGlyph, line => _session.IsExcluded(line) ? "Keep this line" : "Drop this line");
+        _resultToggleMargin.ToggleClicked += (_, line) => OnRowToggleClicked(line);
+        _resultEditor.TextArea.LeftMargins.Add(_resultToggleMargin);
         _resultEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_resultEditor));
         _resultEditor.TextArea.TextView.BackgroundRenderers.Add(
-            new ConflictBackgroundRenderer(_resultEditor, () => null, () => _parse));
+            new ConflictBackgroundRenderer(_resultEditor, () => null, () => _parse, getRowVisual: _session.RowVisual));
+        _excludedColorizer = new ConflictExcludedLineColorizer(_session.IsExcluded);
+        _resultEditor.TextArea.TextView.LineTransformers.Add(_excludedColorizer);
+        _resultEditor.AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(EnsureExcludedColorizerLast);
 
         // Shared scroll synchronization
         _oursEditor.ScrollOffsetChanged += (_, offset) => SyncScroll(_oursEditor, offset);
@@ -433,6 +462,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         this.Dyn(BackgroundProperty, "ColorBg");
 
         AddHandler(KeyDownEvent, OnViewKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(TextInputEvent, OnViewTextInput, RoutingStrategies.Tunnel);
 
         _ctx.State.StatusChanged += OnStatusChanged;
         _ctx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
@@ -468,9 +498,11 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         ToolTip.SetTip(_headerTheirs, labels.TheirsDetail);
     }
 
-    /// <summary>Ctrl+S saves the file without marking it resolved.</summary>
+    /// <summary>Ctrl+S saves the file without marking it resolved; Ctrl+Space keeps or drops the
+    /// managed row under the Result caret.</summary>
     private void OnViewKeyDown(object? sender, KeyEventArgs e)
     {
+        _swallowNextSpace = false;
         if (e.Key == Key.S && e.KeyModifiers == KeyModifiers.Control)
         {
             if (_isEditable && !_isBusy)
@@ -479,6 +511,153 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             }
             e.Handled = true;
         }
+        else if (e.Key == Key.Space && e.KeyModifiers == KeyModifiers.Control)
+        {
+            if (_isEditable && !_isBusy && _session.ToggleRow(_resultEditor.TextArea.Caret.Line - 1))
+            {
+                e.Handled = true;
+                _swallowNextSpace = true;
+            }
+        }
+    }
+
+    /// <summary>Keeps a handled Ctrl+Space from also typing a space into the row it toggled.</summary>
+    private void OnViewTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (_swallowNextSpace && e.Text == " ")
+        {
+            e.Handled = true;
+        }
+        _swallowNextSpace = false;
+    }
+
+    private void OnHunkToggleClicked(ConflictSide side, int line)
+    {
+        if (_isBusy || !_isEditable)
+        {
+            return;
+        }
+
+        var managed = _session.RegionAt(line);
+        if (managed != null)
+        {
+            _session.ToggleHunk(managed, side);
+            return;
+        }
+
+        var region = FreshMarkerRegionAt(line);
+        if (region != null)
+        {
+            _session.Activate(region, s => s.SetHunk(side, true), AnalysisFor(region));
+        }
+    }
+
+    private void OnRowToggleClicked(int line)
+    {
+        if (_isBusy || !_isEditable)
+        {
+            return;
+        }
+
+        _session.ToggleRow(line);
+    }
+
+    /// <summary>
+    /// Every session change: a toggle registers unsaved work exactly like typing, and the panes
+    /// realign at once. A change raised while the Result's own TextChanged handler runs is left to
+    /// that handler.
+    /// </summary>
+    private void OnSessionChanged(object? sender, EventArgs e)
+    {
+        if (_suppressTextChanged || _inResultTextChanged || _currentFile == null || !_isEditable)
+        {
+            return;
+        }
+
+        RegisterUnsavedWork();
+        if (_parseVersion == null || _resultEditor.Document.Version.CompareAge(_parseVersion) != 0)
+        {
+            _debounceCts?.Cancel();
+            UpdateConflictParseSync();
+            UpdateEditorsFromParse();
+        }
+        else
+        {
+            RefreshSessionVisuals();
+        }
+        UpdateFloatingRegionBar();
+    }
+
+    /// <summary>Redraws what a selection change alters without moving text: struck lines, check
+    /// boxes, row washes, minimap and counter.</summary>
+    private void RefreshSessionVisuals()
+    {
+        _minimap.ResolvedRanges = ManagedRanges();
+        UpdateConflictsCount();
+        _oursEditor.TextArea.TextView.Redraw();
+        _theirsEditor.TextArea.TextView.Redraw();
+        _resultEditor.TextArea.TextView.Redraw();
+    }
+
+    private (int Start, int End)[] ManagedRanges()
+        => _session.Regions.Where(r => !r.IsBroken).Select(r => (r.StartLine, r.EndLine)).ToArray();
+
+    /// <summary>Syntax colouring is attached after the editor joins the tree and again on every
+    /// file change; the struck-line colorizer must run after it to win the foreground.</summary>
+    private void EnsureExcludedColorizerLast()
+    {
+        var transformers = _resultEditor.TextArea.TextView.LineTransformers;
+        if (transformers.Count > 0 && ReferenceEquals(transformers[^1], _excludedColorizer))
+        {
+            return;
+        }
+        transformers.Remove(_excludedColorizer);
+        transformers.Add(_excludedColorizer);
+    }
+
+    /// <summary>The marker region on <paramref name="line"/> in a parse of the current text.</summary>
+    private ConflictRegion? FreshMarkerRegionAt(int line)
+    {
+        if (_parseVersion == null || _resultEditor.Document.Version.CompareAge(_parseVersion) != 0)
+        {
+            UpdateConflictParseSync();
+        }
+        return _parse?.Regions.FirstOrDefault(r => line >= r.StartLine && line <= r.EndLine);
+    }
+
+    private ConflictRegionAnalysis? AnalysisFor(ConflictRegion region)
+        => _snapshot?.Analyses.FirstOrDefault(a => a.Region.StartLine == region.StartLine && RegionLinesEqual(a.Region, region))
+           ?? _snapshot?.Analyses.FirstOrDefault(a => RegionLinesEqual(a.Region, region));
+
+    /// <summary>Managed regions' intra-line highlights, moved to their rows' current lines.</summary>
+    private List<ConflictRegionAnalysis> ManagedAnalyses()
+    {
+        var result = new List<ConflictRegionAnalysis>();
+        foreach (var region in _session.Regions)
+        {
+            if (region.IsBroken || region.Analysis is not { } analysis)
+            {
+                continue;
+            }
+            result.Add(new ConflictRegionAnalysis(
+                analysis.Region,
+                RemapToRows(analysis.OursHighlights, region, ConflictSide.Ours),
+                RemapToRows(analysis.TheirsHighlights, region, ConflictSide.Theirs),
+                null));
+        }
+        return result;
+    }
+
+    private static List<RegionLineHighlight> RemapToRows(IReadOnlyList<RegionLineHighlight> highlights, ConflictSelectionSession.ManagedRegion region, ConflictSide side)
+    {
+        int count = Math.Min(highlights.Count, region.Selection.RowCount(side));
+        var remapped = new List<RegionLineHighlight>(count);
+        for (int i = 0; i < count; i++)
+        {
+            var h = highlights[i];
+            remapped.Add(new RegionLineHighlight(h.LineIndex, region.RowLine(side, i), h.Spans, h.ChangedFromBase));
+        }
+        return remapped;
     }
 
     /// <summary>The single primary (blue) button is the next step: Save &amp; mark resolved
@@ -742,6 +921,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _conflictsCountText.IsVisible = false;
         _damagedMarkersHint.IsVisible = false;
         _changedOnDiskBanner.IsVisible = false;
+        _minimap.ResolvedRanges = null;
 
         _dynamicActionButtons.Clear();
         _currentFile = null;
@@ -751,6 +931,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _suppressTextChanged = true;
         try
         {
+            _session.Clear();
             _resultEditor.Text = string.Empty;
         }
         finally
@@ -802,10 +983,12 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _oursEditor.FilePath = file.FilePath;
         _theirsEditor.FilePath = file.FilePath;
         _resultEditor.FilePath = file.FilePath;
+        EnsureExcludedColorizerLast();
 
         _suppressTextChanged = true;
         try
         {
+            _session.Clear();
             _resultEditor.Text = copy.Text ?? string.Empty;
         }
         finally
@@ -835,6 +1018,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             }
 
             _resultEditor.IsReadOnly = false;
+            // Setting IsReadOnly replaces the read-only provider; struck rows need the session's.
+            _resultEditor.TextArea.ReadOnlySectionProvider = _session.ReadOnlySections;
             UpdateConflictParseSync();
             UpdateEditorsFromParse();
         }
@@ -851,6 +1036,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _parseVersion = null;
         _snapshot = null;
         _minimap.Parse = null;
+        _minimap.ResolvedRanges = null;
         _floatingRegionBox.IsVisible = false;
         _conflictsCountText.IsVisible = false;
         _damagedMarkersHint.IsVisible = false;
@@ -892,7 +1078,34 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
+        // Rows first: everything below reads the session's spans for this text.
+        bool reinstalled;
+        _inResultTextChanged = true;
+        try
+        {
+            reinstalled = _session.Normalize();
+        }
+        finally
+        {
+            _inResultTextChanged = false;
+        }
+
         RegisterUnsavedWork();
+
+        if (_session.IsMutating)
+        {
+            return; // the session realigns the panes once its edit is done
+        }
+
+        if (reinstalled)
+        {
+            // An undo/redo of a toggle can move rows: realign now rather than after the debounce.
+            _debounceCts?.Cancel();
+            UpdateConflictParseSync();
+            UpdateEditorsFromParse();
+            UpdateFloatingRegionBar();
+            return;
+        }
 
         _debounceCts?.Cancel();
         _debounceCts?.Dispose();
@@ -902,6 +1115,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         var docSnapshot = _resultEditor.Document.CreateSnapshot();
         var versionSnapshot = _resultEditor.Document.Version;
         int markerSize = _workingCopy?.MarkerSize ?? 7;
+        var spans = _session.Spans;
+        var managedAnalyses = ManagedAnalyses();
 
         Task.Delay(150, ct).ContinueWith(_ =>
         {
@@ -912,9 +1127,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
             var text = docSnapshot.Text;
             var parse = ConflictMarkerParser.Parse(text, markerSize);
-            var oursLines = ConflictPaneBuilder.Build(parse, ConflictSide.Ours);
-            var theirsLines = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs);
-            var analyses = ConflictRegionAnalyzer.AnalyzeAll(parse);
+            var oursLines = ConflictPaneBuilder.Build(parse, ConflictSide.Ours, spans);
+            var theirsLines = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs, spans);
+            var analyses = ConflictRegionAnalyzer.AnalyzeAll(parse).Concat(managedAnalyses).ToList();
             var snapshot = new ConflictParseSnapshot(parse, oursLines, theirsLines, analyses, versionSnapshot);
 
             Dispatcher.UIThread.Post(() =>
@@ -933,8 +1148,12 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                     ConflictPaneUpdateHelper.UpdateDocumentIncremental(_oursEditor.Document, oursLines);
                     ConflictPaneUpdateHelper.UpdateDocumentIncremental(_theirsEditor.Document, theirsLines);
 
+                    _session.SetMarkerRegions(parse.Regions);
                     _minimap.Parse = parse;
+                    _minimap.ResolvedRanges = ManagedRanges();
                     UpdateConflictsCount();
+                    _oursEditor.TextArea.TextView.Redraw();
+                    _theirsEditor.TextArea.TextView.Redraw();
                     _resultEditor.TextArea.TextView.Redraw();
                 }
             });
@@ -947,10 +1166,13 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         var text = _resultEditor.Text;
         _parse = ConflictMarkerParser.Parse(text, markerSize);
         var parse = _parse;
-        var oursLines = ConflictPaneBuilder.Build(parse, ConflictSide.Ours);
-        var theirsLines = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs);
+        var spans = _session.Spans;
+        var oursLines = ConflictPaneBuilder.Build(parse, ConflictSide.Ours, spans);
+        var theirsLines = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs, spans);
         var version = _resultEditor.Document.Version;
         _parseVersion = version;
+        _session.SetMarkerRegions(parse.Regions);
+        var managedAnalyses = ManagedAnalyses();
 
         // No-blink carryover: retain analyses for regions whose text is unchanged
         var prevAnalyses = _snapshot?.Analyses;
@@ -967,8 +1189,10 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             }
         }
 
+        carriedAnalyses.AddRange(managedAnalyses);
         _snapshot = new ConflictParseSnapshot(parse, oursLines, theirsLines, carriedAnalyses, version);
         _minimap.Parse = parse;
+        _minimap.ResolvedRanges = ManagedRanges();
         UpdateConflictsCount();
 
         Task.Run(() =>
@@ -978,7 +1202,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 return;
             }
 
-            var fullAnalyses = ConflictRegionAnalyzer.AnalyzeAll(parse);
+            var fullAnalyses = ConflictRegionAnalyzer.AnalyzeAll(parse).Concat(managedAnalyses).ToList();
             Dispatcher.UIThread.Post(() =>
             {
                 if (_disposed)
@@ -1075,19 +1299,26 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         return side == ConflictSide.Ours ? _snapshot?.OursLines : _snapshot?.TheirsLines;
     }
 
-    /// <summary>The conflicts the arrows and the counter step through, by document line, in order.</summary>
+    /// <summary>The conflicts the arrows and the counter step through — unresolved marker regions
+    /// and managed regions — by document line, in order.</summary>
     internal IReadOnlyList<(int Start, int End)> NavigableRegions()
     {
-        if (_parse == null || _parse.Regions.Count == 0)
+        var regions = new List<(int Start, int End)>();
+        if (_parse != null)
         {
-            return [];
+            foreach (var r in _parse.Regions)
+            {
+                regions.Add((r.StartLine, r.EndLine));
+            }
         }
-
-        var regions = new (int Start, int End)[_parse.Regions.Count];
-        for (int i = 0; i < regions.Length; i++)
+        foreach (var r in _session.Regions)
         {
-            regions[i] = (_parse.Regions[i].StartLine, _parse.Regions[i].EndLine);
+            if (!r.IsBroken)
+            {
+                regions.Add((r.StartLine, r.EndLine));
+            }
         }
+        regions.Sort((a, b) => a.Start.CompareTo(b.Start));
         return regions;
     }
 
@@ -1121,10 +1352,11 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         int total = regions.Count;
         int malformed = _parse?.MalformedAt.Count ?? 0;
         int current = CurrentRegionIndex(regions) + 1;
+        int unresolved = _parse?.Regions.Count ?? 0;
 
         _conflictsCountText.IsVisible = total > 0;
         _conflictsCountText.Text = total > 0 ? $"{current}/{total}" : string.Empty;
-        ToolTip.SetTip(_conflictsCountText, total > 0 ? $"Conflict {current} of {total} in this file" : null);
+        ToolTip.SetTip(_conflictsCountText, total > 0 ? $"Conflict {current} of {total} in this file · {unresolved} unresolved" : null);
         bool canNavigate = !_isBusy && _isEditable && total > 0;
         _prevConflictBtn.IsEnabled = canNavigate;
         _nextConflictBtn.IsEnabled = canNavigate;
@@ -1152,13 +1384,19 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private void UpdateFloatingRegionBar()
     {
+        int caretLine = _resultEditor.TextArea.Caret.Line - 1;
+        if (_isEditable && _session.RegionAt(caretLine) is { } managed)
+        {
+            ShowManagedRegionBar(managed);
+            return;
+        }
+
         if (_parse == null || _parse.Regions.Count == 0)
         {
             _floatingRegionBox.IsVisible = false;
             return;
         }
 
-        int caretLine = _resultEditor.TextArea.Caret.Line - 1;
         var region = _parse.Regions.FirstOrDefault(r => caretLine >= r.StartLine && caretLine <= r.EndLine);
 
         if (region == null)
@@ -1182,6 +1420,81 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _floatingRegionBox.IsVisible = true;
     }
 
+    private void ShowManagedRegionBar(ConflictSelectionSession.ManagedRegion region)
+    {
+        _floatingRegionStrip.Children.Clear();
+        _dynamicActionButtons.Clear();
+        _floatingRegionStrip.Children.Add(DynamicActionButton("Use ours", () => ApplyManagedRegionAction(region, RegionActionChoice.Ours)));
+        _floatingRegionStrip.Children.Add(DynamicActionButton("Use theirs", () => ApplyManagedRegionAction(region, RegionActionChoice.Theirs)));
+        _floatingRegionStrip.Children.Add(DynamicActionButton("Both (ours first)", () => ApplyManagedRegionAction(region, RegionActionChoice.BothOursFirst)));
+        _floatingRegionStrip.Children.Add(DynamicActionButton("Both (theirs first)", () => ApplyManagedRegionAction(region, RegionActionChoice.BothTheirsFirst)));
+        if (region.Original.HasBase)
+        {
+            _floatingRegionStrip.Children.Add(DynamicActionButton("Use base", () => ApplyManagedRegionAction(region, RegionActionChoice.Base)));
+        }
+        _floatingRegionStrip.Children.Add(DynamicActionButton("Restore conflict", () => RestoreConflict(region)));
+        _floatingRegionBox.IsVisible = true;
+    }
+
+    private static void ApplyChoice(ConflictSelection selection, RegionActionChoice choice)
+    {
+        switch (choice)
+        {
+            case RegionActionChoice.Ours:
+                selection.SetHunk(ConflictSide.Theirs, false);
+                selection.SetHunk(ConflictSide.Ours, true);
+                break;
+            case RegionActionChoice.Theirs:
+                selection.SetHunk(ConflictSide.Ours, false);
+                selection.SetHunk(ConflictSide.Theirs, true);
+                break;
+            case RegionActionChoice.BothOursFirst:
+                selection.SetHunk(ConflictSide.Ours, true);
+                selection.SetHunk(ConflictSide.Theirs, true);
+                selection.SetOrder(ConflictSide.Ours);
+                break;
+            case RegionActionChoice.BothTheirsFirst:
+                selection.SetHunk(ConflictSide.Ours, true);
+                selection.SetHunk(ConflictSide.Theirs, true);
+                selection.SetOrder(ConflictSide.Theirs);
+                break;
+        }
+    }
+
+    /// <summary>A region popup action on a managed conflict: ours / theirs / both set its
+    /// selection (it stays toggleable); "Use base" replaces it with the base lines as plain text.</summary>
+    public void ApplyManagedRegionAction(ConflictSelectionSession.ManagedRegion region, RegionActionChoice choice)
+    {
+        if (!_session.Regions.Contains(region) || !_isEditable || _isBusy)
+        {
+            return;
+        }
+
+        if (choice == RegionActionChoice.Base)
+        {
+            _session.ReplaceWithText(region, region.Original.BaseLines ?? []);
+        }
+        else
+        {
+            _session.ApplySelection(region, s => ApplyChoice(s, choice));
+        }
+    }
+
+    /// <summary>Puts a managed conflict's original marker block back.</summary>
+    public void RestoreConflict(ConflictSelectionSession.ManagedRegion region)
+    {
+        if (!_session.Regions.Contains(region) || !_isEditable || _isBusy)
+        {
+            return;
+        }
+
+        _session.Restore(region);
+    }
+
+    /// <summary>
+    /// A region popup action on an unresolved (marker) conflict: ours / theirs / both make it a
+    /// managed conflict with that selection; "Use base" replaces the block with the base lines.
+    /// </summary>
     public void ApplyRegionAction(ConflictRegion targetRegion, RegionActionChoice side)
     {
         // Guard against stale offsets: if version moved, re-parse synchronously on UI thread
@@ -1202,6 +1515,13 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
         if (freshRegion == null)
         {
+            return;
+        }
+
+        if (side != RegionActionChoice.Base)
+        {
+            _session.Activate(freshRegion, s => ApplyChoice(s, side), AnalysisFor(freshRegion));
+            UpdateFloatingRegionBar();
             return;
         }
 
@@ -1326,7 +1646,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
 
         var savedVersion = _resultEditor.Document.Version;
-        var textToSave = _resultEditor.Text;
+        var textToSave = _session.ComposeOutput();
 
         _saving = true;
         IsBusy = true;
@@ -1399,20 +1719,42 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             return;
         }
 
-        int remaining = (_parse?.Regions.Count ?? 0) + (_parse?.MalformedAt.Count ?? 0);
-        if (remaining > 0)
+        if (!await ConfirmMarkResolvedAsync())
         {
-            var ok = await _dialogs.ConfirmAsync(
-                "Unresolved conflicts",
-                $"{remaining} conflict block(s) remain — mark resolved anyway?",
-                confirmLabel: "Mark resolved");
-            if (!ok)
-            {
-                return;
-            }
+            return;
         }
 
         await SaveCurrentFileAsync(stage: true);
+    }
+
+    /// <summary>
+    /// Before marking a file resolved: warn about conflict blocks still in it, and about managed
+    /// conflicts that keep no line and will save as nothing. Neither is destructive — the text is
+    /// what the user sees, and it stays editable after staging.
+    /// </summary>
+    private async Task<bool> ConfirmMarkResolvedAsync()
+    {
+        int remaining = (_parse?.Regions.Count ?? 0) + (_parse?.MalformedAt.Count ?? 0);
+        int emptied = _session.EmptyRegionCount;
+        if (remaining > 0)
+        {
+            string message = $"{remaining} conflict block(s) remain — mark resolved anyway?";
+            if (emptied > 0)
+            {
+                message += $" {emptied} conflict(s) will save as no lines.";
+            }
+            return await _dialogs.ConfirmAsync("Unresolved conflicts", message, confirmLabel: "Mark resolved");
+        }
+
+        if (emptied > 0)
+        {
+            return await _dialogs.ConfirmAsync(
+                "Emptied conflicts",
+                $"{emptied} conflict(s) will save as no lines — mark resolved anyway?",
+                confirmLabel: "Mark resolved");
+        }
+
+        return true;
     }
 
     private async Task TakeSideAsync(ConflictSide side)
@@ -1605,17 +1947,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
                 switch (choice)
                 {
                     case UnsavedWorkChoice.Save:
-                        int remaining = (_parse?.Regions.Count ?? 0) + (_parse?.MalformedAt.Count ?? 0);
-                        if (remaining > 0)
+                        if (!await ConfirmMarkResolvedAsync())
                         {
-                            var ok = await _dialogs.ConfirmAsync(
-                                "Unresolved conflicts",
-                                $"{remaining} conflict block(s) remain — mark resolved anyway?",
-                                confirmLabel: "Mark resolved");
-                            if (!ok)
-                            {
-                                return;
-                            }
+                            return;
                         }
 
                         var saved = await SaveCurrentFileAsync(stage: true);

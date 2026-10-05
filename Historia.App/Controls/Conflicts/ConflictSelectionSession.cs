@@ -313,11 +313,13 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
     /// dropped rows are deleted and it becomes plain text, in a posted undo step that continues the
     /// edit's own step, so one Ctrl+Z brings both back.
     /// </summary>
-    public void Normalize()
+    /// <returns>True when an undo or redo of a session change was installed, which may have moved
+    /// rows to other lines.</returns>
+    public bool Normalize()
     {
         if (_mutating)
         {
-            return;
+            return false;
         }
 
         if (_pending != null)
@@ -326,12 +328,12 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
             _pending = null;
             _lastGood = Capture();
             RebuildIndex();
-            return;
+            return true;
         }
 
         if (_regions.Count == 0)
         {
-            return;
+            return false;
         }
 
         bool broken = false;
@@ -354,6 +356,7 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
         }
 
         RebuildIndex();
+        return false;
     }
 
     /// <summary>Re-attaches each row to its line; false when the region can no longer be managed.</summary>
