@@ -4,7 +4,7 @@ namespace Historia.Services.PowerTools;
 public sealed class StashService(IGitCliService cli) : IStashService
 {
     public Task<IReadOnlyList<StashEntry>> ListAsync(RepositoryContext context, CancellationToken ct = default)
-        => ListStashesAsync(context.RepositoryPath, ct);
+        => ListStashesAsync(context, ct);
 
     public async Task<bool> SaveAsync(RepositoryContext context, StashSaveOptions options, CancellationToken ct = default)
     {
@@ -108,7 +108,7 @@ public sealed class StashService(IGitCliService cli) : IStashService
         using var _ = context.BeginSelfOperation();
 
         // protocol: re-list, find the entry by commit id, act on its CURRENT index.
-        var current = await ListStashesAsync(context.RepositoryPath, ct).ConfigureAwait(false);
+        var current = await ListStashesAsync(context, ct).ConfigureAwait(false);
         var entry = current.FirstOrDefault(e => e.CommitId == commitId)
                     ?? throw new HistoriaGitException(GitErrorKind.RefNotFound,
                         "The stash list changed — refresh the stash panel and try again.");
@@ -141,8 +141,22 @@ public sealed class StashService(IGitCliService cli) : IStashService
         await context.State.RefreshAllAsync(context.Lifetime).ConfigureAwait(false);
     }
 
-    private async Task<IReadOnlyList<StashEntry>> ListStashesAsync(string repositoryPath, CancellationToken ct)
+    private async Task<IReadOnlyList<StashEntry>> ListStashesAsync(RepositoryContext context, CancellationToken ct)
     {
+        // When the ref snapshot is available and has no refs/stash, there are no stashes.
+        RefSnapshot? snapshot;
+        try
+        {
+            snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false);
+        }
+        catch (HistoriaGitException)
+        {
+            snapshot = null;
+        }
+
+        if (snapshot is not null && snapshot.Find("refs/stash") is null)
+            return [];
+
         var result = await cli.RunAsync(new GitCliRequest
         {
             Arguments =
@@ -157,14 +171,15 @@ public sealed class StashService(IGitCliService cli) : IStashService
                 "--format=__HISTORIA_STASH__%x00%H%x00%P%x00%an%x00%ae%x00%aI%x00%gs%x00",
                 "refs/stash",
             ],
-            WorkingDirectory = repositoryPath,
+            WorkingDirectory = context.RepositoryPath,
             RawStandardOutput = true,
         }, ct).ConfigureAwait(false);
 
         if (!result.IsSuccess)
         {
-            // Only a missing refs/stash means "no stashes"; any other failure is a real error.
-            if (result.ErrorKind != GitErrorKind.Cancelled && !await StashRefExistsAsync(repositoryPath, ct).ConfigureAwait(false))
+            // When the ref disappears after the snapshot or the snapshot could not be read,
+            // verify via CLI probe: only a missing refs/stash means "no stashes".
+            if (result.ErrorKind != GitErrorKind.Cancelled && !await StashRefExistsAsync(context.RepositoryPath, ct).ConfigureAwait(false))
                 return [];
             throw HistoriaGitException.FromCli(result, "List stashes");
         }

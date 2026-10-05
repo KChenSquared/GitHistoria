@@ -86,6 +86,25 @@ public sealed class AppLogTests : IDisposable
         Assert.Contains("FAILED: InvalidOperationException: no upstream", ReadSession());
     }
 
+    public static TheoryData<Exception> Cancellations() =>
+    [
+        new OperationCanceledException(),
+        new TaskCanceledException(),
+    ];
+
+    [Theory]
+    [MemberData(nameof(Cancellations))]
+    public void Operation_Fail_with_a_cancellation_records_cancelled(Exception ex)
+    {
+        AppLog.Enabled = true;
+        using (var op = AppLog.Operation("git", "GetStatusAsync"))
+            op.Fail(ex);
+
+        var text = ReadSession();
+        Assert.Contains("(cancelled, ", text);
+        Assert.DoesNotContain("FAILED", text);
+    }
+
     [Fact]
     public void Write_with_exception_renders_a_type_message_and_stack_block()
     {
