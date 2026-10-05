@@ -3,18 +3,19 @@
              x:Class="Historia.ScenarioLab.App"
              RequestedThemeVariant="Dark">
     <Application.Resources>
-        <SolidColorBrush x:Key="ColorBg" Color="#1F1F1F" />
-        <SolidColorBrush x:Key="ColorChrome" Color="#181818" />
-        <SolidColorBrush x:Key="ColorSurface" Color="#202020" />
-        <SolidColorBrush x:Key="ColorSurface2" Color="#313131" />
-        <SolidColorBrush x:Key="ColorBorder" Color="#2B2B2B" />
-        <SolidColorBrush x:Key="ColorBorderStrong" Color="#3C3C3C" />
-        <SolidColorBrush x:Key="ColorText" Color="#CCCCCC" />
-        <SolidColorBrush x:Key="ColorTextMuted" Color="#9D9D9D" />
+        <SolidColorBrush x:Key="ColorBg" Color="#191925" />
+        <SolidColorBrush x:Key="ColorChrome" Color="#13131D" />
+        <SolidColorBrush x:Key="ColorSurface" Color="#1E1E2D" />
+        <SolidColorBrush x:Key="ColorSurface2" Color="#2A2A3D" />
+        <SolidColorBrush x:Key="ColorBorder" Color="#272739" />
+        <SolidColorBrush x:Key="ColorBorderStrong" Color="#3B3B55" />
+        <SolidColorBrush x:Key="ColorText" Color="#CFCFDC" />
+        <SolidColorBrush x:Key="ColorTextMuted" Color="#9D9DB5" />
         <SolidColorBrush x:Key="ColorPrimary" Color="#0078D4" />
         <SolidColorBrush x:Key="ColorPrimaryHover" Color="#026EC1" />
         <SolidColorBrush x:Key="ColorDanger" Color="#F85149" />
-        <SolidColorBrush x:Key="ColorListHover" Color="#2B2B2B" />
+        <SolidColorBrush x:Key="ColorListHover" Color="#272739" />
+        <SolidColorBrush x:Key="ColorScrollbar" Color="#669D9DB5" />
     </Application.Resources>
 
     <Application.Styles>
@@ -106,6 +107,101 @@
         </Style>
         <Style Selector="Button.flat:disabled">
             <Setter Property="Opacity" Value="0.28" />
+        </Style>
+
+        <!-- Menu, ContextMenu & Flyout theming -->
+        <Style Selector="ContextMenu">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="4" />
+        </Style>
+        <Style Selector="MenuFlyoutPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="4" />
+        </Style>
+        <Style Selector="MenuItem">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="4" />
+        </Style>
+        <Style Selector="MenuItem:selected /template/ Border#PART_LayoutRoot">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+        </Style>
+        <Style Selector="MenuItem:selected /template/ ContentPresenter#PART_HeaderPresenter">
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+        </Style>
+        <Style Selector="MenuItem:pressed /template/ Border#PART_LayoutRoot:pointerover">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface2}" />
+        </Style>
+        <Style Selector="MenuItem:disabled /template/ ContentPresenter#PART_HeaderPresenter">
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+        </Style>
+        <Style Selector="Separator">
+            <Setter Property="Background" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="Height" Value="1" />
+            <Setter Property="Margin" Value="0,4" />
+        </Style>
+
+        <!-- ToolTip theming -->
+        <Style Selector="ToolTip">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="8,4" />
+        </Style>
+
+        <!-- ScrollBar theming -->
+        <Style Selector="ScrollBar">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="ScrollBar /template/ Border#VerticalRoot">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="ScrollBar /template/ Border#HorizontalRoot">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="ScrollBar /template/ Rectangle#TrackRect">
+            <Setter Property="Fill" Value="Transparent" />
+            <Setter Property="Stroke" Value="Transparent" />
+        </Style>
+        <Style Selector="ScrollBar[IsExpanded=true] /template/ Grid#Root">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ScrollBar[IsExpanded=true] /template/ Rectangle#TrackRect">
+            <Setter Property="Fill" Value="Transparent" />
+            <Setter Property="Stroke" Value="Transparent" />
+        </Style>
+        <Style Selector="ScrollBar /template/ Thumb">
+            <Setter Property="Background" Value="{DynamicResource ColorScrollbar}" />
+            <Setter Property="CornerRadius" Value="4" />
+        </Style>
+        <Style Selector="ScrollBar /template/ Thumb:pointerover">
+            <Setter Property="Background" Value="{DynamicResource ColorTextMuted}" />
+        </Style>
+        <Style Selector="ScrollBar /template/ Thumb:pressed">
+            <Setter Property="Background" Value="{DynamicResource ColorText}" />
+        </Style>
+        <Style Selector="ScrollBar /template/ RepeatButton">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+        <Style Selector="ScrollBar /template/ RepeatButton:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+        </Style>
+        <Style Selector="ScrollBar /template/ RepeatButton:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface2}" />
         </Style>
     </Application.Styles>
 </Application>

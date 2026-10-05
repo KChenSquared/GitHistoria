@@ -300,6 +300,23 @@ internal static class SimpleDialog
         // default window background. Bound (not set) so it tracks theme changes while open.
         window.Bind(Window.BackgroundProperty, new DynamicResourceExtension("ColorChrome"));
 
+        window.Icon ??= owner?.Icon ?? AvaloniaDialogService.Owner?.Icon ?? FallbackIcon.Value;
+
+        var themeService = ResolveThemeService();
+        void ApplyChrome(EffectiveTheme theme)
+            => WindowChrome.Apply(window.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero, theme);
+
+        // The native handle only exists once shown, so the caption is themed on Opened.
+        window.Opened += (_, _) => ApplyChrome(themeService?.Effective ?? CurrentFallbackTheme());
+
+        if (themeService is not null)
+        {
+            EventHandler<ThemeChangedEventArgs> onThemeChanged =
+                (_, e) => Dispatcher.UIThread.Post(() => ApplyChrome(e.NewTheme));
+            themeService.ThemeChanged += onThemeChanged;
+            window.Closed += (_, _) => themeService.ThemeChanged -= onThemeChanged;
+        }
+
         if (owner is not null)
         {
             await window.ShowDialog(owner);
@@ -309,6 +326,40 @@ internal static class SimpleDialog
             window.Show();
             window.Activate();
         }
+    }
+
+    /// <summary>App icon for owner-less dialogs, decoded once rather than per dialog.</summary>
+    private static readonly Lazy<WindowIcon?> FallbackIcon = new(() =>
+    {
+        try
+        {
+            using var stream = AssetLoader.Open(new Uri("avares://Historia/Assets/Historia.ico"));
+            return new WindowIcon(stream);
+        }
+        catch
+        {
+            return null; // fall back silently if the icon asset cannot be loaded
+        }
+    });
+
+    private static IThemeService? ResolveThemeService()
+    {
+        try
+        {
+            if (Application.Current is App app)
+                return app.Services.GetService<IThemeService>();
+        }
+        catch
+        {
+        }
+        return null;
+    }
+
+    private static EffectiveTheme CurrentFallbackTheme()
+    {
+        if (Application.Current is { } app)
+            return app.ActualThemeVariant == ThemeVariant.Light ? EffectiveTheme.Light : EffectiveTheme.Dark;
+        return EffectiveTheme.Dark;
     }
 }
 

@@ -168,5 +168,59 @@
         <Style Selector="Button:disabled">
             <Setter Property="Opacity" Value="0.4" />
         </Style>
+
+        <!-- Menu, ContextMenu & Flyout theming -->
+        <Style Selector="ContextMenu">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="4" />
+        </Style>
+        <Style Selector="MenuFlyoutPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="4" />
+        </Style>
+        <Style Selector="FlyoutPresenter">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        <Style Selector="Menu">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <!-- MenuItem / ToolTip / ScrollBar colours (every state) come from the Fluent resource
+             keys AvaloniaThemeApplier overrides; only geometry the keys can't express is styled
+             here, so no per-instance pseudo-class / template selectors are added. -->
+        <Style Selector="MenuItem">
+            <Setter Property="CornerRadius" Value="4" />
+        </Style>
+        <Style Selector="Separator">
+            <Setter Property="Background" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="Height" Value="1" />
+            <Setter Property="Margin" Value="0,4" />
+        </Style>
+
+        <!-- ToolTip theming -->
+        <Style Selector="ToolTip">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="8,4" />
+        </Style>
+
+        <!-- ScrollBar theming (colours via the ScrollBar* resource keys) -->
+        <Style Selector="ScrollBar /template/ Thumb">
+            <Setter Property="CornerRadius" Value="4" />
+        </Style>
     </Application.Styles>
 </Application>
