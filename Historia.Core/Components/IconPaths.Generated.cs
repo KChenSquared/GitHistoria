@@ -12,6 +12,7 @@ public static partial class IconPaths
     internal static readonly IReadOnlyDictionary<string, string> MaterialSymbols =
         new Dictionary<string, string>(System.StringComparer.Ordinal)
         {
+            ["add"] = "M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z",
             ["arrow_downward"] = "M440-800v487L216-537l-56 57 320 320 320-320-56-57-224 224v-487h-80Z",
             ["arrow_upward"] = "M440-160v-487L216-423l-56-57 320-320 320 320-56 57-224-224v487h-80Z",
             ["close"] = "m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z",

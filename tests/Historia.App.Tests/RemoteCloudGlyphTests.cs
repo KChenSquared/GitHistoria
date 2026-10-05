@@ -53,4 +53,8 @@ public sealed class RemoteCloudGlyphTests
         var band = RemoteCloudGlyph.DigitBand(16);
         Assert.True(band.X >= 0 && band.Right <= 16 && band.Y >= 0 && band.Bottom <= 16);
     }
+
+    [Fact]
+    public void Add_glyph_resolves() =>
+        Assert.StartsWith("M", Historia.Components.IconPaths.Get("add"));
 }

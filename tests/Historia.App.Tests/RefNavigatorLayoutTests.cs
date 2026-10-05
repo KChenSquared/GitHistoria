@@ -200,7 +200,7 @@ public sealed class RefNavigatorLayoutTests
     }
 
     [AvaloniaFact]
-    public void NoSectionHeaderHasAnAddButton()
+    public void NoSectionHeaderHasANewBranchButton()
     {
         var setup = CreateView();
         try
