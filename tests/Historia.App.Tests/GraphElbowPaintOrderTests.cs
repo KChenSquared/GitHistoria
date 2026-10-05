@@ -96,4 +96,48 @@ public sealed class GraphElbowPaintOrderTests
         };
         Assert.Equal(new[] { 60, 20, 40 }, Order(source, hoverLane: 4));
     }
+
+    private static int[] Order(RowElbow[] source, int focusLane, int hoverLane)
+    {
+        var dest = new RowElbow[source.Length];
+        CommitGraphControl.OrderElbowsForPaint(source, dest, focusLane, hoverLane);
+        return dest.Select(e => e.ColorIndex).ToArray();
+    }
+
+    [Fact]
+    public void FocusLane_VerticalLane_IsEmphasised()
+    {
+        var elbow = E(6, 1, 0, ElbowKind.EnterTop);
+        Assert.True(CommitGraphControl.IsElbowEmphasised(elbow, focusLane: 6, hoverLane: -1));
+    }
+
+    [Fact]
+    public void FocusLane_HorizontalEnd_IsPlain()
+    {
+        var elbow = E(6, 1, 0, ElbowKind.EnterTop);
+        Assert.False(CommitGraphControl.IsElbowEmphasised(elbow, focusLane: 1, hoverLane: -1));
+    }
+
+    [Fact]
+    public void FocusAndHover_BothEmphasised_HoverPaintsLast()
+    {
+        var source = new[]
+        {
+            E(2, 1, 20, ElbowKind.EnterTop), // focus lane (2)
+            E(6, 1, 60, ElbowKind.EnterTop), // hover lane (6)
+            E(3, 1, 30, ElbowKind.EnterTop), // plain lane (3)
+        };
+        // Plain (30) paints first, focus (20) paints next, hover (60) paints last
+        Assert.Equal(new[] { 30, 20, 60 }, Order(source, focusLane: 2, hoverLane: 6));
+    }
+
+    [Fact]
+    public void SwitchingFocusLane_PreviousUnbolds()
+    {
+        var elbowOnLane2 = E(2, 1, 0, ElbowKind.EnterTop);
+        // While lane 2 is focused (selected):
+        Assert.True(CommitGraphControl.IsElbowEmphasised(elbowOnLane2, focusLane: 2, hoverLane: -1));
+        // When selection moves to lane 4, lane 2 becomes unbold:
+        Assert.False(CommitGraphControl.IsElbowEmphasised(elbowOnLane2, focusLane: 4, hoverLane: -1));
+    }
 }

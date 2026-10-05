@@ -247,6 +247,7 @@ public class DagLayoutEngineTests
         Assert.Contains(r.Layout.Decorations, d => d.RowIndex == 0 && d.Type == DecorationType.Head);
         Assert.Contains(r.Layout.Decorations, d => d.RowIndex == 2 && d.Label == "v1.0");
         Assert.True(r.Layout.Rows[0].Flags.HasFlag(RowFlags.IsHead));
+        Assert.Equal(0, r.Layout.HeadRow);
         Assert.True(r.Layout.Rows[0].Flags.HasFlag(RowFlags.HasDecorations));
     }
 

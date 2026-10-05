@@ -334,6 +334,9 @@ public sealed class GraphLayout : IDisposable
     public required int TotalLaneCount { get; init; }
     public required bool IsComplete { get; init; }
 
+    /// <summary>The row index carrying HEAD, or -1 when HEAD has not been placed in this layout.</summary>
+    public int HeadRow { get; init; } = -1;
+
     /// <summary>
     /// Maps <see cref="GitObjectId"/> → row index. Built once; used for selection sync only.
     /// <see cref="DagLayoutEngine.Build"/> hands this the accumulator's own, still-growing
