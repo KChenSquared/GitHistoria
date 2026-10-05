@@ -353,11 +353,15 @@ public static partial class AppLog
             Write(AppLogLevel.Info, category, "-> " + message);
         }
 
-        /// <summary>Record a failure; the exit line reads <c>FAILED: &lt;type&gt;: &lt;message&gt;</c>.</summary>
+        /// <summary>Record a failure; the exit line reads <c>cancelled</c> for a cancellation and <c>FAILED: &lt;type&gt;: &lt;message&gt;</c> for anything else.</summary>
         public void Fail(Exception ex)
         {
             if (_outcome is not null)
-                _outcome[0] = $"FAILED: {ex.GetType().Name}: {ex.Message}";
+            {
+                _outcome[0] = ex is OperationCanceledException
+                    ? "cancelled"
+                    : $"FAILED: {ex.GetType().Name}: {ex.Message}";
+            }
         }
 
         /// <summary>Record a custom outcome string for the exit line (default is <c>ok</c>).</summary>
