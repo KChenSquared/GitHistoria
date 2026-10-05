@@ -170,8 +170,8 @@ public class LaneRunBuilderTests
             }
             Assert.Equal(expected.OrderBy(kv => kv.Key), actual.OrderBy(kv => kv.Key));
 
-            // Failure messages are built only on failure: formatting one per pair of runs is what
-            // made this test take half a minute.
+            // Failure messages are built only on failure: formatting one per pair of runs would
+            // make this test take half a minute.
             foreach (var a in runs)
                 foreach (var b in runs)
                     if (a.Lane == b.Lane && a.ColorIndex == b.ColorIndex && a.EndHalf == b.StartHalf)

@@ -27,9 +27,9 @@ public class DagLayoutEngineTests
         Func<GitObjectId, GitObjectId, bool>? isAncestor = null)
         => _engine.Compute(commits, deco, maxRows, isAncestor: isAncestor);
 
-    /// <summary>2: Segments/Elbows are no longer flat arrays on <see cref="GraphLayout"/>
+    /// <summary>Segments/Elbows are not flat arrays on <see cref="GraphLayout"/>
     /// — they're derived per row window on demand. Asserts the two layouts produce byte-identical
-    /// segments and elbows for every row, the same equality the old whole-array comparison gave.</summary>
+    /// segments and elbows for every row, i.e. whole-layout line equality.</summary>
     private static void AssertSameLines(GraphLayout expected, GraphLayout actual)
     {
         Assert.Equal(expected.RowCount, actual.RowCount);
@@ -320,7 +320,7 @@ public class DagLayoutEngineTests
 
         var merge = Assert.Single(r.Layout.Edges, e => e.Type == EdgeType.MergeIn);
         Assert.Equal(0, merge.FromRow);
-        Assert.Equal(0, merge.FromLane); // was 1 before the fix — the defect
+        Assert.Equal(0, merge.FromLane); // the merge commit's lane, not the parent's (1)
         Assert.Equal(3, merge.ToRow);
         Assert.Equal(1, merge.ToLane);
     }
@@ -431,9 +431,8 @@ public class DagLayoutEngineTests
         };
 
         // The whole graph sits well inside the 200-row scan
-        // window, so the exact in-window check (isAncestor: null, every real caller's shape since
-        // the libgit2 CalculateHistoryDivergence oracle was retired) must reach the same
-        // conclusion as the brute-force oracle tests used to inject.
+        // window, so the exact in-window check (isAncestor: null, the shape every real caller
+        // uses) must reach the same conclusion as an injected brute-force ancestry oracle.
         foreach (var anc in new[] { AncestryOf(commits), null })
         {
             var r = Compute(commits, deco: deco, isAncestor: anc);
@@ -497,11 +496,10 @@ public class DagLayoutEngineTests
     [Fact]
     public void Without_an_explicit_oracle_the_in_window_check_still_applies_the_exception()
     {
-        // Legacy behavior: isAncestor: null skipped the
-        // checked-out-branch exception entirely, deferring to the verified recompute — is gone.
-        // Every real caller now passes null and gets the exact in-window check for free; with no
-        // oracle argument at all, this graph (identical to the "ancestor of no newer tip" case
-        // above) must reach the SAME conclusion, not the old "skip" behavior.
+        // isAncestor: null must not skip the checked-out-branch exception. Every real caller
+        // passes null and gets the exact in-window check for free; with no oracle argument at
+        // all, this graph (identical to the "ancestor of no newer tip" case above) must reach
+        // the SAME conclusion.
         var commits = new[] { C(60, 50), C(50, 1), C(40, 30), C(30, 1), C(20, 10), C(10, 1), C(1) };
         var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
         {
@@ -643,8 +641,8 @@ public class DagLayoutEngineTests
             r.State.TipTargetLane.Keys.OrderBy(x => x.ToString()));
 
         // The far tips pack into the lanes freed by the near branches merging back — far-1/2/3 on
-        // lanes 1/2/3 (3 genuinely-concurrent branches), total 4 lanes. Before the fix all six
-        // tips were pinned, so far-1/2/3 sat at their pin ranks 3/4/5 and the window was 6 wide.
+        // lanes 1/2/3 (3 genuinely-concurrent branches), total 4 lanes. Pinning all six tips
+        // would put far-1/2/3 at pin ranks 3/4/5 and make the window 6 wide.
         Assert.Equal(1, r.Layout.Rows[r.Layout.RowByCommitId[Sha(48)]].LaneIndex); // far-1
         Assert.Equal(3, r.Layout.Rows[r.Layout.RowByCommitId[Sha(46)]].LaneIndex); // far-3
         Assert.Equal(4, r.Layout.TotalLaneCount);
@@ -698,7 +696,7 @@ public class DagLayoutEngineTests
     // ── lane colours are a pure function of the walk ──
 
     /// <summary>Decorates the chain so several lanes carry branch refs and one commit carries
-    /// two — the case that used to let ref-enumeration order flip a lane's seed.</summary>
+    /// two — the case where ref-enumeration order could flip a lane's seed.</summary>
     private static Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> BranchDecorations() =>
         new()
         {
@@ -939,7 +937,7 @@ public class DagLayoutEngineTests
     }
 
     /// <summary>One shared root with <paramref name="tips"/> independent single-commit branches,
-    /// so the walk needs one concurrent lane per tip — wider than the retired 48-lane cap.</summary>
+    /// so the walk needs one concurrent lane per tip — lane count is uncapped (wider than 48).</summary>
     private static List<RawCommit> BuildWideFan(int tips)
     {
         var list = new List<RawCommit>();
@@ -1011,13 +1009,13 @@ public class DagLayoutEngineTests
         Enumerable.Range(0, count).Select(i => i + 1 < count ? C(i, i + 1) : C(i)).ToList();
 
     /// <summary>Extends a synthetic 200k-row linear history in 5k-row steps and asserts the LAST
-    /// extend allocates roughly the same as the FIRST — before this fix, <c>Build</c> copied
+    /// extend allocates roughly the same as the FIRST — a <c>Build</c> that copied
     /// <c>s.Rows</c> (a <c>GraphRow[]</c>) and <c>s.RealEdges</c>/<c>OffWindowEdges</c> (a
-    /// <c>GraphEdge[]</c>) wholesale on every single call, so allocation per extend grew linearly
-    /// with the TOTAL rows accumulated so far — quadratic overall. <c>retainCommits: false</c>
-    /// isolates this to the rows/edges allocation this fix targets: <c>Layout.Commits</c>'s own
+    /// <c>GraphEdge[]</c>) wholesale on every single call would make allocation per extend grow
+    /// linearly with the TOTAL rows accumulated so far — quadratic overall. <c>retainCommits: false</c>
+    /// isolates this to the rows/edges allocation: <c>Layout.Commits</c>'s own
     /// per-extend copy (<c>s.Commits.ToArray()</c>) is a separate, disk-spill-mode-only concern
-    /// is not covered (disk mode never retains commits at all).</summary>
+    /// and is not covered (disk mode never retains commits at all).</summary>
     [Fact]
     public void Extending_a_large_history_does_not_allocate_more_per_extend_as_it_grows()
     {

@@ -3,7 +3,7 @@ namespace Historia.Tests;
 /// <summary>
 /// Rows that live on disk cannot be read back once the cache has lost its store (another writer's
 /// reset made it drop the store, or a tab switch tore it down). A window that needs them is
-/// incomplete — never a complete-looking window built from the resident rows alone, which painted
+/// incomplete — never a complete-looking window built from the resident rows alone, which would paint
 /// the walk's row <c>SpilledRows</c> as row 0.
 /// </summary>
 [Trait("tier", "git")]

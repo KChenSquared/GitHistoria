@@ -4,8 +4,8 @@ namespace Historia.Tests;
 /// Cuts the test run off from the developer machine's own Historia state before any test runs.
 /// <see cref="PerfLog"/> and <see cref="AppLog"/> read their opt-in (<c>HISTORIA_PERF</c> /
 /// <c>HISTORIA_LOG</c>, or a marker file under <see cref="AppPaths.MachineDirectory"/>) once, the
-/// first time either is touched — so a developer with perf logging switched on in the app used to
-/// get it switched on for whichever run happened to resolve the flag outside a test's
+/// first time either is touched — so without this, a developer with perf logging switched on in the
+/// app would get it switched on for whichever run happened to resolve the flag outside a test's
 /// <see cref="StateDir"/>, with every mark from every parallel test appended under one lock.
 /// Tests turn logging on for their own flow (<c>PerfLog.OverrideEnabledForTesting</c>,
 /// <c>AppLog.StartSessionForTesting</c>); nothing from the machine does.

@@ -24,7 +24,7 @@ public sealed partial class CommitGraphControl : Control
     /// HEAD badge→node connector.</summary>
     private const double LaneStrokeWidth = 2.0;
 
-    private double _laneWidth = 18; // raised from 16 (+2px)
+    private double _laneWidth = 18;
     private double LaneWidth => _laneWidth;
 
     private IServiceProvider _services = default!;
@@ -129,7 +129,7 @@ public sealed partial class CommitGraphControl : Control
     private GraphLayoutResult? _layout;
     // The commit store behind _layout. A disk-backed store holds an open file handle that
     // GraphLayoutService will close as soon as a RefsChanged re-walk drops its own reference —
-    // which used to happen mid-Render and kill the process (ObjectDisposedException off the
+    // which can happen mid-Render and would kill the process (ObjectDisposedException off the
     // render thread). We hold an explicit lease for as long as _layout can be rendered from.
     private ICommitStore? _leasedStore;
     // Consecutive Render() failures caught by the transient-fault handler. Reset on any frame
@@ -1092,7 +1092,7 @@ public sealed partial class CommitGraphControl : Control
     }
 
     private int ResolveRow(GitObjectId? id)
-        // 2: RowByCommitId is shared with the layout service's still-growing accumulator
+        // RowByCommitId is shared with the layout service's still-growing accumulator
         // (not copied per snapshot), so an older layout must ignore rows beyond its own RowCount.
         => id is { } nonNull && _layout is { } l && l.Layout.RowByCommitId.TryGetValue(nonNull, out var row)
             && row < l.Layout.RowCount ? row : -1;
@@ -1757,7 +1757,7 @@ public sealed partial class CommitGraphControl : Control
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         // Honour the OS natural/inverted-scroll preference (macOS & Linux) or the
-        // explicit override. Windows probes false, so the sign is 1 and behaviour is unchanged.
+        // explicit override. Windows probes false, so the sign is 1 (no inversion).
         var delta = e.Delta.Y * Historia.Services.UI.WheelInput.Sign(
             _settings.Current.WheelScrollDirection, _scrollProbe.NaturalScrolling);
         if (_revealTarget is not null && !_revealUserTookOver)
@@ -1798,7 +1798,7 @@ public sealed partial class CommitGraphControl : Control
 
         // Shift+wheel, or a trackpad horizontal swipe, over the Graph column's rows pans
         // the lanes. Some platforms deliver Shift+wheel as Delta.X already, so accept either.
-        // With no hidden lanes (MaxPan == 0) this falls through to vertical scrolling, as today.
+        // With no hidden lanes (MaxPan == 0) this falls through to vertical scrolling.
         if (MaxPan > 0)
         {
             var wpos = e.GetPosition(this);
@@ -3672,11 +3672,11 @@ public sealed partial class CommitGraphControl : Control
     /// <summary>screen x of a commit node — always its plain lane centre. The single
     /// source of a node's x: the drawn dot, its hit area, its lane wash and its badge connector
     /// all read from here so they always agree.
-    /// <para>there is no longer an edge-clamp while the lanes are panned
-    /// (<c>_graphPanOffset != 0</c>). It pinned the dot to the column edge but the lane
-    /// segments / elbows kept reading <see cref="LaneX"/>, so a shift+scroll pan visibly
-    /// detached the dots from their lines. Panned-out dots and lines now clip against the Graph
-    /// column together, exactly like narrowing the column with the divider.</para></summary>
+    /// <para>Panned-out dots and lines clip against the Graph column together, exactly like
+    /// narrowing the column with the divider. Trap: do not edge-clamp the dot while the lanes
+    /// are panned (<c>_graphPanOffset != 0</c>). Clamping pins the dot to the column edge while
+    /// the lane segments / elbows keep reading <see cref="LaneX"/>, so a shift+scroll pan
+    /// visibly detaches the dots from their lines.</para></summary>
     private double NodeX(int laneIndex, out bool clamped)
     {
         clamped = false;
@@ -3689,7 +3689,7 @@ public sealed partial class CommitGraphControl : Control
     private const double NumberedCloudBox = 16;
     private const double BadgePadX = 2;
     private const double BadgeClusterGap = 4;
-    /// <summary>Ref-badge / overflow-chip corner radius — near-square (was 7).</summary>
+    /// <summary>Ref-badge / overflow-chip corner radius — near-square.</summary>
     private const double BadgeCornerRadius = 2;
     private const double BadgeMinTextWidth = 10;
     private const double BadgeTextSlack = 1;
@@ -3757,7 +3757,7 @@ public sealed partial class CommitGraphControl : Control
     }
 
     /// <summary>record, per row, the screen-X right edge of the primary badge — the
-    /// start point for <see cref="DrawBadgeConnectors"/>, which now runs before the Refs column
+    /// start point for <see cref="DrawBadgeConnectors"/>, which runs before the Refs column
     /// paints. Mirrors the primary-badge width calc in <see cref="DrawRefsColumn"/> exactly.</summary>
     private void MeasureBadgeRightEdges(Dictionary<int, List<GraphDecoration>> decosByRow,
         int first, int last, double colX, double colWidth)
@@ -3818,7 +3818,7 @@ public sealed partial class CommitGraphControl : Control
             }
 
             // the primary badge's right edge (the connector start) is measured up front
-            // in MeasureBadgeRightEdges — DrawBadgeConnectors runs before this column now.
+            // in MeasureBadgeRightEdges — DrawBadgeConnectors runs before this column.
 
             if (drawn.Count < decos.Count)
             {

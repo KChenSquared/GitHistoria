@@ -102,9 +102,9 @@ public sealed class WorkspaceFocusLossTests : IAsyncDisposable
 
     /// <summary>A focus change that lands as a tab's first load ends finds the load either still
     /// running (interrupted and requeued) or settled — never finished with its status already
-    /// started. Trap: the status used to start inside the load, before it was marked done; a focus
-    /// change or a focus-cancelled refresh in that window requeued the finished tab as an init,
-    /// whose refresh then joined the running status on a token focus loss can't cancel.</summary>
+    /// started. Trap: a status started inside the load, before it is marked done, opens a window in
+    /// which a focus change or a focus-cancelled refresh requeues the finished tab as an init,
+    /// whose refresh then joins the running status on a token focus loss can't cancel.</summary>
     [Fact(Timeout = 60000)]
     public async Task A_focus_change_as_a_first_load_ends_never_finds_its_status_started()
     {
@@ -218,7 +218,7 @@ public sealed class WorkspaceFocusLossTests : IAsyncDisposable
     }
 
     /// <summary>A tab the workspace opens knows its workspace before its file watcher starts.
-    /// A watcher that started without one refreshed on the tab's Lifetime — a token focus loss
+    /// A watcher started without one would refresh on the tab's Lifetime — a token focus loss
     /// can't cancel — whenever its first event fired before the workspace was attached.</summary>
     [Fact(Timeout = 60000)]
     public async Task A_tab_opened_by_the_workspace_knows_it_before_its_watcher_starts()

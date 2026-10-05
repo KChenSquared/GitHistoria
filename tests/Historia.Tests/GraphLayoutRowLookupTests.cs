@@ -4,11 +4,11 @@ namespace Historia.Tests;
 /// <c>DagLayoutEngine.Build</c> hands <see
 /// cref="GraphLayout.RowByCommitId"/> the accumulator's own, still-growing dictionary instead of
 /// a per-snapshot copy. <c>CommitGraphControl.ResolveRow</c> / <c>FindSubject</c> read it from
-/// the render thread with no lock at all, while a background <c>ExtendLayoutAsync</c> inserts
+/// the render thread, while a background <c>ExtendLayoutAsync</c> inserts
 /// into that very same dictionary under <c>lock (existing.State)</c>. An unsynchronized
 /// <see cref="Dictionary{TKey,TValue}"/> read concurrent with an insert that resizes it is
 /// unsupported: it can return a wrong row or throw on the UI thread. These tests exercise the
-/// fix — <see cref="GraphLayout.TryGetRow"/> and the wrapped <see
+/// reader-side guard — <see cref="GraphLayout.TryGetRow"/> and the wrapped <see
 /// cref="GraphLayout.RowByCommitId"/> property both lock on <c>SourceState</c> and bound the
 /// result to the snapshot's own <c>RowCount</c> — the same way a real extend is locked
 /// (<c>GraphLayoutService.ExtendLayoutAsync</c>).
@@ -74,7 +74,7 @@ public class GraphLayoutRowLookupTests
                 {
                     var take = Math.Min(batchSize, total - consumed);
                     // The same lock GraphLayoutService.ExtendLayoutAsync takes around a mutating
-                    // Extend call — the fix's reader-side lock has nothing to mediate against
+                    // Extend call — the reader-side lock has nothing to mediate against
                     // without it.
                     lock (state)
                     {

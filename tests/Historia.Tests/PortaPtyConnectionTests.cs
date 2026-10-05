@@ -4,8 +4,8 @@ namespace Historia.Tests;
 /// Guards that output a shell writes before anyone has subscribed to
 /// <see cref="IPtyConnection.OutputReceived"/> is still delivered. The pty's read thread starts as
 /// soon as the shell spawns, but <see cref="TerminalSession"/> subscribes only after the backend
-/// returns, and the shell's first prompt routinely lands in that gap — when it was raised into an
-/// empty event the terminal stayed blank forever, with no error anywhere.
+/// returns, and the shell's first prompt routinely lands in that gap — raised into an empty
+/// event, it would leave the terminal blank forever, with no error anywhere.
 /// </summary>
 [Trait("tier", "unit")]
 public class PortaPtyConnectionTests

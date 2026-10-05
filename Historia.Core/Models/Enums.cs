@@ -49,7 +49,7 @@ public enum WhitespaceMode
 /// <summary>How the selected-commit detail panel lists changed files.</summary>
 public enum CommitFilesView
 {
-    /// <summary>Flat list of full paths (the original behaviour).</summary>
+    /// <summary>Flat list of full paths (the default).</summary>
     Path,
 
     /// <summary>Collapsible folder tree.</summary>

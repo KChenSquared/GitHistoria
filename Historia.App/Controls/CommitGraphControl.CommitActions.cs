@@ -2,9 +2,8 @@ namespace Historia.Controls;
 
 // The commit-row / branch-pill / drop-intent context
 // menus and the git operations they invoke (checkout, create branch/tag, reset, cherry-pick,
-// revert, merge, delete) split out of the CommitGraphControl god-file. Pure file split —
-// same private members on the same partial class, no behaviour change. The Avalonia Pen/Brush
-// render pass, hit-testing and layout stay in CommitGraphControl.cs.
+// revert, merge, delete), as part of the CommitGraphControl partial class. The Avalonia
+// Pen/Brush render pass, hit-testing and layout live in CommitGraphControl.cs.
 public sealed partial class CommitGraphControl
 {
     private void CheckoutRefEntry(DecorationType type, string label, bool isLocal, string[]? remotes)
@@ -218,7 +217,7 @@ public sealed partial class CommitGraphControl
             items.Add(MenuLeaf("Create tag here…", () => PromptCreateTag(ctx, bid.ToString(), shortSha)));
         }
 
-        // "Copy branch name" — the one common-denominator item the pill menu still lacked.
+        // "Copy branch name", as on the sidebar branch menu.
         if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
         {
             var copyName = deco.IsLocal ? name : (remotes.Length > 0 ? $"{remotes[0]}/{name}" : name);

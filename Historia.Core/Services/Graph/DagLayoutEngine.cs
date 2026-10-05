@@ -125,7 +125,7 @@ public sealed class DagLayoutEngine
                     var type = res.IsFirstParent
                         ? (fromLane == compacted ? EdgeType.Straight : EdgeType.BranchOut)
                         : EdgeType.MergeIn;
-                    // a first-parent edge keeps the child's lane colour, as before. A
+                    // a first-parent edge keeps the child's lane colour. A
                     // MergeIn edge is drawn in the SOURCE (merged-in) branch's colour — this
                     // commit's own lane colour — not the destination (merge commit's) lane.
                     var fromColor = s.LaneColor.GetValueOrDefault(fromLane, color);
@@ -137,7 +137,7 @@ public sealed class DagLayoutEngine
                         ToLane = compacted,
                         Type = type,
                         ColorIndex = type == EdgeType.MergeIn ? color : fromColor,
-                        // fix: the lead-in (NodeToBottom/Full, before the elbow) always
+                        // the lead-in (NodeToBottom/Full, before the elbow) always
                         // matches fromColor — for MergeIn that's the merge commit's OWN lane
                         // colour, which is what's genuinely still drawn there for this row span
                         // (the first-parent edge continues straight through the same lane).
@@ -156,7 +156,7 @@ public sealed class DagLayoutEngine
             if (deco is { Count: > 0 })
             {
                 flags |= RowFlags.HasDecorations;
-                // HEAD is per-badge now (IsHead), but a standalone detached-HEAD badge
+                // HEAD is per-badge (IsHead), but a standalone detached-HEAD badge
                 // still uses DecorationType.Head. Either marks the row.
                 if (deco.Any(x => x.Type == DecorationType.Head || x.IsHead))
                 {
@@ -231,14 +231,14 @@ public sealed class DagLayoutEngine
         var offWindowList = RegenerateOffWindow(s);
         var offWindow = offWindowList.ToArray();
 
-        // Neither Rows nor Edges is materialized here any more — GraphLayout.Rows is
-        // a RowCount-bounded VIEW straight over s.Rows (now a ChunkedAppendList, never copied),
+        // Neither Rows nor Edges is materialized here — GraphLayout.Rows is
+        // a RowCount-bounded VIEW straight over s.Rows (a ChunkedAppendList, never copied),
         // and GraphLayout.Edges is computed lazily on first access (nothing in App or Core code
         // actually reads it). EdgeCount is just the sum of what those two arrays' lengths would
-        // have been.
+        // be.
         //
-        // 2: Rows no longer carry Segment/Elbow slice indices — GraphLayout derives lines
-        // for a row window on demand from the shared crossing index (DeriveWindow), instead of
+        // Rows carry no Segment/Elbow slice indices — GraphLayout derives lines
+        // for a row window on demand from the shared crossing index (DeriveWindow), rather than
         // DeriveVisuals materialising flat Segments/Elbows arrays sized to every resident row on
         // every Build/Extend call.
         var layout = new GraphLayout
@@ -253,7 +253,7 @@ public sealed class DagLayoutEngine
             TotalLaneCount = s.NextCompactedLane,
             IsComplete = complete && s.Reservations.Count == 0,
             HeadRow = s.HeadRow,
-            // 2 / S4: share the accumulator's dictionary instead of copying it wholesale
+            // share the accumulator's dictionary instead of copying it wholesale
             // on every Build — it only ever grows, and a lookup against an older snapshot is
             // bounds-checked by the caller against that snapshot's own RowCount.
             RowByCommitId = s.RowByCommitId,
@@ -262,7 +262,7 @@ public sealed class DagLayoutEngine
         return new GraphLayoutResult(layout, s);
     }
 
-    /// <summary>2: indexes a newly created real edge into the crossing checkpoints it
+    /// <summary>Indexes a newly created real edge into the crossing checkpoints it
     /// will span and the from-row block it starts in, so a later window derivation can find it
     /// without scanning every edge ever created.</summary>
     private static void IndexNewRealEdge(GraphLayoutState s, int index, GraphEdge edge)
@@ -285,7 +285,7 @@ public sealed class DagLayoutEngine
     }
 
     /// <summary>
-    /// 2: derives <see cref="RowLaneSegment"/>/<see cref="RowElbow"/> data for rows
+    /// Derives <see cref="RowLaneSegment"/>/<see cref="RowElbow"/> data for rows
     /// <paramref name="a"/>..<paramref name="b"/> only, using <paramref name="state"/>'s crossing
     /// index to gather just the edges that can touch that range instead of every edge ever laid
     /// out. Produces byte-identical per-row content to a full <see cref="DeriveVisuals"/> over
@@ -495,7 +495,7 @@ public sealed class DagLayoutEngine
                     ColorIndex = stubColor,
                     // An off-window stub never reaches an elbow (DeriveVisuals skips ToRow for
                     // EdgeType.OffWindow) — its only visible segments are the lead-in ones, which
-                    // must match the lane they're actually drawn in, same as the real-edge fix.
+                    // must match the lane they're actually drawn in, same as a real edge's lead-in.
                     LeadColorIndex = s.LaneColor.GetValueOrDefault(fromLane, fromLane % LanePalette.Size),
                 });
             }
@@ -504,8 +504,8 @@ public sealed class DagLayoutEngine
     }
 
     /// <summary>
-    /// Test oracle only (2 acceptance: "derived lines are identical to the legacy
-    /// DeriveVisuals for every row"). Delegates to the same <see cref="ComputeWindowVisuals"/>
+    /// Test oracle only: whole-range derivation that tests compare <see cref="DeriveWindow"/>'s
+    /// windowed lines against, row for row. Delegates to the same <see cref="ComputeWindowVisuals"/>
     /// used by the real, windowed path (<see cref="DeriveWindow"/>), just called for the whole
     /// row range at once, so there is exactly one implementation of the per-edge line rules to
     /// keep correct.
@@ -743,7 +743,7 @@ public sealed class DagLayoutEngine
             return s.LaneCeiling++;
 
         // with MaxLanes == int.MaxValue this branch is unreachable — kept only as an
-        // overflow-safe guard. It no longer describes a rendered lane; nothing collapses here.
+        // overflow-safe guard. It does not describe a rendered lane; nothing collapses here.
         return s.MaxLanes - 1;
     }
 
@@ -821,7 +821,7 @@ public sealed class DagLayoutEngine
         // lanes already coloured. Lane birth order is a pure function of the (stable) walk, and
         // a lane born later that lands on the same colour steps when it is itself coloured — so
         // the outcome does not depend on which side of a pair is processed first.
-        // with up to hundreds of lanes and 9 palette colours the old ±2 window let
+        // with up to hundreds of lanes and 9 palette colours a ±2 window would let
         // identical colours sit only 3 lanes apart everywhere. ±4 is the widest window that
         // still guarantees a free colour exists — its 8 neighbours can hold at most 8 of the 9.
         var taken = new HashSet<int>();

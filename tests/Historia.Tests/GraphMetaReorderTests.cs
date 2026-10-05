@@ -36,8 +36,7 @@ public sealed class GraphMetaReorderTests : IDisposable
 
     /// <summary><see cref="GraphMetaReorder.Build"/> keys existing records on
     /// <see cref="CompactShaIndex"/> (an 8-byte id prefix, verified against the full id) instead
-    /// of a 40-char hex string — this builds one from the same (id, record) pairs the old
-    /// <c>Dictionary&lt;string,int&gt;</c> literals in these tests used to express.</summary>
+    /// of a 40-char hex string — this builds one from (id, record) pairs.</summary>
     private static CompactShaIndex Existing(params (int Id, int Record)[] pairs)
     {
         var index = new CompactShaIndex();

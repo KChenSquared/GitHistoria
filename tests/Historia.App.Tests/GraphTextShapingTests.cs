@@ -5,7 +5,7 @@ namespace HistoriaApp.Tests;
 /// cache count their misses, and a repeat frame must record none. A cached
 /// <see cref="FormattedText"/> would pass a miss count while re-shaping every visible string on
 /// every draw, which is why the graph draws <c>TextLayout</c>s, and why trimming parity with
-/// the old <see cref="FormattedText"/> output is pinned here too.
+/// <see cref="FormattedText"/> output is pinned here too.
 /// </summary>
 [Trait("tier", "ui")]
 public sealed class GraphTextShapingTests

@@ -33,7 +33,9 @@ public interface IProfileService
     IReadOnlyList<RepoProfileBinding> GetStaleBindings();
     Task<int> CleanStaleBindingsAsync(CancellationToken ct = default);
 
-    /// <summary>Applies the cascading resolution of for the given repo.</summary>
+    /// <summary>Resolves the active profile for <paramref name="repoKey"/>: <c>null</c> when the
+    /// repo is bound to its local config, else the bound profile if it still exists, else the
+    /// default profile when it is not global; <c>null</c> otherwise.</summary>
     GitProfile? ResolveActiveProfile(RepoIdentityKey? repoKey = null);
 
     // ── Application ──

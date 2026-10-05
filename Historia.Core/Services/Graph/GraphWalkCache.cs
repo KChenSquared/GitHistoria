@@ -229,7 +229,7 @@ internal sealed class GraphWalkCache
             commits.Add(new RawCommit(id, parents, metadataOnDisk
                 // keep the timestamps even in the id/parents-only load — DagLayoutEngine's
                 // tip-priority pre-pass sorts by CommitWhen, and the paged store is only consulted
-                // for the heavy strings. Zeroing the dates here pinned the trunk to SHA order.
+                // for the heavy strings. Zeroing the dates here would pin the trunk to SHA order.
                 ? new CommitMetadata
                 {
                     Id = id,

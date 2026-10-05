@@ -54,7 +54,7 @@ public sealed class GraphLayoutState
 
     // Accumulators — real edges only append; OffWindow edges are regenerated each build.
     // Rows is chunked (ChunkedAppendList), not a plain List<T> — see its own doc
-    // comment. This is what lets GraphLayout.Rows become a RowCount-bounded VIEW over this same
+    // comment. This is what lets GraphLayout.Rows be a RowCount-bounded VIEW over this same
     // instance instead of a fresh array copy on every Build/Extend.
     internal readonly ChunkedAppendList<GraphRow> Rows = new();
     internal readonly List<CommitMetadata> Commits = [];
@@ -63,7 +63,7 @@ public sealed class GraphLayoutState
     internal readonly Dictionary<GitObjectId, int> RowByCommitId = [];
     internal int HeadRow = -1;
 
-    /// <summary>2 crossing index: boundary rows are multiples of this stride. Sized so a
+    /// <summary>Crossing index: boundary rows are multiples of this stride. Sized so a
     /// window's checkpoint lookup costs about (concurrent lanes) work, not (total rows) — linux
     /// at 300k rows / 637 lanes gives ~1,172 checkpoints of a few hundred entries each, versus
     /// re-deriving 106M segment entries per <c>Build</c>.</summary>

@@ -110,7 +110,7 @@ public sealed class AppBandControl : UserControl, IDisposable
         brandRow.Children.Add(menuDivider);
 
         // The ship emblem — a full-colour raster that follows the theme (wired in Initialize,
-        // once the theme service is available). Was a monochrome silhouette Path off Historia.svg.
+        // once the theme service is available).
         _brandMark = new Image { Width = 24, Height = 24, Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         var word = new TextBlock { Text = "Historia", FontWeight = FontWeight.SemiBold, Margin = new Thickness(8, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
         word.Dyn(TextBlock.ForegroundProperty, "ColorText");
@@ -388,7 +388,7 @@ public sealed class AppBandControl : UserControl, IDisposable
     // ── Terminal entry points ──
 
     // The Historia menu's sole terminal item, labelled "Open Terminal" — always adds another Home
-    // shell and focuses it (the label is cosmetic; behaviour is unchanged "new" semantics).
+    // shell and focuses it (the label is cosmetic: it never reuses an existing shell).
     private Task NewHomeTerminalAsync()
         => _terminals.OpenNewAsync(TerminalOrigin.Home(HomeDirectory));
 
@@ -578,8 +578,8 @@ public sealed class AppBandControl : UserControl, IDisposable
         grid.Children.Add(name);
 
         // terminal glyph and close — Path glyphs on identical 18×18 buttons so they match
-        // in size and sit on one centre line (the old "✕" was a small font glyph that rendered
-        // half-height and off-centre). The close button shows on every tab, not just the
+        // in size and sit on one centre line (a font "✕" glyph renders small, half-height and
+        // off-centre). The close button shows on every tab, not just the
         // active / hovered one.
         Button IconButton(string icon, string tip, double glyphSize = 13)
         {

@@ -1,11 +1,10 @@
 namespace Historia.Tests;
 
 /// <summary>
-/// <c>AppSettings.ResidentRowCap</c> used to be read raw at every
-/// call site (<c>GraphLayoutService</c>, <c>CommitGraphControl.ResidentRowCap</c>) — a
-/// hand-edited or otherwise out-of-range value (<c>0</c>, or something far above the intended
-/// ceiling) would silently stop the background spill and the graph from ever extending.
-/// <see cref="GraphLimits.GetMaxResidentRows"/> now clamps through
+/// <c>AppSettings.ResidentRowCap</c> read raw at a call site (<c>GraphLayoutService</c>,
+/// <c>CommitGraphControl.ResidentRowCap</c>) would let a hand-edited or otherwise out-of-range
+/// value (<c>0</c>, or something far above the intended ceiling) silently stop the background
+/// spill and the graph from ever extending. <see cref="GraphLimits.GetMaxResidentRows"/> clamps through
 /// <see cref="AppSettings.ClampResidentRowCap"/> centrally, so every caller is protected without
 /// re-clamping itself.
 /// </summary>

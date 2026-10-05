@@ -77,7 +77,7 @@ public sealed class NotificationHostView : UserControl, IDisposable
 
             if (hasDetails)
             {
-                // A fixed, always-visible scrollable pane for the detail text (was an Expander).
+                // A fixed, always-visible scrollable pane for the detail text.
                 // Full width — 5px from the card border; text is inset past the scrollbar track.
                 body.Children.Add(new Border
                 {

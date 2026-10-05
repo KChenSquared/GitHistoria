@@ -4,8 +4,8 @@ namespace Historia.Tests;
 /// A cache walks one tip set. When the tips move under a walk that already produced rows (a
 /// fetch, a new branch), a walk over the new tips doesn't line up with those rows, so the cache
 /// stops — no resume, no re-prime that skips rows, no disk write — until the next compute
-/// rebuilds from row 0. Without this, the graph showed rows from two walks and the old walk key's
-/// on-disk store received the new walk's rows.
+/// rebuilds from row 0. Otherwise the graph would show rows from two walks and the old walk key's
+/// on-disk store would receive the new walk's rows.
 /// </summary>
 [Trait("tier", "git")]
 public sealed class GraphWalkSupersedeTests : IAsyncDisposable

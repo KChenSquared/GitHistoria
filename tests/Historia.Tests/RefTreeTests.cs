@@ -32,7 +32,7 @@ public class RefTreeTests
     public void Sorts_flat_alphabetically_without_hoisting_folders()
     {
         // "aaa" is a folder, the rest are leaves — the order is purely alphabetical
-        // (case-insensitive), folders no longer jump to the top.
+        // (case-insensitive), folders do not jump to the top.
         var tree = RefTree.Build([B("zzz"), B("aaa/child"), B("main"), B("Bar/x")], b => b.Name);
 
         Assert.Equal(new[] { "aaa", "Bar", "main", "zzz" }, tree.Select(n => n.Segment).ToArray());

@@ -650,15 +650,15 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
 
     /// <summary>Appends <paramref name="count"/> rows starting at <paramref name="start"/> to
     /// <c>.dat</c>/<c>.idx</c>/<c>.search</c>. No real parent SHAs are available from a bare
-    /// <see cref="CommitMetadata"/> list — each parent slot is written as a zero SHA (v10.1.2's
-    /// <see cref="ReadRaw"/> only ever reads real spill data via the <see cref="RawCommit"/>
-    /// overload below, so this is harmless; kept for existing callers/tests).</summary>
+    /// <see cref="CommitMetadata"/> list — each parent slot is written as a zero SHA
+    /// (<see cref="ReadRaw"/> only ever reads real spill data via the <see cref="RawCommit"/>
+    /// overload below, so this is harmless; for callers and tests that hold only metadata).</summary>
     public void Append(IReadOnlyList<CommitMetadata> rows, int start, int count)
         => Append(i => rows[i], _ => null, start, count);
 
     /// <summary>Overload that reads metadata + real parent SHAs straight off the walk records
     /// (no projection copy) — this is what the spill uses, and what makes the store usable
-    /// as an optimistic-snapshot source (v10.1.2).</summary>
+    /// as an optimistic-snapshot source.</summary>
     public void Append(IReadOnlyList<RawCommit> rows, int start, int count)
         => Append(i => rows[i].Metadata, i => rows[i].ParentIds, start, count);
 
@@ -1127,7 +1127,7 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
     // cache's lease can't pull the handle out from under an in-flight Render. Reads no-op once
     // closed rather than throwing ObjectDisposedException off the render thread.
     // Both fields are only mutated under _sync so AddRef and Dispose can't race a lease back in
-    // after the count has already dropped to zero and committed to closing (that race handed a
+    // after the count has already dropped to zero and committed to closing (that race would hand a
     // caller a live-looking lease on a store whose handle was gone, blanking every row).
     private int _leases = 1;
     private volatile bool _closed;
@@ -1689,8 +1689,8 @@ internal sealed class DiskCommitStore : ICommitStore, IDisposable
         using var ms = new MemoryStream(record.ToArray(), writable: false);
         using var br = new BinaryReader(ms, new UTF8Encoding(false));
         // Trap: a record read at the wrong offset (an index and a data file from different store
-        // incarnations) used to throw ArgumentException from the id constructor, which no reader
-        // catches; a garbage parent count could also allocate an absurd array. Every way a record
+        // incarnations) can make the id constructor throw ArgumentException, which no reader
+        // catches; a garbage parent count could also allocate an absurd array. So every way a record
         // can fail to parse is reported as InvalidDataException, the one fault the readers and the
         // graph render already treat as "serve a stub".
         try
@@ -1787,7 +1787,7 @@ internal static class GraphMetaReorder
 
 /// <summary>
 /// A SHA -&gt; record-index table keyed on the first 8 bytes of the commit id (a
-/// <c>long</c>) rather than its 40-char hex string — at scale the hex-string table was the actual
+/// <c>long</c>) rather than its 40-char hex string — at scale a hex-string table is the
 /// dominant memory cost (~150-180 MB at 1.5M records on linux), not the record indices
 /// themselves. Every lookup still verifies the full id, so a prefix collision (two different
 /// commits sharing the same first 8 bytes — astronomically unlikely for real SHA-1s, but not
@@ -1843,8 +1843,7 @@ internal sealed class CompactShaIndex(int capacity = 0)
 /// <summary>
 /// The streaming half of "reorder instead of re-spill" — maps successive BATCHES of a
 /// freshly walked history to records, so a caller never has to hold the whole new walk resident
-/// (the old, non-streaming shape held ~490 MB of <see cref="RawCommit"/>s on linux plus the SHA
-/// table). Deliberately has no file or git access, like the one-shot
+/// (holding it all costs ~490 MB of <see cref="RawCommit"/>s on linux plus the SHA table). Deliberately has no file or git access, like the one-shot
 /// <see cref="GraphMetaReorder.Build"/> it generalizes — the caller
 /// (<see cref="GraphLayoutService.RunHeadlessReorderAsync"/>) is responsible for calling
 /// <see cref="MapBatch"/> once per walked batch, durably appending each batch's returned new

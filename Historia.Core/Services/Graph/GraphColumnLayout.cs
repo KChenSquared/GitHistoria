@@ -11,8 +11,8 @@ public readonly record struct ResolvedColumn(GraphColumnKind Kind, double Left, 
 /// </summary>
 public static class GraphColumnLayout
 {
-    /// <summary>auto lane-sizing (and Graph's share of the co-grow) stops here. The user
-    /// asked for a tighter cap than the Message ceiling, so this is no longer == CoGrowCeiling.</summary>
+    /// <summary>auto lane-sizing (and Graph's share of the co-grow) stops here. Deliberately a
+    /// tighter cap than the Message ceiling, so this is not == CoGrowCeiling.</summary>
     public const double GraphAutoMax = 250;
 
     /// <summary>Message co-grows with Graph to this ceiling, then Message alone absorbs

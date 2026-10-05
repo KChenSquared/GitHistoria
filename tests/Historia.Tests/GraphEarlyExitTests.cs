@@ -4,7 +4,7 @@ namespace Historia.Tests;
 /// A walk step whose rows are already walked must cost nothing on the repo gate. The silent
 /// crawler asks for +5,000 rows right after the background spill asked for +25,000, so by the
 /// time the crawler's step reaches the gate the rows are usually there — and on a repo with tens
-/// of thousands of refs the ref scan it used to run first (fingerprint + tip resolution) held the
+/// of thousands of refs a ref scan run first (fingerprint + tip resolution) would hold the
 /// gate for ~6 s to return "done". Two concurrent resumes must also never pull more than the
 /// larger of their two targets, and must land rows in stream order.
 /// </summary>

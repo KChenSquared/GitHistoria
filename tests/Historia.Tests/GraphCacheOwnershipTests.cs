@@ -3,7 +3,7 @@ namespace Historia.Tests;
 /// <summary>
 /// Two writers (the focused tab's own spill and an
 /// inactive tab's headless spool/reorder) could both append to the same repo's <c>.meta.*</c>
-/// store, producing a duplicated or misordered on-disk history. The fix has two layers, each
+/// store, producing a duplicated or misordered on-disk history. The guard has two layers, each
 /// covered here:
 /// <list type="bullet">
 /// <item><see cref="GraphMetaWriter.AppendSpillBatch"/> / <see cref="GraphMetaWriter.TryCommitReorder"/>

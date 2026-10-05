@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>A settings textbox commits on <c>LostFocus</c>, but clicking a non-focusable
-/// label or blank space never moves focus on its own — <see cref="SettingsView"/>'s root now
+/// label or blank space never moves focus on its own — <see cref="SettingsView"/>'s root
 /// clears focus on any press that doesn't land on a real input, letting the previously focused
 /// textbox's own LostFocus handler run.</summary>
 [Trait("tier", "ui")]

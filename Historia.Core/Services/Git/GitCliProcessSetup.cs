@@ -4,10 +4,9 @@ namespace Historia.Services.Git;
 /// Process-setup helpers shared by every Historia-launched <c>git.exe</c> invocation: the
 /// deterministic <c>-c</c>/<c>--no-optional-locks</c> prefix and the environment
 /// variables that route credential prompts through Historia's own askpass helper.
-/// Extracted from <see cref="GitCliService"/> so <see cref="GitLogStream"/> — a long-lived
-/// streaming process, not a request/response invocation — can share the exact same setup without
-/// the two ever drifting. No public/interface surface changes; <see cref="IGitCliService"/> is
-/// untouched.
+/// Shared by <see cref="GitCliService"/> and <see cref="GitLogStream"/> — a long-lived
+/// streaming process, not a request/response invocation — so the two use the exact same setup
+/// and never drift. Internal: not part of <see cref="IGitCliService"/>'s surface.
 /// </summary>
 internal static class GitCliProcessSetup
 {

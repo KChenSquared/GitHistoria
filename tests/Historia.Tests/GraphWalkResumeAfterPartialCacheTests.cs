@@ -3,11 +3,10 @@ namespace Historia.Tests;
 /// <summary>
 /// A fresh CLI-engine prime that starts with
 /// <c>cache.Commits</c> already partially seeded (a warm relaunch from a non-exhausted on-disk
-/// walk cache) must re-skip those already-cached rows, exactly like the libgit2 <c>StartWalk</c>
-/// path already does with <c>skip: have</c>. Before the fix, <c>PrimeCliWalkAsync</c> always
-/// pumped with <c>skip: 0</c>, so the freshly primed walk's rows <c>[0, need)</c> landed appended
-/// AFTER the <c>have</c> cached rows instead of continuing from them — duplicate commits in the
-/// layout. This test drives the real <see cref="GraphLayoutService"/> code path (not a mock),
+/// walk cache) must re-skip those already-cached rows (<c>skip: have</c>). A
+/// <c>PrimeCliWalkAsync</c> that pumped with <c>skip: 0</c> would land the freshly primed walk's
+/// rows <c>[0, need)</c> appended AFTER the <c>have</c> cached rows instead of continuing from
+/// them — duplicate commits in the layout. This test drives the real <see cref="GraphLayoutService"/> code path (not a mock),
 /// only using reflection to put the private <c>RepoCache</c> into the "partial warm reload" state
 /// that a genuinely large repo's on-disk cache would produce — reproducing that with real files
 /// would need a repo far larger than a unit test should build.
@@ -89,8 +88,8 @@ public sealed class GraphWalkResumeAfterPartialCacheTests : IAsyncDisposable
         Set(cache, "LiveWalkFingerprint", 0L);
 
         // Extending forces EnsureWalkedAsync to want more than the 5 resident rows. With no live
-        // walk to resume, this takes the "prime a fresh CLI walk" branch — the exact path the fix
-        // is in — and it must re-skip the 5 rows already in
+        // walk to resume, this takes the "prime a fresh CLI walk" branch — the path under
+        // test — and it must re-skip the 5 rows already in
         // cache.Commits rather than re-emit the whole history from row 0.
         var extended = await svc.ExtendLayoutAsync(ctx, initial, additionalRows: 5);
 

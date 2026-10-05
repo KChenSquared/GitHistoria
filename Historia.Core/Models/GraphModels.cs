@@ -250,8 +250,8 @@ public sealed class GraphLayout : IDisposable
     /// <summary>A <see cref="RowCount"/>-bounded VIEW over <see cref="SourceState"/>'s
     /// own chunked row accumulator — never a fresh array copy. Computed from <see
     /// cref="SourceState"/>/<see cref="RowCount"/> (both set before this is ever read), so it
-    /// needs no initializer of its own. Indexer, <c>Count</c> and <c>Length</c> (source
-    /// compatibility with the plain array this replaced) are all safe to call at any time; see
+    /// needs no initializer of its own. Indexer, <c>Count</c> and <c>Length</c> (array-style
+    /// access) are all safe to call at any time; see
     /// <see cref="GraphRowsView"/>'s own doc comment for the concurrency contract.</summary>
     public GraphRowsView Rows => new(SourceState, RowCount);
 
@@ -263,7 +263,7 @@ public sealed class GraphLayout : IDisposable
     /// <summary>How many of <see cref="SourceState"/>'s real edges existed when this snapshot
     /// was built. Later <c>Extend</c> calls on the same state only append — capping reads here
     /// gives an older snapshot the same lines forever, even while the shared accumulator keeps
-    /// growing underneath it (snapshot isolation 2).</summary>
+    /// growing underneath it (snapshot isolation).</summary>
     internal int RealEdgeCap { get; init; }
 
     /// <summary>This snapshot's own off-window stub edges, regenerated fresh at build time from
@@ -271,7 +271,7 @@ public sealed class GraphLayout : IDisposable
     internal GraphEdge[] OffWindowEdges { get; init; } = [];
 
     /// <summary>Rows pulled either side of a requested row into one cached derivation, so
-    /// scrolling a screenful at a time rarely re-derives (2). Only scrolling past the
+    /// scrolling a screenful at a time rarely re-derives. Only scrolling past the
     /// window's edge gets this overscan. A jump (scrollbar drag, search, reveal) derives just the
     /// requested rows ± <see cref="JumpOverscan"/>, because a drag leaves the window on every
     /// frame and a derivation costs window rows × every lane, on screen or not.</summary>
@@ -299,7 +299,7 @@ public sealed class GraphLayout : IDisposable
     /// real-edge accumulator (capped at <see cref="RealEdgeCap"/>, for the same snapshot-isolation
     /// reason <see cref="Rows"/> is capped at <see cref="RowCount"/>) plus this snapshot's own
     /// <see cref="OffWindowEdges"/>. Nothing in App or Core code actually reads this — only tests
-    /// do — so <c>DagLayoutEngine.Build</c> no longer pays to build it on every single Build/Extend
+    /// do — so <c>DagLayoutEngine.Build</c> doesn't pay to build it on every single Build/Extend
     /// call; <see cref="EdgeCount"/> is a plain field computed without ever materializing it.</summary>
     public GraphEdge[] Edges
     {
@@ -350,8 +350,8 @@ public sealed class GraphLayout : IDisposable
     /// every lookup — through this property's own <c>TryGetValue</c>/indexer, or through <see
     /// cref="TryGetRow"/> (the preferred call for new code) — takes <c>lock (SourceState)</c>
     /// when this snapshot still has one, and ignores any row at or past this snapshot's own
-    /// <see cref="RowCount"/> (an older snapshot must not resolve a row a later extend appended).
-    /// Existing callers become safe without themselves changing.
+    /// <see cref="RowCount"/> (an older snapshot must not resolve a row a later extend appended),
+    /// so callers using only the dictionary interface are safe too.
     /// </summary>
     public required IReadOnlyDictionary<GitObjectId, int> RowByCommitId
     {
@@ -538,11 +538,11 @@ public sealed class GraphLayout : IDisposable
 /// override (and NOT a record type, which would compare its private fields — including the
 /// shared, mutable <c>SourceState</c> reference — rather than the rows themselves): callers that
 /// compare two layouts' rows for value equality (xUnit's <c>Assert.Equal</c> included) fall
-/// through to a sequence comparison via <see cref="IEnumerable{T}"/>, exactly as they did when
-/// this property was a plain array — verified against xUnit's <c>AssertEqualityComparer</c>, which
+/// through to a sequence comparison via <see cref="IEnumerable{T}"/>, exactly as they would for
+/// a plain array — verified against xUnit's <c>AssertEqualityComparer</c>, which
 /// only tries <c>IEquatable&lt;T&gt;</c>/<c>IStructuralEquatable</c> before falling back to an
-/// element-wise <c>IEnumerable</c> comparison. <c>Length</c> is kept alongside <c>Count</c> for
-/// source compatibility with the array this replaced.
+/// element-wise <c>IEnumerable</c> comparison. <c>Length</c> sits alongside <c>Count</c> so
+/// callers can use it like a <c>GraphRow[]</c>.
 /// <para>
 /// Every member here is safe to call from any thread at any time with no lock — see
 /// <see cref="ChunkedAppendList{T}"/>'s own concurrency contract, which this is a thin,
@@ -553,7 +553,7 @@ public sealed class GraphRowsView(GraphLayoutState? source, int count) : IReadOn
 {
     public int Count => count;
 
-    /// <summary>Source compatibility with the plain <c>GraphRow[]</c> this view replaced.</summary>
+    /// <summary>Same as <see cref="Count"/>, for callers that use the view like a <c>GraphRow[]</c>.</summary>
     public int Length => count;
 
     public GraphRow this[int index]
@@ -587,9 +587,9 @@ public sealed record GraphQuery
     public bool IncludeStashes { get; init; }
     public bool IncludeRemoteBranches { get; init; } = true;
     public string? PathFilter { get; init; }
-    /// <summary>lanes are uncapped — every lineage gets its own track. The former
-    /// 48-lane cap collapsed anything beyond lane 47 onto a single dashed overflow lane; on a
-    /// busy history that obscured genuine topology. Far lanes are reached by the in-graph pan or
+    /// <summary>lanes are uncapped — every lineage gets its own track. A lane cap would
+    /// collapse every lane past it onto a single dashed overflow lane, which on a busy history
+    /// obscures genuine topology. Far lanes are reached by the in-graph pan or
     /// by stretching the Graph column, not by a cap.</summary>
     public int MaxLanes { get; init; } = int.MaxValue;
 }
