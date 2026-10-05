@@ -38,6 +38,15 @@ public static class ConflictPaneBuilder
     /// Builds aligned pane lines for the specified side.
     /// </summary>
     public static IReadOnlyList<ConflictPaneLine> Build(ConflictParse parse, ConflictSide side)
+        => Build(parse, side, null);
+
+    /// <summary>
+    /// Builds aligned pane lines for the specified side, with <paramref name="managed"/> regions
+    /// overlaid: a managed line shows its row's original text on the side it came from and pads
+    /// the other side (added lines pad both). Spans are sorted, never overlap marker regions, and
+    /// are walked alongside the regions in one pass.
+    /// </summary>
+    public static IReadOnlyList<ConflictPaneLine> Build(ConflictParse parse, ConflictSide side, IReadOnlyList<ConflictManagedSpan>? managed)
     {
         Interlocked.Increment(ref BuildCallCount);
         var documentLines = parse.Lines;
@@ -45,11 +54,31 @@ public static class ConflictPaneBuilder
 
         var result = new List<ConflictPaneLine>(lineCount);
         int regionIndex = 0;
+        int spanIndex = 0;
         int sideLineNumber = 1;
+        var sideOrigin = side == ConflictSide.Ours ? ConflictRowOrigin.Ours : ConflictRowOrigin.Theirs;
+        var sideType = side == ConflictSide.Ours ? ConflictPaneLineType.Ours : ConflictPaneLineType.Theirs;
 
         for (int lineIdx = 0; lineIdx < lineCount; lineIdx++)
         {
             string lineText = lineIdx < documentLines.Count ? documentLines[lineIdx] : string.Empty;
+
+            if (managed != null)
+            {
+                while (spanIndex < managed.Count && managed[spanIndex].EndLine < lineIdx)
+                {
+                    spanIndex++;
+                }
+
+                if (spanIndex < managed.Count && lineIdx >= managed[spanIndex].StartLine)
+                {
+                    var origin = managed[spanIndex].Lines[lineIdx - managed[spanIndex].StartLine];
+                    result.Add(origin.Origin == sideOrigin
+                        ? new ConflictPaneLine(sideType, origin.SourceText, sideLineNumber++, lineIdx)
+                        : new ConflictPaneLine(ConflictPaneLineType.Padding, string.Empty, null, lineIdx));
+                    continue;
+                }
+            }
 
             ConflictRegion? currentRegion = null;
             if (regionIndex < parse.Regions.Count)
