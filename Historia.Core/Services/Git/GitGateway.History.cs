@@ -15,8 +15,7 @@ public sealed partial class GitGateway
         var record = records[0];
 
         var fullMessage = record.Message ?? "";
-        var firstBreak = fullMessage.IndexOf('\n');
-        var messageBody = firstBreak >= 0 ? fullMessage[(firstBreak + 1)..].Trim() : "";
+        var messageBody = BodyAfterFirstParagraph(fullMessage);
 
         return new CommitDetail
         {
@@ -33,6 +32,19 @@ public sealed partial class GitGateway
             ParentIds = record.ParentIds,
             Decorations = [],
         };
+    }
+
+    // Git's %b: everything after the first paragraph (the first blank line), trimmed. A
+    // multi-line first paragraph belongs wholly to the subject, as %s joins it.
+    private static string BodyAfterFirstParagraph(string message)
+    {
+        var lines = message.Replace("\r\n", "\n").Split('\n');
+        for (var i = 1; i < lines.Length; i++)
+        {
+            if (string.IsNullOrWhiteSpace(lines[i]))
+                return string.Join('\n', lines, i + 1, lines.Length - i - 1).Trim();
+        }
+        return "";
     }
 
     public async Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default)

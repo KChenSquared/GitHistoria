@@ -14,6 +14,7 @@ global using Historia.Services.Diff;
 global using FontStyle = Avalonia.Media.FontStyle;
 global using Avalonia.Controls;
 global using Avalonia.Controls.Primitives;
+global using Avalonia.Controls.Primitives.PopupPositioning;
 global using Avalonia.Headless;
 global using Avalonia.Headless.XUnit;
 global using Avalonia.Interactivity;

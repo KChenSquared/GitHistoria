@@ -344,7 +344,7 @@ public sealed class GraphLayout : IDisposable
     /// own <see cref="Consume"/> writer, but not for an unsynchronized reader while a background
     /// <c>ExtendLayoutAsync</c> is inserting into the very same instance under
     /// <c>lock (existing.State)</c> (<c>CommitGraphControl
-    /// .ResolveRow</c> / <c>FindSubject</c> read it from the render thread with no lock at all —
+    /// .ResolveRow</c> reads it from the render thread with no lock at all —
     /// an unsynchronized <see cref="Dictionary{TKey,TValue}"/> read concurrent with an insert
     /// that resizes it can return a wrong row or throw). The value stored here is wrapped so
     /// every lookup — through this property's own <c>TryGetValue</c>/indexer, or through <see

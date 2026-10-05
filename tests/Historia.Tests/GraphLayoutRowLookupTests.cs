@@ -3,7 +3,7 @@ namespace Historia.Tests;
 /// <summary>
 /// <c>DagLayoutEngine.Build</c> hands <see
 /// cref="GraphLayout.RowByCommitId"/> the accumulator's own, still-growing dictionary instead of
-/// a per-snapshot copy. <c>CommitGraphControl.ResolveRow</c> / <c>FindSubject</c> read it from
+/// a per-snapshot copy. <c>CommitGraphControl.ResolveRow</c> reads it from
 /// the render thread with no lock at all, while a background <c>ExtendLayoutAsync</c> inserts
 /// into that very same dictionary under <c>lock (existing.State)</c>. An unsynchronized
 /// <see cref="Dictionary{TKey,TValue}"/> read concurrent with an insert that resizes it is

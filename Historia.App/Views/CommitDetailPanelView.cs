@@ -203,7 +203,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
                 var rules = _settings.Current.IssueAutolinks;
                 _metaHost.Content = BuildMetaRow(detail);
                 _parentsHost.Content = BuildParentsRow(detail);
-                _messageHost.Content = Autolinked(detail.Message, rules, _launcher, 14, "ColorText");
+                _messageHost.Content = Autolinked(CommitMessageReflow.Reflow(detail.Message), rules, _launcher, 14, "ColorText");
 
                 _files = files;
                 BuildTreeCache(files);
