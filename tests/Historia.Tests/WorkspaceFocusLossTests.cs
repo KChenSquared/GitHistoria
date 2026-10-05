@@ -233,6 +233,9 @@ public sealed class WorkspaceFocusLossTests : IAsyncDisposable
         await ws.DisposeAsync();
     }
 
+    /// <summary>Likely flaky under load: it failed once in a full-suite run and passed 3 of 3
+    /// runs on its own. Its fixed waits (20 s, 10 s, 20 s) are what a loaded machine can
+    /// overrun. Tracked in the design spec's known issues (§24.6, load-sensitive tests).</summary>
     [Fact(Timeout = 60000)]
     public async Task Leaving_a_tab_cancels_its_status_refresh_and_the_background_queue_redoes_it()
     {
