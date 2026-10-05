@@ -344,6 +344,87 @@ public sealed class SettingsHelpHintTests
         });
     }
 
+    [AvaloniaFact]
+    public void Splash_screen_sits_in_appearance_between_theme_and_high_contrast()
+    {
+        var sp = CreateServices();
+        var view = new SettingsView(sp);
+
+        var body = SectionBody(view, "Appearance");
+        var order = body.Children.Select(RowLabel).ToList();
+        Assert.Equal(new[] { "Theme", "Show splash screen", "High contrast" }, order.Take(3));
+        Assert.DoesNotContain("Show splash screen", SectionBody(view, "Advanced").Children.Select(RowLabel));
+        view.Dispose();
+    }
+
+    [AvaloniaTheory]
+    [InlineData("Appearance")]
+    [InlineData("Privacy & Network")]
+    [InlineData("Diff viewer")]
+    [InlineData("Git")]
+    public void Main_sections_start_expanded_and_collapse_on_header_click(string title)
+    {
+        var sp = CreateServices();
+        var view = new SettingsView(sp);
+        var window = new Window { Width = 800, Height = 600, Content = view };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var body = SectionBody(view, title);
+        Assert.True(body.IsVisible, $"{title} should start expanded.");
+
+        var header = SectionHeader(view, title);
+        var titleText = header.GetLogicalDescendants().OfType<TextBlock>().First(t => t.Text == title);
+        var badge = HelpHintMap.Badges(header).FirstOrDefault();
+        if (badge is not null)
+        {
+            // The ? beside the title shows its hint; pressing it doesn't toggle the section.
+            Press(window, badge);
+            Assert.True(body.IsVisible, $"Pressing {title}'s ? collapsed the section.");
+        }
+
+        Press(window, titleText);
+        Assert.False(body.IsVisible, $"{title} didn't collapse.");
+        Press(window, titleText);
+        Assert.True(body.IsVisible, $"{title} didn't expand again.");
+
+        window.Close();
+        view.Dispose();
+
+        // Raised on the target and bubbled, as a real press would be, so the ? badge's own
+        // handler gets the first look.
+        static void Press(Window window, Control target)
+        {
+            var pointer = new Avalonia.Input.Pointer(1, Avalonia.Input.PointerType.Mouse, true);
+            target.RaiseEvent(new PointerPressedEventArgs(target, pointer, window, new Point(1, 1), 0,
+                new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonPressed), KeyModifiers.None));
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
+    /// <summary>The clickable header of a collapsible section.</summary>
+    private static Border SectionHeader(SettingsView view, string title)
+        => Root(view).Children.OfType<Border>().Single(b =>
+            b.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == title));
+
+    /// <summary>The body a collapsible section's header shows and hides.</summary>
+    private static StackPanel SectionBody(SettingsView view, string title)
+    {
+        var root = Root(view);
+        return (StackPanel)root.Children[root.Children.IndexOf(SectionHeader(view, title)) + 1];
+    }
+
+    /// <summary>A section row's label: a check box's content, or a labelled row's first text,
+    /// looking through a <c>?</c> hint row.</summary>
+    private static string? RowLabel(Control row) => row switch
+    {
+        CheckBox { Content: string s } => s,
+        Panel p when p.Children.Any(c => c.Classes.Contains(ViewKit.HelpHintClass))
+            => RowLabel(p.Children.Single(c => !c.Classes.Contains(ViewKit.HelpHintClass))),
+        Panel p => p.Children.OfType<TextBlock>().FirstOrDefault()?.Text,
+        _ => null,
+    };
+
     /// <summary>Every user-visible label string: text, control content, combo options and
     /// input watermarks.</summary>
     private static HashSet<string> VisibleLabels(Control view)

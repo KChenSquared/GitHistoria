@@ -11,6 +11,10 @@ public sealed class SettingsView : UserControl, IDisposable
     private readonly StackPanel _root = new() { Spacing = 18, Margin = new Thickness(32), MaxWidth = 640 };
 
     // Survives the full Rebuild() that fires on every settings change.
+    private bool _appearanceExpanded = true;
+    private bool _networkExpanded = true;
+    private bool _diffExpanded = true;
+    private bool _gitExpanded = true;
     private bool _advExpanded;
     private bool _terminalExpanded;
 
@@ -71,23 +75,26 @@ public sealed class SettingsView : UserControl, IDisposable
         _root.Children.Clear();
         _root.Children.Add(Text("Settings", "ColorText", 24, FontWeight.SemiBold));
 
-        // ── Appearance ──
+        // ── Appearance (expanded) ──
+        var appearanceBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
         // The custom-theme override lives in the Developer panel, so only developer mode
         // mentions it here.
         var appearanceHint = "Graph columns are set in Repository settings: click the cog in the graph's GRAPH header.";
         if (Historia.Platform.DevMode.Enabled)
             appearanceHint += "\n\nIn developer mode, a custom theme from the Developer panel overrides Light, Dark and System.";
-        _root.Children.Add(WithHint(Section("Appearance"), appearanceHint));
         var themeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         foreach (var m in new[] { ThemeMode.Light, ThemeMode.Dark, ThemeMode.System })
         {
             var mode = m;
             themeRow.Children.Add(TextButton(m.ToString(), () => _ = _theme.ApplyModeAsync(mode), primary: _theme.CurrentMode == m));
         }
-        _root.Children.Add(LabeledRow("Theme", themeRow));
-        _root.Children.Add(WithHint(Check("High contrast", _theme.HighContrastEnabled, v => _ = _theme.SetHighContrastAsync(v)),
+        appearanceBody.Children.Add(LabeledRow("Theme", themeRow));
+        appearanceBody.Children.Add(WithHint(Check("Show splash screen", c.ShowSplashScreen,
+            v => _ = _cfg.UpdateAsync(s => s with { ShowSplashScreen = v })),
+            "A custom theme uses its own splash instead."));
+        appearanceBody.Children.Add(WithHint(Check("High contrast", _theme.HighContrastEnabled, v => _ = _theme.SetHighContrastAsync(v)),
             "Overrides every other theme. Also turns on when Windows high contrast is on."));
-        _root.Children.Add(WithHint(Check("Wrap tabs onto more rows", c.EnableMultiLineTabs,
+        appearanceBody.Children.Add(WithHint(Check("Wrap tabs onto more rows", c.EnableMultiLineTabs,
             v => _ = _cfg.UpdateAsync(s => s with { EnableMultiLineTabs = v })),
             "When tabs don't fit, they wrap to a new row instead of scrolling."));
         if (c.EnableMultiLineTabs)
@@ -95,9 +102,9 @@ public sealed class SettingsView : UserControl, IDisposable
             var maxRows = new NumericUpDown { Minimum = 2, Maximum = 5, Value = c.MaxTabRows, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
             WireNumericCommit(maxRows, c.MaxTabRows, v => Math.Clamp(v, 2, 5),
                 next => _ = _cfg.UpdateAsync(s => s with { MaxTabRows = next }));
-            _root.Children.Add(LabeledRow("Maximum rows", maxRows));
+            appearanceBody.Children.Add(LabeledRow("Maximum rows", maxRows));
         }
-        _root.Children.Add(WithHint(Check("Fixed tab width", c.TabWidthMode == TabWidthMode.Fixed,
+        appearanceBody.Children.Add(WithHint(Check("Fixed tab width", c.TabWidthMode == TabWidthMode.Fixed,
             v => _ = _cfg.UpdateAsync(s => s with { TabWidthMode = v ? TabWidthMode.Fixed : TabWidthMode.Dynamic })),
             "When off, each tab fits its name, up to about 25 characters."));
         if (c.TabWidthMode == TabWidthMode.Fixed)
@@ -114,9 +121,9 @@ public sealed class SettingsView : UserControl, IDisposable
             };
             WireNumericCommit(tabLen, c.FixedTabWidth, AppSettings.ClampFixedTabWidth,
                 next => _ = _cfg.UpdateAsync(s => s with { FixedTabWidth = next }));
-            _root.Children.Add(LabeledRow("Tab width (px)", tabLen));
+            appearanceBody.Children.Add(LabeledRow("Tab width (px)", tabLen));
         }
-        _root.Children.Add(WithHint(Check("Show author date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })),
+        appearanceBody.Children.Add(WithHint(Check("Show author date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })),
             "Shows when a commit was written, not when it was committed. The graph stays sorted by commit date."));
 
         // Mouse-wheel / trackpad scroll direction for the graph and the tab strip.
@@ -135,9 +142,9 @@ public sealed class SettingsView : UserControl, IDisposable
             if ((wheelDir.SelectedItem as ComboBoxItem)?.Tag is WheelScrollDirection wd)
                 _ = _cfg.UpdateAsync(s => s with { WheelScrollDirection = wd });
         };
-        _root.Children.Add(WithHint(LabeledRow("Scroll direction", wheelDir),
+        appearanceBody.Children.Add(WithHint(LabeledRow("Scroll direction", wheelDir),
             "Applies to the graph and the tab strip. On Windows, Match system is always Standard."));
-        _root.Children.Add(WithHint(Check("Cache sidebar between launches", c.PersistRepoCache,
+        appearanceBody.Children.Add(WithHint(Check("Cache sidebar between launches", c.PersistRepoCache,
             v =>
             {
                 _ = _cfg.UpdateAsync(s => s with { PersistRepoCache = v });
@@ -145,16 +152,18 @@ public sealed class SettingsView : UserControl, IDisposable
                     _repoCache.WipeAll(); // turning it off also clears what's on disk
             }),
             "Saves each repository's branches, tags, stashes and more so the sidebar appears instantly, then refreshes from Git. Turning it off deletes the cache."));
+        AddCollapsibleSection("Appearance", appearanceBody, () => _appearanceExpanded, v => _appearanceExpanded = v, appearanceHint);
 
-        // ── Privacy & Network ──
-        _root.Children.Add(WithHint(Section("Privacy & Network"),
-            "Identity and SSH-only are set per repository, in Repository settings."));
-        _root.Children.Add(WithHint(Check("Auto-fetch open repositories", c.AutoFetchEnabled,
+        // ── Privacy & Network (expanded) ──
+        var networkBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
+        networkBody.Children.Add(WithHint(Check("Auto-fetch open repositories", c.AutoFetchEnabled,
             v => _ = _cfg.UpdateAsync(s => s with { AutoFetchEnabled = v })),
             "Fetches each open repository in turn: a 5-minute pause, then one repository a minute. Turn off to stop all background network traffic."));
+        AddCollapsibleSection("Privacy & Network", networkBody, () => _networkExpanded, v => _networkExpanded = v,
+            "Identity and SSH-only are set per repository, in Repository settings.");
 
-        // ── Diff viewer ──
-        _root.Children.Add(Section("Diff viewer"));
+        // ── Diff viewer (expanded) ──
+        var diffBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
         var diffView = new ComboBox { Width = 160 };
         diffView.Items.Add(new ComboBoxItem { Content = "Unified", Tag = DiffViewMode.Unified });
         diffView.Items.Add(new ComboBoxItem { Content = "Side by side", Tag = DiffViewMode.SideBySide });
@@ -164,16 +173,17 @@ public sealed class SettingsView : UserControl, IDisposable
             if ((diffView.SelectedItem as ComboBoxItem)?.Tag is DiffViewMode dv)
                 _ = _cfg.UpdateAsync(s => s with { DefaultDiffView = dv });
         };
-        _root.Children.Add(WithHint(LabeledRow("Layout", diffView),
+        diffBody.Children.Add(WithHint(LabeledRow("Layout", diffView),
             "Also changes when you switch layout in the diff viewer."));
         var ctxLines = new NumericUpDown { Minimum = 0, Maximum = 20, Value = c.DiffContextLines, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
         WireNumericCommit(ctxLines, c.DiffContextLines, v => v,
             next => _ = _cfg.UpdateAsync(s => s with { DiffContextLines = next }));
-        _root.Children.Add(WithHint(LabeledRow("Context lines", ctxLines),
+        diffBody.Children.Add(WithHint(LabeledRow("Context lines", ctxLines),
             "Unchanged lines shown around each change."));
-        _root.Children.Add(WithHint(Check("Wrap long lines", c.DiffWordWrap,
+        diffBody.Children.Add(WithHint(Check("Wrap long lines", c.DiffWordWrap,
             v => _ = _cfg.UpdateAsync(s => s with { DiffWordWrap = v })),
             "Unified layout only."));
+        AddCollapsibleSection("Diff viewer", diffBody, () => _diffExpanded, v => _diffExpanded = v);
 
         // ── Issue autolinks ──
         _root.Children.Add(WithHint(Section("Issue autolinks"),
@@ -193,16 +203,17 @@ public sealed class SettingsView : UserControl, IDisposable
         }
         _root.Children.Add(TextButton("Add rule", () => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks, new IssueAutolinkRule { Pattern = "", UrlTemplate = "" }] })));
 
-        // ── Git ──
-        _root.Children.Add(Section("Git"));
-        _root.Children.Add(WithHint(Check("Prune deleted remote branches on fetch", c.PruneOnFetch, v => _ = _cfg.UpdateAsync(s => s with { PruneOnFetch = v })),
+        // ── Git (expanded) ──
+        var gitBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
+        gitBody.Children.Add(WithHint(Check("Prune deleted remote branches on fetch", c.PruneOnFetch, v => _ = _cfg.UpdateAsync(s => s with { PruneOnFetch = v })),
             "On fetch and pull, removes remote branches that no longer exist on the server. Your local branches aren't touched."));
-        _root.Children.Add(WithHint(Check("Pull with rebase", c.PullWithRebase, v => _ = _cfg.UpdateAsync(s => s with { PullWithRebase = v })),
+        gitBody.Children.Add(WithHint(Check("Pull with rebase", c.PullWithRebase, v => _ = _cfg.UpdateAsync(s => s with { PullWithRebase = v })),
             "Puts your local commits on top of the remote ones instead of creating a merge commit."));
-        _root.Children.Add(Check("Reopen tabs on launch", c.RestoreSessionTabs, v => _ = _cfg.UpdateAsync(s => s with { RestoreSessionTabs = v })));
-        _root.Children.Add(WithHint(Check("Ask for a stash message", c.UseCustomStashNames,
+        gitBody.Children.Add(Check("Reopen tabs on launch", c.RestoreSessionTabs, v => _ = _cfg.UpdateAsync(s => s with { RestoreSessionTabs = v })));
+        gitBody.Children.Add(WithHint(Check("Ask for a stash message", c.UseCustomStashNames,
             v => _ = _cfg.UpdateAsync(s => s with { UseCustomStashNames = v })),
             "When off, the Stash button names the stash \"Stash of <branch>\"."));
+        AddCollapsibleSection("Git", gitBody, () => _gitExpanded, v => _gitExpanded = v);
 
         // ── Terminal — collapsed ──
         var termBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
@@ -279,10 +290,6 @@ public sealed class SettingsView : UserControl, IDisposable
         // ── Advanced (collapsed) ──
         var advBody = new StackPanel { Spacing = 8 };
 
-        advBody.Children.Add(WithHint(Check("Show splash screen", c.ShowSplashScreen,
-            v => _ = _cfg.UpdateAsync(s => s with { ShowSplashScreen = v })),
-            "A custom theme uses its own splash instead."));
-
         advBody.Children.Add(WithHint(Check("Keep commit details on disk", c.GraphMetadataFromDisk,
             v => _ = _cfg.UpdateAsync(s => s with { GraphMetadataFromDisk = v })),
             "Reads commit messages, authors and dates from a disk cache to save memory on large repositories. Takes effect after restart."));
@@ -328,8 +335,10 @@ public sealed class SettingsView : UserControl, IDisposable
     /// <summary>
     /// A section header that toggles <paramref name="body"/>'s visibility on click: left title,
     /// right chevron, a rule underneath — the whole row is the hit target, no box chrome.
+    /// <paramref name="hint"/> puts a <see cref="HelpHint"/> beside the title; pressing it
+    /// doesn't toggle the section.
     /// </summary>
-    private void AddCollapsibleSection(string title, Control body, Func<bool> isExpanded, Action<bool> setExpanded)
+    private void AddCollapsibleSection(string title, Control body, Func<bool> isExpanded, Action<bool> setExpanded, string? hint = null)
     {
         body.IsVisible = isExpanded();
 
@@ -337,8 +346,14 @@ public sealed class SettingsView : UserControl, IDisposable
         arrow.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(arrow, 1);
 
-        var titleText = Text(title, "ColorText", 13, FontWeight.SemiBold);
+        Control titleText = Text(title, "ColorText", 13, FontWeight.SemiBold);
         titleText.VerticalAlignment = VerticalAlignment.Center;
+        if (hint is not null)
+        {
+            titleText = WithHint(titleText, hint);
+            var badge = ((Panel)titleText).Children.First(ch => ch.Classes.Contains(HelpHintClass));
+            badge.PointerPressed += (_, e) => e.Handled = true;
+        }
 
         var headerGrid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         headerGrid.Children.Add(titleText);
