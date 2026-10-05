@@ -21,6 +21,7 @@ public sealed class DeveloperViewHintTests
         ["Use custom theme"] = "Replaces the Light / Dark / System choice while a theme is selected. High Contrast still wins. Turned off when Historia starts without developer mode.",
         ["Throw test exception"] = "Throws an unhandled error to test crash handling.",
         ["Show sample toast"] = "Shows a success toast. It closes after 2 s and has no Copy button.",
+        ["Show sample alert"] = "Opens the red confirm dialog shown before deleting a branch. Neither button changes anything.",
         ["Performance log"] = $"Records startup and repository-open timings to {Historia.Diagnostics.PerfLog.LogPath}. Stays on across launches; also on when HISTORIA_PERF is set.",
         ["Developer log"] = DevLogExplanation + "\n\n" + DevLogPathLine(),
         ["Show auto-fetch status on tabs"] = "Adds a colour bar to each tab: red = auto-fetch not running, yellow = not fetched yet this round, green = fetched this round.",
@@ -104,6 +105,20 @@ public sealed class DeveloperViewHintTests
             + "session, cached repository/graph file and log from Historia's data and cache folders. "
             + "It cannot be undone. Restart Historia afterwards.",
             call.Effect);
+    }
+
+    [AvaloniaFact]
+    public void Sample_alert_opens_the_delete_branch_confirm()
+    {
+        var (view, dialogs) = CreateView();
+        var button = view.GetLogicalDescendants().OfType<Button>()
+            .Single(b => (b.Content as string) == "Show sample alert");
+
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Dispatcher.UIThread.RunJobs();
+
+        var call = Assert.Single(dialogs.DestructiveCalls);
+        Assert.Equal(("Delete branch", "Delete 'sample-branch'?", "Delete"), call);
     }
 
     private sealed class FakeDialogService : IDialogService

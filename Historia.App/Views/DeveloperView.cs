@@ -23,6 +23,11 @@ public sealed class DeveloperView : UserControl
                 NotificationSeverity.Success, "Commit created.")),
             "Shows a success toast. It closes after 2 s and has no Copy button."));
 
+        root.Children.Add(WithHint(TextButton("Show sample alert", () =>
+            _ = sp.GetRequiredService<IDialogService>().ConfirmDestructiveAsync(
+                "Delete branch", "Delete 'sample-branch'?", "Delete")),
+            "Opens the red confirm dialog shown before deleting a branch. Neither button changes anything."));
+
         var perf = new CheckBox { Content = "Performance log", IsChecked = PerfLog.Enabled };
         perf.IsCheckedChanged += (_, _) => PerfLog.Enabled = perf.IsChecked == true;
         root.Children.Add(WithHint(perf,
