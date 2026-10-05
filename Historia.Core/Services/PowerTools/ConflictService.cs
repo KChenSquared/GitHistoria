@@ -1,7 +1,7 @@
 namespace Historia.Services.PowerTools;
 
 /// <inheritdoc cref="IConflictService"/>
-public sealed class ConflictService(IGitCliService cli, ISettingsService settings) : IConflictService
+public sealed partial class ConflictService(IGitCliService cli, ISettingsService settings) : IConflictService
 {
     private readonly UnmergedIndexReader _unmergedReader = new(cli);
 
@@ -383,7 +383,7 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
                     : string.Empty;
 
                 var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
-                theirsTitle = !string.IsNullOrEmpty(firstMsgLine) ? firstMsgLine : (shortSha.Length > 0 ? shortSha : "Incoming merge");
+                theirsTitle = !string.IsNullOrEmpty(firstMsgLine) ? MergeSourceName(firstMsgLine) : (shortSha.Length > 0 ? shortSha : "Incoming merge");
                 break;
             }
 
@@ -799,4 +799,30 @@ public sealed class ConflictService(IGitCliService cli, ISettingsService setting
 
         return tokens;
     }
+
+    /// <summary>
+    /// The name a merge message merged — <c>Merge branch 'x' into main</c> → <c>x</c>,
+    /// <c>Merge remote-tracking branch 'origin/x'</c> → <c>origin/x</c>, <c>Merge tag 'v1'</c> →
+    /// <c>v1</c>; a merged object id is shortened to 7 characters. Any other message (an octopus
+    /// merge, a custom message) is returned unchanged.
+    /// </summary>
+    internal static string MergeSourceName(string firstMsgLine)
+    {
+        var match = MergeSourceRegex().Match(firstMsgLine);
+        if (!match.Success)
+        {
+            return firstMsgLine;
+        }
+
+        var name = match.Groups[1].Value;
+        if ((name.Length == 40 || name.Length == 64) && name.All(char.IsAsciiHexDigit))
+        {
+            return name[..7];
+        }
+
+        return name;
+    }
+
+    [GeneratedRegex(@"^Merge (?:remote-tracking branch|branch|tag|commit) '([^']+)'", RegexOptions.CultureInvariant)]
+    private static partial Regex MergeSourceRegex();
 }
