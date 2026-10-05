@@ -118,7 +118,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
         Assert.Equal($"commit {CommitCount - 1:D2}", snapshot.Layout.Commits[0].MessageShort);
     }
 
-    /// <summary>3 (3b): the disk cache is keyed on the sorted tip SET, not on every ref +
+    /// <summary>The disk cache is keyed on the sorted tip SET, not on every ref +
     /// HEAD. Checking out between two branches that both already existed (and so were both
     /// already part of the walk's tip set) moves HEAD but changes neither the ref list nor the
     /// walk key — the on-disk `.meta.*` files must not be rewritten.</summary>

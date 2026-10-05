@@ -79,7 +79,7 @@ public static class RefTree
             }
         }
 
-        // one flat alphabetical order — folders are no longer hoisted above leaves.
+        // one flat alphabetical order — folders are not hoisted above leaves.
         // Case-insensitive first (the natural "alphabetical"), ordinal as a stable tie-break.
         result.Sort((x, y) =>
         {

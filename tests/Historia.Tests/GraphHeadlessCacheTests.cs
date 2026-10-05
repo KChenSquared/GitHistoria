@@ -4,8 +4,8 @@ namespace Historia.Tests;
 /// <see cref="IGraphLayoutService.RunHeadlessCacheAsync"/>
 /// brings an INACTIVE tab's on-disk graph cache up to date with no live layout and no lasting
 /// entry in the service's own cache table. This also exercises the live reorder trigger —
-/// the headless pipeline is where it was deferred to, since there's no concurrent foreground
-/// reader to protect mid-reorder here.
+/// it runs in the headless pipeline, since there's no concurrent foreground reader to protect
+/// mid-reorder there.
 /// </summary>
 [Trait("tier", "git")]
 public sealed class GraphHeadlessCacheTests : IAsyncDisposable

@@ -41,9 +41,9 @@ public sealed record RemoteInfo
     public required string Url { get; init; }
     public string? PushUrl { get; init; }
 
-    /// <summary>True when a push URL separate from the fetch URL is configured. LibGit2Sharp
-    /// reports the fetch URL as <see cref="PushUrl"/> when none is set, so equality means there
-    /// is no separate push URL.</summary>
+    /// <summary>True when a push URL separate from the fetch URL is configured. The config
+    /// reader reports the fetch URL as <see cref="PushUrl"/> when no push URL or <c>pushInsteadOf</c>
+    /// rewrite applies, so equality means there is no separate push URL.</summary>
     public bool HasDistinctPushUrl => PushUrl is { } p && !string.Equals(p, Url, StringComparison.Ordinal);
 }
 

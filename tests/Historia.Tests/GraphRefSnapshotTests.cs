@@ -29,7 +29,7 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
 
     private static readonly BindingFlags PrivateStatic = BindingFlags.NonPublic | BindingFlags.Static;
 
-    /// <summary>The tip resolution the graph used before the ref snapshot, verbatim in behaviour:
+    /// <summary>Reference tip resolution through LibGit2Sharp, independent of the ref snapshot:
     /// LibGit2Sharp refs, direct-resolved, peeled to commits, tree/blob targets dropped.</summary>
     private static string[] LibGit2Tips(Repository repo, GraphQuery query)
     {

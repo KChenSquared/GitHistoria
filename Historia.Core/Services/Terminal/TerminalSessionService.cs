@@ -321,7 +321,7 @@ public sealed class TerminalSessionService : ITerminalSessionService, IDisposabl
         Historia.Diagnostics.PerfLog.Mark($"TerminalSessionService.Dispose {toDispose.Count} session(s)");
 
         // Kill all sessions first so ConPTY pipe handles start closing simultaneously,
-        // then dispose in parallel. Sequential disposal was the main cause of slow shutdown
+        // then dispose in parallel. Sequential disposal would make shutdown slow
         // (each PtyIoPump.Dispose waits for its background threads to join).
         foreach (var s in toDispose)
         {

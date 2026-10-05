@@ -10,7 +10,7 @@ namespace Historia.Tests;
 /// Trap: matching the bare name is not enough. A same-named constant or field, an enum type of
 /// the same name, a <c>with { Name = … }</c> initialiser (a write) and
 /// <c>nameof(AppSettings.Name)</c> all satisfy a name-only match while the setting itself has no
-/// reader — that is how unread settings slipped past this guard. Comments and <c>nameof(…)</c>
+/// reader, which would let unread settings slip past this guard. Comments and <c>nameof(…)</c>
 /// are stripped before matching.
 ///
 /// Note: This test verifies reachability (the existence of at least one reader in code),

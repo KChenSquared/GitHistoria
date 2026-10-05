@@ -39,9 +39,8 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private readonly StackPanel _changesRows = new() { Spacing = 1 };
     private readonly StackPanel _stagedRows = new() { Spacing = 1 };
-    // Header labels and the bulk Stage-all / Unstage-all buttons share one font size (13 — the
-    // midpoint of the old 12 header / 14 default-button sizes) so the section-header row reads
-    // as one line.
+    // Header labels and the bulk Stage-all / Unstage-all buttons share one font size so the
+    // section-header row reads as one line.
     private const double HeaderRowFontSize = 13;
     private readonly TextBlock _changesHeader = Text("", "ColorTextMuted", HeaderRowFontSize, FontWeight.SemiBold);
     private readonly TextBlock _stagedHeader = Text("", "ColorTextMuted", HeaderRowFontSize, FontWeight.SemiBold);

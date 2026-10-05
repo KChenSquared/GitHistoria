@@ -115,7 +115,7 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, IBackgroundWorkG
     /// <para>
     /// De-duplicated: a context that is already queued and not yet running is not
     /// queued again — a repeated focus-change churn that re-enqueues every inactive tab on every
-    /// switch no longer piles up redundant jobs for the same context. A context whose job is
+    /// switch does not pile up redundant jobs for the same context. A context whose job is
     /// currently <i>running</i> is not "queued", so a fresh call for it queues a new run.
     /// </para>
     /// </summary>
@@ -158,11 +158,11 @@ internal sealed class GraphBackgroundWriter(IGitCliService cli, IBackgroundWorkG
     /// is none.</summary>
     public Task CancelInactiveTabAsync(RepositoryContext context)
     {
-        // Trap: a queued job used to stay queued after its cancellation until the drain loop
-        // reached it, which is only after the job running ahead of it (another tab's, possibly
-        // minutes long) finished. Until then the tab counted as having a headless job, so its own
-        // foreground spill stood aside and its background spill waited, and its rows piled up in
-        // memory. Dropping it here is safe: it never started, so it holds nothing.
+        // Trap: a cancelled job left in the queue stays there until the drain loop reaches it,
+        // which is only after the job running ahead of it (another tab's, possibly minutes long)
+        // finishes. Until then the tab counts as having a headless job, so its own foreground
+        // spill stands aside and its background spill waits, and its rows pile up in memory.
+        // Dropping it here is safe: it never started, so it holds nothing.
         List<(RepositoryContext Context, Func<CancellationToken, Task> Work, CancellationTokenSource Cts, TaskCompletionSource Done)> dropped = [];
         (CancellationTokenSource Cts, TaskCompletionSource Done)[] running;
         lock (_sync)

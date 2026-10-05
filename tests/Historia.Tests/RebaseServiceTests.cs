@@ -80,9 +80,9 @@ public class RebaseServiceTests : IDisposable
         Assert.Equal(repo.Git("rev-parse", "main").Trim(), mergeBase); // feature is now ahead of main
     }
 
-    // the interactive sequencer re-invokes the Historia executable as
-    // GIT_SEQUENCE_EDITOR. The test project now references Historia.Core (a library),
-    // so there is no exe in the output. Restored in Milestone 9, pointed at Historia.App.exe.
+    // The interactive sequencer re-invokes the Historia executable (Historia.App.exe) as
+    // GIT_SEQUENCE_EDITOR. The test project references only Historia.Core (a library),
+    // so there is no exe in the output to point it at.
     [Fact(Skip = "the rebase-sequencer re-invoke moved to Historia.App (Program.Main); this end-to-end path is covered by manual testing, not the Core-only test project")]
     public async Task Interactive_reword_changes_the_message_with_no_editor_window()
     {

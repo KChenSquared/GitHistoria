@@ -259,6 +259,258 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
     }
 }
 
+/// <summary>What the toggle gutter draws on a line.</summary>
+public enum ConflictToggleGlyph { None, Unchecked, Partial, Checked }
+
+/// <summary>How the Result pane paints a line of a managed conflict.</summary>
+[Flags]
+public enum ConflictRowVisual
+{
+    None = 0,
+    Ours = 1,
+    Theirs = 2,
+    Added = 4,
+    Excluded = 8,
+    RegionTop = 16,
+    RegionBottom = 32,
+}
+
+/// <summary>
+/// Check-box gutter for conflict panes: one box per line the owner says has one, clicked to
+/// toggle. The box, check and dash are drawn from geometries built once per size and translated
+/// per line, with palette pens and brushes resolved once per palette, so a repeat frame creates
+/// nothing.
+/// </summary>
+public sealed class ConflictToggleMargin : AbstractMargin
+{
+    public const double MarginWidth = 16;
+
+    private static readonly Cursor HandCursor = new(StandardCursorType.Hand);
+
+    private readonly TextEditor _editor;
+    private readonly Func<int, ConflictToggleGlyph> _getGlyph;
+    private readonly Func<int, string?>? _getTip;
+
+    private double _boxSize;
+    private StreamGeometry? _checkGeometry;
+    private StreamGeometry? _dashGeometry;
+    private IBrush? _boxBrush;
+    private IBrush? _accentBrush;
+    private IPen? _outlinePen;
+    private IPen? _accentPen;
+    private IPen? _markPen;
+    private int _hoverLine = -1;
+
+    /// <summary>Raised with the 0-based document line whose box was clicked.</summary>
+    public event EventHandler<int>? ToggleClicked;
+
+    internal int PoolMissesForTesting { get; private set; }
+    internal int RenderCountForTesting { get; private set; }
+    internal void ResetPoolCountersForTesting() => PoolMissesForTesting = 0;
+
+    public ConflictToggleMargin(TextEditor editor, Func<int, ConflictToggleGlyph> getGlyph, Func<int, string?>? getTip = null)
+    {
+        _editor = editor;
+        _getGlyph = getGlyph;
+        _getTip = getTip;
+        ClipToBounds = true;
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        PaletteBrushes.Changed += OnPaletteChanged;
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        PaletteBrushes.Changed -= OnPaletteChanged;
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    private void OnPaletteChanged(object? sender, EventArgs e)
+    {
+        _boxBrush = null;
+        InvalidateVisual();
+    }
+
+    protected override Size MeasureOverride(Size availableSize) => new(MarginWidth, 0);
+
+    public override void Render(DrawingContext context)
+    {
+        RenderCountForTesting++;
+        var view = TextView;
+        if (view is not { VisualLinesValid: true })
+        {
+            return;
+        }
+
+        EnsureResources(Math.Clamp(Math.Floor(view.DefaultLineHeight) - 4, 8, 12));
+        double s = _boxSize;
+        double x = Math.Floor((Bounds.Width - s) / 2);
+
+        foreach (var line in view.VisualLines)
+        {
+            if (line.IsDisposed || line.FirstDocumentLine == null || line.FirstDocumentLine.IsDeleted)
+            {
+                continue;
+            }
+
+            var glyph = _getGlyph(line.FirstDocumentLine.LineNumber - 1);
+            if (glyph == ConflictToggleGlyph.None)
+            {
+                continue;
+            }
+
+            var tl = line.TextLines[0];
+            double top = line.GetTextLineVisualYPosition(tl, VisualYPosition.LineTop) - view.VerticalOffset;
+            double bottom = line.GetTextLineVisualYPosition(tl, VisualYPosition.LineBottom) - view.VerticalOffset;
+            double y = Math.Floor(top + (bottom - top - s) / 2);
+            var rect = new Rect(x + 0.5, y + 0.5, s - 1, s - 1);
+
+            if (glyph == ConflictToggleGlyph.Unchecked)
+            {
+                context.DrawRectangle(_boxBrush, _outlinePen, rect, 2, 2);
+                continue;
+            }
+
+            context.DrawRectangle(_accentBrush, _accentPen, rect, 2, 2);
+            using (context.PushTransform(Matrix.CreateTranslation(x, y)))
+            {
+                context.DrawGeometry(null, _markPen, glyph == ConflictToggleGlyph.Checked ? _checkGeometry! : _dashGeometry!);
+            }
+        }
+    }
+
+    private void EnsureResources(double size)
+    {
+        if (_boxBrush == null)
+        {
+            PoolMissesForTesting++;
+            _boxBrush = PaletteBrushes.Get("ColorBg");
+            _accentBrush = PaletteBrushes.Get("ColorAccent");
+            _outlinePen = PaletteBrushes.Pen("ColorTextMuted", 1);
+            _accentPen = PaletteBrushes.Pen("ColorAccent", 1);
+            _markPen = PaletteBrushes.Pen("ColorBg", 1.5);
+        }
+
+        if (_checkGeometry == null || size != _boxSize)
+        {
+            PoolMissesForTesting++;
+            _boxSize = size;
+
+            var check = new StreamGeometry();
+            using (var ctx = check.Open())
+            {
+                ctx.BeginFigure(new Point(size * 0.24, size * 0.52), false);
+                ctx.LineTo(new Point(size * 0.42, size * 0.70));
+                ctx.LineTo(new Point(size * 0.76, size * 0.32));
+                ctx.EndFigure(false);
+            }
+            _checkGeometry = check;
+
+            var dash = new StreamGeometry();
+            using (var ctx = dash.Open())
+            {
+                ctx.BeginFigure(new Point(size * 0.26, size * 0.5), false);
+                ctx.LineTo(new Point(size * 0.74, size * 0.5));
+                ctx.EndFigure(false);
+            }
+            _dashGeometry = dash;
+        }
+    }
+
+    private int LineAt(double y)
+    {
+        var view = TextView;
+        if (view is not { VisualLinesValid: true })
+        {
+            return -1;
+        }
+
+        var docLine = view.GetDocumentLineByVisualTop(y + view.VerticalOffset);
+        return docLine == null ? -1 : docLine.LineNumber - 1;
+    }
+
+    /// <summary>Raises <see cref="ToggleClicked"/> for the box at <paramref name="y"/> (margin
+    /// coordinates), if that line has one.</summary>
+    internal bool ToggleAt(double y)
+    {
+        int line = LineAt(y);
+        if (line < 0 || _getGlyph(line) == ConflictToggleGlyph.None)
+        {
+            return false;
+        }
+
+        ToggleClicked?.Invoke(this, line);
+        return true;
+    }
+
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed && ToggleAt(e.GetPosition(this).Y))
+        {
+            e.Handled = true;
+        }
+    }
+
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+        int line = LineAt(e.GetPosition(this).Y);
+        if (line == _hoverLine)
+        {
+            return;
+        }
+
+        _hoverLine = line;
+        bool hasBox = line >= 0 && _getGlyph(line) != ConflictToggleGlyph.None;
+        Cursor = hasBox ? HandCursor : null;
+        ToolTip.SetTip(this, hasBox ? _getTip?.Invoke(line) : null);
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        _hoverLine = -1;
+        Cursor = null;
+        ToolTip.SetTip(this, null);
+    }
+}
+
+/// <summary>
+/// Dims and strikes through the lines a managed conflict will not save, so they stay visible
+/// (and line-aligned with the side panes) while reading as dropped.
+/// </summary>
+public sealed class ConflictExcludedLineColorizer : DocumentColorizingTransformer
+{
+    private static readonly TextDecorationCollection Strikethrough = TextDecorations.Strikethrough;
+
+    private readonly Func<int, bool> _isExcluded;
+    private readonly Action<VisualLineElement> _apply;
+
+    public ConflictExcludedLineColorizer(Func<int, bool> isExcluded)
+    {
+        _isExcluded = isExcluded;
+        _apply = Apply;
+    }
+
+    protected override void ColorizeLine(DocumentLine line)
+    {
+        if (line.Length > 0 && _isExcluded(line.LineNumber - 1))
+        {
+            ChangeLinePart(line.Offset, line.EndOffset, _apply);
+        }
+    }
+
+    private static void Apply(VisualLineElement element)
+    {
+        element.TextRunProperties.SetForegroundBrush(PaletteBrushes.Get("ColorTextFaint"));
+        element.TextRunProperties.SetTextDecorations(Strikethrough);
+    }
+}
+
 /// <summary>
 /// Background renderer painting conflict region washes, marker bars, and intra-line highlights.
 /// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
@@ -270,21 +522,30 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
     private readonly Func<ConflictParse?> _getParse;
     private readonly Func<IReadOnlyList<ConflictPaneLine>?>? _getLines;
     private readonly Func<IReadOnlyList<ConflictRegionAnalysis>?>? _getAnalysis;
+    private readonly Func<int, ConflictRowVisual>? _getRowVisual;
 
     public override KnownLayer Layer => KnownLayer.Background;
 
+    /// <summary>Managed rows and marker-region lines painted by the last Result pass.</summary>
+    internal int RowLinesDrawnForTesting { get; private set; }
+    internal int RegionLinesDrawnForTesting { get; private set; }
+
+    /// <param name="getRowVisual">Result pane only: how a managed-region line (0-based document
+    /// line) is painted; <see cref="ConflictRowVisual.None"/> for every other line.</param>
     public ConflictBackgroundRenderer(
         TextEditor editor,
         Func<ConflictSide?> getSide,
         Func<ConflictParse?> getParse,
         Func<IReadOnlyList<ConflictPaneLine>?>? getLines = null,
-        Func<IReadOnlyList<ConflictRegionAnalysis>?>? getAnalysis = null)
+        Func<IReadOnlyList<ConflictRegionAnalysis>?>? getAnalysis = null,
+        Func<int, ConflictRowVisual>? getRowVisual = null)
     {
         _editor = editor;
         _getSide = getSide;
         _getParse = getParse;
         _getLines = getLines;
         _getAnalysis = getAnalysis;
+        _getRowVisual = getRowVisual;
     }
 
     protected override void DrawCore(TextView textView, DrawingContext drawingContext)
@@ -408,8 +669,12 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
         }
         else
         {
-            // Result editor: draw based on parse regions
-            if (parse == null || parse.Regions.Count == 0)
+            // Result editor: managed rows from the row visuals, marker regions from the parse. A
+            // file whose conflicts are all managed has no marker regions but still has rows.
+            RowLinesDrawnForTesting = 0;
+            RegionLinesDrawnForTesting = 0;
+            bool hasRegions = parse != null && parse.Regions.Count > 0;
+            if (!hasRegions && _getRowVisual == null)
             {
                 return;
             }
@@ -418,6 +683,8 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
             var oursBg = PaletteBrushes.Get("ColorConflictOursBg");
             var baseBg = PaletteBrushes.Get("ColorConflictBaseBg");
             var theirsBg = PaletteBrushes.Get("ColorConflictTheirsBg");
+            var oursExcludedBg = PaletteBrushes.GetTranslucent("ColorConflictOursBg", 0x40);
+            var theirsExcludedBg = PaletteBrushes.GetTranslucent("ColorConflictTheirsBg", 0x40);
             var blockBorderPen = PaletteBrushes.Pen("ColorAccent", 1);
 
             foreach (var line in textView.VisualLines)
@@ -428,13 +695,45 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
                 }
 
                 int lineIdx = line.FirstDocumentLine.LineNumber - 1;
-                var region = parse.Regions.FirstOrDefault(r => lineIdx >= r.StartLine && lineIdx <= r.EndLine);
+
+                var visual = _getRowVisual?.Invoke(lineIdx) ?? ConflictRowVisual.None;
+                if (visual != ConflictRowVisual.None)
+                {
+                    var rowTop = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineTop) - textView.VerticalOffset;
+                    var rowBottom = line.GetTextLineVisualYPosition(line.TextLines[^1], VisualYPosition.LineBottom) - textView.VerticalOffset;
+                    RowLinesDrawnForTesting++;
+                    bool excluded = (visual & ConflictRowVisual.Excluded) != 0;
+                    IBrush? rowBg = (visual & ConflictRowVisual.Ours) != 0 ? (excluded ? oursExcludedBg : oursBg)
+                        : (visual & ConflictRowVisual.Theirs) != 0 ? (excluded ? theirsExcludedBg : theirsBg)
+                        : null;
+                    if (rowBg != null)
+                    {
+                        drawingContext.DrawRectangle(rowBg, null, new Rect(0, rowTop, width, rowBottom - rowTop));
+                    }
+                    if ((visual & ConflictRowVisual.RegionTop) != 0)
+                    {
+                        drawingContext.DrawLine(blockBorderPen, new Point(0, rowTop), new Point(width, rowTop));
+                    }
+                    if ((visual & ConflictRowVisual.RegionBottom) != 0)
+                    {
+                        drawingContext.DrawLine(blockBorderPen, new Point(0, rowBottom), new Point(width, rowBottom));
+                    }
+                    continue;
+                }
+
+                if (!hasRegions)
+                {
+                    continue;
+                }
+
+                var region = parse!.Regions.FirstOrDefault(r => lineIdx >= r.StartLine && lineIdx <= r.EndLine);
 
                 if (region == null)
                 {
                     continue;
                 }
 
+                RegionLinesDrawnForTesting++;
                 var lastTextLine = line.TextLines[^1];
                 var startY = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineTop) - textView.VerticalOffset;
                 var endY = line.GetTextLineVisualYPosition(lastTextLine, VisualYPosition.LineBottom) - textView.VerticalOffset;
@@ -480,6 +779,8 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
 /// <see cref="MinimapBars"/> (at most one bar per bucket row), re-rendered only when the parse,
 /// the height or the palette changes, and a range layer that is the only thing a
 /// <see cref="DisplayRange"/> change invalidates. Setting an unchanged value invalidates nothing.
+/// Managed (resolved-but-toggleable) regions from <see cref="ResolvedRanges"/> are drawn muted
+/// beneath the unresolved marker regions.
 /// </para>
 /// </summary>
 public sealed class ConflictResolverMinimap : Control
@@ -488,6 +789,7 @@ public sealed class ConflictResolverMinimap : Control
     private readonly RangeLayer _range;
     private ConflictParse? _parse;
     private (int Start, int End)? _displayRange;
+    private IReadOnlyList<(int Start, int End)>? _resolvedRanges;
 
     public ConflictParse? Parse
     {
@@ -500,6 +802,23 @@ public sealed class ConflictResolverMinimap : Control
                 _bars.Invalidate();
                 _range.InvalidateVisual();
             }
+        }
+    }
+
+    /// <summary>0-based line ranges of managed regions. An equal sequence invalidates nothing.</summary>
+    public IReadOnlyList<(int Start, int End)>? ResolvedRanges
+    {
+        get => _resolvedRanges;
+        set
+        {
+            if (ReferenceEquals(_resolvedRanges, value)
+                || (_resolvedRanges != null && value != null && _resolvedRanges.SequenceEqual(value)))
+            {
+                return;
+            }
+
+            _resolvedRanges = value;
+            _bars.Invalidate();
         }
     }
 
@@ -523,6 +842,9 @@ public sealed class ConflictResolverMinimap : Control
 
     /// <summary>Rectangles drawn by the last bars render.</summary>
     internal int BarRectCountForTesting => _bars.RectCount;
+
+    /// <summary>Muted rectangles (managed regions) drawn by the last bars render.</summary>
+    internal int ResolvedRectCountForTesting => _bars.ResolvedRectCount;
 
     /// <summary>How many times the range layer has rendered.</summary>
     internal int RangeRenderCountForTesting => _range.RenderCount;
@@ -581,10 +903,12 @@ public sealed class ConflictResolverMinimap : Control
     {
         private readonly ConflictResolverMinimap _owner;
         private IReadOnlyList<MinimapSpan>? _spans;
+        private IReadOnlyList<MinimapSpan>? _resolvedSpans;
         private int _bucketHeight;
 
         public int RenderCount { get; private set; }
         public int RectCount { get; private set; }
+        public int ResolvedRectCount { get; private set; }
 
         public BarsLayer(ConflictResolverMinimap owner)
         {
@@ -595,6 +919,7 @@ public sealed class ConflictResolverMinimap : Control
         public void Invalidate()
         {
             _spans = null;
+            _resolvedSpans = null;
             InvalidateVisual();
         }
 
@@ -602,6 +927,7 @@ public sealed class ConflictResolverMinimap : Control
         {
             RenderCount++;
             RectCount = 0;
+            ResolvedRectCount = 0;
 
             var parse = _owner._parse;
             if (parse == null || parse.LineCount == 0 || Bounds.Height <= 0)
@@ -614,9 +940,22 @@ public sealed class ConflictResolverMinimap : Control
             {
                 _bucketHeight = height;
                 _spans = MinimapBars.FromRegions(parse.Regions.Select(r => (r.StartLine, r.EndLine)), parse.LineCount, height);
+                _resolvedSpans = _owner._resolvedRanges is { Count: > 0 } resolved
+                    ? MinimapBars.FromRegions(resolved, parse.LineCount, height)
+                    : null;
             }
 
             double scale = Bounds.Height / height;
+            if (_resolvedSpans != null)
+            {
+                var resolvedBrush = PaletteBrushes.Get("ColorTextFaint");
+                foreach (var span in _resolvedSpans)
+                {
+                    context.DrawRectangle(resolvedBrush, null, new Rect(0, span.Top * scale, Bounds.Width, Math.Max(2.0, span.Height * scale)));
+                    ResolvedRectCount++;
+                }
+            }
+
             var conflictBrush = PaletteBrushes.Get("ColorWarning");
             foreach (var span in _spans)
             {

@@ -90,7 +90,7 @@ public sealed record AppSettings
     public static int ClampFixedTabWidth(int value) => Math.Clamp(value, MinFixedTabWidth, MaxFixedTabWidth);
 
     // graph column layout (order, widths, visibility, the width pin) and the commit-walk
-    // ceiling moved to a per-repository store — see Historia.Services.Settings.IRepoLayoutService.
+    // ceiling live in a per-repository store — see Historia.Services.Settings.IRepoLayoutService.
 
     /// <summary>Flat path list vs. collapsible folder tree for a commit's changed files.</summary>
     public CommitFilesView CommitFilesView { get; init; } = CommitFilesView.Path;

@@ -3,7 +3,7 @@ namespace Historia.Tests;
 /// <summary>
 /// <see cref="TerminalSession.TryEncodeKittyKey"/> and <see cref="TerminalSession.KeyboardProtocol"/>
 /// against flags the child pushes. Expected bytes follow XTerm.NET's
-/// <c>Input/KittyKeyboard.cs</c> (at b2d78f8) and the kitty keyboard-protocol spec
+/// <c>Input/KittyKeyboard.cs</c> (XTerm.NET 2.0.2) and the kitty keyboard-protocol spec
 /// (https://sw.kovidgoyal.net/kitty/keyboard-protocol/).
 /// </summary>
 [Trait("tier", "unit")]

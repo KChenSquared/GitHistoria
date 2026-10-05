@@ -21,7 +21,7 @@ public readonly record struct EdgeRoute(IReadOnlyList<PointD> Waypoints, double 
 public static class EdgeRouter
 {
     /// <summary>
-    /// default corner radius is now "as large as the cell allows" — the per-call clamp
+    /// default corner radius is "as large as the cell allows" — the per-call clamp
     /// below caps it at the lane width, the row height, and the segment lengths, so a 1×1 bend
     /// becomes a full quarter turn across the square. Callers that want a tighter nub still pass
     /// an explicit <c>cornerRadius</c>.
@@ -37,7 +37,7 @@ public static class EdgeRouter
         double laneWidth, double rowHeight, double cornerRadius = DefaultCornerRadius)
     {
         // Straight always renders as a single vertical; so does any edge whose endpoints share
-        // an x. An OffWindow stub with a lane change now routes as an elbow rather than
+        // an x. An OffWindow stub with a lane change routes as an elbow rather than
         // short-circuiting.
         if (type is EdgeType.Straight || Math.Abs(x1 - x2) < 0.5)
             return new EdgeRoute([new(x1, y1), new(x2, y2)], 0);
@@ -52,7 +52,7 @@ public static class EdgeRouter
         };
 
         // a bend may consume the whole lane×row cell it turns in — the cap is the full
-        // lane width / row height (was half), and the full remaining segment length (was half).
+        // lane width / row height, and the full remaining segment length.
         var r = Math.Min(cornerRadius, Math.Min(laneWidth, rowHeight));
         r = Math.Min(r, Math.Min(Math.Abs(x2 - x1), Math.Abs(y2 - y1)));
         r = Math.Max(0, r);

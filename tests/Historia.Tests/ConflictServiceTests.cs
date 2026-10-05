@@ -262,7 +262,7 @@ public class ConflictServiceTests
             var labels = await svc.GetSideLabelsAsync(ctx);
             Assert.Equal(OperationState.Merging, labels.Operation);
             Assert.Equal("main", labels.OursTitle);
-            Assert.Contains("feature", labels.TheirsTitle, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("feature", labels.TheirsTitle);
         }
 
         // 2. Rebase labels
@@ -284,6 +284,37 @@ public class ConflictServiceTests
             Assert.Contains("feature", labels.TheirsTitle);
         }
     }
+
+    [Fact]
+    public async Task Merge_by_commit_sha_theirs_title_is_short_sha()
+    {
+        await using var host = new MiniHost();
+        using var repoDir = TestRepositoryBuilder.Create();
+        repoDir.WriteFile("f.txt", "base\n").Stage().Commit("base");
+        repoDir.Checkout("feature", create: true).WriteFile("f.txt", "feature\n").Stage().Commit("theirs");
+        var sha = repoDir.Git("rev-parse", "HEAD").Trim();
+        repoDir.Checkout("main").WriteFile("f.txt", "main\n").Stage().Commit("ours");
+        try { repoDir.Git("merge", sha); } catch { /* expected to conflict */ }
+
+        await using var ctx = host.Open(repoDir.Path);
+        var labels = await Make(host).GetSideLabelsAsync(ctx);
+
+        Assert.Equal(OperationState.Merging, labels.Operation);
+        Assert.Equal(sha[..7], labels.TheirsTitle);
+    }
+
+    [Theory]
+    [InlineData("Merge branch 'feature'", "feature")]
+    [InlineData("Merge branch 'feature' into main", "feature")]
+    [InlineData("Merge remote-tracking branch 'origin/feature'", "origin/feature")]
+    [InlineData("Merge tag 'v1.0'", "v1.0")]
+    [InlineData("Merge commit '0123456789abcdef0123456789abcdef01234567'", "0123456")]
+    [InlineData("Merge commit '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'", "0123456")]
+    [InlineData("Merge branches 'a' and 'b'", "Merge branches 'a' and 'b'")]
+    [InlineData("Custom merge message", "Custom merge message")]
+    [InlineData("", "")]
+    public void MergeSourceName_parses_merge_messages(string firstLine, string expected)
+        => Assert.Equal(expected, ConflictService.MergeSourceName(firstLine));
 
     [Fact]
     public async Task Stop_id_is_stable_across_staging_and_changes_at_next_stop()

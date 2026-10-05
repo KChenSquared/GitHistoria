@@ -86,9 +86,9 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     private static readonly TimeSpan GraphPriorityTimeout = TimeSpan.FromSeconds(8);
 
     // the FOCUSED tab's graph control WILL paint — wait for that, not a short guess,
-    // before its identity resolution + RefreshAllAsync run. 8s was far too short
-    // on a big repo (linux first paint alone is tens of seconds), so identity/refresh
-    // ran mid-first-walk and stalled it for ~60s. This ceiling is only a stuck-guard.
+    // before its identity resolution + RefreshAllAsync run. A short ceiling like the 8s
+    // above is far too short on a big repo (linux first paint alone is tens of seconds):
+    // identity/refresh would run mid-first-walk and stall it for ~60s. This ceiling is only a stuck-guard.
     private static readonly TimeSpan GraphFirstPaintCeiling = TimeSpan.FromSeconds(120);
 
     // A large working tree's first status waits for the graph's crawl to warm up; this is only a
@@ -237,10 +237,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         CancellationTokenSource attemptCts;
         lock (_sync)
         {
-            // One attempt per tab at a time; the running one covers this request. Trap: the open
-            // path used to start its attempt even when the background queue had already started
-            // one for the tab (a watcher refresh queued between the tab joining _open and taking
-            // focus). Only the second was tracked, so a focus change cancelled it while the first
+            // One attempt per tab at a time; the running one covers this request. Trap: the background
+            // queue can already have started an attempt for the tab (a watcher refresh queued
+            // between the tab joining _open and taking focus). Starting a second one here would
+            // leave only the second tracked, so a focus change would cancel it while the first
             // kept the tab's status running on a token focus loss can't cancel.
             if (_attemptCts.ContainsKey(context))
                 return;
@@ -273,10 +273,10 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
                 }
             }
 
-            // Trap: this status used to start inside the attempt, and the load was marked done
-            // only afterwards. A focus change or a focus-cancelled refresh in between requeued the
-            // finished tab as an init; the queue re-ran it, and its refresh joined this status run
-            // on a token focus loss can't cancel.
+            // Trap: starting this status inside the attempt, with the load marked done only
+            // afterwards, lets a focus change or a focus-cancelled refresh in between requeue the
+            // finished tab as an init; the queue re-runs it, and its refresh joins this status run
+            // on a token focus loss can't cancel. So it starts here, after the load is settled.
             if (outcome == InitOutcome.Completed && foreground)
                 _ = RefreshStatusAfterInitAsync(context);
         }
@@ -951,7 +951,7 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         }
     }
 
-    /// <summary>(AF4): force a still-deferred session-restore tab through the ordinary
+    /// <summary>Force a still-deferred session-restore tab through the ordinary
     /// initialize path, instead of waiting for its first focus — auto-fetch needs every open
     /// repo fully loaded before its loop starts. enqueued onto the serial background
     /// pump rather than fired immediately, so a restore does not fan every tab's identity walk +

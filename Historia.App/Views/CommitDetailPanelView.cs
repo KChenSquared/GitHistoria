@@ -226,7 +226,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
 
     /// <summary>
     /// Author name and click-to-copy hash. Author email shows as a tooltip on the name.
-    /// The commit date has moved to the parents row.
+    /// The commit date is shown on the parents row.
     /// </summary>
     private Control BuildMetaRow(CommitDetail detail)
     {

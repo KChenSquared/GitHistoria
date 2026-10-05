@@ -21,8 +21,8 @@ public static class TestScratch
 
     private static readonly ConcurrentDictionary<string, string> RunRoots = new(StringComparer.OrdinalIgnoreCase);
 
-    // In the background: deleting a previous run's leftovers used to block the first test on every
-    // worker thread for as long as the delete took.
+    // In the background: deleting a previous run's leftovers inline would block the first test on
+    // every worker thread for as long as the delete took.
     private static readonly Lazy<Task> PruneOnce = new(() => Task.Run(PruneStale));
 
     private static readonly Lazy<bool> ExitHook = new(() =>
@@ -73,7 +73,7 @@ public static class TestScratch
                     TryDelete(info);
             }
 
-            // Directories from before the per-run folder existed.
+            // Loose test directories directly under the scratch root, outside any per-run folder.
             var patterns = new[] { "historia-tpl-*", "historia-test-*", "historia-state-*" };
             foreach (var pattern in patterns)
             {

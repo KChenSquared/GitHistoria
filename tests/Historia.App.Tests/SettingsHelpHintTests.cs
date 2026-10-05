@@ -3,8 +3,8 @@ namespace HistoriaApp.Tests;
 /// <summary>
 /// Every explanatory note on the App Settings page is a <c>?</c> hover hint carrying its whole
 /// text, never a visible caption under the control, and the labels read as approved. A private
-/// caption helper once shadowed <see cref="ViewKit.WithHint"/> and silently turned every hint
-/// back into a caption — these tests pin the exact anchor → hint map so that cannot recur
+/// caption helper shadowing <see cref="ViewKit.WithHint"/> would silently turn every hint back
+/// into a caption — these tests pin the exact anchor → hint map so that cannot happen
 /// unnoticed.
 /// </summary>
 [Trait("tier", "ui")]

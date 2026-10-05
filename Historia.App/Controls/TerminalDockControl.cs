@@ -53,8 +53,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
         _tabStrip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
 
         // Buttons stacked vertically on the right: close on top, new-terminal below.
-        // The clear and maximize/restore buttons are gone; "+" opens another Home terminal,
-        // exactly as the Historia-menu entry does.
+        // "+" opens another Home terminal, exactly as the Historia-menu entry does.
         var toolbar = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
         toolbar.Children.Add(ToolButton("✕", "Close terminal dock", () => SetOpen(false)));
         toolbar.Children.Add(ToolButton("＋", "New terminal", NewHomeTerminal));

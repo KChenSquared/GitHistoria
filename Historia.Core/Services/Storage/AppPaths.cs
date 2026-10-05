@@ -17,8 +17,8 @@ public static class AppPaths
     private static string? _cachedPortable;
     private static readonly object _sync = new();
 
-    /// <summary>Redirects <b>all</b> persistent state to <paramref name="directory"/> (test seam,
-    ///). Short-circuits the whole resolution and invalidates the cache.</summary>
+    /// <summary>Redirects <b>all</b> persistent state to <paramref name="directory"/> (test seam).
+    /// Short-circuits the whole resolution and invalidates the cache.</summary>
     public static void OverrideForTesting(string? directory)
     {
         _override.Value = directory;

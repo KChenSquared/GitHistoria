@@ -122,7 +122,7 @@ public class WorkspaceServiceTests : WorkspaceServiceTestBase
 
     /// <summary>ValidateCloneUrl delegates to CloneValidation.DescribeUrlProblem, which
     /// also rejects a URL with no repo-address shape at all (not just the security-motivated
-    /// cases above) — confirms that delegation reaches the new shape check too.</summary>
+    /// cases above) — confirms that delegation reaches the shape check too.</summary>
     [Fact]
     public async Task CloneAsync_rejects_a_url_with_no_repository_shape()
     {
@@ -312,8 +312,8 @@ public class WorkspaceServiceTests : WorkspaceServiceTestBase
     /// <summary>
     /// Verifies that restored repositories from session are not touched in the recent list.
     /// Also guards the dispose path: the restored background tab is still queued when the
-    /// workspace is disposed, which once spun DrainBackgroundInitQueueAsync forever on the
-    /// closed foreground tab and hung DisposeAsync.
+    /// workspace is disposed, and DrainBackgroundInitQueueAsync must not spin forever on the
+    /// closed foreground tab and hang DisposeAsync.
     /// </summary>
     [Fact(Timeout = 30000)]
     public async Task Session_restore_does_not_touch_the_recent_list()
@@ -487,7 +487,7 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
         ctx1.State.StatusChanged += (_, _) => statusRaised.TrySetResult();
 
         // Identity resolution is still blocked (never released) — if RefreshAllAsync waited for it
-        // to finish first (the old sequential behavior), this would time out.
+        // to finish first (running the two sequentially), this would time out.
         await statusRaised.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.False(ctx1.FirstFullLoad.IsCompleted, "identity is still blocked, so the attempt as a whole isn't done");
@@ -687,7 +687,7 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
     private static TestRepositoryBuilder RepoWithoutLocalIdentity()
     {
         var b = Repo("f.txt");
-        //'s write path only triggers when the repo has neither user.name nor user.email set
+        // The profile-to-git-config write path only triggers when the repo has neither user.name nor user.email set
         // locally — TestRepositoryBuilder.Create() sets both so Commit() works, so clear them here.
         b.Git("config", "--local", "--unset", "user.name");
         b.Git("config", "--local", "--unset", "user.email");
@@ -1044,7 +1044,7 @@ public class WorkspaceTabGroupMoveTests : WorkspaceServiceTestBase
         ws.Move(owner, newIndex: 3);
 
         // The owner+child block relocates together, snapping to the boundary nearest index 3
-        // (third's own start) — matching the pre-existing (ungrouped) Move's convention of using
+        // (third's own start) — matching the ungrouped Move's convention of using
         // the target index exactly as computed pre-removal, with no shift adjustment.
         Assert.Equal([other, third, owner, child], ws.OpenRepositories);
         await ws.DisposeAsync();

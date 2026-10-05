@@ -109,10 +109,9 @@ public sealed class GraphMetaSpliceTests
     public void Guard4_fails_closed_when_no_full_walk_time_is_known()
     {
         // An unknown baseline (no recorded
-        // LastFullWalkMs — a store from before this field existed, or a wiped disk cache) used to
-        // let a delta query of ANY length through unchecked ("skip the check, allow the splice").
-        // Fixed to reject instead — even a fast delta query must not pass without a real budget to
-        // compare against.
+        // LastFullWalkMs — a store written without this field, or a wiped disk cache) rejects
+        // the splice rather than letting a delta query of ANY length through unchecked — even a
+        // fast delta query must not pass without a real budget to compare against.
         var result = EvaluateDefaults(addedElapsed: TimeSpan.FromMilliseconds(1), fullWalkElapsed: TimeSpan.Zero);
         Assert.False(result.Allowed);
     }

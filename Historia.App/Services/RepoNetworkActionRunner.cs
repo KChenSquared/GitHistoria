@@ -10,9 +10,9 @@ public sealed record RepoNetworkProgress(RepositoryContext Repo, GitProgress? Pr
 /// repository, or the focused one when the request names none. One operation runs at a time; a
 /// request that arrives meanwhile is answered with a notice, not queued.
 /// A DI singleton, eagerly resolved once at startup (<c>MainWindow</c>) so it subscribes to <see cref="IRepoActionBus.NetworkActionRequested"/> for
-/// the app's whole lifetime — this logic used to live in <c>RepositoryView</c> itself, which meant
-/// Fetch/Pull/Push silently did nothing whenever the detail pane showed anything other than the
-/// repo view (Home, Settings, …), since that view (and its event subscription) had been disposed.
+/// the app's whole lifetime. It does not live in <c>RepositoryView</c>: that view (and any event
+/// subscription it holds) is disposed whenever the detail pane shows something else (Home,
+/// Settings, …), so Fetch/Pull/Push would silently do nothing there.
 /// </summary>
 public interface IRepoNetworkActionRunner
 {

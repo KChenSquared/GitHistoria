@@ -1,7 +1,7 @@
 <Project>
 
   <!--
-    V4: one build-output tree for the whole solution, rooted at the repository root. Every
+    One build-output tree for the whole solution, rooted at the repository root. Every
     project's bin/ and obj/ are redirected to <repo>\bin\<ProjectName>\ and
     <repo>\obj\<ProjectName>\ — nothing is written under Historia.App\, Historia.Core\, or
     tests\Historia.Tests\.

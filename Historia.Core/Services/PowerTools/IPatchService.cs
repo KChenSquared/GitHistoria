@@ -10,7 +10,7 @@ public interface IPatchService
     /// <summary>
     /// Builds a unified-diff patch containing only the requested hunks, or only the requested
     /// lines within them. The caller supplies the <see cref="FileDiff"/> for the correct diff
-    /// direction (index↔worktree to stage, HEAD↔index to unstage).3 requirement 1.
+    /// direction (index↔worktree to stage, HEAD↔index to unstage).
     /// <paramref name="reverse"/> must match the reverse flag passed to <see cref="CheckAsync"/>
     /// and <see cref="ApplyPatchAsync"/>.
     /// </summary>

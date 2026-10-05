@@ -179,8 +179,8 @@ internal static class SingleInstance
             {
                 // A malformed client, or a bind failure, must not kill the listener outright —
                 // but a bind failure that never clears (e.g. another process/session holding the
-                // pipe name — see the MutexName/PipeName comment) used to retry forever, 5 times
-                // a second, for the life of the process. Give up after a bounded run of failures
+                // pipe name — see the MutexName/PipeName comment) would otherwise retry forever,
+                // 5 times a second, for the life of the process. Give up after a bounded run of failures
                 // and act as a lone instance, per this class's own stated degrade policy.
                 if (++consecutiveFailures >= MaxConsecutiveServerFailures)
                     return;

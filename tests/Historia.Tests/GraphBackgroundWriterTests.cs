@@ -227,8 +227,8 @@ public sealed class GraphBackgroundWriterTests : IAsyncDisposable
     public async Task EnqueueInactiveTab_runs_jobs_one_at_a_time_in_enqueue_order()
     {
         var writer = new GraphBackgroundWriter(new RecordingGitCliService());
-        // Two distinct contexts — EnqueueInactiveTab now de-dupes by context, so
-        // this ordering test (which predates that fix) must not enqueue the same context twice.
+        // Two distinct contexts — EnqueueInactiveTab de-dupes by context, so
+        // this ordering test must not enqueue the same context twice.
         await using var ctx1 = _host.Open(_repo.Path);
         await using var ctx2 = _host.Open(_repo.Path);
 

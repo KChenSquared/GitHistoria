@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 
-/// <summary>The About dialog's version formatting and credits, and the guarantee that Settings no
-/// longer carries an About section (the credits must live in the dialog instead).</summary>
+/// <summary>The About dialog's version formatting and credits, and the guarantee that Settings
+/// carries no About section (the credits must live in the dialog instead).</summary>
 [Trait("tier", "ui")]
 public sealed class AboutDialogTests
 {

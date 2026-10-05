@@ -27,7 +27,7 @@ public sealed class AtomicFileWriter : IAsyncDisposable
         var dir = Path.GetDirectoryName(filePath)!;
         Directory.CreateDirectory(dir);
 
-        // Each write now uses a unique temp name (so two processes writing the same target
+        // Each write uses a unique temp name (so two processes writing the same target
         // cannot interleave into one shared temp), which means a hard crash mid-write can
         // leave an orphan. Sweep our own stale temps on construction — best effort.
         try
@@ -207,7 +207,7 @@ public sealed class AtomicFileWriter : IAsyncDisposable
     private async Task<bool> WriteAtomicAsync(string content, CancellationToken ct)
     {
         // Unique per write: a second process (or a second AtomicFileWriter) targeting the same
-        // path can no longer truncate a temp file this write is still appending to.
+        // path cannot truncate a temp file this write is still appending to.
         var tempPath = $"{FilePath}.{Guid.NewGuid():N}.tmp";
 
         try

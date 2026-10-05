@@ -1,8 +1,9 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>Every configured remote gets a sidebar row with the remote context menu, even with no
-/// remote-tracking branches; the old "Rename remote…" item is gone; stale tracking groups render
-/// without a menu.</summary>
+/// remote-tracking branches; stale tracking groups render without a menu. Remote rows sort
+/// case-insensitively and carry a numbered cloud when two or more remotes exist; a right-click
+/// opens the menu without toggling the row; the Remotes header has an Add remote button.</summary>
 [Trait("tier", "ui")]
 public sealed class RefNavigatorRemoteRowTests
 {
@@ -26,7 +27,7 @@ public sealed class RefNavigatorRemoteRowTests
     {
         public string Path { get; }
 
-        public RepoFixture()
+        public RepoFixture(bool withUpstream = true, string[]? extraRemotes = null)
         {
             Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-remoterow-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Path);
@@ -39,8 +40,12 @@ public sealed class RefNavigatorRemoteRowTests
 
             RunGit("remote", "add", "origin", "https://example.com/repo.git");
             RunGit("update-ref", "refs/remotes/origin/main", "HEAD");
+            RunGit("update-ref", "refs/remotes/origin/feature/x", "HEAD");
             // Configured but never fetched: no remote-tracking branches.
-            RunGit("remote", "add", "upstream", "https://example.com/upstream.git");
+            if (withUpstream)
+                RunGit("remote", "add", "upstream", "https://example.com/upstream.git");
+            foreach (var extra in extraRemotes ?? [])
+                RunGit("remote", "add", extra, $"git@example.com:o/{extra}.git");
             // Tracking refs whose remote is not configured.
             RunGit("update-ref", "refs/remotes/ghost/main", "HEAD");
         }
@@ -129,9 +134,10 @@ public sealed class RefNavigatorRemoteRowTests
         return sc.BuildServiceProvider();
     }
 
-    private static (RefNavigatorView View, ServiceProvider Sp, RepoFixture Fixture, RepositoryContext Context, Window Window) CreateView()
+    private static (RefNavigatorView View, ServiceProvider Sp, RepoFixture Fixture, RepositoryContext Context, Window Window) CreateView(
+        bool withUpstream = true, string[]? extraRemotes = null)
     {
-        var fixture = new RepoFixture();
+        var fixture = new RepoFixture(withUpstream, extraRemotes);
         var sp = CreateServices();
         var ws = sp.GetRequiredService<IWorkspaceService>();
         var ctx = ws.OpenAsync(fixture.Path).GetAwaiter().GetResult();
@@ -154,11 +160,28 @@ public sealed class RefNavigatorRemoteRowTests
         try { s.Fixture.Dispose(); } catch { }
     }
 
-    private static Border? FolderRowNamed(RefNavigatorView view, string name) =>
+    // Folder rows: a caret and a name, plus a cloud on a remote root. Leaves have four columns.
+    private static IEnumerable<Border> FolderRows(RefNavigatorView view) =>
         view.GetVisualDescendants().OfType<Border>()
-            .FirstOrDefault(b => b.Child is Grid { ColumnDefinitions.Count: 2 }
-                && ToolTip.GetTip(b)?.ToString() == name
-                && b.Height == 24);
+            .Where(b => b.Child is Grid { ColumnDefinitions.Count: 2 or 3 } && b.Height == 24);
+
+    private static TextBlock RowName(Border row) =>
+        row.GetVisualDescendants().OfType<TextBlock>().Last(t => t.Parent is Grid);
+
+    private static Border? FolderRowNamed(RefNavigatorView view, string name) =>
+        FolderRows(view).FirstOrDefault(b => RowName(b).Text == name);
+
+    /// <summary>The digit on a remote root row's cloud, "" for a plain cloud, null for no cloud.</summary>
+    private static string? CloudDigit(Border row)
+    {
+        if (row.Child is not Grid { ColumnDefinitions.Count: 3 } grid)
+            return null;
+        var cloud = grid.Children.OfType<Panel>().Single(c => Grid.GetColumn(c) == 1);
+        return cloud.GetVisualDescendants().OfType<TextBlock>().SingleOrDefault()?.Text ?? "";
+    }
+
+    private static List<string> RemoteRowOrder(RefNavigatorView view) =>
+        FolderRows(view).Where(b => CloudDigit(b) is not null).Select(b => RowName(b).Text!).ToList();
 
     private static List<string> MenuHeaders(Border row) =>
         (row.ContextMenu!.ItemsSource as IEnumerable<Control>)!
@@ -203,6 +226,74 @@ public sealed class RefNavigatorRemoteRowTests
         }
     }
 
+    private static string Caret(Border row) =>
+        row.GetVisualDescendants().OfType<TextBlock>().First().Text!;
+
+    private static void Click(Window window, Border row, MouseButton button)
+    {
+        var at = row.TranslatePoint(new Point(row.Bounds.Width / 2, row.Bounds.Height / 2), window)!.Value;
+        // Hit testing reads the composed scene, so let a render tick publish the current tree.
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
+        window.MouseDown(at, button);
+        Dispatcher.UIThread.RunJobs();
+        window.MouseUp(at, button);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    [AvaloniaFact]
+    public void Right_click_on_remote_root_opens_its_menu()
+    {
+        var setup = CreateView();
+        try
+        {
+            var row = FolderRowNamed(setup.View, "origin")!;
+            Click(setup.Window, row, MouseButton.Right);
+
+            Assert.NotNull(row.GetVisualRoot());
+            Assert.True(row.ContextMenu!.IsOpen);
+            row.ContextMenu.Close();
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Right_click_does_not_toggle_the_remote_folder()
+    {
+        var setup = CreateView();
+        try
+        {
+            var before = Caret(FolderRowNamed(setup.View, "origin")!);
+            Click(setup.Window, FolderRowNamed(setup.View, "origin")!, MouseButton.Right);
+            FolderRowNamed(setup.View, "origin")!.ContextMenu?.Close();
+
+            Assert.Equal(before, Caret(FolderRowNamed(setup.View, "origin")!));
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Left_click_still_toggles_the_remote_folder()
+    {
+        var setup = CreateView();
+        try
+        {
+            Assert.Equal("▾", Caret(FolderRowNamed(setup.View, "origin")!));
+            Click(setup.Window, FolderRowNamed(setup.View, "origin")!, MouseButton.Left);
+            Assert.Equal("▸", Caret(FolderRowNamed(setup.View, "origin")!));
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
     [AvaloniaFact]
     public void Stale_tracking_group_renders_without_a_remote_menu()
     {
@@ -212,6 +303,104 @@ public sealed class RefNavigatorRemoteRowTests
             var row = FolderRowNamed(setup.View, "ghost");
             Assert.NotNull(row);
             Assert.Null(row!.ContextMenu);
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Remotes_header_has_an_add_button_that_does_not_toggle_the_section()
+    {
+        var setup = CreateView();
+        try
+        {
+            var requested = 0;
+            setup.View.AddRemoteOverrideForTesting = () => requested++;
+            var button = setup.View.GetVisualDescendants().OfType<Button>()
+                .Single(b => ToolTip.GetTip(b)?.ToString() == "Add remote…");
+            Assert.True(setup.View.RemotesOpen);
+
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            Dispatcher.UIThread.RunJobs();
+            var at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), setup.Window)!.Value;
+            setup.Window.MouseDown(at, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+            setup.Window.MouseUp(at, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(1, requested);
+            Assert.True(setup.View.RemotesOpen);
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Remote_roots_show_numbered_clouds_when_two_or_more()
+    {
+        var setup = CreateView();
+        try
+        {
+            Assert.Equal("1", CloudDigit(FolderRowNamed(setup.View, "origin")!));
+            Assert.Equal("2", CloudDigit(FolderRowNamed(setup.View, "upstream")!));
+            Assert.Equal("", CloudDigit(FolderRowNamed(setup.View, "ghost")!));
+
+            Assert.Equal("1 · origin", ToolTip.GetTip(FolderRowNamed(setup.View, "origin")!));
+            Assert.Equal("ghost", ToolTip.GetTip(FolderRowNamed(setup.View, "ghost")!));
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Single_remote_root_shows_plain_cloud()
+    {
+        var setup = CreateView(withUpstream: false);
+        try
+        {
+            var origin = FolderRowNamed(setup.View, "origin")!;
+            Assert.Equal("", CloudDigit(origin));
+            Assert.Equal("origin", ToolTip.GetTip(origin));
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Remote_rows_follow_case_insensitive_order()
+    {
+        var setup = CreateView(extraRemotes: ["Zeta", "alpha"]);
+        try
+        {
+            Assert.Equal(["alpha", "ghost", "origin", "upstream", "Zeta"], RemoteRowOrder(setup.View));
+            Assert.Equal(
+                ["1", "", "2", "3", "4"],
+                RemoteRowOrder(setup.View).Select(n => CloudDigit(FolderRowNamed(setup.View, n)!)).ToList());
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Path_segment_folders_have_no_cloud()
+    {
+        var setup = CreateView();
+        try
+        {
+            var feature = FolderRowNamed(setup.View, "feature");
+            Assert.NotNull(feature);
+            Assert.Null(CloudDigit(feature!));
+            Assert.DoesNotContain(feature!.GetVisualDescendants(), v => v is Avalonia.Controls.Shapes.Path);
         }
         finally
         {

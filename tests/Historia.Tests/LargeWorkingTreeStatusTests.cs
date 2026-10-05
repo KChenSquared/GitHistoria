@@ -3,7 +3,7 @@ namespace Historia.Tests;
 /// <summary>
 /// On a large working tree the focused tab's first <c>git status</c> waits for the graph's crawl
 /// to warm up (<see cref="RepositoryContext.GraphWarmed"/>): a cold status there reads every file
-/// and slowed each crawl step several-fold while both ran.
+/// and slows each crawl step several-fold while both run.
 /// </summary>
 [Trait("tier", "git")]
 public sealed class LargeWorkingTreeStatusTests : IAsyncDisposable

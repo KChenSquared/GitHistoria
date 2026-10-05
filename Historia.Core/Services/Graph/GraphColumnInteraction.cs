@@ -106,15 +106,15 @@ public static class GraphColumnInteraction
         return null;
     }
 
-    /// <summary>The single-slot (Refs, Message) search list every pre-multi-slot caller used —
-    /// the default for <see cref="HeaderIconAt"/> so those call sites keep compiling unchanged.</summary>
+    /// <summary>The single-slot (Refs, Message) search list — the default for
+    /// <see cref="HeaderIconAt"/> when a caller passes no candidates.</summary>
     private static readonly (GraphColumnKind Kind, int Slot)[] DefaultHeaderIconCandidates =
         [(GraphColumnKind.Refs, 0), (GraphColumnKind.Message, 0)];
 
     /// <summary>Returns the (kind, slot) pair of the header icon containing
     /// (<paramref name="x"/>, <paramref name="y"/>), restricted to the candidates in
-    /// <paramref name="candidates"/> (default: the single-slot Refs/Message search every caller
-    /// used before multi-slot columns existed), or <c>null</c>.</summary>
+    /// <paramref name="candidates"/> (default: the single-slot Refs/Message search), or
+    /// <c>null</c>.</summary>
     public static (GraphColumnKind Kind, int Slot)? HeaderIconAt(
         IReadOnlyList<ResolvedColumn> resolved,
         double x,

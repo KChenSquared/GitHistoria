@@ -138,11 +138,44 @@ public sealed class RemoteMenuTests
     [InlineData("origin", "https://a/r .git", false)]
     [InlineData("origin", "https://a/r.git", true)]
     [InlineData("team/fork", "https://a/r.git", true)]
+    [InlineData("-x", "https://a/r.git", false)]
+    [InlineData("--upload-pack=evil", "https://a/r.git", false)]
+    [InlineData("origin", "git@host:o/taken.git", false)]
+    [InlineData("origin", "  git@host:o/taken.git  ", false)]
     public void EditRemoteDialog_Validate(string name, string url, bool valid)
     {
-        var problem = Historia.Platform.EditRemoteDialog.Validate(name, url, ["taken", "other"]);
+        var problem = Historia.Platform.EditRemoteDialog.Validate(name, url, ["taken", "other"],
+            new Dictionary<string, string> { ["git@host:o/taken.git"] = "taken" });
         Assert.Equal(valid, problem is null);
     }
+
+    [Fact]
+    public void Validate_duplicate_url_names_the_remote_using_it()
+    {
+        var owners = Historia.Platform.EditRemoteDialog.UrlOwners(
+            [Remote("git@host:o/up.git", name: "upstream"), Remote(" git@host:o/r.git ", name: "origin")]);
+
+        Assert.Equal("Remote 'upstream' already uses this URL.",
+            Historia.Platform.EditRemoteDialog.Validate("fork", "git@host:o/up.git", ["upstream", "origin"], owners));
+        Assert.Equal("Remote 'origin' already uses this URL.",
+            Historia.Platform.EditRemoteDialog.Validate("fork", "git@host:o/r.git ", ["upstream", "origin"], owners));
+    }
+
+    [Fact]
+    public void Validate_accepts_a_remote_keeping_its_own_url_in_edit()
+    {
+        // Edit excludes the remote being edited from both lists, so its own URL is not a clash.
+        var origin = Remote("git@host:o/r.git");
+        var others = new[] { Remote("git@host:o/up.git", name: "upstream") };
+
+        Assert.Null(Historia.Platform.EditRemoteDialog.Validate(origin.Name, origin.Url,
+            others.Select(r => r.Name).ToList(), Historia.Platform.EditRemoteDialog.UrlOwners(others)));
+    }
+
+    [Fact]
+    public void Validate_rejects_a_leading_dash_with_its_own_message() =>
+        Assert.Equal("A remote name cannot start with '-'.",
+            Historia.Platform.EditRemoteDialog.Validate("-x", "git@host:o/r.git", [], new Dictionary<string, string>()));
 
     [Fact]
     public void Delete_effect_names_remote_url_and_branch_count()

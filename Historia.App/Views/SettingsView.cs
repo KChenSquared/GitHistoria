@@ -451,8 +451,8 @@ public sealed class SettingsView : UserControl, IDisposable
                 // races the physical key: the dialog's own default button (Cancel, here — a
                 // destructive confirm defaults to safe) can end up catching that same keystroke's
                 // trailing key-up the instant the new window takes focus, auto-cancelling itself
-                // before the user ever sees it. Flushing the Input-priority queue alone (as this
-                // used to do) isn't enough — that's Avalonia's queue, not the OS message queue the
+                // before the user ever sees it. Flushing the Input-priority queue alone
+                // isn't enough — that's Avalonia's queue, not the OS message queue the
                 // native key-up is still sitting in. A short real-time delay lets that message
                 // land on the field (harmless — NumericUpDown has no Enter-linked side effect
                 // after commit) before the dialog exists to steal it. Also covers the same race

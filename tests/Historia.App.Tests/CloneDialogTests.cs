@@ -2,8 +2,8 @@ namespace HistoriaApp.Tests;
 
 /// <summary>
 /// The Clone dialog's folder-name box must keep auto-filling from the URL box across
-/// multiple pastes — the regression was the auto-fill's own programmatic write to
-/// <c>folder.Text</c> being mistaken for a user edit, which silently stopped every later update.
+/// multiple pastes — the auto-fill's own programmatic write to <c>folder.Text</c> must not be
+/// mistaken for a user edit, which would silently stop every later update.
 /// Exercises <see cref="CloneDialog.ShouldAutoFillFolder"/> directly rather than driving the
 /// whole modal, mirroring <c>DestructiveConfirmDialogTests</c>'s pattern of calling small static
 /// helpers.

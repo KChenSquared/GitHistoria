@@ -40,9 +40,9 @@ public static class GraphColumnDefaults
     ];
 
     /// <summary>
-    /// Per-column minimum width. Keeps its one-argument signature so <c>Normalize</c>, the auto-fit gesture
-    /// and the resize gesture all keep compiling. "Minimum 150 for each other column", with SHA
-    /// held at 80 — a seven-character hash in a 150 DIU column is dead space.
+    /// Per-column minimum width, shared by <c>Normalize</c>, the auto-fit gesture and the resize
+    /// gesture. 150 for each other column, with SHA held at 80 — a seven-character hash in a
+    /// 150 DIU column is dead space.
     /// </summary>
     public static double MinWidthFor(GraphColumnKind kind) => kind switch
     {

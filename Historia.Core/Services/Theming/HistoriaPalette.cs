@@ -192,8 +192,8 @@ public static class HistoriaPalette
         ("ansi-br-white",   "#A5A5A5")); // A: terminal.ansiBrightWhite
 
     // ── High Contrast ────────────────────────────────────────────────────────────────────
-    // Its own accessibility contract; no VS Code counterpart. Additions are derived
-    // from the existing values: chrome = bg (one black ground), border-strong =
+    // Its own accessibility contract; no VS Code counterpart. Derived tokens come
+    // from the core HC values: chrome = bg (one black ground), border-strong =
     // border, list-active = the selection yellow at full opacity, git-*/diff-* from the
     // danger/success pair. Every foreground/background pairing stays above 7:1.
     private static readonly IReadOnlyDictionary<string, Rgb> HighContrast = Build(

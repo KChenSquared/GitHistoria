@@ -24,7 +24,7 @@ public sealed class AppLogTests : IDisposable
             : [];
 
     /// <summary>Reads the session file's content. Disables logging first — the session writer
-    /// now holds the file open for the whole session (no more open/close per line),
+    /// holds the file open for the whole session (not opened and closed per line),
     /// so the handle must be closed before a second reader can open the same file.</summary>
     private string ReadSession()
     {
@@ -148,9 +148,8 @@ public sealed class AppLogTests : IDisposable
     [Fact]
     public void The_session_file_stays_open_for_writing_across_multiple_entries()
     {
-        // every previous version reopened, wrote, and closed the file on every single
-        // entry — no handle was ever held between calls. Now one handle spans the whole session:
-        // a second attempt to open the same file for writing must be rejected while it's live.
+        // One handle spans the whole session rather than the file being reopened, written and
+        // closed per entry: a second attempt to open the same file for writing must be rejected while it's live.
         AppLog.Enabled = true;
         AppLog.Write(AppLogLevel.Info, "test", "one");
 

@@ -9,7 +9,7 @@ public sealed class GraphPrepareGateTests : IAsyncDisposable
         await _host.DisposeAsync();
     }
 
-    /// <summary>Waits until the gate sees exactly these queued callers. A fixed sleep here let a
+    /// <summary>Waits until the gate sees exactly these queued callers. A fixed sleep here would let a
     /// busy thread pool start the foreground task only after the holder released.</summary>
     private static async Task WaitForWaiters(GraphPrepareGate gate, int foreground, int background)
     {

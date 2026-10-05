@@ -198,8 +198,8 @@ internal static class SimpleDialog
         var tcs = new TaskCompletionSource<Result>();
         // Set the result BEFORE closing: Window.Close() raises Closed synchronously, and that
         // handler's TrySetResult(false, ...) would otherwise win the race against this one,
-        // making every confirm-button click resolve as "not confirmed" (matches ShowChoiceAsync
-        // below, which already gets this order right).
+        // making every confirm-button click resolve as "not confirmed" (ShowChoiceAsync below uses
+        // the same order).
         confirm.Click += (_, _) => { tcs.TrySetResult(new Result(true, box.Text)); window.Close(); };
         if (cancel is not null)
             cancel.Click += (_, _) => { tcs.TrySetResult(new Result(false, null)); window.Close(); };

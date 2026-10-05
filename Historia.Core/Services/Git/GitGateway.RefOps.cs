@@ -346,7 +346,7 @@ public sealed partial class GitGateway
         {
             var result = await cli.RunAsync(new GitCliRequest
             {
-                Arguments = ["remote", "add", name, url],
+                Arguments = ["remote", "add", "--", name, url],
                 WorkingDirectory = context.RepositoryPath,
             }, innerCt).ConfigureAwait(false);
 
@@ -397,7 +397,7 @@ public sealed partial class GitGateway
         {
             var result = await cli.RunAsync(new GitCliRequest
             {
-                Arguments = ["remote", "rename", oldName, newName],
+                Arguments = ["remote", "rename", "--", oldName, newName],
                 WorkingDirectory = context.RepositoryPath,
             }, innerCt).ConfigureAwait(false);
 

@@ -53,6 +53,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     internal bool TagsFilterOpen => _tagsFilterOpen;
     internal bool StashesFilterOpen => _stashesFilterOpen;
     internal bool LocalOpen => _localOpen;
+    internal bool RemotesOpen => _remotesOpen;
     internal bool TagsOpen => _tagsOpen;
 
     private void ResetSectionState()
@@ -80,6 +81,14 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     /// records deviations from that default, so the actual open/closed state is the default
     /// XORed with "has this path been toggled".</summary>
     private bool IsOpen(string path, int depth) => (depth == 0) ^ _expanded.Contains(path);
+
+    /// <summary>Replaces the Add remote dialog flow behind the Remotes header's button; tests set
+    /// it so pressing the button doesn't open a window.</summary>
+    internal Action? AddRemoteOverrideForTesting;
+
+    // The cloud on a remote's root row, and the slot it takes between the caret and the name.
+    private const double RemoteCloudSize = 14;
+    private const double RemoteCloudSlot = RemoteCloudSize + 3;
 
     private static readonly TimeSpan PowerToolsPaintCeiling = TimeSpan.FromSeconds(8);
 
@@ -364,6 +373,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         }
 
         // ── Remotes: one collapsible folder per remote ──
+        var addRemote = IconButton("add", "Add remote…", AddRemote);
         var remoteBody = Section($"Remotes ({repo.State.Remotes.Count})", _remotesOpen,
             () => { _remotesOpen = !_remotesOpen; Rebuild(); },
             filter: () =>
@@ -374,7 +384,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 if (_remotesFilterOpen) _remotesFilterBox?.Focus();
             },
             filterOpen: _remotesFilterOpen,
-            filterBox: _remotesFilterBox);
+            filterBox: _remotesFilterBox,
+            extra: (addRemote, AddRemote));
         if (remoteBody is not null)
         {
             if (_remotesFilterOpen && !string.IsNullOrWhiteSpace(_remotesFilterBox?.Text))
@@ -406,16 +417,18 @@ public sealed class RefNavigatorView : UserControl, IDisposable
 
             // Every configured remote gets a row, including one with no remote-tracking branches
             // yet. Tracking-branch groups whose alias is no longer configured (stale refs) still
-            // render, without a remote menu.
+            // render, without a remote menu or a number. Rows sort with the numbering's comparer,
+            // so a remote's number matches its position among the configured rows.
             var configured = repo.State.Remotes.ToDictionary(r => r.Name, StringComparer.Ordinal);
+            var numbering = RemoteNumbering.From(configured.Keys);
             var byRemote = remote
                 .GroupBy(b => b.RemoteName ?? (b.Name.Contains('/') ? b.Name[..b.Name.IndexOf('/')] : "origin"))
                 .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
-            foreach (var alias in configured.Keys.Union(byRemote.Keys, StringComparer.Ordinal).OrderBy(a => a, StringComparer.Ordinal))
+            foreach (var alias in configured.Keys.Union(byRemote.Keys, StringComparer.Ordinal).OrderBy(a => a, RemoteNumbering.Comparer))
             {
                 var key = "remote:" + alias;
                 configured.TryGetValue(alias, out var info);
-                remoteBody.Children.Add(FolderRow(alias, key, depth: 0, remote: info));
+                remoteBody.Children.Add(FolderRow(alias, key, depth: 0, remote: info, numbering: numbering));
                 if (IsOpen(key, depth: 0) && byRemote.TryGetValue(alias, out var branchesOfRemote))
                 {
                     var prefix = alias + "/";
@@ -625,9 +638,10 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private static string Count<T>(IReadOnlyList<T>? list) => list is null ? "" : $" ({list.Count})";
 
     /// <summary>Section header; returns the capped body panel when expanded, else null.</summary>
-    private StackPanel? Section(string title, bool open, Action toggle, Action? filter = null, bool filterOpen = false, TextBox? filterBox = null)
+    private StackPanel? Section(string title, bool open, Action toggle, Action? filter = null, bool filterOpen = false,
+        TextBox? filterBox = null, (Button Button, Action Run)? extra = null)
     {
-        _root.Children.Add(SectionHeader(title, open, toggle, filter));
+        _root.Children.Add(SectionHeader(title, open, toggle, filter, extra));
         if (open && filterOpen && filterBox is not null)
         {
             filterBox.Margin = new Thickness(LeafIndent, 2, RowRightGutter, 4);
@@ -645,9 +659,13 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         return body;
     }
 
-    private Control SectionHeader(string title, bool open, Action toggle, Action? filter = null)
+    /// <summary>A section's header row. <paramref name="extra"/> is an optional action button drawn
+    /// before the filter button; like the filter button it consumes its own press so it never
+    /// toggles the section.</summary>
+    private Control SectionHeader(string title, bool open, Action toggle, Action? filter = null,
+        (Button Button, Action Run)? extra = null)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"), Height = 28 };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), Height = 28 };
         var caret = Text(open ? "▾" : "▸", "ColorTextMuted", 10);
         caret.Margin = new Thickness(8, 0, 6, 0);
         grid.Children.Add(caret);
@@ -655,6 +673,18 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         label.LetterSpacing = 0.4;
         Grid.SetColumn(label, 1);
         grid.Children.Add(label);
+        if (extra is { } ex)
+        {
+            var (extraBtn, run) = ex;
+            extraBtn.AddHandler(PointerPressedEvent, (_, e) =>
+            {
+                e.Handled = true;
+                if (e.GetCurrentPoint(extraBtn).Properties.IsLeftButtonPressed)
+                    run();
+            }, RoutingStrategies.Tunnel);
+            Grid.SetColumn(extraBtn, 2);
+            grid.Children.Add(extraBtn);
+        }
         if (filter is not null)
         {
             var filterBtn = IconButton("filter_alt", "Filter this section", () => filter());
@@ -663,7 +693,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 e.Handled = true;
                 filter();
             }, RoutingStrategies.Tunnel);
-            Grid.SetColumn(filterBtn, 2);
+            Grid.SetColumn(filterBtn, 3);
             grid.Children.Add(filterBtn);
         }
         var b = new Border { Child = grid, Cursor = new Cursor(StandardCursorType.Hand), Padding = new Thickness(0, 0, RowRightGutter, 0) };
@@ -703,26 +733,58 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     }
 
     /// <summary>A collapsible folder row (remote root or path segment). Its label aligns with leaves.
-    /// <paramref name="remote"/> is non-null only for a configured remote's own root folder row
-    /// (never a path-segment folder beneath it) and adds the remote context menu.</summary>
-    private Border FolderRow(string segment, string path, int depth, RemoteInfo? remote = null)
+    /// <paramref name="numbering"/> is non-null only for a remote's own root row (configured or
+    /// stale), which then shows a cloud carrying the remote's number between the caret and the
+    /// name. <paramref name="remote"/> is non-null only for a configured remote's root row and adds
+    /// the remote context menu.</summary>
+    private Border FolderRow(string segment, string path, int depth, RemoteInfo? remote = null, RemoteNumbering? numbering = null)
     {
         var open = IsOpen(path, depth);
         var caret = Text(open ? "▾" : "▸", "ColorTextMuted", 10);
-        // Caret sits 12 DIU left of the shared leaf indent so its label lands on that edge.
-        caret.Margin = new Thickness(LeafIndent + depth * IndentStep - 12, 0, 2, 0);
+        // Caret sits 12 DIU left of the shared leaf indent so its label lands on that edge; a
+        // remote root's cloud takes its slot out of the caret's indent, down to a 4 DIU inset.
+        var caretLeft = LeafIndent + depth * IndentStep - 12;
+        if (numbering is not null)
+            caretLeft = Math.Max(4, caretLeft - RemoteCloudSlot);
+        caret.Margin = new Thickness(caretLeft, 0, 2, 0);
         var name = Text(segment, "ColorTextMuted", 12);
         name.VerticalAlignment = VerticalAlignment.Center;
 
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
-        grid.Children.Add(caret);
-        Grid.SetColumn(name, 1);
-        grid.Children.Add(name);
+        Grid grid;
+        if (numbering is not null)
+        {
+            grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*") };
+            var cloud = RemoteCloudGlyph.CreateIcon(numbering.NumberOf(segment), RemoteCloudSize, "ColorTextMuted", "ColorChrome");
+            cloud.Margin = new Thickness(0, 0, RemoteCloudSlot - RemoteCloudSize, 0);
+            Grid.SetColumn(cloud, 1);
+            grid.Children.Add(caret);
+            grid.Children.Add(cloud);
+            Grid.SetColumn(name, 2);
+            grid.Children.Add(name);
+        }
+        else
+        {
+            grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
+            grid.Children.Add(caret);
+            Grid.SetColumn(name, 1);
+            grid.Children.Add(name);
+        }
 
-        var b = new Border { Child = grid, Height = 24, Cursor = new Cursor(StandardCursorType.Hand), Padding = new Thickness(0, 0, RowRightGutter, 0) };
-        ToolTip.SetTip(b, segment);
+        // Transparent, not null: the whole row (caret gutter and the space past the name) is the
+        // click and context-menu target, not just the glyphs.
+        var b = new Border
+        {
+            Child = grid, Height = 24, Background = Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.Hand), Padding = new Thickness(0, 0, RowRightGutter, 0),
+        };
+        ToolTip.SetTip(b, numbering?.TooltipOf(segment) ?? segment);
+        // Trap: only a left press toggles. The context menu opens on the right button's release,
+        // and Rebuild() replaces every row, so rebuilding on a right press detaches this row (and
+        // moves pointer capture to the root panel) before the menu can open.
         b.PointerPressed += (_, e) =>
         {
+            if (!e.GetCurrentPoint(b).Properties.IsLeftButtonPressed)
+                return;
             e.Handled = true;
             if (!_expanded.Remove(path)) _expanded.Add(path);
             Rebuild();
@@ -737,6 +799,17 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             };
         }
         return b;
+    }
+
+    private void AddRemote()
+    {
+        if (AddRemoteOverrideForTesting is { } over)
+        {
+            over();
+            return;
+        }
+        if (_repo is { } ctx)
+            _ = RemoteMenu.AddAsync(ctx, _notifications, _actions);
     }
 
     private Border Leaf(string text, int depth, string fgKey, Action? select, Control? action, bool current = false, string? tooltip = null)

@@ -12,14 +12,20 @@ internal sealed record EditRemoteResult(string Name, string Url, bool ResetPushU
 internal static class EditRemoteDialog
 {
     /// <summary>Why <paramref name="name"/> / <paramref name="url"/> cannot be saved, or
-    /// <see langword="null"/> when both are acceptable. <paramref name="otherNames"/> are the
-    /// names of the repository's other remotes (compared ordinally).</summary>
-    internal static string? Validate(string name, string url, IReadOnlyCollection<string> otherNames)
+    /// <see langword="null"/> when both are acceptable. Shared by the Add and Edit dialogs.
+    /// <paramref name="otherNames"/> are the names of the repository's other remotes and
+    /// <paramref name="otherUrls"/> maps each of their trimmed fetch URLs to the remote using it
+    /// (both compared ordinally).</summary>
+    internal static string? Validate(string name, string url, IReadOnlyCollection<string> otherNames,
+        IReadOnlyDictionary<string, string> otherUrls)
     {
+        url = url.Trim();
         if (string.IsNullOrWhiteSpace(name))
             return "Enter a name for the remote.";
         if (name.Any(char.IsWhiteSpace))
             return "A remote name cannot contain whitespace.";
+        if (name.StartsWith('-'))
+            return "A remote name cannot start with '-'.";
         if (name.StartsWith('/') || name.EndsWith('/'))
             return "A remote name cannot start or end with '/'.";
         if (name.Contains("..", StringComparison.Ordinal))
@@ -31,15 +37,27 @@ internal static class EditRemoteDialog
             return "Enter a URL for the remote.";
         if (url.Any(char.IsWhiteSpace))
             return "A remote URL cannot contain whitespace.";
+        if (otherUrls.TryGetValue(url, out var owner))
+            return $"Remote '{owner}' already uses this URL.";
         return null;
+    }
+
+    /// <summary>Maps each remote's trimmed fetch URL to its name, for <see cref="Validate"/>.</summary>
+    internal static Dictionary<string, string> UrlOwners(IEnumerable<RemoteInfo> remotes)
+    {
+        var owners = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var r in remotes)
+            owners.TryAdd(r.Url.Trim(), r.Name);
+        return owners;
     }
 
     /// <summary>Shows the dialog for <paramref name="remote"/>. Returns <see langword="null"/>
     /// when the user cancels or saves without changing anything.</summary>
-    public static async Task<EditRemoteResult?> ShowAsync(RemoteInfo remote, IReadOnlyCollection<string> otherNames)
+    public static async Task<EditRemoteResult?> ShowAsync(RemoteInfo remote, IReadOnlyCollection<string> otherNames,
+        IReadOnlyDictionary<string, string> otherUrls)
     {
         if (!Dispatcher.UIThread.CheckAccess())
-            return await Dispatcher.UIThread.InvokeAsync(() => ShowAsync(remote, otherNames));
+            return await Dispatcher.UIThread.InvokeAsync(() => ShowAsync(remote, otherNames, otherUrls));
 
         var nameBox = new TextBox { Text = remote.Name, MinWidth = 460 };
         var urlBox = new TextBox { Text = remote.Url, MinWidth = 460 };
@@ -61,7 +79,7 @@ internal static class EditRemoteDialog
 
         void Revalidate()
         {
-            var problem = Validate((nameBox.Text ?? "").Trim(), (urlBox.Text ?? "").Trim(), otherNames);
+            var problem = Validate((nameBox.Text ?? "").Trim(), (urlBox.Text ?? "").Trim(), otherNames, otherUrls);
             hint.Text = problem;
             hint.IsVisible = problem is not null;
             save.IsEnabled = problem is null;

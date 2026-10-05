@@ -476,8 +476,8 @@ public sealed class FileDiffCliParityTests : IAsyncDisposable
     [InlineData("\r\n")]
     public async Task Raw_patch_keeps_line_endings_and_a_hunk_stages(string eol)
     {
-        // Line-mode capture re-joined stdout with Environment.NewLine: an LF patch came back
-        // CRLF on Windows (and real CRs were lost), so git apply rejected every staged hunk.
+        // Line-mode capture re-joins stdout with Environment.NewLine: an LF patch would come back
+        // CRLF on Windows (and real CRs would be lost), so git apply would reject every staged hunk.
         using var repo = TestRepositoryBuilder.FromTemplate("diff-eol-stage-" + (eol == "\n" ? "lf" : "crlf"), b =>
         {
             b.Git("config", "core.autocrlf", "false");
@@ -509,7 +509,7 @@ public sealed class FileDiffCliParityTests : IAsyncDisposable
     public async Task Commit_diff_of_a_signed_commit_ignores_signature_output()
     {
         // log.showSignature=true prints "No signature" on stdout; reading parents from `git log`
-        // turned that text into the "parent" revision and the diff failed.
+        // would turn that text into the "parent" revision and fail the diff.
         using var repo = TestRepositoryBuilder.FromTemplate("diff-signed-commit", b =>
         {
             b.WriteFile("f.txt", "one\n").Stage().Commit("base");

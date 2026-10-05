@@ -60,8 +60,8 @@ param(
 
     # By default the white / black field is keyed EVERYWHERE by colour, so the tile
     # interior inside the emblem's border also drops out (spine bands / feather / border
-    # stroke are left "floating", which is fine). -FloodFill restores the old behaviour:
-    # only the background reachable from the image edge is removed, enclosed white/black kept.
+    # stroke are left "floating", which is fine). With -FloodFill, only the background
+    # reachable from the image edge is removed, enclosed white/black kept.
     [switch]  $FloodFill,
 
     [switch]  $DarkOnly             # emit only the dark set (skip the light job)
