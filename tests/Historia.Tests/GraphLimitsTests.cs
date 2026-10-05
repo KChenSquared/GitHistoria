@@ -3,8 +3,7 @@ namespace Historia.Tests;
 /// <summary>
 /// <c>AppSettings.ResidentRowCap</c> used to be read raw at every
 /// call site (<c>GraphLayoutService</c>, <c>CommitGraphControl.ResidentRowCap</c>) — a
-/// hand-edited or otherwise out-of-range value (<c>0</c>, or something far above the intended
-/// ceiling) would silently stop the background spill and the graph from ever extending.
+/// hand-edited or otherwise out-of-range value (<c>0</c>, or a negative number) would silently stop the background spill and the graph from ever extending.
 /// <see cref="GraphLimits.GetMaxResidentRows"/> now clamps through
 /// <see cref="AppSettings.ClampResidentRowCap"/> centrally, so every caller is protected without
 /// re-clamping itself.
@@ -22,12 +21,10 @@ public class GraphLimitsTests
     }
 
     [Fact]
-    public void Disk_mode_clamps_a_too_high_cap_down_to_the_ceiling()
+    public void Disk_mode_has_no_upper_ceiling()
     {
-        var result = GraphLimits.GetMaxResidentRows(metaFromDisk: true, residentRowCapDisk: 20_000_000);
-
-        Assert.Equal(10_000_000, result);
-        Assert.Equal(AppSettings.MaxResidentRowCap, result);
+        Assert.Equal(20_000_000, GraphLimits.GetMaxResidentRows(metaFromDisk: true, residentRowCapDisk: 20_000_000));
+        Assert.Equal(int.MaxValue, GraphLimits.GetMaxResidentRows(metaFromDisk: true, residentRowCapDisk: int.MaxValue));
     }
 
     [Fact]

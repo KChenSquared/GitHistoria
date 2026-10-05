@@ -27,7 +27,8 @@ public sealed class GraphCrawlThreshold(int step, int ceiling)
         if (lastVisibleRow < Target)
             return false;
 
-        var next = Math.Min(ceiling, ((lastVisibleRow / step) + 1) * step);
+        // long: with an uncapped ceiling the next step can exceed int.MaxValue.
+        var next = (int)Math.Min(ceiling, ((long)(lastVisibleRow / step) + 1) * step);
         if (next <= Target)
             return false;
 

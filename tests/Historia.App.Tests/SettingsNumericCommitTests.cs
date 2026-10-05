@@ -262,6 +262,94 @@ public class SettingsNumericCommitTests
     }
 
     [AvaloniaFact]
+    public async Task ResidentRowCap_above_warn_threshold_asks_twice_and_commits_on_both_confirms()
+    {
+        var nud = new NumericUpDown
+        {
+            Minimum = AppSettings.MinResidentRowCap,
+            Maximum = AppSettings.MaxResidentRowCap,
+            Value = 2_500_000,
+        };
+        var dialog = new FakeDialogService { ResultToReturn = true };
+        var commits = new List<int>();
+
+        SettingsView.WireResidentRowCapCommit(nud, 2_500_000, dialog, next =>
+        {
+            commits.Add(next);
+            return Task.CompletedTask;
+        });
+
+        nud.Text = "20000000"; // above the old 10M hard cap — no longer clamped
+        RaiseEnter(nud);
+
+        await Task.Delay(500);
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+
+        Assert.Equal(2, dialog.DestructiveCalls.Count);
+        Assert.Equal("Change the resident row cap?", dialog.DestructiveCalls[0].Title);
+        Assert.Equal("Keep this many rows in memory?", dialog.DestructiveCalls[1].Title);
+        Assert.Equal("Save anyway", dialog.DestructiveCalls[1].ConfirmLabel);
+        Assert.Equal([20_000_000], commits);
+    }
+
+    [AvaloniaFact]
+    public async Task ResidentRowCap_cancelling_the_second_warning_reverts_and_does_not_commit()
+    {
+        var nud = new NumericUpDown
+        {
+            Minimum = AppSettings.MinResidentRowCap,
+            Maximum = AppSettings.MaxResidentRowCap,
+            Value = 2_500_000,
+        };
+        var dialog = new FakeDialogService { Results = new Queue<bool>([true, false]) };
+        var commits = new List<int>();
+
+        SettingsView.WireResidentRowCapCommit(nud, 2_500_000, dialog, next =>
+        {
+            commits.Add(next);
+            return Task.CompletedTask;
+        });
+
+        nud.Text = "6000000";
+        RaiseEnter(nud);
+
+        await Task.Delay(500);
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+
+        Assert.Equal(2, dialog.DestructiveCalls.Count);
+        Assert.Empty(commits);
+        Assert.Equal(2_500_000, nud.Value);
+    }
+
+    [AvaloniaFact]
+    public async Task ResidentRowCap_at_warn_threshold_asks_only_once()
+    {
+        var nud = new NumericUpDown
+        {
+            Minimum = AppSettings.MinResidentRowCap,
+            Maximum = AppSettings.MaxResidentRowCap,
+            Value = 2_500_000,
+        };
+        var dialog = new FakeDialogService { ResultToReturn = true };
+        var commits = new List<int>();
+
+        SettingsView.WireResidentRowCapCommit(nud, 2_500_000, dialog, next =>
+        {
+            commits.Add(next);
+            return Task.CompletedTask;
+        });
+
+        nud.Text = AppSettings.ResidentRowCapWarnThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        RaiseEnter(nud);
+
+        await Task.Delay(500);
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+
+        Assert.Single(dialog.DestructiveCalls);
+        Assert.Equal([AppSettings.ResidentRowCapWarnThreshold], commits);
+    }
+
+    [AvaloniaFact]
     public void WireNumericCommit_does_not_commit_a_value_change_until_LostFocus()
     {
         var nud = new NumericUpDown { Value = 10 };
@@ -281,12 +369,14 @@ public class SettingsNumericCommitTests
     private sealed class FakeDialogService : IDialogService
     {
         public bool ResultToReturn { get; set; } = true;
+        /// <summary>Per-call destructive-confirm answers, in order; falls back to <see cref="ResultToReturn"/>.</summary>
+        public Queue<bool>? Results { get; set; }
         public List<(string Title, string Effect, string ConfirmLabel)> DestructiveCalls { get; } = [];
 
         public Task<bool> ConfirmDestructiveAsync(string title, string effect, string confirmLabel)
         {
             DestructiveCalls.Add((title, effect, confirmLabel));
-            return Task.FromResult(ResultToReturn);
+            return Task.FromResult(Results is { Count: > 0 } ? Results.Dequeue() : ResultToReturn);
         }
 
         public Task<bool> ConfirmAsync(string title, string message, bool destructive = false, string confirmLabel = "OK", bool defaultToCancel = false, DialogIcon icon = DialogIcon.None) =>

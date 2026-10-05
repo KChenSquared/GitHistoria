@@ -319,4 +319,27 @@ public sealed class SettingsV20ToV21 : IJsonMigration
     }
 }
 
+/// <summary>v21 → v22: raises the defaults of <c>silentCrawlRowCap</c> (100,000 → 500,000) and
+/// <c>residentRowCap</c> (2,000,000 → 2,500,000). Rewrites a stored old default to the new one;
+/// preserves any other user-chosen value.</summary>
+public sealed class SettingsV21ToV22 : IJsonMigration
+{
+    public int FromVersion => 21;
+    public int ToVersion => 22;
+
+    public void Apply(JsonObject document)
+    {
+        if (HasInt(document, "silentCrawlRowCap", 100_000))
+            document["silentCrawlRowCap"] = 500_000;
+        if (HasInt(document, "residentRowCap", 2_000_000))
+            document["residentRowCap"] = 2_500_000;
+        document["schemaVersion"] = 22;
+    }
+
+    // TryGetValue, not GetValue: a hand-edited string, fraction or out-of-int-range value must
+    // fall through to deserialization (which resets to defaults) rather than throw here.
+    private static bool HasInt(JsonObject document, string key, int value) =>
+        document[key] is JsonValue v && v.TryGetValue<int>(out var n) && n == value;
+}
+
 

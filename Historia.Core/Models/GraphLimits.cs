@@ -6,8 +6,8 @@
 /// </summary>
 public static class GraphLimits
 {
-    /// <summary>Maximum resident rows when per-commit metadata is paged from disk.</summary>
-    public const int MaxResidentRowsDisk = 2_000_000;
+    /// <summary>Default resident-row ceiling when per-commit metadata is paged from disk (the user can raise it — see <see cref="AppSettings.ResidentRowCap"/>).</summary>
+    public const int MaxResidentRowsDisk = 2_500_000;
 
     /// <summary>Maximum resident rows when full CommitMetadata is resident in memory.</summary>
     public const int MaxResidentRowsMemory = 500_000;
