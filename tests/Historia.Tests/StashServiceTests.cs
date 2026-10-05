@@ -54,6 +54,42 @@ public class StashServiceTests
     }
 
     [Fact]
+    public async Task List_without_refs_stash_starts_no_stash_process()
+    {
+        await using var host = new MiniHost();
+        using var b = SeededRepo();
+        var cli = new InterceptingGitCliService(host.Cli);
+        await using var ctx = host.Open(b.Path, cli);
+        var svc = new StashService(cli);
+
+        var list = await svc.ListAsync(ctx);
+
+        Assert.Empty(list);
+        Assert.DoesNotContain(cli.Requests, r =>
+            r.Arguments.Contains("log") && r.Arguments.Contains("-g"));
+        Assert.DoesNotContain(cli.Requests, r =>
+            r.Arguments.Contains("rev-parse") && r.Arguments.Contains("refs/stash"));
+    }
+
+    [Fact]
+    public async Task List_sees_a_stash_pushed_after_an_empty_list()
+    {
+        await using var host = new MiniHost();
+        using var b = SeededRepo();
+        await using var ctx = host.Open(b.Path);
+        var svc = Make(host);
+
+        Assert.Empty(await svc.ListAsync(ctx));
+
+        b.WriteFile("f.txt", "stash-me\n");
+        b.Git("stash", "push", "-m", "fresh-stash");
+
+        var list = await svc.ListAsync(ctx);
+        var entry = Assert.Single(list);
+        Assert.Contains("fresh-stash", entry.Message);
+    }
+
+    [Fact]
     public async Task Save_reports_false_when_nothing_to_stash()
     {
         await using var host = new MiniHost();

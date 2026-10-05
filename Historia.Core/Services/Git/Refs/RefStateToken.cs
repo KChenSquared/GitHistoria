@@ -49,6 +49,29 @@ public static class RefStateToken
         return new State(unchecked((long)h), headSymref, headSha, isReftable);
     }
 
+    /// <summary>
+    /// A cheap stamp representing the stash state: FNV-1a over the loose <c>refs/stash</c> file,
+    /// <c>logs/refs/stash</c> in the common directory, and <c>reftable/tables.list</c> when present.
+    /// Covers all stash changes because push, drop, and clear rewrite the stash reflog, while push
+    /// and drop of stash@{0} rewrite refs/stash. On a reftable repository this over-reports on any
+    /// ref change, which is harmless.
+    /// </summary>
+    public static long StashStamp(string gitDir)
+    {
+        var commonDir = ResolveCommonDir(gitDir);
+        var h = StableHash.Fnv64OffsetBasis;
+        void Feed(string s) => h = StableHash.Fnv1a64Step(h, s);
+
+        FeedFile(Feed, "stash-ref", Path.Combine(commonDir, "refs", "stash"), withCreation: false);
+        FeedFile(Feed, "stash-log", Path.Combine(commonDir, "logs", "refs", "stash"), withCreation: false);
+
+        var tablesList = Path.Combine(commonDir, "reftable", "tables.list");
+        if (File.Exists(tablesList))
+            Feed("reftable:" + ReadAllTextOrEmpty(tablesList));
+
+        return unchecked((long)h);
+    }
+
     /// <summary>The directory shared by every worktree of the repo — where <c>packed-refs</c>
     /// and the shared <c>refs/</c> live. A linked worktree's git dir names it in its
     /// <c>commondir</c> file (relative to the worktree git dir, or absolute).</summary>

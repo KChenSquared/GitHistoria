@@ -131,6 +131,50 @@ public class RepoSettingsIdentityTests : IDisposable
         view.Dispose();
     }
 
+    private const string IdentityHint = "Name, email and signing key used for commits in this repository.";
+    private const string SshOnlyHint = "Fetch, pull and push always use SSH, even for HTTPS remotes. HTTPS is never tried.";
+    private const string GraphColumnsHint = "Order and visibility apply to all repositories. Widths are per repository and reset on restart.";
+
+    [AvaloniaFact]
+    public void Repo_settings_hints_have_their_full_text()
+    {
+        _workspaceService.ChangeFocus(_context);
+
+        var view = new RepoSettingsView(_sp);
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+
+        var expected = new Dictionary<string, string>
+        {
+            ["Identity"] = IdentityHint,
+            ["SSH only"] = SshOnlyHint,
+            ["Graph columns"] = GraphColumnsHint,
+        };
+        Assert.Equal(expected.OrderBy(p => p.Key, StringComparer.Ordinal),
+                     HelpHintMap.Of(view).OrderBy(p => p.Key, StringComparer.Ordinal));
+
+        var tips = HelpHintMap.Badges(view).Select(ToolTip.GetTip).ToHashSet();
+        Assert.DoesNotContain(view.GetLogicalDescendants().OfType<TextBlock>(),
+            t => !tips.Contains(t) && t.TextWrapping == TextWrapping.Wrap);
+
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
+    public void Graph_columns_hint_shows_without_a_focused_repo()
+    {
+        _workspaceService.ChangeFocus(null);
+
+        var view = new RepoSettingsView(_sp);
+        view.Measure(new Size(800, 600));
+        view.Arrange(new Rect(0, 0, 800, 600));
+
+        var map = HelpHintMap.Of(view);
+        Assert.Equal(new Dictionary<string, string> { ["Graph columns"] = GraphColumnsHint }, map);
+
+        view.Dispose();
+    }
+
     private sealed class FakeLayoutService : IRepoLayoutService
     {
         private readonly Dictionary<string, RepoLayout> _layouts = new(StringComparer.OrdinalIgnoreCase);

@@ -6,10 +6,6 @@ public enum ThemeMode
     Dark,
     Light,
     System,
-
-    /// <summary>a user-authored theme selected from the Themes panel. The active
-    /// theme's id is <c>AppSettings.CustomThemeId</c>; it overlays a Dark or Light base.</summary>
-    Custom,
 }
 
 /// <summary>

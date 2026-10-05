@@ -126,10 +126,15 @@ internal static class ViewKit
         return b;
     }
 
+    /// <summary>Style class on every <see cref="HelpHint"/> badge — the handle
+    /// <see cref="SetHintText"/> (and the UI tests) find it by.</summary>
+    public const string HelpHintClass = "help-hint";
+
     /// <summary>
     /// A small circular “?” badge. Hovering shows <paramref name="text"/> in a tooltip that
     /// wraps to fit the message with no scrollbar — used in place of a sub-text line under a
-    /// setting.
+    /// setting. A <c>"\n\n"</c> in the text renders as a paragraph break. The badge is not
+    /// focusable, so the text is also exposed as its automation help text for screen readers.
     /// </summary>
     public static Control HelpHint(string text, double diameter = 15)
     {
@@ -151,22 +156,54 @@ internal static class ViewKit
                 VerticalAlignment = VerticalAlignment.Center,
             }.Dyn(TextBlock.ForegroundProperty, "ColorTextMuted"),
         }.Dyn(Border.BorderBrushProperty, "ColorBorder");
-
-        // A plain wrapping TextBlock sizes itself to the text (up to MaxWidth) with no
-        // ScrollViewer in the way, so every message shows whole and right-sized.
-        ToolTip.SetTip(badge, new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, MaxWidth = 360 });
+        badge.Classes.Add(HelpHintClass);
+        Avalonia.Automation.AutomationProperties.SetName(badge, "Help");
+        ApplyHintText(badge, text);
         ToolTip.SetShowDelay(badge, 200);
         return badge;
     }
 
-    /// <summary>Lays a setting control out with a <see cref="HelpHint"/> to its right.</summary>
+    /// <summary>
+    /// Lays a setting control out with a <see cref="HelpHint"/> to its right. A left-aligned
+    /// <see cref="DockPanel"/> with the badge docked right: the badge is measured first and the
+    /// setting gets what is left, so a setting wider than the column is cut short rather than
+    /// pushing the badge out of it. The badge must come first in the children to be measured
+    /// first, and a later sibling draws on top, so it is raised by <c>ZIndex</c> — otherwise a
+    /// fixed-width box in the setting that overruns its slot covers the badge.
+    /// Trap: a horizontal <see cref="StackPanel"/> measures its children with unbounded width, so
+    /// in a narrow window the badge lands past the column's edge and is clipped.
+    /// </summary>
     public static Control WithHint(Control setting, string hintText)
     {
         setting.VerticalAlignment = VerticalAlignment.Center;
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var badge = HelpHint(hintText);
+        badge.ZIndex = 1;
+        DockPanel.SetDock(badge, Dock.Right);
+        var row = new DockPanel { HorizontalAlignment = HorizontalAlignment.Left, HorizontalSpacing = 6 };
+        row.Children.Add(badge);
         row.Children.Add(setting);
-        row.Children.Add(HelpHint(hintText));
         return row;
+    }
+
+    /// <summary>
+    /// Replaces the text of a <see cref="HelpHint"/> badge, or of the badge inside a
+    /// <see cref="WithHint"/> row: both the tooltip and the automation help text.
+    /// </summary>
+    public static void SetHintText(Control hint, string text)
+    {
+        var badge = hint.Classes.Contains(HelpHintClass)
+            ? hint
+            : (hint as Panel)?.Children.FirstOrDefault(c => c.Classes.Contains(HelpHintClass))
+              ?? throw new ArgumentException("Not a help hint or a row holding one.", nameof(hint));
+        ApplyHintText(badge, text);
+    }
+
+    private static void ApplyHintText(Control badge, string text)
+    {
+        // A plain wrapping TextBlock sizes itself to the text (up to MaxWidth) with no
+        // ScrollViewer in the way, so every message shows whole and right-sized.
+        ToolTip.SetTip(badge, new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, MaxWidth = 360 });
+        Avalonia.Automation.AutomationProperties.SetHelpText(badge, text);
     }
 
     /// <summary>

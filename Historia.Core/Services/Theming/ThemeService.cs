@@ -2,15 +2,20 @@
 
 /// <inheritdoc cref="IThemeService"/>
 /// <remarks>
-/// this type is now UI-framework-free. It resolves the effective theme and raises
+/// This type is UI-framework-free. It resolves the effective theme and raises
 /// <see cref="ThemeChanged"/>; applying it to a concrete resource dictionary is the App layer's
 /// job (<c>AvaloniaThemeApplier</c> subscribes to <see cref="ThemeChanged"/>). Subscribers are
 /// responsible for marshalling to their UI thread.
 /// <para>
-/// it also exposes the <em>resolved</em> <see cref="Palette"/> and
-/// <see cref="LaneColors"/> — the built-in tables, or a custom theme's overlay when
-/// <see cref="ThemeMode.Custom"/> is active — so consumers no longer read <c>HistoriaPalette</c> /
-/// <c>LanePalette</c> directly.
+/// It also exposes the <em>resolved</em> <see cref="Palette"/> and <see cref="LaneColors"/> —
+/// the built-in tables, or a custom theme's overlay while <see cref="CustomThemeActive"/> — so
+/// consumers never read <c>HistoriaPalette</c> / <c>LanePalette</c> directly.
+/// </para>
+/// <para>
+/// A custom theme overrides the Light / Dark / System choice; it never replaces it. It renders
+/// only while <see cref="AppSettings.UseCustomTheme"/> is on, <see cref="AppSettings.CustomThemeId"/>
+/// resolves to a saved theme and High Contrast is off, and it resolves through its own Dark or
+/// Light base. Otherwise <see cref="AppSettings.AppTheme"/> renders.
 /// </para>
 /// </remarks>
 public sealed class ThemeService : IThemeService, IDisposable
@@ -29,12 +34,14 @@ public sealed class ThemeService : IThemeService, IDisposable
         _settings = settings;
         _probe = probe;
         _customThemes = customThemes;
-        _effective = Resolve(settings.Current.AppTheme, settings.Current.HighContrastOverride);
+        _effective = Resolve();
         _probe.Changed += OnOsThemeChanged;
         _customThemes.Changed += OnCustomThemesChanged;
     }
 
     public ThemeMode CurrentMode => _settings.Current.AppTheme;
+
+    public bool CustomThemeActive => ActiveCustom() is not null;
 
     public bool HighContrastEnabled =>
         _settings.Current.HighContrastOverride || _probe.IsHighContrast;
@@ -68,28 +75,45 @@ public sealed class ThemeService : IThemeService, IDisposable
         }
     }
 
-    /// <summary>The custom theme to overlay, or null — null whenever HC is on (HC always wins)
-    /// or the mode is not Custom or the stored id no longer resolves.</summary>
+    /// <summary>The custom theme to overlay, or null — null whenever the override is off, HC is
+    /// on (HC always wins) or the stored id no longer resolves.</summary>
     private CustomTheme? ActiveCustom()
     {
-        if (CurrentMode != ThemeMode.Custom || HighContrastEnabled)
+        var s = _settings.Current;
+        if (!s.UseCustomTheme || HighContrastEnabled)
             return null;
-        var id = _settings.Current.CustomThemeId;
+        var id = s.CustomThemeId;
         return string.IsNullOrEmpty(id) ? null : _customThemes.Get(id);
     }
 
     public async Task ApplyModeAsync(ThemeMode mode, CancellationToken ct = default)
     {
         await _settings.UpdateAsync(s => s with { AppTheme = mode }, ct).ConfigureAwait(false);
-        if (!Recompute() && mode == ThemeMode.Custom)
+        Recompute();
+    }
+
+    public async Task SetCustomThemeEnabledAsync(bool enabled, CancellationToken ct = default)
+    {
+        // Read outside the settings update: the mutation runs under the settings lock, and
+        // listing themes can touch the disk.
+        IReadOnlyList<CustomTheme> saved = enabled ? _customThemes.List() : [];
+        await _settings.UpdateAsync(s =>
+        {
+            if (!enabled)
+                return s with { UseCustomTheme = false };
+            var id = s.CustomThemeId;
+            if (saved.Count > 0 && !saved.Any(t => string.Equals(t.Id, id, StringComparison.Ordinal)))
+                id = saved[0].Id;
+            return s with { UseCustomTheme = true, CustomThemeId = id };
+        }, ct).ConfigureAwait(false);
+        if (!Recompute())
             ForceRefresh();
     }
 
-    public async Task ApplyCustomThemeAsync(string themeId, CancellationToken ct = default)
+    public async Task SelectCustomThemeAsync(string themeId, CancellationToken ct = default)
     {
-        await _settings.UpdateAsync(s => s with { AppTheme = ThemeMode.Custom, CustomThemeId = themeId }, ct)
-            .ConfigureAwait(false);
-        if (!Recompute())
+        await _settings.UpdateAsync(s => s with { CustomThemeId = themeId }, ct).ConfigureAwait(false);
+        if (_settings.Current.UseCustomTheme && !Recompute())
             ForceRefresh();
     }
 
@@ -103,9 +127,10 @@ public sealed class ThemeService : IThemeService, IDisposable
 
     private void OnCustomThemesChanged(object? sender, EventArgs e)
     {
-        // A custom theme was saved or deleted. If one is active, its colours may have changed
-        // even though the effective base theme has not — force consumers to re-read.
-        if (!Recompute() && CurrentMode == ThemeMode.Custom)
+        // A custom theme was saved or deleted. While the override is on, its colours may have
+        // changed (or it may have started or stopped resolving) even though the effective base
+        // theme has not — force consumers to re-read.
+        if (!Recompute() && _settings.Current.UseCustomTheme)
             ForceRefresh();
     }
 
@@ -113,7 +138,7 @@ public sealed class ThemeService : IThemeService, IDisposable
     /// only if it actually changed.</summary>
     private bool Recompute()
     {
-        var next = Resolve(_settings.Current.AppTheme, _settings.Current.HighContrastOverride);
+        var next = Resolve();
         EffectiveTheme previous;
         lock (_sync)
         {
@@ -135,21 +160,19 @@ public sealed class ThemeService : IThemeService, IDisposable
         ThemeChanged?.Invoke(this, new ThemeChangedEventArgs(e, e));
     }
 
-    private EffectiveTheme Resolve(ThemeMode mode, bool highContrastOverride)
+    private EffectiveTheme Resolve()
     {
-        // Custom resolves through its chosen base (Dark/Light) so the Fluent variant and
-        // every EffectiveTheme switch still work. HC override still wins over everything.
-        if (mode == ThemeMode.Custom && !highContrastOverride && !_probe.IsHighContrast)
-        {
-            var id = _settings.Current.CustomThemeId;
-            var baseTheme = (string.IsNullOrEmpty(id) ? null : _customThemes.Get(id))?.BaseTheme
-                            ?? EffectiveTheme.Dark;
-            mode = baseTheme == EffectiveTheme.Light ? ThemeMode.Light : ThemeMode.Dark;
-        }
+        // An active custom theme resolves through its chosen base (Dark/Light) so the Fluent
+        // variant and every EffectiveTheme switch still work. HC still wins over everything,
+        // and ActiveCustom() is null while it is on.
+        var s = _settings.Current;
+        var mode = ActiveCustom() is { } custom
+            ? (custom.BaseTheme == EffectiveTheme.Light ? ThemeMode.Light : ThemeMode.Dark)
+            : s.AppTheme;
 
         return ThemeResolver.Resolve(
             mode,
-            highContrastOverride,
+            s.HighContrastOverride,
             _probe.IsHighContrast,
             _probe.IsLightTheme);
     }
