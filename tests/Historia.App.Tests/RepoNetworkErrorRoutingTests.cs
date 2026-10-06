@@ -38,11 +38,12 @@ public sealed class RepoNetworkErrorRoutingTests
         public event EventHandler<NotificationsChangedEventArgs>? Changed;
     }
 
-    /// <summary>Counts the push-rejection chooser and the destructive confirm; both answer Cancel.</summary>
+    /// <summary>Counts the push-rejection chooser and the destructive confirm; both answer Cancel by default.</summary>
     private sealed class CountingDialogService : IDialogService
     {
         public int ChooseCalls;
         public int ConfirmDestructiveCalls;
+        public bool ConfirmDestructiveAnswer;
 
         public Task<int> ChooseAsync(string title, string message, IReadOnlyList<string> options,
             int defaultIndex = 0, int destructiveIndex = -1, DialogIcon icon = DialogIcon.None)
@@ -54,7 +55,7 @@ public sealed class RepoNetworkErrorRoutingTests
         public Task<bool> ConfirmDestructiveAsync(string title, string effect, string confirmLabel)
         {
             ConfirmDestructiveCalls++;
-            return Task.FromResult(false);
+            return Task.FromResult(ConfirmDestructiveAnswer);
         }
 
         public Task<string?> PickFolderAsync(string title, string? initialDirectory = null) => throw new NotSupportedException();
@@ -138,6 +139,38 @@ public sealed class RepoNetworkErrorRoutingTests
         {
             RunGit(LocalPath, "remote", "set-url", "origin", url);
             return this;
+        }
+
+        public PushFixture PushBranch(string branch)
+        {
+            RunGit(LocalPath, "branch", branch);
+            RunGit(LocalPath, "push", "origin", branch);
+            return this;
+        }
+
+        public PushFixture Checkout(string branch)
+        {
+            RunGit(LocalPath, "checkout", branch);
+            return this;
+        }
+
+        public bool RemoteHasBranch(string branch)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("git")
+            {
+                WorkingDirectory = RemotePath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("branch");
+            psi.ArgumentList.Add("--list");
+            psi.ArgumentList.Add(branch);
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            var stdout = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            return !string.IsNullOrWhiteSpace(stdout);
         }
 
         private static void Configure(string dir)
@@ -268,6 +301,10 @@ public sealed class RepoNetworkErrorRoutingTests
             try
             {
                 start();
+                Dispatcher.UIThread.RunJobs();
+                if (!Runner.IsBusy && final is null)
+                    return;
+
                 for (int i = 0; i < 1000 && final is null; i++)
                 {
                     Dispatcher.UIThread.RunJobs();
@@ -383,5 +420,77 @@ public sealed class RepoNetworkErrorRoutingTests
         Assert.Equal("origin", request.Value.Remote);
         Assert.Equal("main", request.Value.Branch);
         Assert.Same(ctx, request.Value.Repo);
+    }
+
+    [AvaloniaFact]
+    public async Task A_declined_remote_branch_delete_deletes_nothing()
+    {
+        using var fixture = new PushFixture().PushBranch("a").PushBranch("b");
+        await using var h = new Harness();
+        h.Dialogs.ConfirmDestructiveAnswer = false;
+        var ctx = await h.OpenAsync(fixture.LocalPath);
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
+            new RepoNetworkRequest(RepoNetworkAction.DeleteRemoteBranch, "origin", null, "b")));
+
+        Assert.Equal(1, h.Dialogs.ConfirmDestructiveCalls);
+        Assert.True(fixture.RemoteHasBranch("b"));
+        Assert.Contains(ctx.State.Branches, br => br.IsRemote && br.Name == "origin/b");
+        Assert.DoesNotContain(h.Notify.Published, n => n.Severity == NotificationSeverity.Success);
+    }
+
+    [AvaloniaFact]
+    public async Task A_confirmed_remote_branch_delete_removes_it_and_its_tracking_ref()
+    {
+        using var fixture = new PushFixture().PushBranch("a").PushBranch("b");
+        await using var h = new Harness();
+        h.Dialogs.ConfirmDestructiveAnswer = true;
+        var ctx = await h.OpenAsync(fixture.LocalPath);
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
+            new RepoNetworkRequest(RepoNetworkAction.DeleteRemoteBranch, "origin", null, "b")));
+
+        Assert.Equal(1, h.Dialogs.ConfirmDestructiveCalls);
+        Assert.False(fixture.RemoteHasBranch("b"));
+        Assert.True(fixture.RemoteHasBranch("a"));
+        Assert.True(fixture.RemoteHasBranch("main"));
+        Assert.DoesNotContain(ctx.State.Branches, br => br.IsRemote && br.Name == "origin/b");
+        var success = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Success);
+        Assert.Equal("Deleted origin/b.", success.Message);
+    }
+
+    [AvaloniaFact]
+    public async Task A_remote_branch_delete_without_a_target_never_falls_back()
+    {
+        using var fixture = new PushFixture().PushBranch("a").PushBranch("b").Checkout("a");
+        await using var h = new Harness();
+        h.Dialogs.ConfirmDestructiveAnswer = true;
+        var ctx = await h.OpenAsync(fixture.LocalPath);
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
+            new RepoNetworkRequest(RepoNetworkAction.DeleteRemoteBranch, "origin", null, RemoteBranch: null)));
+
+        Assert.Equal(0, h.Dialogs.ConfirmDestructiveCalls);
+        var warning = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Warning);
+        Assert.Equal("No remote branch to delete.", warning.Message);
+        Assert.True(fixture.RemoteHasBranch("a"));
+        Assert.True(fixture.RemoteHasBranch("b"));
+    }
+
+    [AvaloniaFact]
+    public async Task An_already_deleted_remote_branch_reports_not_found()
+    {
+        using var fixture = new PushFixture();
+        await using var h = new Harness();
+        h.Dialogs.ConfirmDestructiveAnswer = true;
+        await h.OpenAsync(fixture.LocalPath);
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
+            new RepoNetworkRequest(RepoNetworkAction.DeleteRemoteBranch, "origin", null, "missing")));
+
+        Assert.Equal(1, h.Dialogs.ConfirmDestructiveCalls);
+        var error = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Error);
+        Assert.Equal("Delete remote branch failed: the branch, tag or commit wasn't found.", error.Message);
+        Assert.Contains("remote ref does not exist", error.Details);
     }
 }

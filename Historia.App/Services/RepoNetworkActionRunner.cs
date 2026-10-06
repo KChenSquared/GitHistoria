@@ -18,6 +18,8 @@ public interface IRepoNetworkActionRunner
 {
     event EventHandler<RepoNetworkProgress>? ProgressChanged;
 
+    bool IsBusy { get; }
+
     /// <summary>Cancels the in-flight operation, if any.</summary>
     void CancelCurrent();
 }
@@ -38,6 +40,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
     private bool _busy;
     private CancellationTokenSource? _cts;
 
+    public bool IsBusy => _busy;
     public event EventHandler<RepoNetworkProgress>? ProgressChanged;
 
     public RepoNetworkActionRunner(
@@ -118,6 +121,19 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         $"Prune deletes every remote-tracking branch under '{remote}/' whose branch no longer exists on {remote}. "
         + "Commits reachable only from those refs become unreferenced locally. "
         + "Your local branches are not touched.";
+
+    /// <summary>The remote branch delete confirmation text: names the remote and branch, explains that
+    /// the branch is deleted on the remote for everyone who uses it, and clarifies that any local branch
+    /// is kept with its upstream shown as gone.</summary>
+    internal static string RemoteBranchDeleteEffect(string remote, string branch) =>
+        $"Delete '{remote}/{branch}' on {remote} for everyone who uses it. "
+        + "Your local branch (if any) is kept, with its upstream shown as gone.";
+
+    internal static string OpLabel(RepoNetworkAction op) => op switch
+    {
+        RepoNetworkAction.DeleteRemoteBranch => "Delete remote branch",
+        _ => op.ToString(),
+    };
 
     private async Task ExecOpAsync(RepositoryContext repo, RepoNetworkAction op, string remote, string? branch, string? remoteBranch,
         IProgress<GitProgress> progress, CancellationToken ct)
@@ -291,6 +307,13 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             return;
         }
 
+        if (op == RepoNetworkAction.DeleteRemoteBranch && (string.IsNullOrEmpty(request.Remote) || string.IsNullOrEmpty(request.RemoteBranch)))
+        {
+            _notifications.Publish(NotificationSeverity.Warning, "No remote branch to delete.");
+            AppLog.Write(AppLogLevel.Warn, "invalid_request", "DeleteRemoteBranch requested without Remote or RemoteBranch specified.");
+            return;
+        }
+
         string remote;
         if (request.Remote is { } targetRemote)
         {
@@ -315,21 +338,35 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             return;
         }
 
+        if (op == RepoNetworkAction.DeleteRemoteBranch
+            && !await _dialogs.ConfirmDestructiveAsync("Delete remote branch", RemoteBranchDeleteEffect(remote, request.RemoteBranch!), "Delete"))
+        {
+            AppLog.Write(AppLogLevel.Info, "declined", $"Delete of {remote}/{request.RemoteBranch} declined");
+            return;
+        }
+
         _busy = true;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(repo.Lifetime);
         var ct = _cts.Token;
         var progress = new Progress<GitProgress>(p => ProgressChanged?.Invoke(this, new RepoNetworkProgress(repo, p)));
-        ProgressChanged?.Invoke(this, new RepoNetworkProgress(repo, new GitProgress { Phase = $"{op}…" }));
+        ProgressChanged?.Invoke(this, new RepoNetworkProgress(repo, new GitProgress { Phase = $"{OpLabel(op)}…" }));
 
-        // Prune is confirmed above, once; the same delegate serves the first attempt and the
-        // Local-config retry so the retry never asks again.
-        Func<Task> execute = op == RepoNetworkAction.Prune
-            ? async () =>
+        // Prune and remote-branch delete are confirmed above, once; the same delegate serves the first
+        // attempt and the Local-config retry so the retry never asks again.
+        Func<Task> execute = op switch
+        {
+            RepoNetworkAction.Prune => async () =>
             {
                 await repo.Gateway.PruneRemoteAsync(remote, progress, ct);
                 _notifications.Publish(NotificationSeverity.Success, $"Pruned {remote}.");
-            }
-            : () => ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct);
+            },
+            RepoNetworkAction.DeleteRemoteBranch => async () =>
+            {
+                await repo.Gateway.DeleteRemoteBranchAsync(remote, request.RemoteBranch!, progress, ct);
+                _notifications.Publish(NotificationSeverity.Success, $"Deleted {remote}/{request.RemoteBranch}.");
+            },
+            _ => () => ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct),
+        };
         try
         {
             await EnsureActiveProfileFreshAsync(repo);
@@ -345,7 +382,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             var previous = repo.State.ActiveProfile;
             var confirmed = await _dialogs.ConfirmAsync(
                 "Switch to Local config?",
-                $"{op} from '{remote}' failed as '{previous?.DisplayName ?? "the selected profile"}'"
+                $"{OpLabel(op)} from '{remote}' failed as '{previous?.DisplayName ?? "the selected profile"}'"
                 + (FirstDetailLine(ex) is { } detail ? $":\n\n{detail}\n\n" : ". ")
                 + "Switch this repository to Local config and try again?",
                 confirmLabel: "Switch and retry");
@@ -372,7 +409,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                         repo.State.SetActiveProfile(previous);
                     }
                     catch { /* best effort rollback */ }
-                    _notifications.Publish(NotificationSeverity.Error, retryEx.NotificationMessage(op.ToString()), retryEx.NotificationDetails());
+                    _notifications.Publish(NotificationSeverity.Error, retryEx.NotificationMessage(OpLabel(op)), retryEx.NotificationDetails());
                 }
             }
             else
@@ -435,7 +472,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage(op.ToString()), ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage(OpLabel(op)), ex.NotificationDetails());
         }
         finally
         {
