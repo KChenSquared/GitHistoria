@@ -250,6 +250,10 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                 _keepConflictResolverOpen = false;
             }
 
+            // A rebase or cherry-pick that stops on its next commit keeps the session active, so
+            // conflicts reappearing after all were resolved reopen a closed resolver too.
+            bool conflictsAppeared = _status.Conflicted.Count == 0 && status.Conflicted.Count > 0;
+
             _status = status;
             _repository = info;
             operationChanged = _pendingOperation != operation;
@@ -261,7 +265,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             {
                 _selectedConflictPath = null;
             }
-            if (conflictSessionFlipped)
+            if (conflictSessionFlipped || conflictsAppeared)
             {
                 closedCleared = _conflictResolverClosed;
                 _conflictResolverClosed = false;
@@ -282,6 +286,8 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
 
         if (conflictSessionFlipped)
             HandleConflictSessionFlipped(nowActive, closedCleared);
+        else if (closedCleared)
+            Raise(() => ConflictResolverClosedChanged?.Invoke(this, EventArgs.Empty));
 
         if (openDiffCleared)
             Raise(() => OpenDiffChanged?.Invoke(this, new OpenDiffChangedEventArgs(null)));

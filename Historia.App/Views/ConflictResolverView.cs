@@ -472,6 +472,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
         _ctx.State.StatusChanged += OnStatusChanged;
         _ctx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
+        _ctx.State.ConflictSessionChanged += OnConflictSessionChanged;
+        UpdateCloseButton();
         _ = LoadAsync();
     }
 
@@ -724,6 +726,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             bool stopChanged = _stopId != null && labels.StopId != _stopId;
             _stopId = labels.StopId;
             SetSideCaptions(labels);
+            UpdateCloseButton();
 
             var op = _ctx.State.PendingOperation;
             if (op == OperationState.None)
@@ -798,6 +801,19 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
     }
 
+    private void OnConflictSessionChanged(object? sender, EventArgs e)
+        => Dispatcher.UIThread.Post(() =>
+        {
+            if (!_disposed)
+            {
+                UpdateCloseButton();
+            }
+        });
+
+    /// <summary>Closing needs a live session: once it has ended nothing would bring back a hidden
+    /// resolver, so one kept open only for its unsaved edits cannot be closed.</summary>
+    private void UpdateCloseButton() => _closeBtn.IsVisible = _ctx.State.IsConflictSessionActive;
+
     private void OnSelectedConflictPathChanged(object? sender, SelectedConflictPathChangedEventArgs e)
     {
         Dispatcher.UIThread.Post(async () =>
@@ -863,6 +879,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
             _stopId = labels.StopId;
             SetSideCaptions(labels);
+            UpdateCloseButton();
 
             var op = _ctx.State.PendingOperation;
             if (op == OperationState.None)
@@ -2049,6 +2066,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _disposed = true;
         _ctx.State.StatusChanged -= OnStatusChanged;
         _ctx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
+        _ctx.State.ConflictSessionChanged -= OnConflictSessionChanged;
         _viewCts.Cancel();
         _switchCts?.Cancel();
         _switchCts?.Dispose();

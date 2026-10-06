@@ -51,7 +51,8 @@ public interface IRepositoryStateService
     /// <summary>
     /// True while the user has closed the conflict resolver. Closing hides it without saving or
     /// discarding: the view and its unsaved edits stay alive. The flag resets to false whenever the
-    /// conflict session starts or ends.
+    /// conflict session starts or ends, and when conflicts reappear after all were resolved (a
+    /// rebase or cherry-pick stopping on its next commit).
     /// </summary>
     bool IsConflictResolverClosed { get; }
 
@@ -105,6 +106,6 @@ public interface IRepositoryStateService
     /// <summary>Raised on the UI dispatcher whenever SelectedConflictPath changes.</summary>
     event EventHandler<SelectedConflictPathChangedEventArgs>? SelectedConflictPathChanged;
 
-    /// <summary>Raised on the UI dispatcher whenever IsConflictResolverClosed changes, including its reset when the conflict session flips.</summary>
+    /// <summary>Raised on the UI dispatcher whenever IsConflictResolverClosed changes, including its resets.</summary>
     event EventHandler? ConflictResolverClosedChanged;
 }

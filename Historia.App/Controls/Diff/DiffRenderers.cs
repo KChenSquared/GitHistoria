@@ -67,6 +67,9 @@ public sealed class DiffLineNumberMargin : AbstractMargin
     internal IBrush? TintForRowForTesting(int rowIndex)
         => rowIndex >= 0 && rowIndex < _presenter.Rows.Count ? DiffGutterTint.GutterBrush(_presenter.Rows[rowIndex].Type) : null;
 
+    /// <summary>Gutter rows the last <see cref="Render"/> tinted.</summary>
+    internal int TintedRowsDrawnForTesting { get; private set; }
+
     public DiffLineNumberMargin(DiffPresenterBase presenter, bool isOld)
     {
         _presenter = presenter;
@@ -103,6 +106,7 @@ public sealed class DiffLineNumberMargin : AbstractMargin
             return;
         }
 
+        TintedRowsDrawnForTesting = 0;
         var rows = _presenter.Rows;
         var foregroundBrush = PaletteBrushes.Get("ColorTextFaint");
 
@@ -131,6 +135,7 @@ public sealed class DiffLineNumberMargin : AbstractMargin
             if (DiffGutterTint.GutterBrush(row.Type) is { } tint)
             {
                 DiffGutterTint.FillRow(context, view, line, Bounds.Width, tint);
+                TintedRowsDrawnForTesting++;
             }
 
             var lineNumber = _isOld ? row.OldLineText : row.NewLineText;
@@ -185,6 +190,9 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
     internal IBrush? TintForRowForTesting(int rowIndex)
         => rowIndex >= 0 && rowIndex < _presenter.Rows.Count ? DiffGutterTint.GutterBrush(_presenter.Rows[rowIndex].Type) : null;
 
+    /// <summary>Gutter rows the last <see cref="Render"/> tinted.</summary>
+    internal int TintedRowsDrawnForTesting { get; private set; }
+
     public DiffLineModifyTypeMargin(DiffPresenterBase presenter)
     {
         _presenter = presenter;
@@ -220,6 +228,7 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
             return;
         }
 
+        TintedRowsDrawnForTesting = 0;
         var rows = _presenter.Rows;
 
         var typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
@@ -250,6 +259,7 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
             if (DiffGutterTint.GutterBrush(row.Type) is { } tint)
             {
                 DiffGutterTint.FillRow(context, view, line, Bounds.Width, tint);
+                TintedRowsDrawnForTesting++;
             }
 
             TextLayout? indicator = row.Type switch

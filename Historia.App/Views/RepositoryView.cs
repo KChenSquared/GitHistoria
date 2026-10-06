@@ -241,7 +241,8 @@ public sealed class RepositoryView : UserControl, IDisposable
                 : $"Repository is in {op} state with no conflicts.";
             _opOpenResolverBtn.IsVisible = resolverClosed;
             bool canContinue = op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
-            _opActions.IsVisible = canContinue;
+            _opContinueBtn.IsVisible = _opAbortBtn.IsVisible = canContinue;
+            _opActions.IsVisible = canContinue || resolverClosed;
             _opBox.IsVisible = true;
         }
         else
@@ -291,6 +292,15 @@ public sealed class RepositoryView : UserControl, IDisposable
     private async Task OnOpBannerContinueAsync()
     {
         if (_repo == null || _opBusy) return;
+
+        // A closed resolver can still hold edits; continuing would commit without them.
+        var unsaved = _sp.GetService<Historia.Services.UI.IUnsavedWorkRegistry>()?.For(_repo);
+        if (unsaved is { Count: > 0 } && !await Historia.Services.UI.UnsavedWorkPrompt.ResolveAsync(unsaved, _dialogs))
+        {
+            return;
+        }
+
+        if (_opBusy) return;
         _opBusy = true;
         _opContinueBtn.IsEnabled = _opAbortBtn.IsEnabled = false;
         try

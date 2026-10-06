@@ -3220,10 +3220,33 @@ public class ConflictResolverViewTests : IDisposable
         }
     }
 
+    /// <summary>Puts the repository into a conflict session; a stash-style one when
+    /// <paramref name="withOperation"/> is false (conflicted files, no operation).</summary>
+    private async Task StartConflictSessionAsync(bool withOperation = true)
+    {
+        _fixture.CreateConflict();
+        if (!withOperation)
+        {
+            _fixture.ClearOperation();
+        }
+
+        await _context.State.RefreshStatusAsync();
+        // A refresh already in flight can finish with the pre-conflict status.
+        for (int i = 0; i < 50 && !_context.State.IsConflictSessionActive; i++)
+        {
+            await Task.Delay(50);
+            await _context.State.RefreshStatusAsync();
+        }
+        Assert.True(_context.State.IsConflictSessionActive);
+        Dispatcher.UIThread.RunJobs();
+    }
+
     [AvaloniaFact]
     public async Task Close_button_marks_resolver_closed_without_saving()
     {
+        await StartConflictSessionAsync();
         var view = await LoadTwoConflictViewAsync();
+        Assert.True(view.CloseButtonForTesting.IsVisible);
         ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
         Assert.True(view.HasUnsavedWork);
         Assert.False(_context.State.IsConflictResolverClosed);
@@ -3239,6 +3262,7 @@ public class ConflictResolverViewTests : IDisposable
     [AvaloniaFact]
     public async Task Close_button_visible_without_an_operation()
     {
+        await StartConflictSessionAsync(withOperation: false);
         var (view, window) = await ShowViewAsync(TwoConflictText);
         try
         {
@@ -3250,6 +3274,25 @@ public class ConflictResolverViewTests : IDisposable
         {
             window.Close();
         }
+    }
+
+    [AvaloniaFact]
+    public async Task Close_button_hidden_once_the_session_has_ended()
+    {
+        await StartConflictSessionAsync();
+        var view = await LoadTwoConflictViewAsync();
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
+        Assert.True(view.CloseButtonForTesting.IsVisible);
+
+        // The merge ends outside Historia while the resolver still holds edits.
+        _fixture.MarkResolved();
+        _fixture.ClearOperation();
+        await _context.State.RefreshStatusAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(_context.State.IsConflictSessionActive);
+        Assert.True(view.HasUnsavedWork);
+        Assert.False(view.CloseButtonForTesting.IsVisible);
     }
 
     #endregion

@@ -120,6 +120,12 @@ public sealed class DiffMarginTextTests
     private static int RowIndexOf(Setup s, DiffDisplayLineType type)
         => s.Presenter.Rows.Select((r, i) => (r, i)).First(x => x.r.Type == type).i;
 
+    /// <summary>Visible rows that are additions or deletions — the rows a margin must tint.</summary>
+    private static int VisibleChangedRows(Setup s)
+        => s.Presenter.TextArea.TextView.VisualLines
+            .Select(l => s.Presenter.Rows[l.FirstDocumentLine.LineNumber - 1].Type)
+            .Count(t => t is DiffDisplayLineType.Addition or DiffDisplayLineType.Deletion);
+
     [AvaloniaFact]
     public void Number_margin_tints_added_and_deleted_rows()
     {
@@ -137,6 +143,14 @@ public sealed class DiffMarginTextTests
             Assert.Equal(delGutter, Assert.IsAssignableFrom<ISolidColorBrush>(m.TintForRowForTesting(deleted)).Color);
             Assert.Null(m.TintForRowForTesting(context));
         }
+
+        RenderAll(s);
+        int changed = VisibleChangedRows(s);
+        Assert.True(changed > 0, "the viewport must show changed rows");
+        foreach (var m in s.Numbers)
+        {
+            Assert.Equal(changed, m.TintedRowsDrawnForTesting);
+        }
     }
 
     [AvaloniaFact]
@@ -149,6 +163,10 @@ public sealed class DiffMarginTextTests
         Assert.Equal(addGutter, Assert.IsAssignableFrom<ISolidColorBrush>(s.Modify.TintForRowForTesting(RowIndexOf(s, DiffDisplayLineType.Addition))).Color);
         Assert.Equal(delGutter, Assert.IsAssignableFrom<ISolidColorBrush>(s.Modify.TintForRowForTesting(RowIndexOf(s, DiffDisplayLineType.Deletion))).Color);
         Assert.Null(s.Modify.TintForRowForTesting(RowIndexOf(s, DiffDisplayLineType.Context)));
+
+        RenderAll(s);
+        Assert.True(VisibleChangedRows(s) > 0, "the viewport must show changed rows");
+        Assert.Equal(VisibleChangedRows(s), s.Modify.TintedRowsDrawnForTesting);
     }
 
     [AvaloniaFact]

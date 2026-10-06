@@ -2,8 +2,8 @@ namespace Historia.Views;
 
 /// <summary>
 /// Controls the content displayed in the center panel of the main window.
-/// Manages content precedence: OpenDiff -> DiffView; else conflict session (or unsaved resolver work) that the
-/// user has not closed -> ConflictResolverView; else CommitGraphControl.
+/// Manages content precedence: OpenDiff -> DiffView; else conflict session the user has not closed, or unsaved
+/// resolver work after the session ended -> ConflictResolverView; else CommitGraphControl.
 /// Ensures proper lifecycle management, view disposal, and resolver session state retention. A closed resolver
 /// stays cached with its edits, so reopening it shows the same view.
 /// </summary>
@@ -149,7 +149,9 @@ public sealed class CenterPaneController : IDisposable
         bool isSessionActive = _activeCtx.State.IsConflictSessionActive;
         bool hasUnsaved = existing?.HasUnsavedWork == true;
 
-        if ((isSessionActive || hasUnsaved) && _activeCtx.State.IsConflictResolverClosed)
+        // Only a live session can be closed: with no conflicts or operation left, nothing would
+        // bring back a hidden resolver holding edits.
+        if (isSessionActive && _activeCtx.State.IsConflictResolverClosed)
         {
             if (!ReferenceEquals(_centerHost.Content, _graph))
             {

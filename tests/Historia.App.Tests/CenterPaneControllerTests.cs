@@ -217,6 +217,26 @@ public class CenterPaneControllerTests : IDisposable
     }
 
     [AvaloniaFact]
+    public async Task Closed_flag_cannot_hide_unsaved_work_after_the_session_ends()
+    {
+        var (centerHost, _, controller, resolver) = await ShowResolverAsync();
+        using var _ = controller;
+        resolver.ResultEditorForTesting.Document.Insert(0, "edit\n");
+
+        _fixture.MarkResolved();
+        _fixture.ClearOperation();
+        await _context.State.RefreshStatusAsync();
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(_context.State.IsConflictSessionActive);
+
+        _context.State.SetConflictResolverClosed(true);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(resolver, centerHost.Content);
+        Assert.True(resolver.HasUnsavedWork);
+    }
+
+    [AvaloniaFact]
     public async Task New_session_after_close_opens_resolver()
     {
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];

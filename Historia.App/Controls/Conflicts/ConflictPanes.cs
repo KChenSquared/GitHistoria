@@ -274,6 +274,9 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
     /// <summary>The tint the margin paints behind 0-based <paramref name="row"/>.</summary>
     internal ConflictRowTint TintForRowForTesting(int row) => _getTint?.Invoke(row) ?? ConflictRowTint.None;
 
+    /// <summary>Gutter rows the last <see cref="Render"/> tinted.</summary>
+    internal int TintedRowsDrawnForTesting { get; private set; }
+
     /// <param name="getTint">How a row (0-based document line) tints its gutter; null leaves the
     /// gutter untinted.</param>
     public ConflictLineNumberMargin(
@@ -324,6 +327,7 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
             _textCache.Clear();
         }
 
+        TintedRowsDrawnForTesting = 0;
         var lines = _getLines?.Invoke();
         var foregroundBrush = PaletteBrushes.Get("ColorTextFaint");
 
@@ -354,6 +358,7 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
             if (_getTint != null && ConflictRowTints.GutterBrush(_getTint(docLineNumber - 1)) is { } tint)
             {
                 DiffGutterTint.FillRow(context, view, line, Bounds.Width, tint);
+                TintedRowsDrawnForTesting++;
             }
 
             if (string.IsNullOrEmpty(numText))

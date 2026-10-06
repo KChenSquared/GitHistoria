@@ -560,6 +560,11 @@ public sealed class ConflictPaneRenderTests
             Assert.Equal(new Thickness(0), margin.Margin);
             RenderMargin(margin);
 
+            // Every row is Add or Del, so the render fills the gutter of every visible row.
+            int visible = editor.TextArea.TextView.VisualLines.Count;
+            Assert.True(visible > 0);
+            Assert.Equal(visible, margin.TintedRowsDrawnForTesting);
+
             Assert.Equal(ConflictRowTint.None, new ConflictLineNumberMargin(editor).TintForRowForTesting(0));
         }
         finally

@@ -425,6 +425,48 @@ public class RepositoryStateServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Conflicts_on_the_next_rebase_step_clear_closed_flag()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var gateway = new FakeGateway();
+        var state = new RepositoryStateService(ctx, ui: null, repoCache: null, gateway: gateway);
+
+        var rebaseDir = Path.Combine(ctx.GitDirectory, "rebase-merge");
+        Directory.CreateDirectory(rebaseDir);
+        var conflicted = Historia.Models.RepositoryStatus.Empty with
+        {
+            Conflicted = [new FileStatusEntry { Path = "f.txt", Kind = FileChangeKind.Conflicted, IsBinary = false, IsSubmodule = false }],
+        };
+
+        try
+        {
+            gateway.StatusToReturn = conflicted;
+            await state.RefreshStatusAsync();
+            state.SetConflictResolverClosed(true);
+
+            // Every file resolved: the session stays active for Continue, and the resolver stays closed.
+            gateway.StatusToReturn = Historia.Models.RepositoryStatus.Empty;
+            await state.RefreshStatusAsync();
+            Assert.True(state.IsConflictSessionActive);
+            Assert.True(state.IsConflictResolverClosed);
+
+            int raises = 0;
+            state.ConflictResolverClosedChanged += (_, _) => raises++;
+
+            gateway.StatusToReturn = conflicted;
+            await state.RefreshStatusAsync();
+
+            Assert.True(state.IsConflictSessionActive);
+            Assert.False(state.IsConflictResolverClosed);
+            Assert.Equal(1, raises);
+        }
+        finally
+        {
+            Directory.Delete(rebaseDir, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Closed_flag_does_not_change_IsConflictSessionActive()
     {
         await using var ctx = _host.Open(_repo.Path);
