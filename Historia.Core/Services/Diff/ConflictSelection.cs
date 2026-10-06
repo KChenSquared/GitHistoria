@@ -16,24 +16,45 @@ public sealed class ConflictSelection
 {
     private readonly bool[] _ours;
     private readonly bool[] _theirs;
+    private readonly ConflictSide? _deletionSide;
     private readonly ConflictSide[] _sideLayout = [ConflictSide.Ours, ConflictSide.Theirs];
     private List<(ConflictSide Side, int Index)>? _layout;
 
+    /// <summary>Raw source lines of the ours side. Row indices must go through <see cref="RowCount"/> and <see cref="RowText"/>.</summary>
     public IReadOnlyList<string> OursLines { get; }
+
+    /// <summary>Raw source lines of the theirs side. Row indices must go through <see cref="RowCount"/> and <see cref="RowText"/>.</summary>
     public IReadOnlyList<string> TheirsLines { get; }
 
     public ConflictSelection(IReadOnlyList<string> oursLines, IReadOnlyList<string> theirsLines)
     {
         OursLines = oursLines;
         TheirsLines = theirsLines;
-        _ours = new bool[oursLines.Count];
-        _theirs = new bool[theirsLines.Count];
+        if (oursLines.Count == 0 && theirsLines.Count > 0)
+        {
+            _deletionSide = ConflictSide.Ours;
+            _ours = new bool[1];
+            _theirs = new bool[theirsLines.Count];
+        }
+        else if (theirsLines.Count == 0 && oursLines.Count > 0)
+        {
+            _deletionSide = ConflictSide.Theirs;
+            _ours = new bool[oursLines.Count];
+            _theirs = new bool[1];
+        }
+        else
+        {
+            _deletionSide = null;
+            _ours = new bool[oursLines.Count];
+            _theirs = new bool[theirsLines.Count];
+        }
     }
 
     private ConflictSelection(ConflictSelection source)
     {
         OursLines = source.OursLines;
         TheirsLines = source.TheirsLines;
+        _deletionSide = source._deletionSide;
         _ours = (bool[])source._ours.Clone();
         _theirs = (bool[])source._theirs.Clone();
         _sideLayout[0] = source._sideLayout[0];
@@ -69,12 +90,36 @@ public sealed class ConflictSelection
 
     public bool HasRows(ConflictSide side) => Rows(side).Length > 0;
 
+    public bool IsDeletion(ConflictSide side) => _deletionSide == side;
+
+    public bool IsDeletionRow(ConflictSide side, int index) => _deletionSide == side && index == 0;
+
+    public string RowText(ConflictSide side, int index)
+    {
+        if (IsDeletionRow(side, index))
+        {
+            return string.Empty;
+        }
+
+        return side switch
+        {
+            ConflictSide.Ours => OursLines[index],
+            ConflictSide.Theirs => TheirsLines[index],
+            _ => throw new ArgumentOutOfRangeException(nameof(side), side, "Only ours and theirs rows can be selected."),
+        };
+    }
+
     public bool IsIncluded(ConflictSide side, int index) => Rows(side)[index];
+
+    public bool IsSaved(ConflictSide side, int index) => IsIncluded(side, index) && !IsDeletionRow(side, index);
 
     /// <summary>At least one row of the side is kept.</summary>
     public bool IsChecked(ConflictSide side) => Array.IndexOf(Rows(side), true) >= 0;
 
-    /// <summary>True when no row of either side is kept — the conflict resolves to no lines.</summary>
+    /// <summary>
+    /// True when no row of either side is kept — the conflict resolves to no lines.
+    /// Note that a kept deletion row makes this false, even though the deletion row itself saves no line.
+    /// </summary>
     public bool IsEmpty => !IsChecked(ConflictSide.Ours) && !IsChecked(ConflictSide.Theirs);
 
     public ConflictHunkState HunkState(ConflictSide side)
@@ -169,7 +214,7 @@ public enum ConflictRowOrigin { Ours, Theirs, Added }
 /// One document line of a managed region: an ours or theirs row (with its index and original
 /// text on that side), or a line the user typed inside the region.
 /// </summary>
-public readonly record struct ConflictLineOrigin(ConflictRowOrigin Origin, int SourceIndex, string SourceText);
+public readonly record struct ConflictLineOrigin(ConflictRowOrigin Origin, int SourceIndex, string SourceText, bool IsDeletion = false);
 
 /// <summary>A managed region's document lines, starting at <paramref name="StartLine"/> (0-based).</summary>
 public sealed record ConflictManagedSpan(int StartLine, IReadOnlyList<ConflictLineOrigin> Lines)

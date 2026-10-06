@@ -120,14 +120,74 @@ public class ConflictSelectionTests
     }
 
     [Fact]
-    public void SetHunk_on_empty_side_is_noop()
+    public void Empty_side_opposite_lines_has_one_deletion_row()
     {
         var s = Make(ours: 0, theirs: 2);
-        Assert.False(s.HasRows(ConflictSide.Ours));
+        Assert.True(s.HasRows(ConflictSide.Ours));
+        Assert.Equal(1, s.RowCount(ConflictSide.Ours));
+        Assert.True(s.IsDeletion(ConflictSide.Ours));
+        Assert.False(s.IsDeletion(ConflictSide.Theirs));
+        Assert.True(s.IsDeletionRow(ConflictSide.Ours, 0));
+        Assert.Equal(string.Empty, s.RowText(ConflictSide.Ours, 0));
+
         s.SetHunk(ConflictSide.Ours, true);
-        Assert.Equal(ConflictHunkState.Unchecked, s.HunkState(ConflictSide.Ours));
-        Assert.Equal(new[] { ConflictSide.Ours, ConflictSide.Theirs }, s.SideLayout);
+        Assert.True(s.IsIncluded(ConflictSide.Ours, 0));
+        Assert.Equal(ConflictHunkState.Checked, s.HunkState(ConflictSide.Ours));
+        Assert.False(s.IsEmpty);
+        Assert.False(s.IsSaved(ConflictSide.Ours, 0));
+    }
+
+    [Fact]
+    public void Deletion_then_addition_layout_follows_clicks()
+    {
+        var s = Make(ours: 0, theirs: 2);
+        s.SetHunk(ConflictSide.Ours, true);
+        s.SetHunk(ConflictSide.Theirs, true);
+        Assert.Equal(new[] { (ConflictSide.Ours, 0), (ConflictSide.Theirs, 0), (ConflictSide.Theirs, 1) }, s.Layout);
+        Assert.False(s.IsSaved(ConflictSide.Ours, 0));
+        Assert.True(s.IsSaved(ConflictSide.Theirs, 0));
+        Assert.True(s.IsSaved(ConflictSide.Theirs, 1));
+    }
+
+    [Fact]
+    public void Addition_then_deletion_keeps_addition_first()
+    {
+        var s = Make(ours: 0, theirs: 2);
+        s.SetHunk(ConflictSide.Theirs, true);
+        s.SetHunk(ConflictSide.Ours, true);
+        Assert.Equal(new[] { (ConflictSide.Theirs, 0), (ConflictSide.Theirs, 1), (ConflictSide.Ours, 0) }, s.Layout);
+    }
+
+    [Fact]
+    public void Both_sides_empty_has_no_rows()
+    {
+        var s = Make(ours: 0, theirs: 0);
+        Assert.Equal(0, s.RowCount(ConflictSide.Ours));
+        Assert.Equal(0, s.RowCount(ConflictSide.Theirs));
+        Assert.False(s.HasRows(ConflictSide.Ours));
+        Assert.False(s.HasRows(ConflictSide.Theirs));
+        Assert.False(s.IsDeletion(ConflictSide.Ours));
+        Assert.False(s.IsDeletion(ConflictSide.Theirs));
         Assert.True(s.IsEmpty);
+    }
+
+    [Fact]
+    public void Both_sides_non_empty_has_no_deletion()
+    {
+        var s = Make(ours: 2, theirs: 3);
+        Assert.False(s.IsDeletion(ConflictSide.Ours));
+        Assert.False(s.IsDeletion(ConflictSide.Theirs));
+    }
+
+    [Fact]
+    public void Clone_keeps_deletion_side()
+    {
+        var s = Make(ours: 0, theirs: 2);
+        s.SetHunk(ConflictSide.Ours, true);
+        var copy = s.Clone();
+        Assert.True(copy.SelectionEquals(s));
+        Assert.True(copy.IsDeletion(ConflictSide.Ours));
+        Assert.False(copy.IsDeletion(ConflictSide.Theirs));
     }
 
     [Fact]

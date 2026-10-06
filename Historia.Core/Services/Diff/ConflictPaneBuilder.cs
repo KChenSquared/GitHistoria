@@ -11,7 +11,9 @@ public enum ConflictPaneLineType
     Theirs,
     Padding,
     [Obsolete("Never produced")]
-    Base
+    Base,
+    /// <summary>The one row standing for a side that removed every line of the conflict.</summary>
+    Deletion
 }
 
 /// <summary>
@@ -28,7 +30,8 @@ public readonly record struct ConflictPaneLine(
 /// <summary>
 /// Builds the pane lines for conflict resolution editors (Ours, Theirs). Every pane has the same
 /// row count as the Result document, so the panes scroll together with the Result. Inside a
-/// conflict both sides start on the conflict's first content row and the shorter side pads below.
+/// conflict both sides start on the conflict's first content row and the shorter side pads below
+/// (or shows a single deletion row if it has no lines at all).
 /// </summary>
 public static class ConflictPaneBuilder
 {
@@ -46,8 +49,10 @@ public static class ConflictPaneBuilder
     /// <summary>
     /// Builds pane lines for the specified side, with <paramref name="managed"/> regions overlaid:
     /// a managed region shows its rows' original text on the side they came from, from the region's
-    /// first row down, and pads the rest (added lines are never shown). Spans are sorted, never
-    /// overlap marker regions, and are walked alongside the regions in one pass.
+    /// first row down, and pads the rest (added lines are never shown; a side's deletion row shows
+    /// as an unnumbered deletion row). Spans are sorted, never overlap marker regions, and are walked
+    /// alongside the regions in one pass. An unresolved marker region with no lines on one side and lines
+    /// on the other shows a single deletion row on that side in place of its first padding row.
     /// </summary>
     public static IReadOnlyList<ConflictPaneLine> Build(ConflictParse parse, ConflictSide side, IReadOnlyList<ConflictManagedSpan>? managed)
     {
@@ -83,8 +88,16 @@ public static class ConflictPaneBuilder
                         var origin = span.Lines[offset + i];
                         if (origin.Origin == sideOrigin)
                         {
-                            result.Add(new ConflictPaneLine(sideType, origin.SourceText, sideLineNumber++, lineIdx + i));
-                            shown++;
+                            if (origin.IsDeletion)
+                            {
+                                result.Add(new ConflictPaneLine(ConflictPaneLineType.Deletion, string.Empty, null, lineIdx + i));
+                                shown++;
+                            }
+                            else
+                            {
+                                result.Add(new ConflictPaneLine(sideType, origin.SourceText, sideLineNumber++, lineIdx + i));
+                                shown++;
+                            }
                         }
                     }
 
@@ -110,19 +123,31 @@ public static class ConflictPaneBuilder
                 int rows = region.EndLine - region.StartLine + 1;
                 int sideStart = side == ConflictSide.Ours ? region.OursStartLine : region.TheirsStartLine;
                 int sideCount = side == ConflictSide.Ours ? region.OursLineCount : region.TheirsLineCount;
+                int otherCount = side == ConflictSide.Ours ? region.TheirsLineCount : region.OursLineCount;
                 System.Diagnostics.Debug.Assert(sideCount <= rows - 2, "a conflict's side lines must fit between its markers");
 
                 result.Add(new ConflictPaneLine(ConflictPaneLineType.Marker, string.Empty, null, lineIdx));
-                for (int k = 0; k < sideCount; k++)
+                if (sideCount == 0 && otherCount > 0)
                 {
-                    int source = sideStart + k;
-                    string text = source < documentLines.Count ? documentLines[source] : string.Empty;
-                    result.Add(new ConflictPaneLine(sideType, text, sideLineNumber++, source));
+                    result.Add(new ConflictPaneLine(ConflictPaneLineType.Deletion, string.Empty, null, sideStart));
+                    for (int row = 2; row < rows - 1; row++)
+                    {
+                        result.Add(new ConflictPaneLine(ConflictPaneLineType.Padding, string.Empty, null, lineIdx + row));
+                    }
                 }
-
-                for (int row = sideCount + 1; row < rows - 1; row++)
+                else
                 {
-                    result.Add(new ConflictPaneLine(ConflictPaneLineType.Padding, string.Empty, null, lineIdx + row));
+                    for (int k = 0; k < sideCount; k++)
+                    {
+                        int source = sideStart + k;
+                        string text = source < documentLines.Count ? documentLines[source] : string.Empty;
+                        result.Add(new ConflictPaneLine(sideType, text, sideLineNumber++, source));
+                    }
+
+                    for (int row = sideCount + 1; row < rows - 1; row++)
+                    {
+                        result.Add(new ConflictPaneLine(ConflictPaneLineType.Padding, string.Empty, null, lineIdx + row));
+                    }
                 }
 
                 result.Add(new ConflictPaneLine(ConflictPaneLineType.Marker, string.Empty, null, region.EndLine));
