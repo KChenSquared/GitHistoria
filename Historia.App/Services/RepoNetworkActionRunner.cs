@@ -544,7 +544,8 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         }
         catch (Exception ex)
         {
-            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage(op.ToString()), ex.NotificationDetails());
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage(op.ToString()), ex.NotificationDetails(),
+                StaleLockPrompt.ActionsFor(repo, ex, _dialogs, _notifications));
         }
     }
 }

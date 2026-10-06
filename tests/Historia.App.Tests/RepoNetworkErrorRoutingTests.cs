@@ -40,11 +40,14 @@ public sealed class RepoNetworkErrorRoutingTests
         public event EventHandler<NotificationsChangedEventArgs>? Changed;
     }
 
-    /// <summary>Counts the push-rejection chooser and the destructive confirm; both answer Cancel.</summary>
+    /// <summary>Counts the push-rejection chooser and the destructive confirm. The chooser answers
+    /// Cancel; the destructive confirm answers <see cref="ConfirmAnswer"/> (Cancel by default).</summary>
     private sealed class CountingDialogService : IDialogService
     {
         public int ChooseCalls;
         public int ConfirmDestructiveCalls;
+        public bool ConfirmAnswer;
+        public string? LastEffect;
 
         public Task<int> ChooseAsync(string title, string message, IReadOnlyList<string> options,
             int defaultIndex = 0, int destructiveIndex = -1, DialogIcon icon = DialogIcon.None)
@@ -56,7 +59,8 @@ public sealed class RepoNetworkErrorRoutingTests
         public Task<bool> ConfirmDestructiveAsync(string title, string effect, string confirmLabel)
         {
             ConfirmDestructiveCalls++;
-            return Task.FromResult(false);
+            LastEffect = effect;
+            return Task.FromResult(ConfirmAnswer);
         }
 
         public Task<string?> PickFolderAsync(string title, string? initialDirectory = null) => throw new NotSupportedException();
@@ -114,11 +118,11 @@ public sealed class RepoNetworkErrorRoutingTests
 
         public PushFixture Diverge()
         {
-            var other = Path.Combine(_root, "other");
+            var other = Path.Combine(_root, "other-" + Guid.NewGuid().ToString("N"));
             RunGit(_root, "clone", RemotePath, other);
             Configure(other);
             RunGit(other, "checkout", "main");
-            File.WriteAllText(Path.Combine(other, "f.txt"), "other\n");
+            File.WriteAllText(Path.Combine(other, "f.txt"), "other " + Guid.NewGuid().ToString("N") + "\n");
             RunGit(other, "add", "f.txt");
             RunGit(other, "commit", "-m", "other commit");
             RunGit(other, "push", "origin", "main");
@@ -134,6 +138,17 @@ public sealed class RepoNetworkErrorRoutingTests
                 + "echo 'error: File big.bin is 361.72 MB; this exceeds the file size limit of 100.00 MB' >&2\n"
                 + "exit 1\n");
             return this;
+        }
+
+        /// <summary>Leaves <c>refs/remotes/origin/main.lock</c> in the clone, last written
+        /// <paramref name="age"/> ago — what a git process killed mid-fetch leaves behind.</summary>
+        public string LeaveRefLock(TimeSpan age)
+        {
+            var path = Path.Combine(LocalPath, ".git", "refs", "remotes", "origin", "main.lock");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, "");
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow - age);
+            return path;
         }
 
         public PushFixture PointOriginAt(string url)
@@ -495,5 +510,89 @@ public sealed class RepoNetworkErrorRoutingTests
         Assert.Equal("origin", request.Value.Remote);
         Assert.Equal("main", request.Value.Branch);
         Assert.Same(ctx, request.Value.Repo);
+    }
+
+    // ── stale lock files ──
+
+    [AvaloniaFact]
+    public async Task A_fetch_blocked_by_a_stale_ref_lock_offers_removal_behind_a_destructive_confirm()
+    {
+        using var fixture = new PushFixture().Diverge();
+        var lockFile = fixture.LeaveRefLock(TimeSpan.FromHours(3));
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(RepoNetworkAction.Fetch));
+        var error = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Error);
+        Assert.StartsWith("Fetch failed: ", error.Message);
+        var remove = Assert.Single(error.Actions);
+        Assert.Equal("Remove stale lock files…", remove.Label);
+
+        // Declined: nothing is deleted.
+        await remove.Invoke();
+        Assert.Equal(1, h.Dialogs.ConfirmDestructiveCalls);
+        Assert.Contains("refs/remotes/origin/main.lock", h.Dialogs.LastEffect);
+        Assert.True(File.Exists(lockFile));
+
+        // Confirmed: the lock goes and the next fetch succeeds.
+        h.Dialogs.ConfirmAnswer = true;
+        await remove.Invoke();
+        Assert.False(File.Exists(lockFile));
+        Assert.Contains(h.Notify.Published, n => n.Severity == NotificationSeverity.Success
+            && n.Message == $"Removed 1 stale lock file from {repo.DisplayName}.");
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(RepoNetworkAction.Fetch));
+        Assert.Contains(h.Notify.Published, n => n.Severity == NotificationSeverity.Success && n.Message == "Fetched origin.");
+    }
+
+    [AvaloniaFact]
+    public async Task A_lock_younger_than_five_minutes_is_not_offered_for_removal()
+    {
+        using var fixture = new PushFixture().Diverge();
+        fixture.LeaveRefLock(TimeSpan.FromMinutes(1));
+        await using var h = new Harness();
+        await h.OpenAsync(fixture.LocalPath);
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(RepoNetworkAction.Fetch));
+
+        var error = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Error);
+        Assert.Empty(error.Actions);
+    }
+
+    [AvaloniaFact]
+    public async Task Auto_fetch_warns_once_per_local_failure_until_a_clean_fetch()
+    {
+        using var fixture = new PushFixture().Diverge();
+        var lockFile = fixture.LeaveRefLock(TimeSpan.FromHours(3));
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+        var host = h.Services.GetRequiredService<IAutoFetchHost>();
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
+        await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
+        var warning = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Warning);
+        Assert.Equal($"Auto-fetch of {repo.DisplayName} failed: lock files left by a stopped git process are in the way.", warning.Message);
+        Assert.Equal("Remove stale lock files…", Assert.Single(warning.Actions).Label);
+
+        File.Delete(lockFile);
+        await host.FetchAsync(repo, CancellationToken.None);
+
+        fixture.LeaveRefLock(TimeSpan.FromHours(3));
+        fixture.Diverge();
+        await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
+        Assert.Equal(2, h.Notify.Published.Count(n => n.Severity == NotificationSeverity.Warning));
+    }
+
+    [AvaloniaFact]
+    public async Task Auto_fetch_never_warns_when_the_remote_is_unreachable()
+    {
+        using var fixture = new PushFixture().PointOriginAt("https://127.0.0.1:1/r.git");
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+        var host = h.Services.GetRequiredService<IAutoFetchHost>();
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
+
+        Assert.DoesNotContain(h.Notify.Published, n => n.Severity == NotificationSeverity.Warning);
     }
 }

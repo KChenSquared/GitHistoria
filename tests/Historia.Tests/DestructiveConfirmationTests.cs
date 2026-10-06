@@ -86,6 +86,7 @@ public class DestructiveConfirmationTests
         (new(@"\.SkipCurrentAsync\s*\(", RegexOptions.Compiled), "SkipCurrentAsync"),
         (new(@"\.PruneRemoteAsync\s*\(", RegexOptions.Compiled), "PruneRemoteAsync"),
         (new(@"\.RemoveRemoteAsync\s*\(", RegexOptions.Compiled), "RemoveRemoteAsync"),
+        (new(@"RemoveStaleLocksAsync\s*\(", RegexOptions.Compiled), "RemoveStaleLocksAsync"),
         // Bounded lookahead (not a full parse) for the Force flag on the same statement, so a
         // plain push (no Force argument at all) never has to sit behind a confirm.
         (new(@"PushAsync\s*\([^;]{0,400}?Force", RegexOptions.Compiled | RegexOptions.Singleline), "force PushAsync"),
