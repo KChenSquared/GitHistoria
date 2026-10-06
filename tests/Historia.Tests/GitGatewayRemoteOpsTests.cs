@@ -151,18 +151,26 @@ public sealed class GitGatewayRemoteOpsTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task DeleteRemoteBranch_missing_on_remote_is_RefNotFound()
+    public async Task DeleteRemoteBranch_already_gone_keeps_a_same_named_tag_and_drops_the_stale_tracking_ref()
     {
         using var origin = TestRepositoryBuilder.Create();
         origin.WriteFile("f.txt", "x").Stage().Commit("seed");
+        origin.Git("branch", "x");
 
         using var local = TestRepositoryBuilder.Create();
         local.Git("remote", "add", "origin", origin.Path);
         local.Git("fetch", "origin");
+        Assert.Contains("origin/x", local.Git("branch", "-r"));
+
+        // Someone else deleted the branch and tagged the same name; the local row is now stale.
+        origin.Git("branch", "-D", "x");
+        origin.Git("tag", "x");
 
         await using var ctx = _host.Open(local.Path);
-        var ex = await Assert.ThrowsAsync<HistoriaGitException>(() =>
-            ctx.Gateway.DeleteRemoteBranchAsync("origin", "missing", progress: null));
-        Assert.Equal(GitErrorKind.RefNotFound, ex.Kind);
+        await ctx.Gateway.DeleteRemoteBranchAsync("origin", "x", progress: null);
+
+        var tagNames = origin.Git("tag").Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        Assert.Contains("x", tagNames);
+        Assert.DoesNotContain("origin/x", local.Git("branch", "-r"));
     }
 }

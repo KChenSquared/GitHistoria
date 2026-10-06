@@ -154,7 +154,20 @@ public sealed class RepoNetworkErrorRoutingTests
             return this;
         }
 
-        public bool RemoteHasBranch(string branch)
+        /// <summary>Replaces <paramref name="name"/> on the remote with a same-named tag, as if
+        /// someone else deleted the branch, leaving the local remote-tracking ref stale.</summary>
+        public PushFixture ReplaceRemoteBranchWithTag(string name)
+        {
+            RunGit(RemotePath, "branch", "-D", name);
+            RunGit(RemotePath, "tag", name, "main");
+            return this;
+        }
+
+        public bool RemoteHasBranch(string branch) => RemoteLists("branch", branch);
+
+        public bool RemoteHasTag(string tag) => RemoteLists("tag", tag);
+
+        private bool RemoteLists(string kind, string name)
         {
             var psi = new System.Diagnostics.ProcessStartInfo("git")
             {
@@ -164,9 +177,9 @@ public sealed class RepoNetworkErrorRoutingTests
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
-            psi.ArgumentList.Add("branch");
+            psi.ArgumentList.Add(kind);
             psi.ArgumentList.Add("--list");
-            psi.ArgumentList.Add(branch);
+            psi.ArgumentList.Add(name);
             using var p = System.Diagnostics.Process.Start(psi)!;
             var stdout = p.StandardOutput.ReadToEnd();
             p.WaitForExit();
@@ -478,19 +491,20 @@ public sealed class RepoNetworkErrorRoutingTests
     }
 
     [AvaloniaFact]
-    public async Task An_already_deleted_remote_branch_reports_not_found()
+    public async Task An_already_deleted_remote_branch_drops_its_stale_row_and_keeps_a_same_named_tag()
     {
-        using var fixture = new PushFixture();
+        using var fixture = new PushFixture().PushBranch("b").ReplaceRemoteBranchWithTag("b");
         await using var h = new Harness();
         h.Dialogs.ConfirmDestructiveAnswer = true;
-        await h.OpenAsync(fixture.LocalPath);
+        var ctx = await h.OpenAsync(fixture.LocalPath);
+        Assert.Contains(ctx.State.Branches, br => br.IsRemote && br.Name == "origin/b");
 
         await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
-            new RepoNetworkRequest(RepoNetworkAction.DeleteRemoteBranch, "origin", null, "missing")));
+            new RepoNetworkRequest(RepoNetworkAction.DeleteRemoteBranch, "origin", null, "b")));
 
         Assert.Equal(1, h.Dialogs.ConfirmDestructiveCalls);
-        var error = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Error);
-        Assert.Equal("Delete remote branch failed: the branch, tag or commit wasn't found.", error.Message);
-        Assert.Contains("remote ref does not exist", error.Details);
+        Assert.DoesNotContain(h.Notify.Published, n => n.Severity == NotificationSeverity.Error);
+        Assert.True(fixture.RemoteHasTag("b"));
+        Assert.DoesNotContain(ctx.State.Branches, br => br.IsRemote && br.Name == "origin/b");
     }
 }
