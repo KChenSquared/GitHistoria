@@ -25,8 +25,11 @@ So I decided to put my Claude and Gemini subscriptions to use and build a free,
 fast alternative to the commit graph I've come to rely on. Historia's graph keeps the
 same easy-to-read orthogonal edge routing, but it can render repos with hundreds of
 thousands of commits and scroll through them quickly and smoothly. Beyond the graph,
-Historia is built with agentic workflows in mind: a command center lets your agents point
-you to what needs your review.
+Historia is built with agentic workflows in mind: agents can point you to what needs your
+review, and hand you the change they just made to commit. It was built with Claude and
+Gemini, and it is set up so coding agents can keep working on it safely: the
+[constitution](docs/constitution.md) is written to be followed mechanically, and the rules
+that matter are enforced by tests rather than convention.
 
 **Trade-offs.** Historia loads your entire commit history instead of capping it at the
 most recent few thousand commits. That means memory grows with the size of the repo:
@@ -76,7 +79,14 @@ users on all repos. It is built around:
 - **Next-Gen Commit Graph:** Virtualized rendering (60+ FPS) designed to scroll smoothly
   across repositories with hundreds of thousands of commits. Features vibrant multi-color
   branch lanes and orthogonal edge routing with rounded corners.
-- **Power-User Feature Parity:** 100% core Git autonomy, visual interactive rebase\*,
+- **Built for Agentic Coding:** Agents can open Historia on the exact commit, file or
+  uncommitted change they just produced, so you review it in a real diff viewer. They can stage
+  their change and propose a commit message, but only you commit, and nothing they send can
+  change the repository ([constitution Rule 40](docs/constitution.md#automation--agents)). The
+  codebase is built for agent contributors too: see
+  [Working with coding agents](docs/contributing.md#6-working-with-coding-agents) and
+  [`AGENTS.md`](AGENTS.md).
+- **Power-User Feature Parity:** 100% core Git autonomy, visual interactive rebase,
   granular staging, 3-way conflict resolver, and full repository management (submodules,
   worktrees, LFS\*).
 - **SSH Only Mode:** By default, fetch, pull, and push try the remote's own scheme first
@@ -94,6 +104,11 @@ users on all repos. It is built around:
 - 📜 [**Historia Constitution**](docs/constitution.md) — Architectural invariants, security
   policies, and performance ceilings.
 - 🛣️ [**Roadmap**](docs/roadmap.md) — Planned features for upcoming releases.
+- 🗂️ [**Plans**](Historia-DevDocs/AdHocPlans/) — Active implementation plans; finished ones move to
+  `completed/`.
+- 🤖 [**AGENTS.md**](AGENTS.md) — The shared instructions for coding agents working on Historia.
+- 🔌 [**Agent integration**](docs/agent-integration/README.md) — `historia-cmdr` and sample skills
+  for Claude Code and GitHub Copilot.
 - 🤝 [**Contributing Guide**](docs/contributing.md) — Environment setup, coding standards,
   PR guidelines, and core tenets.
 
@@ -168,7 +183,7 @@ xattr -dr com.apple.quarantine Historia.app
 
 ---
 
-## ⌨️ Command-line control
+## ⌨️ Review agent work in Historia
 
 `historia-cmdr` (built beside `Historia.exe`) tells a running Historia what to show, so a script
 or a coding agent can point you at the exact commit, file or change to look at. It prints one
