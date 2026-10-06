@@ -249,6 +249,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     /// <summary>Clicks the hunk check box on <paramref name="paneRow"/> of the Ours or Theirs pane.</summary>
     internal void ClickHunkForTesting(ConflictSide side, int paneRow) => OnHunkToggleClicked(side, paneRow);
 
+    /// <summary>The hunk box drawn on <paramref name="paneRow"/> of the Ours or Theirs pane.</summary>
+    internal ConflictToggleGlyph HunkGlyphForTesting(ConflictSide side, int paneRow) => PaneHunkGlyph(side, paneRow);
+
     public ConflictResolverView(IServiceProvider sp, RepositoryContext ctx)
     {
         _sp = sp;
@@ -266,15 +269,15 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _session.Changed += OnSessionChanged;
 
         // Margins and Renderers
-        _oursToggleMargin = new ConflictToggleMargin(_oursEditor, line => _session.HunkGlyph(ConflictSide.Ours, line), _ => "Use these ours lines");
-        _oursToggleMargin.ToggleClicked += (_, line) => OnHunkToggleClicked(ConflictSide.Ours, line);
+        _oursToggleMargin = new ConflictToggleMargin(_oursEditor, row => PaneHunkGlyph(ConflictSide.Ours, row), _ => "Use these ours lines");
+        _oursToggleMargin.ToggleClicked += (_, row) => OnHunkToggleClicked(ConflictSide.Ours, row);
         _oursEditor.TextArea.LeftMargins.Add(_oursToggleMargin);
         _oursEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_oursEditor, () => GetPaneLines(ConflictSide.Ours), row => PaneTint(ConflictSide.Ours, row)));
         _oursEditor.TextArea.TextView.BackgroundRenderers.Add(
             new ConflictBackgroundRenderer(_oursEditor, () => ConflictSide.Ours, () => _parse, () => GetPaneLines(ConflictSide.Ours), () => _snapshot?.Analyses));
 
-        _theirsToggleMargin = new ConflictToggleMargin(_theirsEditor, line => _session.HunkGlyph(ConflictSide.Theirs, line), _ => "Use these theirs lines");
-        _theirsToggleMargin.ToggleClicked += (_, line) => OnHunkToggleClicked(ConflictSide.Theirs, line);
+        _theirsToggleMargin = new ConflictToggleMargin(_theirsEditor, row => PaneHunkGlyph(ConflictSide.Theirs, row), _ => "Use these theirs lines");
+        _theirsToggleMargin.ToggleClicked += (_, row) => OnHunkToggleClicked(ConflictSide.Theirs, row);
         _theirsEditor.TextArea.LeftMargins.Add(_theirsToggleMargin);
         _theirsEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_theirsEditor, () => GetPaneLines(ConflictSide.Theirs), row => PaneTint(ConflictSide.Theirs, row)));
         _theirsEditor.TextArea.TextView.BackgroundRenderers.Add(
@@ -536,9 +539,10 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _swallowNextSpace = false;
     }
 
-    private void OnHunkToggleClicked(ConflictSide side, int line)
+    private void OnHunkToggleClicked(ConflictSide side, int paneRow)
     {
-        if (_isBusy || !_isEditable)
+        int line = PaneDocLine(side, paneRow);
+        if (line < 0 || _isBusy || !_isEditable)
         {
             return;
         }
@@ -1300,6 +1304,23 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     {
         return side == ConflictSide.Ours ? _snapshot?.OursLines : _snapshot?.TheirsLines;
     }
+
+    /// <summary>The Result line of a side's row in a top pane; -1 for a marker, padding or common
+    /// row, which carry no hunk box.</summary>
+    private int PaneDocLine(ConflictSide side, int paneRow)
+    {
+        var lines = GetPaneLines(side);
+        if (lines == null || paneRow < 0 || paneRow >= lines.Count)
+        {
+            return -1;
+        }
+
+        var line = lines[paneRow];
+        return line.Type is ConflictPaneLineType.Ours or ConflictPaneLineType.Theirs ? line.DocumentLineIndex : -1;
+    }
+
+    private ConflictToggleGlyph PaneHunkGlyph(ConflictSide side, int paneRow)
+        => _session.HunkGlyph(side, PaneDocLine(side, paneRow));
 
     private ConflictRowTint PaneTint(ConflictSide side, int row)
     {

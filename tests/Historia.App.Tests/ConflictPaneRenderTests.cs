@@ -433,6 +433,51 @@ public sealed class ConflictPaneRenderTests
     }
 
     [AvaloniaFact]
+    public void Changed_text_highlight_follows_the_source_line()
+    {
+        const string text = "top\n<<<<<<< HEAD\nalpha beta\n=======\ngamma\nalpha DELTA\n>>>>>>> b\nbottom";
+        var parse = ConflictMarkerParser.Parse(text);
+        var region = Assert.Single(parse.Regions);
+        var analysis = Assert.Single(ConflictRegionAnalyzer.AnalyzeAll(parse));
+        var theirs = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs);
+
+        // The first theirs line sits on the region's first content row, above its source line.
+        int row = theirs.Select((l, i) => (l, i)).First(x => x.l.Type == ConflictPaneLineType.Theirs).i;
+        Assert.Equal(region.StartLine + 1, row);
+        Assert.NotEqual(row, theirs[row].DocumentLineIndex);
+
+        var highlighted = analysis.TheirsHighlights.Where(h => h.Spans.Count > 0).Select(h => h.DocumentLineIndex).ToList();
+        Assert.NotEmpty(highlighted);
+        foreach (var line in highlighted)
+        {
+            Assert.Contains(theirs, l => l.Type == ConflictPaneLineType.Theirs && l.DocumentLineIndex == line);
+        }
+
+        var (window, editor, renderer) = ShowPaneRenderer(theirs, analysis);
+        try
+        {
+            RenderBackground(editor, renderer);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private static (Window Window, TextEditor Editor, ConflictBackgroundRenderer Renderer) ShowPaneRenderer(
+        IReadOnlyList<ConflictPaneLine> lines, ConflictRegionAnalysis analysis)
+    {
+        var editor = new TextEditor { Document = new TextDocument(string.Join('\n', lines.Select(l => l.Text))) };
+        var renderer = new ConflictBackgroundRenderer(editor, () => ConflictSide.Theirs, () => null, () => lines, () => [analysis]);
+        editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
+        var window = new Window { Width = 400, Height = 300, Content = editor };
+        window.Show();
+        window.UpdateLayout();
+        editor.TextArea.TextView.EnsureVisualLines();
+        return (window, editor, renderer);
+    }
+
+    [AvaloniaFact]
     public void Row_tints_classify_pane_lines()
     {
         Assert.Equal(ConflictRowTint.Add, ConflictRowTints.ForPane(ConflictPaneLineType.Ours));

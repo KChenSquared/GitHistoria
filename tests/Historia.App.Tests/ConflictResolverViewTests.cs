@@ -905,7 +905,7 @@ public class ConflictResolverViewTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task Use_empty_side_leaves_no_blank_line()
+    public async Task Unchecking_the_only_side_leaves_no_blank_line()
     {
         string text = "before\n<<<<<<< HEAD\n=======\ntheirs line\n>>>>>>> branch\nafter\n";
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
@@ -921,7 +921,8 @@ public class ConflictResolverViewTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         var r0 = view.CurrentParseForTesting!.Regions[0];
-        ClickHunk(view, ConflictSide.Ours, r0);
+        ClickHunk(view, ConflictSide.Theirs, r0);
+        view.ClickHunkForTesting(ConflictSide.Theirs, view.SessionForTesting.Regions[0].StartLine);
 
         Assert.Equal("before\nafter\n", view.ComposedTextForTesting);
         Assert.Equal(1, view.SessionForTesting.EmptyRegionCount);
@@ -2667,7 +2668,7 @@ public class ConflictResolverViewTests : IDisposable
 
     /// <summary>Clicks the hunk check box of <paramref name="side"/> on a marker region's first line for that side.</summary>
     private static void ClickHunk(ConflictResolverView view, ConflictSide side, ConflictRegion region)
-        => view.ClickHunkForTesting(side, side == ConflictSide.Ours ? region.OursStartLine : region.TheirsStartLine);
+        => view.ClickHunkForTesting(side, region.StartLine + 1);
 
     /// <summary>Clicks the check box a toggle margin draws on <paramref name="docLine"/> (0-based).</summary>
     private static void ClickToggle(ConflictToggleMargin margin, TextEditor editor, int docLine)
@@ -2714,7 +2715,75 @@ public class ConflictResolverViewTests : IDisposable
             Assert.Single(view.CurrentParseForTesting!.Regions);
             AssertPanesAligned(view);
             Assert.Equal("ours 1", view.OursEditorForTesting.Document.GetText(view.OursEditorForTesting.Document.GetLineByNumber(2)));
-            Assert.Equal("theirs 1", view.TheirsEditorForTesting.Document.GetText(view.TheirsEditorForTesting.Document.GetLineByNumber(3)));
+            Assert.Equal("theirs 1", view.TheirsEditorForTesting.Document.GetText(view.TheirsEditorForTesting.Document.GetLineByNumber(2)));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Hunk_boxes_sit_on_each_sides_first_row()
+    {
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            // Region 1 spans lines 1-5, region 2 lines 7-11; the first content row of each is the next line.
+            foreach (var firstRow in new[] { 2, 8 })
+            {
+                Assert.Equal(ConflictToggleGlyph.Unchecked, view.HunkGlyphForTesting(ConflictSide.Ours, firstRow));
+                Assert.Equal(ConflictToggleGlyph.Unchecked, view.HunkGlyphForTesting(ConflictSide.Theirs, firstRow));
+            }
+
+            var boxRows = Enumerable.Range(0, view.ResultEditorForTesting.Document.LineCount)
+                .Where(row => view.HunkGlyphForTesting(ConflictSide.Theirs, row) != ConflictToggleGlyph.None)
+                .ToList();
+            Assert.Equal([2, 8], boxRows);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Padding_row_at_hunk_start_index_has_no_box()
+    {
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            // Region 1's theirs line is Result line 4, but the theirs pane's row 4 is padding. The
+            // session keys its box by Result line, so only a side row may use it.
+            Assert.Equal(ConflictToggleGlyph.Unchecked, view.SessionForTesting.HunkGlyph(ConflictSide.Theirs, 4));
+            Assert.Equal(ConflictPaneLineType.Padding, view.SnapshotForTesting!.TheirsLines[4].Type);
+            Assert.Equal(4, view.SnapshotForTesting.TheirsLines[4].DocumentLineIndex);
+            Assert.Equal(ConflictToggleGlyph.None, view.HunkGlyphForTesting(ConflictSide.Theirs, 4));
+
+            var text = view.ResultEditorForTesting.Text;
+            view.ClickHunkForTesting(ConflictSide.Theirs, 4);
+
+            Assert.Empty(view.SessionForTesting.Regions);
+            Assert.Equal(text, view.ResultEditorForTesting.Text);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Clicking_theirs_box_selects_theirs()
+    {
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            ClickToggle(view.TheirsToggleMarginForTesting, view.TheirsEditorForTesting, 2);
+
+            var region = Assert.Single(view.SessionForTesting.Regions);
+            Assert.Equal(ConflictHunkState.Checked, region.Selection.HunkState(ConflictSide.Theirs));
+            Assert.Equal(ConflictHunkState.Unchecked, region.Selection.HunkState(ConflictSide.Ours));
+            Assert.StartsWith("header\ntheirs 1\nmiddle\n", view.ComposedTextForTesting);
         }
         finally
         {
@@ -2912,10 +2981,11 @@ public class ConflictResolverViewTests : IDisposable
         var (view, window) = await ShowViewAsync(TwoConflictText);
         try
         {
-            ClickToggle(view.TheirsToggleMarginForTesting, view.TheirsEditorForTesting, 4); // region 1's theirs row
+            ClickToggle(view.TheirsToggleMarginForTesting, view.TheirsEditorForTesting, 2); // region 1's theirs row
             AssertPanesAligned(view);
 
-            ClickToggle(view.OursToggleMarginForTesting, view.OursEditorForTesting, LineOf(view, "ours 1"));
+            // The managed region's ours rows start on its first row in the ours pane.
+            ClickToggle(view.OursToggleMarginForTesting, view.OursEditorForTesting, view.SessionForTesting.Regions[0].StartLine);
             AssertPanesAligned(view);
 
             view.ResultEditorForTesting.Document.UndoStack.Undo();
