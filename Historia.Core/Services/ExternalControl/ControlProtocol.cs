@@ -1,9 +1,10 @@
 namespace Historia.Services.ExternalControl;
 
-/// <summary>Serializes enums as lower-case kebab strings (<c>rev-not-found</c>, <c>propose-commit</c>).</summary>
+/// <summary>Serializes enums as lower-case kebab strings (<c>rev-not-found</c>, <c>propose-commit</c>)
+/// and accepts nothing else: an integer is a malformed request, not an undefined member.</summary>
 public sealed class ControlKebabEnumConverter<T> : JsonStringEnumConverter<T> where T : struct, Enum
 {
-    public ControlKebabEnumConverter() : base(JsonNamingPolicy.KebabCaseLower) { }
+    public ControlKebabEnumConverter() : base(JsonNamingPolicy.KebabCaseLower, allowIntegerValues: false) { }
 }
 
 /// <summary>What an external tool can ask Historia to do. Every verb navigates; only

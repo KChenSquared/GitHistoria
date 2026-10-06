@@ -148,4 +148,13 @@ public sealed class ControlProtocolTests
         Assert.True(ControlVerbs.MayLaunch(ControlVerb.ProposeCommit));
         Assert.True(ControlVerbs.MayLaunch(ControlVerb.Show));
     }
+
+    [Theory]
+    [InlineData("{\"verb\":99}")]
+    [InlineData("{\"verb\":0}")]
+    [InlineData("{\"verb\":\"nope\"}")]
+    public void Integer_and_undefined_verbs_are_rejected(string json)
+    {
+        Assert.ThrowsAny<JsonException>(() => ControlJson.DeserializeRequest(json));
+    }
 }

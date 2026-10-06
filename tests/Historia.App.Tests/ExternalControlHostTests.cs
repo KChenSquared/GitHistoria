@@ -455,9 +455,9 @@ public sealed class ExternalControlHostTests : IAsyncLifetime
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _run;
 
-        public Server(Func<ControlRequest, CancellationToken, Task<ControlResponse>> handler)
+        public Server(Func<ControlRequest, CancellationToken, Task<ControlResponse>> handler, TimeSpan? clientIoTimeout = null)
         {
-            _run = SingleInstance.RunServerAsync(a => Args.Enqueue(a), handler, _cts.Token, PipeName);
+            _run = SingleInstance.RunServerAsync(a => Args.Enqueue(a), handler, _cts.Token, PipeName, clientIoTimeout);
         }
 
         public async Task<ControlResponse?> SendAsync(ControlRequest request)
@@ -568,6 +568,71 @@ public sealed class ExternalControlHostTests : IAsyncLifetime
         var response = await ControlPipe.ReadResponseAsync(reader);
 
         Assert.Equal(ControlError.Usage, response!.Error);
+    }
+
+    [Fact]
+    public async Task An_integer_verb_over_the_pipe_is_usage()
+    {
+        var calls = 0;
+        await using var server = new Server((request, ct) =>
+        {
+            Interlocked.Increment(ref calls);
+            return Task.FromResult(ControlResponse.Success());
+        });
+
+        var connected = await ControlPipe.ConnectClientAsync(TimeSpan.FromSeconds(5), pipeName: server.PipeName);
+        using var client = connected.Stream!;
+        using var writer = ControlPipe.CreateWriter(client);
+        using var reader = ControlPipe.CreateReader(client);
+        await writer.WriteLineAsync(ControlPipe.ProtocolHeader);
+        await writer.WriteLineAsync("{\"verb\":99}");
+        await writer.FlushAsync();
+
+        var response = await ControlPipe.ReadResponseAsync(reader);
+
+        Assert.Equal(ControlError.Usage, response!.Error);
+        Assert.Equal(0, Volatile.Read(ref calls));
+    }
+
+    [Fact]
+    public async Task A_client_that_never_reads_its_answer_frees_its_slot()
+    {
+        await using var server = new Server(
+            (request, ct) => Task.FromResult(ControlResponse.Fail(ControlError.Internal, new string('x', 300))),
+            clientIoTimeout: TimeSpan.FromMilliseconds(300));
+
+        var silent = new List<NamedPipeClientStream>();
+        try
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                var connected = await ControlPipe.ConnectClientAsync(TimeSpan.FromSeconds(5), pipeName: server.PipeName);
+                Assert.Equal(ControlConnectOutcome.Connected, connected.Outcome);
+                silent.Add(connected.Stream!);
+                var w = ControlPipe.CreateWriter(connected.Stream!);
+                await ControlPipe.WriteRequestAsync(w, new ControlRequest { Verb = ControlVerb.Ping });
+            }
+
+            var answered = await server.SendAsync(new ControlRequest { Verb = ControlVerb.Ping }).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.NotNull(answered);
+
+            using (var client = new NamedPipeClientStream(".", server.PipeName, PipeDirection.Out))
+            {
+                await client.ConnectAsync(5000);
+                using var w = new StreamWriter(client) { AutoFlush = true };
+                await w.WriteLineAsync(@"C:fter");
+            }
+
+            string[]? received = null;
+            for (var i = 0; i < 200 && !server.Args.TryDequeue(out received); i++)
+                await Task.Delay(30);
+            Assert.Equal([@"C:fter"], received!);
+        }
+        finally
+        {
+            foreach (var s in silent)
+                s.Dispose();
+        }
     }
 
     // ── Test doubles ────────────────────────────────────────────────────────────────────

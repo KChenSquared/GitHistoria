@@ -34,8 +34,9 @@ internal static class SingleInstance
     /// toward <see cref="MaxConsecutiveServerFailures"/>.</summary>
     private const int MaxConnections = 4;
 
-    /// <summary>How long a connected client may take to finish sending, or to collect its answer,
-    /// before the server drops it and frees the slot.</summary>
+    /// <summary>How long a connected client may take to finish sending, to read its answer (the pipe
+    /// has no output buffer, so a write waits for the reader) and to close, before the server drops
+    /// it and frees the slot.</summary>
     private static readonly TimeSpan ClientIoTimeout = TimeSpan.FromSeconds(10);
 
     // Held for the process lifetime so the name stays claimed; never released explicitly (the
@@ -169,9 +170,11 @@ internal static class SingleInstance
         Action<string[]> onArgs,
         Func<ControlRequest, CancellationToken, Task<ControlResponse>> onControl,
         CancellationToken ct,
-        string? pipeName = null)
+        string? pipeName = null,
+        TimeSpan? clientIoTimeout = null)
     {
         pipeName ??= ControlPipe.PipeName;
+        var ioTimeout = clientIoTimeout ?? ClientIoTimeout;
         using var slots = new SemaphoreSlim(MaxConnections, MaxConnections);
         var consecutiveFailures = 0;
         while (!ct.IsCancellationRequested)
@@ -194,7 +197,7 @@ internal static class SingleInstance
                 {
                     try
                     {
-                        await ServeConnectionAsync(connected, onArgs, onControl, ct).ConfigureAwait(false);
+                        await ServeConnectionAsync(connected, onArgs, onControl, ioTimeout, ct).ConfigureAwait(false);
                     }
                     catch
                     {
@@ -234,15 +237,17 @@ internal static class SingleInstance
         NamedPipeServerStream server,
         Action<string[]> onArgs,
         Func<ControlRequest, CancellationToken, Task<ControlResponse>> onControl,
+        TimeSpan ioTimeout,
         CancellationToken ct)
     {
         using var reader = ControlPipe.CreateReader(server);
         using var writer = ControlPipe.CreateWriter(server);
 
         using var readCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        readCts.CancelAfter(ClientIoTimeout);
+        readCts.CancelAfter(ioTimeout);
         var read = await ControlPipe.ReadAsync(reader, readCts.Token).ConfigureAwait(false);
 
+        ControlResponse reply;
         switch (read.Kind)
         {
             case ControlReadKind.Empty:
@@ -252,13 +257,12 @@ internal static class SingleInstance
                 onArgs(read.Lines!.ToArray());
                 return;
             case ControlReadKind.Invalid:
-                await ControlPipe.WriteResponseAsync(writer, read.Failure!, ct).ConfigureAwait(false);
+                reply = read.Failure!;
                 break;
             default:
-                ControlResponse response;
                 try
                 {
-                    response = await onControl(read.Request!, ct).ConfigureAwait(false);
+                    reply = await onControl(read.Request!, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
@@ -266,16 +270,27 @@ internal static class SingleInstance
                 }
                 catch
                 {
-                    response = ControlResponse.Fail(ControlError.Internal, "Historia could not handle the request.");
+                    reply = ControlResponse.Fail(ControlError.Internal, "Historia could not handle the request.");
                 }
-                await ControlPipe.WriteResponseAsync(writer, response, ct).ConfigureAwait(false);
                 break;
+        }
+
+        using var writeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        writeCts.CancelAfter(ioTimeout);
+        try
+        {
+            await ControlPipe.WriteResponseAsync(writer, reply, writeCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
+        {
+            // The client never read its answer, or is gone; drop the connection and free the slot.
+            return;
         }
 
         // Let the client read its answer and close first; disposing the server end right away
         // can discard a reply the client has not read yet.
         using var drainCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        drainCts.CancelAfter(ClientIoTimeout);
+        drainCts.CancelAfter(ioTimeout);
         try
         {
             await reader.ReadToEndAsync(drainCts.Token).ConfigureAwait(false);
