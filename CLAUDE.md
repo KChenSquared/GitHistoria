@@ -1,19 +1,8 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in this repository (Historia).
+This file exists so Claude Code loads the shared instructions in `AGENTS.md`.
 
-## Read these first
-
-- [Historia Constitution](docs/constitution.md) — architectural invariants, security policies,
-  and performance ceilings. Rule 00 (Confirm Before Destroying Anything) outranks every other
-  principle in this codebase, including performance.
-- [Comprehensive Design Documentation](Historia-DevDocs/ComprehensiveDesign/README.md) — technical
-  architecture, Git data access strategy, and the DAG graph layout engine. This is the living
-  spec; consult it before making architectural changes.
-- [Version Plans](Historia-DevDocs/versionPlans/) — the active milestone's plan. Older plans are
-  archived to keep the working set small.
-- [Contributing Guide](docs/contributing.md) — environment setup, coding standards, PR
-  guidelines, and core tenets.
+@AGENTS.md
 
 ## Subagents
 
