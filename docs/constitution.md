@@ -69,7 +69,7 @@ true`, `defaultToCancel:`, `DialogIcon.Warning` outside the one entry point's ow
 implementation), and a call-site guard scanning every listed destructive service call (submodule
 `RemoveAsync`, rebase `StartAsync`, `DiscardAsync`, `DeleteBranchAsync`, `DeleteTagAsync`, stash
 `DropAsync`/`ClearAsync`, worktree `RemoveAsync`, hard `ResetAsync`, `ResolveWithSideAsync`,
-`RecreateConflictAsync`, `AbortOperationAsync`, `SkipCurrentAsync`, force `PushAsync`) so it must
+`RecreateConflictAsync`, `AbortOperationAsync`, `SkipCurrentAsync`, `DeleteAiServiceAsync`, force `PushAsync`) so it must
 sit in a method that also calls `ConfirmDestructiveAsync`, or be on an explicit, commented
 allowlist. `HistoriaApp.Tests.DestructiveConfirmDialogTests` guards the dialog builder itself —
 that Cancel gets the primary class while staying rightmost. A destructive call site with no

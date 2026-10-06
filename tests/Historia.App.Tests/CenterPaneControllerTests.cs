@@ -12,6 +12,7 @@ public class CenterPaneControllerTests : IDisposable
     private readonly ConflictResolverHost _conflictHost;
     private readonly IWorkspaceService _workspace;
     private readonly RepositoryContext _context;
+    private readonly AiIntegrationsPanel _aiPanel = new();
 
     private sealed class StubThemeService : IThemeService
     {
@@ -78,7 +79,11 @@ public class CenterPaneControllerTests : IDisposable
         sc.AddSingleton<ICredentialVaultService, ConflictResolverViewTests.FakeVault>();
         sc.AddSingleton<IExternalLauncher, ExternalLauncher>();
         sc.AddSingleton<IRepoNetworkActionRunner, ConflictResolverViewTests.FakeNetworkRunner>();
-        sc.AddSingleton<ISettingsService>(new ConflictResolverViewTests.FakeSettingsService());
+        var settings = new ConflictResolverViewTests.FakeSettingsService();
+        sc.AddSingleton<ISettingsService>(settings);
+        sc.AddSingleton<IAiProfileService>(new AiProfileService(settings));
+        sc.AddSingleton<IAiIntegrationsPanel>(_aiPanel);
+        sc.AddSingleton<IAiClientFactory>(new AiTestSupport.Factory(new AiTestSupport.Client()));
 
         _sp = sc.BuildServiceProvider();
         _conflictHost = _sp.GetRequiredService<ConflictResolverHost>();
@@ -313,6 +318,113 @@ public class CenterPaneControllerTests : IDisposable
 
         Assert.Same(graph, centerHost.Content);
         Assert.Null(_conflictHost.GetOrCreate(_context));
+    }
+
+    [AvaloniaFact]
+    public void An_open_AI_window_beats_the_graph_and_works_with_no_repository()
+    {
+        var centerHost = new ContentControl();
+        var graph = new Border();
+        using var controller = new CenterPaneController(centerHost, graph, _conflictHost, workspace: null, _sp);
+        Assert.Same(graph, centerHost.Content);
+
+        _aiPanel.Open();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.IsType<AiIntegrationsView>(centerHost.Content);
+
+        _aiPanel.Close();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(graph, centerHost.Content);
+        Assert.Null(controller.ActiveAiViewForTesting);
+    }
+
+    [AvaloniaFact]
+    public void An_open_AI_window_beats_an_open_diff_and_closing_restores_the_diff()
+    {
+        var centerHost = new ContentControl();
+        var graph = new Border();
+        using var controller = new CenterPaneController(centerHost, graph, _conflictHost, _workspace, _sp);
+        _context.State.SetOpenDiff(new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "f.txt" });
+        Dispatcher.UIThread.RunJobs();
+        Assert.IsType<DiffView>(centerHost.Content);
+
+        _aiPanel.Open();
+        Dispatcher.UIThread.RunJobs();
+        Assert.IsType<AiIntegrationsView>(centerHost.Content);
+
+        _aiPanel.Close();
+        Dispatcher.UIThread.RunJobs();
+
+        var restored = Assert.IsType<DiffView>(centerHost.Content);
+        Assert.Same(restored, controller.ActiveDiffViewForTesting);
+        Assert.NotNull(_context.State.OpenDiff);
+    }
+
+    [AvaloniaFact]
+    public async Task An_open_AI_window_beats_the_resolver_and_closing_returns_the_same_resolver()
+    {
+        var (centerHost, _, controller, resolver) = await ShowResolverAsync();
+        using var _ = controller;
+        resolver.ResultEditorForTesting.Document.Insert(0, "edit\n");
+
+        _aiPanel.Open();
+        Dispatcher.UIThread.RunJobs();
+        Assert.IsType<AiIntegrationsView>(centerHost.Content);
+
+        _aiPanel.Close();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(resolver, centerHost.Content);
+        Assert.True(resolver.HasUnsavedWork);
+    }
+
+    [AvaloniaFact]
+    public void A_new_diff_while_the_AI_window_is_open_closes_it_and_shows_the_diff()
+    {
+        var centerHost = new ContentControl();
+        var graph = new Border();
+        using var controller = new CenterPaneController(centerHost, graph, _conflictHost, _workspace, _sp);
+        _aiPanel.Open();
+        Dispatcher.UIThread.RunJobs();
+        Assert.IsType<AiIntegrationsView>(centerHost.Content);
+
+        _context.State.SetOpenDiff(new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "f.txt" });
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(_aiPanel.IsOpen);
+        Assert.IsType<DiffView>(centerHost.Content);
+    }
+
+    [AvaloniaFact]
+    public void A_selected_conflict_path_while_the_AI_window_is_open_closes_it()
+    {
+        var centerHost = new ContentControl();
+        var graph = new Border();
+        using var controller = new CenterPaneController(centerHost, graph, _conflictHost, _workspace, _sp);
+        _aiPanel.Open();
+        Dispatcher.UIThread.RunJobs();
+
+        _context.State.SetSelectedConflictPath("f.txt");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(_aiPanel.IsOpen);
+        Assert.Same(graph, centerHost.Content);
+    }
+
+    [AvaloniaFact]
+    public void Disposing_the_controller_unsubscribes_from_the_panel()
+    {
+        var centerHost = new ContentControl();
+        var graph = new Border();
+        var controller = new CenterPaneController(centerHost, graph, _conflictHost, _workspace, _sp);
+        controller.Dispose();
+
+        _aiPanel.Open();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(controller.ActiveAiViewForTesting);
     }
 
     public void Dispose()

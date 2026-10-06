@@ -2,8 +2,9 @@ namespace Historia.Views;
 
 /// <summary>
 /// Controls the content displayed in the center panel of the main window.
-/// Manages content precedence: OpenDiff -> DiffView; else conflict session the user has not closed, or unsaved
-/// resolver work after the session ended -> ConflictResolverView; else CommitGraphControl.
+/// Manages content precedence: AI Integrations window while it is open; else OpenDiff -> DiffView; else conflict
+/// session the user has not closed, or unsaved resolver work after the session ended -> ConflictResolverView; else
+/// CommitGraphControl. A new diff or a selected conflict path closes the AI window so the click is not lost behind it.
 /// Ensures proper lifecycle management, view disposal, and resolver session state retention. A closed resolver
 /// stays cached with its edits, so reopening it shows the same view.
 /// </summary>
@@ -14,12 +15,15 @@ public sealed class CenterPaneController : IDisposable
     private readonly ConflictResolverHost _conflictHost;
     private readonly IWorkspaceService? _workspace;
     private readonly IServiceProvider _services;
+    private readonly IAiIntegrationsPanel? _aiPanel;
+    private AiIntegrationsView? _aiView;
     private RepositoryContext? _activeCtx;
     private DiffRequest? _activeDiffRequest;
     private DiffView? _activeDiffView;
     private bool _disposed;
 
     internal DiffView? ActiveDiffViewForTesting => _activeDiffView;
+    internal AiIntegrationsView? ActiveAiViewForTesting => _aiView;
     internal RepositoryContext? ActiveContextForTesting => _activeCtx;
 
     public CenterPaneController(
@@ -34,6 +38,11 @@ public sealed class CenterPaneController : IDisposable
         _conflictHost = conflictHost ?? throw new ArgumentNullException(nameof(conflictHost));
         _workspace = workspace;
         _services = services ?? throw new ArgumentNullException(nameof(services));
+        _aiPanel = services.GetService<IAiIntegrationsPanel>();
+        if (_aiPanel != null)
+        {
+            _aiPanel.OpenChanged += OnAiPanelChanged;
+        }
 
         if (_workspace != null)
         {
@@ -83,6 +92,7 @@ public sealed class CenterPaneController : IDisposable
             _activeCtx.State.StatusChanged -= OnStatusChanged;
             _activeCtx.State.ConflictSessionChanged -= OnConflictSessionChanged;
             _activeCtx.State.ConflictResolverClosedChanged -= OnConflictResolverClosedChanged;
+            _activeCtx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
 
             var existing = _conflictHost.TryGet(_activeCtx);
             if (!_activeCtx.State.IsConflictSessionActive && existing?.HasUnsavedWork != true)
@@ -99,13 +109,34 @@ public sealed class CenterPaneController : IDisposable
             _activeCtx.State.StatusChanged += OnStatusChanged;
             _activeCtx.State.ConflictSessionChanged += OnConflictSessionChanged;
             _activeCtx.State.ConflictResolverClosedChanged += OnConflictResolverClosedChanged;
+            _activeCtx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
         }
 
         UpdateContent();
     }
 
-    private void OnOpenDiffChanged(object? sender, OpenDiffChangedEventArgs e)
+    private void OnAiPanelChanged(object? sender, EventArgs e)
         => Dispatcher.UIThread.Post(UpdateContent);
+
+    private void OnOpenDiffChanged(object? sender, OpenDiffChangedEventArgs e)
+        => Dispatcher.UIThread.Post(() =>
+        {
+            if (_activeCtx?.State.OpenDiff != null)
+            {
+                _aiPanel?.Close();
+            }
+            UpdateContent();
+        });
+
+    private void OnSelectedConflictPathChanged(object? sender, SelectedConflictPathChangedEventArgs e)
+        => Dispatcher.UIThread.Post(() =>
+        {
+            if (e.Path != null)
+            {
+                _aiPanel?.Close();
+            }
+            UpdateContent();
+        });
 
     private void OnStatusChanged(object? sender, StatusChangedEventArgs e)
         => Dispatcher.UIThread.Post(UpdateContent);
@@ -122,6 +153,21 @@ public sealed class CenterPaneController : IDisposable
         {
             return;
         }
+
+        if (_aiPanel?.IsOpen == true)
+        {
+            // A diff is re-created from OpenDiff when the window closes; a resolver keeps its
+            // own cached view, so its edits are untouched.
+            DisposeActiveDiffView();
+            _aiView ??= new AiIntegrationsView(_services);
+            if (!ReferenceEquals(_centerHost.Content, _aiView))
+            {
+                _centerHost.Content = _aiView;
+            }
+            return;
+        }
+
+        DisposeAiView();
 
         if (_activeCtx == null)
         {
@@ -187,6 +233,21 @@ public sealed class CenterPaneController : IDisposable
         }
     }
 
+    private void DisposeAiView()
+    {
+        if (_aiView == null)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(_centerHost.Content, _aiView))
+        {
+            _centerHost.Content = null;
+        }
+        _aiView.Dispose();
+        _aiView = null;
+    }
+
     private void DisposeActiveDiffView()
     {
         _activeDiffRequest = null;
@@ -210,6 +271,11 @@ public sealed class CenterPaneController : IDisposable
 
         _disposed = true;
 
+        if (_aiPanel != null)
+        {
+            _aiPanel.OpenChanged -= OnAiPanelChanged;
+        }
+
         if (_workspace != null)
         {
             _workspace.FocusedRepositoryChanged -= OnFocusedRepositoryChanged;
@@ -221,6 +287,7 @@ public sealed class CenterPaneController : IDisposable
             _activeCtx.State.StatusChanged -= OnStatusChanged;
             _activeCtx.State.ConflictSessionChanged -= OnConflictSessionChanged;
             _activeCtx.State.ConflictResolverClosedChanged -= OnConflictResolverClosedChanged;
+            _activeCtx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
 
             var existing = _conflictHost.TryGet(_activeCtx);
             if (!_activeCtx.State.IsConflictSessionActive && existing?.HasUnsavedWork != true)
@@ -231,5 +298,6 @@ public sealed class CenterPaneController : IDisposable
         }
 
         DisposeActiveDiffView();
+        DisposeAiView();
     }
 }
