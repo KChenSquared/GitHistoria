@@ -319,4 +319,100 @@ public class DiffDisplayModelTests
         Assert.Equal(lineCount, selected.Count);
         Assert.True(sw.ElapsedMilliseconds < 250, $"Tripwire triggered: selection took {sw.ElapsedMilliseconds} ms (bound: 250 ms)");
     }
+
+    private static FileDiff TwoHunkDiff()
+    {
+        static DiffLine Ctx(int o, int n) => new() { Type = DiffLineType.Context, Content = "c", OldLineNumber = o, NewLineNumber = n };
+
+        var first = new DiffHunk
+        {
+            OldStart = 1, OldLineCount = 2, NewStart = 1, NewLineCount = 2,
+            Header = "@@ -1,2 +1,2 @@",
+            Lines =
+            [
+                Ctx(1, 1),
+                new DiffLine { Type = DiffLineType.Deletion, Content = "old", OldLineNumber = 2, NewLineNumber = null },
+                new DiffLine { Type = DiffLineType.Addition, Content = "new", OldLineNumber = null, NewLineNumber = 2 },
+            ],
+        };
+        var second = new DiffHunk
+        {
+            OldStart = 20, OldLineCount = 3, NewStart = 20, NewLineCount = 2,
+            Header = "@@ -20,3 +20,2 @@",
+            Lines =
+            [
+                Ctx(20, 20),
+                new DiffLine { Type = DiffLineType.Deletion, Content = "gone", OldLineNumber = 21, NewLineNumber = null },
+                Ctx(22, 21),
+            ],
+        };
+
+        return new FileDiff
+        {
+            Path = "two.txt", Kind = DiffKind.Modified, IsBinary = false, IsTruncated = false,
+            AddedLines = 1, DeletedLines = 2, Hunks = [first, second],
+        };
+    }
+
+    [Fact]
+    public void FindDisplayLineForNewLine_returns_the_exact_row_in_both_modes()
+    {
+        var model = DiffDisplayModel.Create(TwoHunkDiff());
+
+        // Rows: 1 header, 2 ctx(1), 3 del, 4 add(2), 5 header, 6 ctx(20), 7 del, 8 ctx(21).
+        Assert.Equal(4, model.FindDisplayLineForNewLine(2, sideBySide: false));
+        Assert.Equal(8, model.FindDisplayLineForNewLine(21, sideBySide: false));
+
+        // Side-by-side pairs the deletion with the addition on one row.
+        var sbsAdd = model.FindDisplayLineForNewLine(2, sideBySide: true)!.Value;
+        Assert.Equal(2, model.SideBySideNewRows[sbsAdd - 1].NewLineNumber);
+        var sbsLast = model.FindDisplayLineForNewLine(21, sideBySide: true)!.Value;
+        Assert.Equal(21, model.SideBySideNewRows[sbsLast - 1].NewLineNumber);
+    }
+
+    [Fact]
+    public void FindDisplayLineForNewLine_falls_back_to_the_nearest_numbered_row()
+    {
+        var model = DiffDisplayModel.Create(TwoHunkDiff());
+
+        Assert.Equal(4, model.FindDisplayLineForNewLine(5, sideBySide: false));
+        Assert.Equal(6, model.FindDisplayLineForNewLine(18, sideBySide: false));
+        Assert.Equal(8, model.FindDisplayLineForNewLine(500, sideBySide: false));
+        Assert.Equal(2, model.FindDisplayLineForNewLine(1, sideBySide: false));
+    }
+
+    [Fact]
+    public void FindDisplayLineForNewLine_prefers_the_earlier_row_on_a_tie()
+    {
+        var model = DiffDisplayModel.Create(TwoHunkDiff());
+
+        // Line 11 is nine from new line 2 (row 4) and nine from new line 20 (row 6).
+        Assert.Equal(4, model.FindDisplayLineForNewLine(11, sideBySide: false));
+    }
+
+    [Fact]
+    public void FindDisplayLineForNewLine_handles_a_deletion_only_diff_and_an_empty_model()
+    {
+        var deletionOnly = new FileDiff
+        {
+            Path = "d.txt", Kind = DiffKind.Deleted, IsBinary = false, IsTruncated = false,
+            AddedLines = 0, DeletedLines = 1,
+            Hunks =
+            [
+                new DiffHunk
+                {
+                    OldStart = 1, OldLineCount = 1, NewStart = 0, NewLineCount = 0, Header = "@@ -1 +0,0 @@",
+                    Lines = [new DiffLine { Type = DiffLineType.Deletion, Content = "x", OldLineNumber = 1, NewLineNumber = null }],
+                },
+            ],
+        };
+        var empty = new FileDiff
+        {
+            Path = "e.txt", Kind = DiffKind.Modified, IsBinary = false, IsTruncated = false,
+            AddedLines = 0, DeletedLines = 0, Hunks = [],
+        };
+
+        Assert.Null(DiffDisplayModel.Create(deletionOnly).FindDisplayLineForNewLine(1, sideBySide: false));
+        Assert.Null(DiffDisplayModel.Create(empty).FindDisplayLineForNewLine(1, sideBySide: true));
+    }
 }

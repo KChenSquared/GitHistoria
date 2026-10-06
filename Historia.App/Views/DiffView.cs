@@ -23,6 +23,8 @@ public sealed class DiffView : UserControl, IDisposable
     private CancellationTokenSource? _loadingCts;
     private bool _disposed;
     private bool _patchInFlight;
+    private bool _focusLinePending;
+    private int _focusLineAttempts;
 
     private CombinedDiffPresenter? _combinedPresenter;
     private SideBySideDiffPresenter? _sideBySidePresenter;
@@ -30,6 +32,7 @@ public sealed class DiffView : UserControl, IDisposable
     public Control? PresenterForTesting => _host.Content as Control;
     public DiffMinimap MinimapForTesting => _minimap;
     public FileDiff? DiffForTesting => _diff;
+    internal DiffDisplayModel? ModelForTesting => _model;
     public Button ToggleButtonForTesting => _toggleButton;
     internal Button CloseButtonForTesting => _closeButton;
     public void ToggleModeForTesting() => OnToggleMode();
@@ -45,6 +48,7 @@ public sealed class DiffView : UserControl, IDisposable
         _wordWrap = settings?.Current.DiffWordWrap ?? false;
         _patches = sp?.GetService(typeof(IPatchService)) as IPatchService;
         _notifications = sp?.GetService(typeof(INotificationService)) as INotificationService;
+        _focusLinePending = request.FocusLine is > 0;
 
         this.Dyn(BackgroundProperty, "ColorBg");
 
@@ -223,6 +227,7 @@ public sealed class DiffView : UserControl, IDisposable
 
         if (_diff.IsBinary)
         {
+            _focusLinePending = false;
             _combinedPresenter = null;
             _sideBySidePresenter = null;
             _minimap.IsVisible = false;
@@ -237,6 +242,7 @@ public sealed class DiffView : UserControl, IDisposable
 
         if (_diff.IsTruncated)
         {
+            _focusLinePending = false;
             _combinedPresenter = null;
             _sideBySidePresenter = null;
             _minimap.IsVisible = false;
@@ -251,6 +257,7 @@ public sealed class DiffView : UserControl, IDisposable
 
         if (_diff.Hunks.Count == 0)
         {
+            _focusLinePending = false;
             _combinedPresenter = null;
             _sideBySidePresenter = null;
             _minimap.IsVisible = false;
@@ -310,6 +317,44 @@ public sealed class DiffView : UserControl, IDisposable
             _combinedPresenter = combined;
             _minimap.DisplayRange = combined.VisibleLineRange;
             _host.Content = combined;
+        }
+
+        if (_focusLinePending)
+        {
+            Dispatcher.UIThread.Post(ApplyFocusLine, DispatcherPriority.Loaded);
+        }
+    }
+
+    /// <summary>Scrolls to the requested line once the presenter has been laid out; a view that is
+    /// not on screen yet is retried a few times, and the request is spent either way so later
+    /// mode switches never pull the user back.</summary>
+    private void ApplyFocusLine()
+    {
+        if (_disposed || !_focusLinePending || _model is null || _request.FocusLine is not { } focus)
+        {
+            return;
+        }
+
+        var presenter = _host.Content as Control;
+        if ((presenter is null || !presenter.IsEffectivelyVisible || presenter.Bounds.Height <= 0) && ++_focusLineAttempts < 20)
+        {
+            Dispatcher.UIThread.Post(ApplyFocusLine, DispatcherPriority.Background);
+            return;
+        }
+
+        _focusLinePending = false;
+        if (_model.FindDisplayLineForNewLine(focus, _sideBySide) is not { } line)
+        {
+            return;
+        }
+
+        if (_sideBySide)
+        {
+            _sideBySidePresenter?.ScrollToLine(line);
+        }
+        else
+        {
+            _combinedPresenter?.ScrollToLine(line);
         }
     }
 
