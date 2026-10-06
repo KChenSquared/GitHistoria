@@ -260,6 +260,12 @@ public sealed class App : Application
         services.AddSingleton<IUnsavedWorkRegistry, UnsavedWorkRegistry>();
         services.AddSingleton<ConflictResolverHost>();
 
+        // ── AI commit messages. Nothing here is resolved at startup, so launch makes no AI request. ──
+        services.AddSingleton<IAiProfileService, AiProfileService>();
+        services.AddSingleton<IAiIntegrationsPanel, AiIntegrationsPanel>();
+        services.AddSingleton<IAiClientFactory, AiClientFactory>();
+        services.AddSingleton<ICommitMessageGenerator, CommitMessageGenerator>();
+
         // ── Terminal. Singletons — never AddScoped. ──
         services.AddSingleton<Historia.Services.Terminal.ITerminalBackend, Historia.Services.Terminal.PortaPtyBackend>();
         services.AddSingleton<Historia.Services.Terminal.ITerminalSessionService, Historia.Services.Terminal.TerminalSessionService>();

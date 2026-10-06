@@ -9,6 +9,9 @@ public enum AiErrorKind
     NotConfigured,
     MissingApiKey,
 
+    /// <summary>Nothing is staged, so there is nothing to describe.</summary>
+    NothingStaged,
+
     /// <summary>A Custom profile has no model chosen.</summary>
     NoModel,
 
