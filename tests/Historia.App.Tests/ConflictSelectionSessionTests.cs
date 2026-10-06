@@ -446,4 +446,135 @@ public sealed class ConflictSelectionSessionTests
         var parse = ConflictMarkerParser.Parse(doc.Text);
         Assert.Equal(parse.LineCount, ConflictPaneBuilder.Build(parse, ConflictSide.Ours, spans).Count);
     }
+
+    [AvaloniaFact]
+    public void Activate_empty_ours_inserts_empty_deletion_row()
+    {
+        const string text = "top\n<<<<<<< HEAD\n=======\ntheirs 1\n>>>>>>> branch\nbottom\n";
+        var (doc, session) = Make(text);
+        var region = session.Activate(Region(doc), s => s.SetHunk(ConflictSide.Ours, true))!;
+
+        Assert.Equal("top\n\ntheirs 1\nbottom\n", doc.Text);
+        Assert.Equal(1, region.StartLine);
+        Assert.Equal(2, region.EndLine);
+        Assert.True(session.IsDeletionRow(1));
+        Assert.False(session.IsDeletionRow(2));
+        Assert.Equal(ConflictToggleGlyph.Checked, session.RowGlyph(1));
+        Assert.Equal(ConflictToggleGlyph.Unchecked, session.RowGlyph(2));
+        Assert.False(session.IsExcluded(1));
+        Assert.True(session.IsExcluded(2));
+        Assert.True((session.RowVisual(1) & ConflictRowVisual.Deletion) != 0);
+        Assert.False((session.RowVisual(1) & ConflictRowVisual.Excluded) != 0);
+        Assert.True((session.RowVisual(2) & ConflictRowVisual.Excluded) != 0);
+    }
+
+    [AvaloniaFact]
+    public void Deletion_row_is_never_composed()
+    {
+        const string text = "top\n<<<<<<< HEAD\n=======\ntheirs 1\n>>>>>>> branch\nbottom\n";
+
+        // 1. Deletion checked alone -> region saves no lines
+        var (doc1, session1) = Make(text);
+        session1.Activate(Region(doc1), s => s.SetHunk(ConflictSide.Ours, true));
+        Assert.Equal("top\nbottom\n", session1.ComposeOutput());
+
+        // 2. Checked with theirs -> only theirs lines saved
+        var (doc2, session2) = Make(text);
+        session2.Activate(Region(doc2), s =>
+        {
+            s.SetHunk(ConflictSide.Ours, true);
+            s.SetHunk(ConflictSide.Theirs, true);
+        });
+        Assert.Equal("top\ntheirs 1\nbottom\n", session2.ComposeOutput());
+
+        // 3. Unchecked with theirs -> only theirs lines saved
+        var (doc3, session3) = Make(text);
+        session3.Activate(Region(doc3), s => s.SetHunk(ConflictSide.Theirs, true));
+        Assert.Equal("top\ntheirs 1\nbottom\n", session3.ComposeOutput());
+    }
+
+    [AvaloniaFact]
+    public void Deletion_row_is_read_only()
+    {
+        const string text = "top\n<<<<<<< HEAD\n=======\ntheirs 1\n>>>>>>> branch\nbottom\n";
+        var (doc, session) = Make(text);
+        session.Activate(Region(doc), s => s.SetHunk(ConflictSide.Ours, true));
+
+        var line = doc.GetLineByNumber(2); // line 1 (0-based) is deletion row
+        Assert.False(session.CanInsert(line.Offset));
+        Assert.False(session.CanInsert(line.EndOffset));
+
+        var seg = new SimpleSegment(line.Offset, line.TotalLength);
+        Assert.Empty(session.GetDeletableSegments(seg));
+    }
+
+    [AvaloniaFact]
+    public void Deletion_checked_region_is_not_counted_as_emptied()
+    {
+        const string text = "top\n<<<<<<< HEAD\n=======\ntheirs 1\n>>>>>>> branch\nbottom\n";
+        var (doc, session) = Make(text);
+        var region = session.Activate(Region(doc), s => s.SetHunk(ConflictSide.Ours, true))!;
+
+        Assert.Equal(0, session.EmptyRegionCount);
+
+        session.ToggleHunk(region, ConflictSide.Ours);
+        Assert.Equal(1, session.EmptyRegionCount);
+    }
+
+    [AvaloniaFact]
+    public void Toggling_deletion_row_changes_no_text_and_undoes()
+    {
+        const string text = "top\n<<<<<<< HEAD\n=======\ntheirs 1\n>>>>>>> branch\nbottom\n";
+        var (doc, session) = Make(text);
+        var region = session.Activate(Region(doc), s => s.SetHunk(ConflictSide.Ours, true))!;
+
+        string initialText = doc.Text;
+        Assert.False(session.IsExcluded(1));
+
+        session.ToggleRow(1);
+        Assert.Equal(initialText, doc.Text);
+        Assert.True(session.IsExcluded(1));
+
+        doc.UndoStack.Undo();
+        Pump();
+        Assert.Equal(initialText, doc.Text);
+        Assert.False(session.IsExcluded(1));
+
+        doc.UndoStack.Redo();
+        Pump();
+        Assert.Equal(initialText, doc.Text);
+        Assert.True(session.IsExcluded(1));
+    }
+
+    [AvaloniaFact]
+    public void Freeze_removes_deletion_row()
+    {
+        const string text = "top\n<<<<<<< HEAD\n=======\ntheirs 1\n>>>>>>> branch\nbottom\n";
+        var (doc, session) = Make(text);
+        session.Activate(Region(doc), s =>
+        {
+            s.SetHunk(ConflictSide.Ours, true);
+            s.SetHunk(ConflictSide.Theirs, true);
+        });
+
+        // Break the region by deleting a line of theirs row
+        var theirsLine = doc.GetLineByNumber(3);
+        doc.Remove(theirsLine.Offset, theirsLine.TotalLength);
+        Pump();
+
+        // After freezing, the deletion placeholder line was removed
+        Assert.Empty(session.Regions);
+        Assert.Equal("top\nbottom\n", doc.Text);
+        Assert.Equal(doc.Text, session.ComposeOutput());
+    }
+
+    [AvaloniaFact]
+    public void Deletion_row_as_last_line_without_final_newline_composes_without_trailing_break()
+    {
+        const string text = "top\n<<<<<<< HEAD\n=======\ntheirs\n>>>>>>> b";
+        var (doc, session) = Make(text);
+        session.Activate(Region(doc), s => s.SetHunk(ConflictSide.Ours, true));
+
+        Assert.Equal("top", session.ComposeOutput());
+    }
 }

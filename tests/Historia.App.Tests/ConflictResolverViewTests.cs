@@ -3455,4 +3455,110 @@ public class ConflictResolverViewTests : IDisposable
     }
 
     #endregion
+
+    #region Deletion rows in the resolver
+
+    private const string GuideConflictText =
+        "Introduction\n<<<<<<< HEAD\n=======\nStatus: Staging Preview v1.1\n>>>>>>> 209e2e8\nMaintainer: team\n";
+
+    [AvaloniaFact]
+    public async Task Empty_ours_conflict_shows_deletion_row_with_box()
+    {
+        var (view, window) = await ShowViewAsync(GuideConflictText);
+        try
+        {
+            var region = Assert.Single(view.CurrentParseForTesting!.Regions);
+            Assert.Equal(0, region.OursLineCount);
+            Assert.Equal(1, region.TheirsLineCount);
+
+            int row = region.StartLine + 1;
+            var oursLine = view.SnapshotForTesting!.OursLines[row];
+            Assert.Equal(ConflictPaneLineType.Deletion, oursLine.Type);
+            Assert.Equal(ConflictToggleGlyph.Unchecked, view.HunkGlyphForTesting(ConflictSide.Ours, row));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Checking_deletion_box_activates_region_with_deletion_row()
+    {
+        var (view, window) = await ShowViewAsync(GuideConflictText);
+        try
+        {
+            var r0 = Assert.Single(view.CurrentParseForTesting!.Regions);
+            int row = r0.StartLine + 1;
+
+            view.ClickHunkForTesting(ConflictSide.Ours, row);
+
+            Assert.Empty(view.CurrentParseForTesting!.Regions);
+            var managedRegion = Assert.Single(view.SessionForTesting.Regions);
+            Assert.True(managedRegion.Selection.IsDeletion(ConflictSide.Ours));
+            Assert.Equal(ConflictHunkState.Checked, managedRegion.Selection.HunkState(ConflictSide.Ours));
+            Assert.Equal(ConflictHunkState.Unchecked, managedRegion.Selection.HunkState(ConflictSide.Theirs));
+
+            Assert.True(view.SessionForTesting.IsDeletionRow(1));
+            Assert.False(view.SessionForTesting.IsExcluded(1));
+            Assert.True(view.SessionForTesting.IsExcluded(2));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Deletion_and_theirs_checked_saves_only_theirs()
+    {
+        var (view, window) = await ShowViewAsync(GuideConflictText);
+        try
+        {
+            var r0 = Assert.Single(view.CurrentParseForTesting!.Regions);
+            int row = r0.StartLine + 1;
+
+            view.ClickHunkForTesting(ConflictSide.Ours, row);
+            view.ClickHunkForTesting(ConflictSide.Theirs, view.SessionForTesting.Regions[0].StartLine);
+
+            Assert.Equal(ConflictHunkState.Checked, view.SessionForTesting.Regions[0].Selection.HunkState(ConflictSide.Ours));
+            Assert.Equal(ConflictHunkState.Checked, view.SessionForTesting.Regions[0].Selection.HunkState(ConflictSide.Theirs));
+            Assert.Equal(
+                "Introduction\nStatus: Staging Preview v1.1\nMaintainer: team\n",
+                view.ComposedTextForTesting);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Deletion_alone_mark_resolved_does_not_prompt_emptied()
+    {
+        var (view, window) = await ShowViewAsync(GuideConflictText);
+        try
+        {
+            var r0 = Assert.Single(view.CurrentParseForTesting!.Regions);
+            int row = r0.StartLine + 1;
+
+            view.ClickHunkForTesting(ConflictSide.Ours, row);
+
+            Assert.Empty(view.CurrentParseForTesting!.Regions);
+            Assert.Equal(0, view.SessionForTesting.EmptyRegionCount);
+
+            await view.SaveAndMarkResolvedAsync();
+
+            Assert.Empty(_dialogs.ConfirmCalls);
+            var call = Assert.Single(_conflicts.SaveResolutionCalls);
+            Assert.Equal("Introduction\nMaintainer: team\n", call.Text);
+            Assert.True(call.Stage);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    #endregion
 }

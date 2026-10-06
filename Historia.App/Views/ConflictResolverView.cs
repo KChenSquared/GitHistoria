@@ -271,21 +271,23 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _session.Changed += OnSessionChanged;
 
         // Margins and Renderers
-        _oursToggleMargin = new ConflictToggleMargin(_oursEditor, row => PaneHunkGlyph(ConflictSide.Ours, row), _ => "Use these ours lines");
+        _oursToggleMargin = new ConflictToggleMargin(_oursEditor, row => PaneHunkGlyph(ConflictSide.Ours, row), row => PaneHunkTip(ConflictSide.Ours, row));
         _oursToggleMargin.ToggleClicked += (_, row) => OnHunkToggleClicked(ConflictSide.Ours, row);
         _oursEditor.TextArea.LeftMargins.Add(_oursToggleMargin);
         _oursEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_oursEditor, () => GetPaneLines(ConflictSide.Ours), row => PaneTint(ConflictSide.Ours, row)));
         _oursEditor.TextArea.TextView.BackgroundRenderers.Add(
             new ConflictBackgroundRenderer(_oursEditor, () => ConflictSide.Ours, () => _parse, () => GetPaneLines(ConflictSide.Ours), () => _snapshot?.Analyses));
 
-        _theirsToggleMargin = new ConflictToggleMargin(_theirsEditor, row => PaneHunkGlyph(ConflictSide.Theirs, row), _ => "Use these theirs lines");
+        _theirsToggleMargin = new ConflictToggleMargin(_theirsEditor, row => PaneHunkGlyph(ConflictSide.Theirs, row), row => PaneHunkTip(ConflictSide.Theirs, row));
         _theirsToggleMargin.ToggleClicked += (_, row) => OnHunkToggleClicked(ConflictSide.Theirs, row);
         _theirsEditor.TextArea.LeftMargins.Add(_theirsToggleMargin);
         _theirsEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_theirsEditor, () => GetPaneLines(ConflictSide.Theirs), row => PaneTint(ConflictSide.Theirs, row)));
         _theirsEditor.TextArea.TextView.BackgroundRenderers.Add(
             new ConflictBackgroundRenderer(_theirsEditor, () => ConflictSide.Theirs, () => _parse, () => GetPaneLines(ConflictSide.Theirs), () => _snapshot?.Analyses));
 
-        _resultToggleMargin = new ConflictToggleMargin(_resultEditor, _session.RowGlyph, line => _session.IsExcluded(line) ? "Keep this line" : "Drop this line");
+        _resultToggleMargin = new ConflictToggleMargin(_resultEditor, _session.RowGlyph, line => _session.IsDeletionRow(line)
+            ? (_session.IsExcluded(line) ? "Mark as deleted" : "Unmark the deletion")
+            : (_session.IsExcluded(line) ? "Keep this line" : "Drop this line"));
         _resultToggleMargin.ToggleClicked += (_, line) => OnRowToggleClicked(line);
         _resultEditor.TextArea.LeftMargins.Add(_resultToggleMargin);
         _resultNumberMargin = new ConflictLineNumberMargin(_resultEditor, getTint: ResultTint);
@@ -1348,8 +1350,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         return side == ConflictSide.Ours ? _snapshot?.OursLines : _snapshot?.TheirsLines;
     }
 
-    /// <summary>The Result line of a side's row in a top pane; -1 for a marker, padding or common
-    /// row, which carry no hunk box.</summary>
+    /// <summary>The Result line of a side's row in a top pane (an ours, theirs or deletion row);
+    /// -1 for a marker, padding or common row, which carry no hunk box.</summary>
     private int PaneDocLine(ConflictSide side, int paneRow)
     {
         var lines = GetPaneLines(side);
@@ -1359,7 +1361,18 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
 
         var line = lines[paneRow];
-        return line.Type is ConflictPaneLineType.Ours or ConflictPaneLineType.Theirs ? line.DocumentLineIndex : -1;
+        return line.Type is ConflictPaneLineType.Ours or ConflictPaneLineType.Theirs or ConflictPaneLineType.Deletion ? line.DocumentLineIndex : -1;
+    }
+
+    private string PaneHunkTip(ConflictSide side, int paneRow)
+    {
+        var lines = GetPaneLines(side);
+        bool isDeletion = lines != null && paneRow >= 0 && paneRow < lines.Count && lines[paneRow].Type == ConflictPaneLineType.Deletion;
+        if (side == ConflictSide.Ours)
+        {
+            return isDeletion ? "Use the ours deletion" : "Use these ours lines";
+        }
+        return isDeletion ? "Use the theirs deletion" : "Use these theirs lines";
     }
 
     private ConflictToggleGlyph PaneHunkGlyph(ConflictSide side, int paneRow)

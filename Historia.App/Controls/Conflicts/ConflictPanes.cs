@@ -154,7 +154,7 @@ public enum ConflictRowTint { None, Add, Del, Base, Marker }
 /// <summary>
 /// Maps conflict pane and Result rows to their wash and gutter tints. Kept rows (and both sides'
 /// lines of an unresolved block) take the diff addition colours, dropped rows the deletion colours,
-/// and marker and base lines stay neutral.
+/// and a side's deletion row the deletion colours while it is checked; marker and base lines stay neutral.
 /// </summary>
 public static class ConflictRowTints
 {
@@ -162,6 +162,7 @@ public static class ConflictRowTints
     public static ConflictRowTint ForPane(ConflictPaneLineType type) => type switch
     {
         ConflictPaneLineType.Ours or ConflictPaneLineType.Theirs => ConflictRowTint.Add,
+        ConflictPaneLineType.Deletion => ConflictRowTint.Del,
         ConflictPaneLineType.Marker => ConflictRowTint.Marker,
         _ => ConflictRowTint.None,
     };
@@ -184,6 +185,11 @@ public static class ConflictRowTints
     /// <summary>The tint of a managed row.</summary>
     internal static ConflictRowTint ForManagedRow(ConflictRowVisual visual)
     {
+        if ((visual & ConflictRowVisual.Deletion) != 0)
+        {
+            return (visual & ConflictRowVisual.Excluded) != 0 ? ConflictRowTint.None : ConflictRowTint.Del;
+        }
+
         if ((visual & ConflictRowVisual.Excluded) != 0)
         {
             return ConflictRowTint.Del;
@@ -400,6 +406,7 @@ public enum ConflictRowVisual
     Excluded = 8,
     RegionTop = 16,
     RegionBottom = 32,
+    Deletion = 64,
 }
 
 /// <summary>

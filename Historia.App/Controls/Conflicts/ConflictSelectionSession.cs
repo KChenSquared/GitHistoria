@@ -3,8 +3,9 @@ namespace Historia.Controls;
 /// <summary>
 /// Managed conflict regions over the Result document. Checking a hunk turns a marker region into
 /// a managed region: its marker block is replaced by every ours row and every theirs row, each kept
-/// or dropped. Dropped rows stay in the document — dimmed, struck through and read-only — so the
-/// three panes stay line-aligned; <see cref="ComposeOutput"/> leaves them out of the saved text.
+/// or dropped (or an empty deletion row if a side has no lines). Dropped rows and deletion rows stay
+/// in the document — dimmed, struck through or neutral, and read-only — so the three panes stay
+/// line-aligned; <see cref="ComposeOutput"/> leaves them out of the saved text.
 /// <para>
 /// Rows are <see cref="TextSegment"/>s in one <see cref="TextSegmentCollection{T}"/>, so offsets
 /// follow user edits. The view calls <see cref="Normalize"/> at the top of its
@@ -93,7 +94,7 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
     private readonly Dictionary<int, LineInfo> _lines = [];
     private readonly Dictionary<int, ConflictToggleGlyph> _oursHunkGlyphs = [];
     private readonly Dictionary<int, ConflictToggleGlyph> _theirsHunkGlyphs = [];
-    private int[] _excludedLines = [];
+    private int[] _omittedLines = [];
     private IReadOnlyList<ConflictRegion> _markerRegions = [];
     private IReadOnlyList<ConflictManagedSpan> _spans = [];
     private Snapshot _lastGood = new([]);
@@ -110,8 +111,8 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
     /// <summary>Raised after every session change, undo or redo of one, and normalisation.</summary>
     public event EventHandler? Changed;
 
-    /// <summary>The read-only sections to install on the Result <c>TextArea</c>: dropped rows and the
-    /// line breaks around them.</summary>
+    /// <summary>The read-only sections to install on the Result <c>TextArea</c>: dropped rows, deletion rows
+    /// and the line breaks around them.</summary>
     public IReadOnlySectionProvider ReadOnlySections => this;
 
     public IReadOnlyList<ManagedRegion> Regions => _regions;
@@ -131,6 +132,8 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
     public ManagedRegion? RegionAt(int docLine) => _lines.TryGetValue(docLine, out var info) ? info.Region : null;
 
     public bool IsExcluded(int docLine) => _lines.TryGetValue(docLine, out var info) && info.Excluded;
+
+    public bool IsDeletionRow(int docLine) => _lines.TryGetValue(docLine, out var info) && (info.Visual & ConflictRowVisual.Deletion) != 0;
 
     public ConflictRowVisual RowVisual(int docLine) => _lines.TryGetValue(docLine, out var info) ? info.Visual : ConflictRowVisual.None;
 
@@ -202,7 +205,7 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
         var managed = new ManagedRegion(selection, region, blockText, delimiter, analysis);
 
         var layout = selection.Layout;
-        var texts = layout.Select(r => r.Side == ConflictSide.Ours ? region.OursLines[r.Index] : region.TheirsLines[r.Index]).ToList();
+        var texts = layout.Select(r => selection.RowText(r.Side, r.Index)).ToList();
         string replacement = string.Join(delimiter, texts) + trailing;
 
         Mutate(() =>
@@ -420,7 +423,7 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
                         // row starts there; a row whose line was deleted has collapsed), bottom up.
                         var live = region.Rows.Where(r => !(r.Length == 0 && r.AttachedLength > 0)).ToList();
                         var deletable = live
-                            .Where(r => !region.Selection.IsIncluded(r.Side, r.Index)
+                            .Where(r => (!region.Selection.IsIncluded(r.Side, r.Index) || region.Selection.IsDeletionRow(r.Side, r.Index))
                                         && r.StartOffset == _document.GetLineByOffset(r.StartOffset).Offset
                                         && !live.Any(o => o != r && _document.GetLineByOffset(o.StartOffset).LineNumber == _document.GetLineByOffset(r.StartOffset).LineNumber))
                             .Select(r => _document.GetLineByOffset(r.StartOffset))
@@ -496,12 +499,12 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
     #region Output
 
     /// <summary>
-    /// The document text with dropped rows (and their line breaks) removed; a region with nothing
+    /// The document text with dropped rows and deletion rows (and their line breaks) removed; a region with nothing
     /// kept contributes no lines. Line breaks and the presence of a final line break are kept.
     /// </summary>
     public string ComposeOutput()
     {
-        if (_excludedLines.Length == 0)
+        if (_omittedLines.Length == 0)
         {
             return _document.Text;
         }
@@ -512,7 +515,7 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
         foreach (var line in _document.Lines)
         {
             int index = line.LineNumber - 1;
-            if (next < _excludedLines.Length && _excludedLines[next] == index)
+            if (next < _omittedLines.Length && _omittedLines[next] == index)
             {
                 next++;
                 lastLineExcluded = line.NextLine == null;
@@ -523,7 +526,7 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
 
         if (lastLineExcluded)
         {
-            // The dropped row was the last line, which had no line break: neither does the output.
+            // The omitted row was the last line, which had no line break: neither does the output.
             int end = sb.Length;
             if (end > 0 && sb[end - 1] == '\n')
             {
@@ -543,25 +546,25 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
 
     #region Read-only sections
 
-    /// <summary>Nothing can be typed on a dropped row, at either end included.</summary>
+    /// <summary>Nothing can be typed on a dropped or deletion row, at either end included.</summary>
     public bool CanInsert(int offset)
     {
-        if (_excludedLines.Length == 0)
+        if (_omittedLines.Length == 0)
         {
             return true;
         }
         var line = _document.GetLineByOffset(offset);
-        return !IsExcluded(line.LineNumber - 1);
+        return Array.BinarySearch(_omittedLines, line.LineNumber - 1) < 0;
     }
 
     /// <summary>
-    /// The parts of <paramref name="segment"/> outside every dropped row's protected range, which
-    /// runs from the previous line's line break through the row's own line break, so a struck line
+    /// The parts of <paramref name="segment"/> outside every dropped or deletion row's protected range, which
+    /// runs from the previous line's line break through the row's own line break, so an omitted line
     /// can be neither edited nor joined to its neighbours.
     /// </summary>
     public IEnumerable<ISegment> GetDeletableSegments(ISegment segment)
     {
-        if (_excludedLines.Length == 0)
+        if (_omittedLines.Length == 0)
         {
             return [segment];
         }
@@ -573,7 +576,7 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
 
         int firstLine = _document.GetLineByOffset(segment.Offset).LineNumber - 1;
         int lastLine = Math.Min(_document.LineCount - 1, _document.GetLineByOffset(segment.EndOffset).LineNumber);
-        int at = Array.BinarySearch(_excludedLines, firstLine);
+        int at = Array.BinarySearch(_omittedLines, firstLine);
         if (at < 0)
         {
             at = ~at;
@@ -582,9 +585,9 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
         var result = new List<ISegment>();
         int writableFrom = segment.Offset;
         int end = segment.EndOffset;
-        for (; at < _excludedLines.Length && _excludedLines[at] <= lastLine; at++)
+        for (; at < _omittedLines.Length && _omittedLines[at] <= lastLine; at++)
         {
-            var line = _document.GetLineByNumber(_excludedLines[at] + 1);
+            var line = _document.GetLineByNumber(_omittedLines[at] + 1);
             int protectedStart = line.PreviousLine?.EndOffset ?? line.Offset;
             int protectedEnd = line.EndOffset + line.DelimiterLength;
             if (protectedEnd <= writableFrom || protectedStart >= end)
@@ -782,7 +785,7 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
     private void RebuildIndex()
     {
         _lines.Clear();
-        var excluded = new List<int>();
+        var omitted = new List<int>();
         var spans = new List<ConflictManagedSpan>(_regions.Count);
 
         foreach (var region in _regions)
@@ -811,15 +814,26 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
                 {
                     var row = region.Rows[rowAt++];
                     bool included = selection.IsIncluded(row.Side, row.Index);
+                    bool isDeletion = selection.IsDeletionRow(row.Side, row.Index);
                     var origin = row.Side == ConflictSide.Ours ? ConflictRowOrigin.Ours : ConflictRowOrigin.Theirs;
                     visual |= row.Side == ConflictSide.Ours ? ConflictRowVisual.Ours : ConflictRowVisual.Theirs;
+                    if (isDeletion)
+                    {
+                        visual |= ConflictRowVisual.Deletion;
+                    }
+
                     if (!included)
                     {
                         visual |= ConflictRowVisual.Excluded;
-                        excluded.Add(ln);
                     }
-                    string sourceText = row.Side == ConflictSide.Ours ? selection.OursLines[row.Index] : selection.TheirsLines[row.Index];
-                    origins[ln - region.StartLine] = new ConflictLineOrigin(origin, row.Index, sourceText);
+
+                    if (!included || isDeletion)
+                    {
+                        omitted.Add(ln);
+                    }
+
+                    string sourceText = selection.RowText(row.Side, row.Index);
+                    origins[ln - region.StartLine] = new ConflictLineOrigin(origin, row.Index, sourceText, isDeletion);
                     _lines[ln] = new LineInfo(region, origin, row.Index, !included, visual);
                     (row.Side == ConflictSide.Ours ? region.OursRowLines : region.TheirsRowLines)[row.Index] = ln;
                 }
@@ -833,7 +847,7 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
             spans.Add(new ConflictManagedSpan(region.StartLine, origins));
         }
 
-        _excludedLines = [.. excluded];
+        _omittedLines = [.. omitted];
         _spans = spans;
         RebuildHunkGlyphs();
         Changed?.Invoke(this, EventArgs.Empty);
@@ -846,11 +860,11 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
 
         foreach (var region in _markerRegions)
         {
-            if (region.OursLineCount > 0)
+            if (region.OursLineCount > 0 || (region.OursLineCount == 0 && region.TheirsLineCount > 0))
             {
                 _oursHunkGlyphs[region.OursStartLine] = ConflictToggleGlyph.Unchecked;
             }
-            if (region.TheirsLineCount > 0)
+            if (region.TheirsLineCount > 0 || (region.TheirsLineCount == 0 && region.OursLineCount > 0))
             {
                 _theirsHunkGlyphs[region.TheirsStartLine] = ConflictToggleGlyph.Unchecked;
             }
