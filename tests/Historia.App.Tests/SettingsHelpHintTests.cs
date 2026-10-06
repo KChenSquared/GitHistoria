@@ -42,6 +42,7 @@ public sealed class SettingsHelpHintTests
         ["Enhanced keyboard (Kitty protocol)"] = "Lets editors such as Neovim and Helix tell apart keys like Ctrl+Enter and Shift+Enter. Applies to new terminals.",
         ["Allow programs to copy to the clipboard (OSC 52)"] = "Lets copy in Vim or tmux reach the system clipboard, including over SSH. Programs can never read the clipboard.",
         ["Show splash screen"] = "A custom theme uses its own splash instead.",
+        ["Auto hide notices"] = "Closes notices in the bottom-right corner after 10 seconds. Turn off to keep them until you close them.",
         ["Keep commit details on disk"] = "Reads commit messages, authors and dates from a disk cache to save memory on large repositories. Takes effect after restart.",
         ["Fast graph updates (experimental)"] = "On large repositories, adds new commits to the saved graph instead of rebuilding it. Takes effect after restart.",
         ["Background preload (rows)"] = "Rows loaded in the background after the graph opens, and again each time you scroll past them. 0 = no limit. Takes effect after restart.",
@@ -57,7 +58,7 @@ public sealed class SettingsHelpHintTests
         "Pattern (regex)", "Link URL ($1 = first group)", "Git", "Prune deleted remote branches on fetch",
         "Pull with rebase", "Reopen tabs on launch", "Ask for a stash message", "Terminal", "Shell",
         "Shell arguments", "Separated by spaces", "Font family", "Font size", "Scrollback (lines)",
-        "Cursor style", "Blinking cursor", "Advanced", "Show splash screen", "Keep commit details on disk",
+        "Cursor style", "Blinking cursor", "Advanced", "Auto hide notices", "Show splash screen", "Keep commit details on disk",
         "Fast graph updates (experimental)", "Background preload (rows)", "Max rows in memory",
     ];
 
