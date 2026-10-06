@@ -241,7 +241,7 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     themes do not recolour syntax tokens — they inherit the syntax theme of their underlying base
     theme (`Dark`, `Light`, or `HighContrast`), which means a custom theme whose `bg` contradicts its
     base theme (e.g., a light `bg` authored on a Dark base) will produce poorly readable syntax tokens.
-    This exception was adopted by user decision (2026-09-23) to provide VS Code-grade syntax grammars
+    This exception was adopted (2026-09-23) to provide VS Code-grade syntax grammars
     and high-fidelity token highlighting across 100+ programming languages without requiring the manual
     definition and maintenance of thousands of language-specific token rules in `HistoriaPalette`.
 27. *(Removed.)*
@@ -272,6 +272,9 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
 
 31. **Secrets live in Windows Credential Manager.** `profiles.json` stores reference keys;
     profiles store SSH key *paths* and GPG key *ids*, never key material. *(§I-12)*
+    **Exception — AI API keys and request headers** are stored in `settings.json`. They are
+    currently not treated as secrets, because they are easily revoked and the feature targets
+    free-tier accounts. *(2026-10-06)*
 32. **SSH keys are per-process environment, never process-global.** Two tabs on two profiles
     must be able to push concurrently. *(§I-6.5.2)*
 
