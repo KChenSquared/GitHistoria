@@ -3,8 +3,10 @@ namespace HistoriaApp.Tests;
 /// <summary>
 /// How the network-action runner reports failures: a server-policy decline is an error toast
 /// (never the non-fast-forward chooser or a force push), a non-fast-forward still opens the
-/// chooser, the toast names the operation once, a request while busy gets a notice, and a
-/// request pinned to a repository runs there whichever tab is focused.
+/// chooser, the toast names the operation once, a request on a busy repository gets a notice
+/// naming what is running while other repositories stay free, a request that finds auto-fetch
+/// running waits for it (cancellably), and a request pinned to a repository runs there whichever
+/// tab is focused.
 /// </summary>
 [Trait("tier", "ui")]
 public sealed class RepoNetworkErrorRoutingTests
@@ -333,11 +335,11 @@ public sealed class RepoNetworkErrorRoutingTests
     }
 
     [AvaloniaFact]
-    public async Task A_request_while_busy_gets_a_notice_and_runs_nothing()
+    public async Task A_second_request_on_a_busy_repo_gets_a_notice_naming_it_and_runs_nothing()
     {
         using var fixture = new PushFixture();
         await using var h = new Harness();
-        await h.OpenAsync(fixture.LocalPath);
+        var repo = await h.OpenAsync(fixture.LocalPath);
 
         await h.RunToIdleAsync(() =>
         {
@@ -346,8 +348,118 @@ public sealed class RepoNetworkErrorRoutingTests
         });
 
         var info = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Info);
-        Assert.Equal("Another fetch, pull or push is still running.", info.Message);
+        Assert.Equal($"Fetch on {repo.DisplayName} is still running.", info.Message);
         Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Success);
+    }
+
+    [AvaloniaFact]
+    public async Task A_busy_repo_does_not_block_a_fetch_on_another_repo()
+    {
+        using var busyFixture = new PushFixture();
+        using var otherFixture = new PushFixture();
+        await using var h = new Harness();
+        var busy = await h.OpenAsync(busyFixture.LocalPath, focus: false);
+        var other = await h.OpenAsync(otherFixture.LocalPath);
+
+        Assert.True(busy.TryBeginNetworkOperation(new NetworkOperationInfo(NetworkOperationOwner.User, "Pull"), out var held));
+        using (held)
+        {
+            await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
+                new RepoNetworkRequest(RepoNetworkAction.Fetch, null, null, Repo: other)));
+        }
+
+        Assert.DoesNotContain(h.Notify.Published, n => n.Severity == NotificationSeverity.Info);
+        Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Success);
+    }
+
+    [AvaloniaFact]
+    public async Task A_lock_cleanup_on_the_repo_gets_a_notice_naming_it()
+    {
+        using var fixture = new PushFixture();
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+
+        Assert.True(repo.TryBeginNetworkOperation(new NetworkOperationInfo(NetworkOperationOwner.Maintenance, "Lock cleanup"), out var held));
+        using (held)
+        {
+            // Refused before it starts, so there is no idle tick to wait for — wait for the notice.
+            _ = h.Runner; // the runner subscribes to the bus when it is first resolved
+            h.Bus.RequestNetworkAction(RepoNetworkAction.Fetch);
+            for (var i = 0; i < 250 && !h.Notify.Published.Any(); i++)
+            {
+                Dispatcher.UIThread.RunJobs();
+                await Task.Delay(20);
+            }
+        }
+
+        var info = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Info);
+        Assert.Equal($"Lock cleanup on {repo.DisplayName} is still running.", info.Message);
+        Assert.DoesNotContain(h.Notify.Published, n => n.Severity == NotificationSeverity.Success);
+    }
+
+    [AvaloniaFact]
+    public async Task A_request_during_auto_fetch_waits_for_it_then_runs()
+    {
+        using var fixture = new PushFixture();
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+
+        Assert.True(repo.TryBeginNetworkOperation(new NetworkOperationInfo(NetworkOperationOwner.AutoFetch, "Auto-fetch"), out var autoFetch));
+        var phases = new List<string?>();
+        void OnProgress(object? s, RepoNetworkProgress p)
+        {
+            phases.Add(p.Progress?.Phase);
+            if (p.Progress?.Phase == "Waiting for auto-fetch…")
+            {
+                Assert.Equal("Waiting for auto-fetch…", h.Runner.CurrentProgress(repo)?.Phase);
+                autoFetch.Dispose();
+            }
+        }
+        h.Runner.ProgressChanged += OnProgress;
+        try
+        {
+            await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(RepoNetworkAction.Fetch));
+        }
+        finally
+        {
+            h.Runner.ProgressChanged -= OnProgress;
+        }
+
+        Assert.Equal("Waiting for auto-fetch…", phases[0]);
+        Assert.Contains("Fetch…", phases);
+        Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Success);
+        Assert.Null(h.Runner.CurrentProgress(repo));
+        Assert.Null(repo.CurrentNetworkOperation);
+    }
+
+    [AvaloniaFact]
+    public async Task Cancelling_while_waiting_for_auto_fetch_ends_silently_without_running()
+    {
+        using var fixture = new PushFixture();
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+
+        Assert.True(repo.TryBeginNetworkOperation(new NetworkOperationInfo(NetworkOperationOwner.AutoFetch, "Auto-fetch"), out var autoFetch));
+        using (autoFetch)
+        {
+            void CancelWhileWaiting(object? s, RepoNetworkProgress p)
+            {
+                if (p.Progress?.Phase == "Waiting for auto-fetch…")
+                    h.Runner.Cancel(repo);
+            }
+            h.Runner.ProgressChanged += CancelWhileWaiting;
+            try
+            {
+                await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(RepoNetworkAction.Fetch));
+            }
+            finally
+            {
+                h.Runner.ProgressChanged -= CancelWhileWaiting;
+            }
+
+            Assert.Empty(h.Notify.Published);
+            Assert.Equal("Auto-fetch", repo.CurrentNetworkOperation?.Label);
+        }
     }
 
     [AvaloniaFact]

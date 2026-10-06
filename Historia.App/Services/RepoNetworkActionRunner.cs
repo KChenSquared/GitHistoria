@@ -7,8 +7,11 @@ public sealed record RepoNetworkProgress(RepositoryContext Repo, GitProgress? Pr
 /// <summary>
 /// Runs the Fetch / Pull / Push flow requested via <see cref="IRepoActionBus"/> — from the
 /// shortcuts bar, branch menus and the staging panel's Commit &amp; Push — against the request's
-/// repository, or the focused one when the request names none. One operation runs at a time; a
-/// request that arrives meanwhile is answered with a notice, not queued.
+/// repository, or the focused one when the request names none. One operation runs per repository,
+/// through the repository's network gate; different repositories run side by side. A request for
+/// a repository that is already busy with one of the user's operations (or a lock cleanup) is
+/// answered with a notice naming it, not queued; one that finds auto-fetch running waits for it,
+/// cancellable, and then runs — auto-fetch is never killed to make room.
 /// A DI singleton, eagerly resolved once at startup (<c>MainWindow</c>) so it subscribes to <see cref="IRepoActionBus.NetworkActionRequested"/> for
 /// the app's whole lifetime. It does not live in <c>RepositoryView</c>: that view (and any event
 /// subscription it holds) is disposed whenever the detail pane shows something else (Home,
@@ -18,8 +21,11 @@ public interface IRepoNetworkActionRunner
 {
     event EventHandler<RepoNetworkProgress>? ProgressChanged;
 
-    /// <summary>Cancels the in-flight operation, if any.</summary>
-    void CancelCurrent();
+    /// <summary>Cancels the operation running, or waiting to run, on <paramref name="repo"/>, if any.</summary>
+    void Cancel(RepositoryContext repo);
+
+    /// <summary>The latest progress of <paramref name="repo"/>'s operation; null when none is running.</summary>
+    GitProgress? CurrentProgress(RepositoryContext repo);
 }
 
 /// <inheritdoc cref="IRepoNetworkActionRunner"/>
@@ -35,8 +41,15 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
     private readonly IGraphLayoutService _graph;
     private readonly ISettingsService _settings;
 
-    private bool _busy;
-    private CancellationTokenSource? _cts;
+    private readonly object _opsSync = new();
+    private readonly Dictionary<RepositoryContext, RunningOp> _ops = [];
+
+    private sealed class RunningOp(string label, CancellationTokenSource cts)
+    {
+        public string Label { get; } = label;
+        public CancellationTokenSource Cts { get; } = cts;
+        public GitProgress? Last { get; set; }
+    }
 
     public event EventHandler<RepoNetworkProgress>? ProgressChanged;
 
@@ -273,7 +286,33 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         }
     }
 
-    public void CancelCurrent() => _cts?.Cancel();
+    public void Cancel(RepositoryContext repo)
+    {
+        CancellationTokenSource? cts;
+        lock (_opsSync)
+            cts = _ops.TryGetValue(repo, out var running) ? running.Cts : null;
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { /* finished meanwhile */ }
+    }
+
+    public GitProgress? CurrentProgress(RepositoryContext repo)
+    {
+        lock (_opsSync)
+            return _ops.TryGetValue(repo, out var running) ? running.Last : null;
+    }
+
+    private void Report(RepositoryContext repo, GitProgress? progress)
+    {
+        lock (_opsSync)
+        {
+            if (_ops.TryGetValue(repo, out var running))
+                running.Last = progress;
+        }
+        ProgressChanged?.Invoke(this, new RepoNetworkProgress(repo, progress));
+    }
+
+    private void NotifyBusy(RepositoryContext repo, string label) =>
+        _notifications.Publish(NotificationSeverity.Info, $"{label} on {repo.DisplayName} is still running.");
 
     private static string? FirstDetailLine(HistoriaGitException ex) =>
         (ex.Details ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -285,9 +324,9 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         var op = request.Action;
         if ((request.Repo ?? _workspace.Focused) is not { } repo)
             return;
-        if (_busy)
+        if (BusyLabel(repo) is { } busyWith)
         {
-            _notifications.Publish(NotificationSeverity.Info, "Another fetch, pull or push is still running.");
+            NotifyBusy(repo, busyWith);
             return;
         }
 
@@ -306,6 +345,79 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             }
             remote = remotes.Any(r => r.Name == "origin") ? "origin" : remotes[0].Name;
         }
+
+        var running = new RunningOp(op.ToString(), CancellationTokenSource.CreateLinkedTokenSource(repo.Lifetime));
+        bool registered;
+        string? takenBy = null;
+        lock (_opsSync)
+        {
+            registered = _ops.TryAdd(repo, running);
+            if (!registered)
+                takenBy = _ops[repo].Label;
+        }
+        if (!registered)
+        {
+            running.Cts.Dispose();
+            NotifyBusy(repo, takenBy!);
+            return;
+        }
+
+        var ct = running.Cts.Token;
+        IDisposable? gate = null;
+        try
+        {
+            gate = await EnterGateAsync(repo, running.Label, ct);
+            if (gate is null)
+                return;
+            await ExecuteAsync(repo, op, remote, request, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            AppLog.Write(AppLogLevel.Info, "declined", $"{op} cancelled while waiting for auto-fetch");
+        }
+        finally
+        {
+            gate?.Dispose();
+            lock (_opsSync)
+                _ops.Remove(repo);
+            running.Cts.Dispose();
+            Report(repo, null);
+        }
+    }
+
+    /// <summary>The label of the user's operation or lock cleanup holding <paramref name="repo"/>,
+    /// or null when it is free or only auto-fetch is running (which a request waits for).</summary>
+    private string? BusyLabel(RepositoryContext repo)
+    {
+        lock (_opsSync)
+        {
+            if (_ops.TryGetValue(repo, out var running))
+                return running.Label;
+        }
+        return repo.CurrentNetworkOperation is { Owner: not NetworkOperationOwner.AutoFetch } holder ? holder.Label : null;
+    }
+
+    /// <summary>Takes <paramref name="repo"/>'s network gate, waiting (cancellably, with a
+    /// progress line) when auto-fetch holds it. Null — after a notice — when another kind of
+    /// operation took it first.</summary>
+    private async Task<IDisposable?> EnterGateAsync(RepositoryContext repo, string label, CancellationToken ct)
+    {
+        var info = new NetworkOperationInfo(NetworkOperationOwner.User, label);
+        if (repo.TryBeginNetworkOperation(info, out var lease))
+            return lease;
+
+        if (repo.CurrentNetworkOperation is { Owner: not NetworkOperationOwner.AutoFetch } holder)
+        {
+            NotifyBusy(repo, holder.Label);
+            return null;
+        }
+
+        Report(repo, new GitProgress { Phase = "Waiting for auto-fetch…" });
+        return await repo.BeginNetworkOperationAsync(info, ct);
+    }
+
+    private async Task ExecuteAsync(RepositoryContext repo, RepoNetworkAction op, string remote, RepoNetworkRequest request, CancellationToken ct)
+    {
         var branch = request.Branch ?? repo.State.CurrentBranch?.Name;
 
         if (op == RepoNetworkAction.Prune
@@ -315,11 +427,8 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             return;
         }
 
-        _busy = true;
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(repo.Lifetime);
-        var ct = _cts.Token;
-        var progress = new Progress<GitProgress>(p => ProgressChanged?.Invoke(this, new RepoNetworkProgress(repo, p)));
-        ProgressChanged?.Invoke(this, new RepoNetworkProgress(repo, new GitProgress { Phase = $"{op}…" }));
+        var progress = new Progress<GitProgress>(p => Report(repo, p));
+        Report(repo, new GitProgress { Phase = $"{op}…" });
 
         // Prune is confirmed above, once; the same delegate serves the first attempt and the
         // Local-config retry so the retry never asks again.
@@ -436,13 +545,6 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage(op.ToString()), ex.NotificationDetails());
-        }
-        finally
-        {
-            _busy = false;
-            _cts?.Dispose();
-            _cts = null;
-            ProgressChanged?.Invoke(this, new RepoNetworkProgress(repo, null));
         }
     }
 }

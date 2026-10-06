@@ -2359,7 +2359,8 @@ public class ConflictResolverViewTests : IDisposable
 #pragma warning restore CS0067
         public Task RunAsync(RepositoryContext repo, string actionName, Func<IProgress<RepoNetworkProgress>?, CancellationToken, Task> action, CancellationToken ct = default)
             => Task.CompletedTask;
-        public void CancelCurrent() { }
+        public void Cancel(RepositoryContext repo) { }
+        GitProgress? IRepoNetworkActionRunner.CurrentProgress(RepositoryContext repo) => null;
     }
 
     internal sealed class TestRepoFixture : IDisposable
