@@ -157,7 +157,7 @@ public class ConflictResolverViewTests : IDisposable
 
         var initialText = view.ResultEditorForTesting.Text;
         var r0 = view.CurrentParseForTesting!.Regions[0];
-        view.ApplyRegionAction(r0, ConflictResolverView.RegionActionChoice.Theirs);
+        ClickHunk(view, ConflictSide.Theirs, r0);
 
         // Ours stays visible, struck, so it can be re-checked; the saved text drops it.
         Assert.Contains("ours 1", view.ResultEditorForTesting.Text);
@@ -190,7 +190,7 @@ public class ConflictResolverViewTests : IDisposable
         Assert.Equal(resultLines, view.TheirsEditorForTesting.Document.LineCount);
 
         // Edit result
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
         resultLines = view.ResultEditorForTesting.Document.LineCount;
         Assert.Equal(resultLines, view.OursEditorForTesting.Document.LineCount);
         Assert.Equal(resultLines, view.TheirsEditorForTesting.Document.LineCount);
@@ -213,10 +213,10 @@ public class ConflictResolverViewTests : IDisposable
 
         Assert.Equal(2, view.CurrentParseForTesting!.Regions.Count);
 
-        view.ApplyRegionAction(view.CurrentParseForTesting.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting.Regions[0]);
         Assert.Single(view.CurrentParseForTesting.Regions);
 
-        view.ApplyRegionAction(view.CurrentParseForTesting.Regions[0], ConflictResolverView.RegionActionChoice.Theirs);
+        ClickHunk(view, ConflictSide.Theirs, view.CurrentParseForTesting.Regions[0]);
         Assert.Empty(view.CurrentParseForTesting.Regions);
     }
 
@@ -456,7 +456,7 @@ public class ConflictResolverViewTests : IDisposable
         view.ResultEditorForTesting.Document.Insert(0, "new top line\n");
 
         // Immediately trigger region action
-        view.ApplyRegionAction(r0, ConflictResolverView.RegionActionChoice.Theirs);
+        ClickHunk(view, ConflictSide.Theirs, r0);
 
         Assert.Contains("new top line", view.ComposedTextForTesting);
         Assert.Contains("theirs 1", view.ComposedTextForTesting);
@@ -895,7 +895,7 @@ public class ConflictResolverViewTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         var r0 = view.CurrentParseForTesting!.Regions[0];
-        view.ApplyRegionAction(r0, ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, r0);
 
         Assert.Equal("ours\r\ntheirs\r\n", view.ResultEditorForTesting.Text);
         string result = view.ComposedTextForTesting;
@@ -921,7 +921,7 @@ public class ConflictResolverViewTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         var r0 = view.CurrentParseForTesting!.Regions[0];
-        view.ApplyRegionAction(r0, ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, r0);
 
         Assert.Equal("before\nafter\n", view.ComposedTextForTesting);
         Assert.Equal(1, view.SessionForTesting.EmptyRegionCount);
@@ -1625,10 +1625,10 @@ public class ConflictResolverViewTests : IDisposable
         var parse = view.CurrentParseForTesting!;
         Assert.Equal(2, parse.Regions.Count);
 
-        // Apply "Use ours" on Region 1
-        view.ApplyRegionAction(parse.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        // Check ours on Region 1
+        ClickHunk(view, ConflictSide.Ours, parse.Regions[0]);
 
-        // Immediately after ApplyRegionAction (before any background parse finishes): the untouched
+        // Immediately after the hunk click (before any background parse finishes): the untouched
         // region keeps its highlights, and the managed one keeps its own on the rows' new lines.
         var snapshot = view.SnapshotForTesting;
         Assert.NotNull(snapshot);
@@ -2665,6 +2665,10 @@ public class ConflictResolverViewTests : IDisposable
         return (view, window);
     }
 
+    /// <summary>Clicks the hunk check box of <paramref name="side"/> on a marker region's first line for that side.</summary>
+    private static void ClickHunk(ConflictResolverView view, ConflictSide side, ConflictRegion region)
+        => view.ClickHunkForTesting(side, side == ConflictSide.Ours ? region.OursStartLine : region.TheirsStartLine);
+
     /// <summary>Clicks the check box a toggle margin draws on <paramref name="docLine"/> (0-based).</summary>
     private static void ClickToggle(ConflictToggleMargin margin, TextEditor editor, int docLine)
     {
@@ -2788,8 +2792,8 @@ public class ConflictResolverViewTests : IDisposable
     public async Task Save_writes_composed_text()
     {
         var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Theirs);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
+        ClickHunk(view, ConflictSide.Theirs, view.CurrentParseForTesting!.Regions[0]);
         var second = view.SessionForTesting.Regions[1];
         view.SessionForTesting.ToggleHunk(second, ConflictSide.Theirs); // both unchecked: saves nothing
 
@@ -2805,7 +2809,7 @@ public class ConflictResolverViewTests : IDisposable
     public async Task Toggle_registers_unsaved_work()
     {
         var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
         await view.SaveCurrentFileAsync(stage: false);
         Assert.False(view.HasUnsavedWork);
         var text = view.ResultEditorForTesting.Text;
@@ -2817,10 +2821,10 @@ public class ConflictResolverViewTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task Popup_use_ours_creates_toggleable_region()
+    public async Task Ours_hunk_click_creates_toggleable_region()
     {
         var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
         int theirs1 = LineOf(view, "theirs 1");
         Assert.Equal(ConflictToggleGlyph.Unchecked, view.SessionForTesting.RowGlyph(theirs1));
 
@@ -2829,25 +2833,10 @@ public class ConflictResolverViewTests : IDisposable
         Assert.Equal(ConflictToggleGlyph.Checked, view.SessionForTesting.RowGlyph(theirs1));
         Assert.StartsWith("header\nours 1\ntheirs 1\nmiddle\n", view.ComposedTextForTesting);
 
-        // The popup acts on the managed region too.
-        view.ApplyManagedRegionAction(view.SessionForTesting.Regions[0], ConflictResolverView.RegionActionChoice.BothTheirsFirst);
+        // Re-checking ours after unchecking it puts it behind theirs.
+        view.ClickHunkForTesting(ConflictSide.Ours, view.SessionForTesting.Regions[0].StartLine);
+        view.ClickHunkForTesting(ConflictSide.Ours, view.SessionForTesting.Regions[0].StartLine);
         Assert.StartsWith("header\ntheirs 1\nours 1\nmiddle\n", view.ResultEditorForTesting.Text);
-        AssertPanesAligned(view);
-    }
-
-    [AvaloniaFact]
-    public async Task Restore_conflict_brings_markers_back()
-    {
-        var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Theirs);
-        Assert.Single(view.CurrentParseForTesting!.Regions);
-
-        view.ResultEditorForTesting.TextArea.Caret.Line = 2;
-        view.RestoreConflict(view.SessionForTesting.Regions[0]);
-
-        Assert.Equal(TwoConflictText, view.ResultEditorForTesting.Text);
-        Assert.Empty(view.SessionForTesting.Regions);
-        Assert.Equal(2, view.CurrentParseForTesting!.Regions.Count);
         AssertPanesAligned(view);
     }
 
@@ -2855,7 +2844,7 @@ public class ConflictResolverViewTests : IDisposable
     public async Task Take_ours_whole_file_clears_session()
     {
         var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
         Assert.Single(view.SessionForTesting.Regions);
 
         _dialogs.ConfirmDestructiveResult = true;
@@ -2871,7 +2860,7 @@ public class ConflictResolverViewTests : IDisposable
     public async Task Counter_includes_managed_regions()
     {
         var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
 
         Assert.Equal(2, view.NavigableRegions().Count);
         view.ResultEditorForTesting.TextArea.Caret.Line = 1;
@@ -2898,7 +2887,7 @@ public class ConflictResolverViewTests : IDisposable
         await view.LoadAsync();
         Dispatcher.UIThread.RunJobs();
 
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
         Assert.True(view.HasUnsavedWork);
 
         _dialogs.ChooseResult = 1; // Discard
@@ -2947,7 +2936,7 @@ public class ConflictResolverViewTests : IDisposable
         var (view, window) = await ShowViewAsync(TwoConflictText);
         try
         {
-            view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+            ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
             int theirs1 = LineOf(view, "theirs 1");
             Assert.True(view.SessionForTesting.IsExcluded(theirs1));
 
@@ -2969,7 +2958,7 @@ public class ConflictResolverViewTests : IDisposable
         var (view, window) = await ShowViewAsync(TwoConflictText);
         try
         {
-            view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+            ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
             var text = view.ComposedTextForTesting;
 
             view.ResultEditorForTesting.TextArea.Caret.Line = 1; // "header"
@@ -2990,7 +2979,7 @@ public class ConflictResolverViewTests : IDisposable
         var (view, window) = await ShowViewAsync(TwoConflictText);
         try
         {
-            view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+            ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
             int theirs1 = LineOf(view, "theirs 1");
             view.ResultEditorForTesting.TextArea.Caret.Line = theirs1 + 1;
 
@@ -3014,7 +3003,7 @@ public class ConflictResolverViewTests : IDisposable
         await view.LoadAsync();
         Dispatcher.UIThread.RunJobs();
 
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
         view.SessionForTesting.ToggleHunk(view.SessionForTesting.Regions[0], ConflictSide.Ours);
         Assert.Empty(view.CurrentParseForTesting!.Regions);
         Assert.Equal(1, view.SessionForTesting.EmptyRegionCount);
@@ -3040,7 +3029,7 @@ public class ConflictResolverViewTests : IDisposable
     public async Task Mark_resolved_with_markers_left_mentions_emptied_conflicts()
     {
         var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
         view.SessionForTesting.ToggleHunk(view.SessionForTesting.Regions[0], ConflictSide.Ours);
 
         _dialogs.ConfirmResult = false;
@@ -3056,7 +3045,7 @@ public class ConflictResolverViewTests : IDisposable
     public async Task Minimap_gets_managed_ranges()
     {
         var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
 
         var region = view.SessionForTesting.Regions[0];
         Assert.Equal(new[] { (region.StartLine, region.EndLine) }, view.MinimapForTesting.ResolvedRanges);
@@ -3067,7 +3056,7 @@ public class ConflictResolverViewTests : IDisposable
     public async Task Excluded_rows_reject_typing()
     {
         var view = await LoadTwoConflictViewAsync();
-        view.ApplyRegionAction(view.CurrentParseForTesting!.Regions[0], ConflictResolverView.RegionActionChoice.Ours);
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
         var doc = view.ResultEditorForTesting.Document;
         var struck = doc.GetLineByNumber(LineOf(view, "theirs 1") + 1);
         var kept = doc.GetLineByNumber(LineOf(view, "ours 1") + 1);
@@ -3077,6 +3066,120 @@ public class ConflictResolverViewTests : IDisposable
         Assert.False(provider.CanInsert(struck.Offset));
         Assert.False(provider.CanInsert(struck.EndOffset));
         Assert.True(provider.CanInsert(kept.Offset + 1));
+    }
+
+    private static void AssertNoRegionPopup(ConflictResolverView view)
+    {
+        string[] popupLabels = ["Use ours", "Use theirs", "Both (ours first)", "Both (theirs first)", "Use base", "Restore conflict"];
+        var labels = view.GetLogicalDescendants().OfType<Button>().Select(b => b.Content as string).Where(c => c != null).ToList();
+        Assert.DoesNotContain(labels, l => popupLabels.Contains(l!));
+    }
+
+    [AvaloniaFact]
+    public async Task No_region_popup_when_caret_in_conflict()
+    {
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            view.ResultEditorForTesting.TextArea.Caret.Line = 3; // inside an unresolved block
+            AssertNoRegionPopup(view);
+
+            ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
+            view.ResultEditorForTesting.TextArea.Caret.Line = 3; // inside the managed block
+            AssertNoRegionPopup(view);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Resolve_file_menu_keeps_its_items()
+    {
+        var view = await LoadTwoConflictViewAsync();
+
+        Assert.Equal(
+            ["Take ours (whole file)", "Take theirs (whole file)", "Reset file to conflicted", "Open in external tool"],
+            view.ResolveFileMenuItemsForTesting.Select(m => m.Header as string));
+    }
+
+    [AvaloniaFact]
+    public async Task Pane_dividers_are_four_px_border()
+    {
+        using var applier = new AvaloniaThemeApplier(new StubThemeService());
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            var border = HistoriaPalette.Get(EffectiveTheme.Dark, "border").ToAvalonia();
+
+            Assert.Equal(4, view.PaneDividerForTesting.Width);
+            Assert.Equal(border, Assert.IsAssignableFrom<ISolidColorBrush>(view.PaneDividerForTesting.Fill).Color);
+            Assert.Equal(4, view.ResultDividerForTesting.Height);
+            Assert.Equal(border, Assert.IsAssignableFrom<ISolidColorBrush>(view.ResultDividerForTesting.Fill).Color);
+            Assert.Equal(4, view.ResultSplitterForTesting.Height);
+            Assert.Equal(new GridLength(4), view.SplitGridForTesting.RowDefinitions[1].Height);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Result_gutter_tints_kept_and_dropped_rows()
+    {
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            var margin = view.ResultNumberMarginForTesting;
+            Assert.Equal(ConflictRowTint.None, margin.TintForRowForTesting(LineOf(view, "header")));
+            Assert.Equal(ConflictRowTint.Add, margin.TintForRowForTesting(LineOf(view, "ours 2")));
+
+            ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
+            int ours1 = LineOf(view, "ours 1");
+            Assert.Equal(ConflictRowTint.Add, margin.TintForRowForTesting(ours1));
+            Assert.Equal(ConflictRowTint.Del, margin.TintForRowForTesting(LineOf(view, "theirs 1")));
+
+            Assert.True(view.SessionForTesting.ToggleRow(ours1));
+            Assert.Equal(ConflictRowTint.Del, margin.TintForRowForTesting(ours1));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Close_button_marks_resolver_closed_without_saving()
+    {
+        var view = await LoadTwoConflictViewAsync();
+        ClickHunk(view, ConflictSide.Ours, view.CurrentParseForTesting!.Regions[0]);
+        Assert.True(view.HasUnsavedWork);
+        Assert.False(_context.State.IsConflictResolverClosed);
+
+        view.CloseButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+
+        Assert.True(_context.State.IsConflictResolverClosed);
+        Assert.Empty(_conflicts.SaveResolutionCalls);
+        Assert.Empty(_dialogs.ConfirmDestructiveCalls);
+        Assert.True(view.HasUnsavedWork);
+    }
+
+    [AvaloniaFact]
+    public async Task Close_button_visible_without_an_operation()
+    {
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            Assert.Equal(OperationState.None, _context.State.PendingOperation);
+            Assert.False(view.OpBarForTesting.IsVisible);
+            Assert.True(view.CloseButtonForTesting.IsEffectivelyVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     #endregion
