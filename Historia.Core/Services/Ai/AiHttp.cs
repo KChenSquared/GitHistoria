@@ -165,6 +165,7 @@ public sealed class AiHttp
         AiErrorKind.ContextTooLarge => "The staged changes are too large for this model. Set a Diff size limit for this AI integration.",
         AiErrorKind.Server => "The AI service had an internal error. Try again in a moment.",
         AiErrorKind.Timeout => "The AI service took too long to respond.",
+        AiErrorKind.UnsupportedOption => "The model doesn't accept this Reasoning Effort Level. Choose another level, or unspecified, in AI Integrations.",
         _ => $"The AI service returned an error (HTTP {status}).",
     };
 

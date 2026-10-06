@@ -278,6 +278,121 @@ public class AiClientTests
         Assert.Equal(AiErrorKind.ModelNotFound, ex.Kind);
     }
 
+    [Theory]
+    [InlineData("Thinking level MEDIUM is not supported for this model.")]
+    [InlineData("thinking_budget and thinking_level are not supported together for this model")]
+    public async Task Gemini_an_unsupported_thinking_option_is_not_a_missing_model(string message)
+    {
+        var h = new FakeHandler().Enqueue(HttpStatusCode.BadRequest,
+            $$$"""{"error":{"code":400,"message":"{{{message}}}","status":"INVALID_ARGUMENT"}}""");
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => new GeminiClient(Http(h)).CompleteAsync(Req(GeminiServer), default));
+
+        Assert.Equal(AiErrorKind.UnsupportedOption, ex.Kind);
+        Assert.Contains("Reasoning Effort Level", ex.Message);
+        Assert.Contains(message, ex.Details);
+        Assert.Single(h.Requests);
+    }
+
+    [Theory]
+    [InlineData("""{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"API_KEY_INVALID","domain":"googleapis.com"}]}}""")]
+    [InlineData("""{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}""")]
+    [InlineData("""{"error":{"code":400,"message":"Request rejected.","status":"INVALID_ARGUMENT","details":[{"reason":"API_KEY_INVALID"}]}}""")]
+    public async Task Gemini_an_invalid_key_400_is_unauthorized(string body)
+    {
+        var h = new FakeHandler().Enqueue(HttpStatusCode.BadRequest, body);
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => new GeminiClient(Http(h)).CompleteAsync(Req(GeminiServer), default));
+
+        Assert.Equal(AiErrorKind.Unauthorized, ex.Kind);
+    }
+
+    [Fact]
+    public async Task Gemini_a_400_with_a_non_object_error_body_falls_through_to_classification()
+    {
+        var h = new FakeHandler().Enqueue(HttpStatusCode.BadRequest, "[]");
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => new GeminiClient(Http(h)).CompleteAsync(Req(GeminiServer), default));
+
+        Assert.Equal(AiErrorKind.Unknown, ex.Kind);
+    }
+
+    [Fact]
+    public async Task Gemini_a_size_400_is_still_context_too_large()
+    {
+        var h = new FakeHandler().Enqueue(HttpStatusCode.BadRequest,
+            """{"error":{"code":400,"message":"The input token count exceeds the maximum number of tokens allowed.","status":"INVALID_ARGUMENT"}}""");
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => new GeminiClient(Http(h)).CompleteAsync(Req(GeminiServer), default));
+
+        Assert.Equal(AiErrorKind.ContextTooLarge, ex.Kind);
+    }
+
+    [Fact]
+    public async Task Gemini_a_non_string_model_name_is_a_bad_response()
+    {
+        var h = new FakeHandler().Enqueue(HttpStatusCode.OK, """{"models":[{"name":5,"supportedGenerationMethods":["generateContent"]}]}""");
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => new GeminiClient(Http(h)).ListModelsAsync(Req(GeminiServer), default));
+
+        Assert.Equal(AiErrorKind.BadResponse, ex.Kind);
+    }
+
+    [Fact]
+    public async Task Gemini_an_array_reply_is_a_bad_response()
+    {
+        var h = new FakeHandler().Enqueue(HttpStatusCode.OK, "[]");
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => new GeminiClient(Http(h)).CompleteAsync(Req(GeminiServer), default));
+
+        Assert.Equal(AiErrorKind.BadResponse, ex.Kind);
+    }
+
+    [Fact]
+    public async Task OpenAi_an_unsupported_reasoning_effort_is_an_unsupported_option()
+    {
+        const string message = "Unsupported value: 'reasoning_effort' does not support 'minimal' with this model.";
+        var h = new FakeHandler().Enqueue(HttpStatusCode.BadRequest,
+            $$$"""{"error":{"message":"{{{message}}}","type":"invalid_request_error","param":"reasoning_effort"}}""");
+
+        var ex = await Assert.ThrowsAsync<AiException>(
+            () => new OpenAiCompatibleClient(Http(h)).CompleteAsync(Req(Server, effort: "minimal"), default));
+
+        Assert.Equal(AiErrorKind.UnsupportedOption, ex.Kind);
+        Assert.Contains("reasoning_effort", ex.Details);
+        Assert.Single(h.Requests);
+    }
+
+    [Fact]
+    public async Task OpenAi_an_array_model_list_is_a_bad_response()
+    {
+        var h = new FakeHandler().Enqueue(HttpStatusCode.OK, "[]");
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => new OpenAiCompatibleClient(Http(h)).ListModelsAsync(Req(Server), default));
+
+        Assert.Equal(AiErrorKind.BadResponse, ex.Kind);
+    }
+
+    [Fact]
+    public async Task OpenAi_a_non_string_finish_reason_is_a_bad_response()
+    {
+        var h = new FakeHandler().Enqueue(HttpStatusCode.OK, """{"choices":[{"finish_reason":5,"message":{"content":"x"}}]}""");
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => new OpenAiCompatibleClient(Http(h)).CompleteAsync(Req(Server), default));
+
+        Assert.Equal(AiErrorKind.BadResponse, ex.Kind);
+    }
+
+    [Fact]
+    public async Task OpenAi_a_content_filter_still_passes_through_the_shape_guard()
+    {
+        var h = new FakeHandler().Enqueue(HttpStatusCode.OK, """{"choices":[{"finish_reason":"content_filter","message":{"content":""}}]}""");
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => new OpenAiCompatibleClient(Http(h)).CompleteAsync(Req(Server), default));
+
+        Assert.Equal(AiErrorKind.ContentFiltered, ex.Kind);
+    }
+
     [Fact]
     public async Task Gemini_listing_never_classifies_a_404_as_a_missing_model()
     {

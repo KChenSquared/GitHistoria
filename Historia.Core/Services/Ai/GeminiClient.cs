@@ -20,19 +20,10 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
             var body = await http.SendAsync(() => Create(HttpMethod.Get, url, request, null), Secrets(request), null, ct)
                 .ConfigureAwait(false);
 
-            var root = Parse(body);
-            foreach (var model in root["models"] as JsonArray ?? [])
-            {
-                var name = model?["name"]?.GetValue<string>();
-                var methods = model?["supportedGenerationMethods"] as JsonArray;
-                if (string.IsNullOrWhiteSpace(name)
-                    || methods is null
-                    || !methods.Any(m => m?.GetValue<string>() == "generateContent"))
-                    continue;
-                ids.Add(StripPrefix(name));
-            }
+            var (names, next) = ReadModelPage(body);
+            ids.AddRange(names);
 
-            pageToken = root["nextPageToken"]?.GetValue<string>();
+            pageToken = next;
             if (string.IsNullOrEmpty(pageToken))
                 break;
         }
@@ -56,8 +47,44 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
         var json = payload.ToJsonString();
         var body = await http.SendAsync(
             () => Create(HttpMethod.Post, url, request, json),
-            Secrets(request), RefineModelNotFound, ct).ConfigureAwait(false);
+            Secrets(request), RefineError, ct).ConfigureAwait(false);
 
+        try
+        {
+            return ReadReply(body);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new AiException(AiErrorKind.BadResponse, "Gemini returned a reply in an unexpected format.", null, ex);
+        }
+    }
+
+    private static (List<string> Ids, string? NextPageToken) ReadModelPage(string body)
+    {
+        var root = Parse(body);
+        try
+        {
+            var ids = new List<string>();
+            foreach (var model in root["models"] as JsonArray ?? [])
+            {
+                var name = model?["name"]?.GetValue<string>();
+                var methods = model?["supportedGenerationMethods"] as JsonArray;
+                if (string.IsNullOrWhiteSpace(name)
+                    || methods is null
+                    || !methods.Any(m => m?.GetValue<string>() == "generateContent"))
+                    continue;
+                ids.Add(StripPrefix(name));
+            }
+            return (ids, root["nextPageToken"]?.GetValue<string>());
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new AiException(AiErrorKind.BadResponse, "Gemini returned a model list in an unexpected format.", null, ex);
+        }
+    }
+
+    private static string ReadReply(string body)
+    {
         var root = Parse(body);
 
         if (root["promptFeedback"]?["blockReason"]?.GetValue<string>() is { Length: > 0 })
@@ -80,11 +107,13 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
     }
 
     /// <summary>
-    /// A retired or unknown model reports <c>NOT_FOUND</c> in the JSON error body, or a 400 that
-    /// says the model isn't found or isn't supported for <c>generateContent</c>. A 404 that isn't
-    /// that JSON is a wrong server address and stays a plain not-found.
+    /// Reads a failed response's JSON error body. A message about <c>thinking</c> is an option the
+    /// model rejects, and <c>API_KEY_INVALID</c> (Gemini answers a bad key with a 400) is a bad key.
+    /// A retired or unknown model reports <c>NOT_FOUND</c>, or a 400 that says the model isn't
+    /// found or isn't supported for <c>generateContent</c>. A 404 that isn't that JSON is a wrong
+    /// server address and stays a plain not-found.
     /// </summary>
-    internal static AiErrorKind? RefineModelNotFound(int status, string body)
+    internal static AiErrorKind? RefineError(int status, string body)
     {
         if (status is not (400 or 404))
             return null;
@@ -94,28 +123,40 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
         {
             error = JsonNode.Parse(body)?["error"];
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
             return null;
         }
         if (error is null)
             return null;
 
-        var code = error["code"]?.ToString();
-        var statusText = error["status"]?.GetValue<string>();
-        var message = error["message"]?.GetValue<string>() ?? "";
+        var code = Text(error["code"]);
+        var statusText = Text(error["status"]);
+        var message = Text(error["message"]) ?? "";
 
-        if (status == 404 && (statusText == "NOT_FOUND" || code == "model_not_found"))
-            return AiErrorKind.ModelNotFound;
+        if (status == 404)
+            return statusText == "NOT_FOUND" || code == "model_not_found" ? AiErrorKind.ModelNotFound : null;
 
-        if (status == 400
-            && message.Contains("model", StringComparison.OrdinalIgnoreCase)
+        if (message.Contains("thinking", StringComparison.OrdinalIgnoreCase))
+            return AiErrorKind.UnsupportedOption;
+
+        if (message.Contains("API key not valid", StringComparison.OrdinalIgnoreCase) || HasReason(error, "API_KEY_INVALID"))
+            return AiErrorKind.Unauthorized;
+
+        if (message.Contains("model", StringComparison.OrdinalIgnoreCase)
             && (message.Contains("not found", StringComparison.OrdinalIgnoreCase)
-                || message.Contains("not supported", StringComparison.OrdinalIgnoreCase)))
+                || message.Contains("not supported for generateContent", StringComparison.OrdinalIgnoreCase)))
             return AiErrorKind.ModelNotFound;
 
         return null;
     }
+
+    private static string? Text(JsonNode? node) =>
+        node is JsonValue value ? value.ToString() : null;
+
+    private static bool HasReason(JsonNode error, string reason) =>
+        error["details"] is JsonArray details
+        && details.Any(d => d is JsonObject o && Text(o["reason"]) == reason);
 
     /// <summary>None switches thinking off; the other levels use <c>thinkingLevel</c>.
     /// Unspecified sends nothing.</summary>

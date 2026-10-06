@@ -37,6 +37,9 @@ public enum AiErrorKind
     /// <summary>The response was not the JSON shape the protocol promises.</summary>
     BadResponse,
 
+    /// <summary>The service rejected a request option (today, the reasoning effort).</summary>
+    UnsupportedOption,
+
     /// <summary>The reply was cut off at the model's output limit.</summary>
     Truncated,
     ContentFiltered,

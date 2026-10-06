@@ -13,14 +13,21 @@ public sealed class OpenAiCompatibleClient(AiHttp http) : IAiChatClient
             Secrets(request), null, ct).ConfigureAwait(false);
 
         var root = Parse(body);
-        var data = root["data"] as JsonArray
-            ?? throw new AiException(AiErrorKind.BadResponse, "The AI service returned a model list in an unexpected format.");
-        return data
-            .Select(n => n?["id"]?.GetValue<string>())
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Select(id => id!)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
+        try
+        {
+            var data = root["data"] as JsonArray
+                ?? throw new AiException(AiErrorKind.BadResponse, "The AI service returned a model list in an unexpected format.");
+            return data
+                .Select(n => n?["id"]?.GetValue<string>())
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id!)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new AiException(AiErrorKind.BadResponse, "The AI service returned a model list in an unexpected format.", null, ex);
+        }
     }
 
     public async Task<string> CompleteAsync(AiChatRequest request, CancellationToken ct)
@@ -37,8 +44,28 @@ public sealed class OpenAiCompatibleClient(AiHttp http) : IAiChatClient
         var json = payload.ToJsonString();
         var body = await http.SendAsync(
             () => Create(HttpMethod.Post, $"{Base(request)}/chat/completions", request, json),
-            Secrets(request), null, ct).ConfigureAwait(false);
+            Secrets(request), RefineError, ct).ConfigureAwait(false);
 
+        try
+        {
+            return ReadReply(body);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new AiException(AiErrorKind.BadResponse, "The AI service returned a reply in an unexpected format.", null, ex);
+        }
+    }
+
+    /// <summary>A 400 that names the reasoning effort means the model doesn't take that level.</summary>
+    internal static AiErrorKind? RefineError(int status, string body) =>
+        status == 400
+        && (body.Contains("reasoning_effort", StringComparison.OrdinalIgnoreCase)
+            || body.Contains("reasoning effort", StringComparison.OrdinalIgnoreCase))
+            ? AiErrorKind.UnsupportedOption
+            : null;
+
+    private static string ReadReply(string body)
+    {
         var root = Parse(body);
         var choice = (root["choices"] as JsonArray)?.FirstOrDefault()
             ?? throw new AiException(AiErrorKind.BadResponse, "The AI service returned a reply in an unexpected format.");
