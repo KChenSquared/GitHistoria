@@ -572,4 +572,38 @@ public sealed class ConflictPaneRenderTests
             window.Close();
         }
     }
+
+    [AvaloniaFact]
+    public void ForPane_deletion_is_del()
+    {
+        Assert.Equal(ConflictRowTint.Del, ConflictRowTints.ForPane(ConflictPaneLineType.Deletion));
+    }
+
+    [AvaloniaFact]
+    public void ForManagedRow_deletion_checked_is_del_unchecked_is_none()
+    {
+        Assert.Equal(ConflictRowTint.Del, ConflictRowTints.ForManagedRow(ConflictRowVisual.Deletion));
+        Assert.Equal(ConflictRowTint.Del, ConflictRowTints.ForManagedRow(ConflictRowVisual.Deletion | ConflictRowVisual.Ours));
+        Assert.Equal(ConflictRowTint.None, ConflictRowTints.ForManagedRow(ConflictRowVisual.Deletion | ConflictRowVisual.Excluded));
+        Assert.Equal(ConflictRowTint.None, ConflictRowTints.ForManagedRow(ConflictRowVisual.Deletion | ConflictRowVisual.Ours | ConflictRowVisual.Excluded));
+    }
+
+    [AvaloniaFact]
+    public void Toggle_margin_second_pass_no_pool_miss_with_deletion_rows()
+    {
+        var (window, _, margin) = ShowToggleMargin(line => line == 0 ? ConflictToggleGlyph.Unchecked : ConflictToggleGlyph.Checked);
+        try
+        {
+            RenderMargin(margin);
+            Assert.True(margin.PoolMissesForTesting > 0);
+
+            margin.ResetPoolCountersForTesting();
+            RenderMargin(margin);
+            Assert.Equal(0, margin.PoolMissesForTesting);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }
