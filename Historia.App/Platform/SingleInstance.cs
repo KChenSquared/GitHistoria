@@ -1,11 +1,13 @@
-﻿namespace Historia.Platform;
+namespace Historia.Platform;
 
 /// <summary>
 /// Single-instance guard. The first process to start holds a named mutex and runs a tiny
 /// named-pipe listener; a later launch hands its arguments to that listener and exits, so there
 /// is only ever one Historia writing <c>settings.json</c> / <c>profiles.json</c> / <c>session.json</c>.
-/// Windows is the parity target; the mutex and the pipe both work on macOS / Linux as well, and
-/// any failure here degrades to "just start a normal instance".
+/// The same pipe also serves control requests: a client that opens with the control header gets a
+/// JSON answer from the handler instead of being treated as a launch. Windows is the parity
+/// target; the mutex and the pipe both work on macOS / Linux as well, and any failure here
+/// degrades to "just start a normal instance".
 /// </summary>
 internal static class SingleInstance
 {
@@ -20,12 +22,21 @@ internal static class SingleInstance
     // since %LOCALAPPDATA% (settings.json / profiles.json / session.json) is per-user, not
     // per-session — the same account logged in twice must still resolve to a single writer.
     private const string MutexName = @"Global\Historia.SingleInstance.Mutex";
-    private const string PipeName = "Historia.SingleInstance.Pipe";
 
     /// <summary>Consecutive pipe-bind failures in <see cref="RunServerAsync"/> before it gives up
     /// rather than retrying forever — degrading to "no forwarding, act as a lone instance" per
     /// this class's own stated policy.</summary>
     private const int MaxConsecutiveServerFailures = 10;
+
+    /// <summary>Concurrent pipe instances. A slow control request must not block a second launch's
+    /// hand-off, and a slot is taken before an instance is created so the listener never asks the OS
+    /// for more instances than it allows: creating one past the limit throws, and that would count
+    /// toward <see cref="MaxConsecutiveServerFailures"/>.</summary>
+    private const int MaxConnections = 4;
+
+    /// <summary>How long a connected client may take to finish sending, or to collect its answer,
+    /// before the server drops it and frees the slot.</summary>
+    private static readonly TimeSpan ClientIoTimeout = TimeSpan.FromSeconds(10);
 
     // Held for the process lifetime so the name stays claimed; never released explicitly (the
     // OS frees it on exit, and an abandoned mutex from a crash is reclaimable by the next launch).
@@ -133,7 +144,7 @@ internal static class SingleInstance
     {
         try
         {
-            using var client = new NamedPipeClientStream(".", PipeName, PipeDirection.Out);
+            using var client = new NamedPipeClientStream(".", ControlPipe.PipeName, PipeDirection.Out);
             client.Connect(1500);
             using var w = new StreamWriter(client) { AutoFlush = true };
             foreach (var a in args)
@@ -147,29 +158,54 @@ internal static class SingleInstance
     }
 
     /// <summary>
-    /// Runs the primary's listener until <paramref name="ct"/> trips. Each client sends zero or
-    /// more newline-separated argument lines; <paramref name="onArgs"/> is invoked with them (the
-    /// caller marshals to a UI thread if it needs one). A single empty connection (no lines) is
-    /// still delivered as an empty array so the primary can just raise/focus its window.
+    /// Runs the primary's listener until <paramref name="ct"/> trips. A client that opens with the
+    /// control header sends one JSON request, which <paramref name="onControl"/> answers. Any other
+    /// client is a second launch sending zero or more newline-separated argument lines;
+    /// <paramref name="onArgs"/> is invoked with them (the caller marshals to a UI thread if it
+    /// needs one). A single empty connection (no lines) is still delivered as an empty array so the
+    /// primary can just raise/focus its window.
     /// </summary>
-    public static async Task RunServerAsync(Action<string[]> onArgs, CancellationToken ct)
+    public static async Task RunServerAsync(
+        Action<string[]> onArgs,
+        Func<ControlRequest, CancellationToken, Task<ControlResponse>> onControl,
+        CancellationToken ct,
+        string? pipeName = null)
     {
+        pipeName ??= ControlPipe.PipeName;
+        using var slots = new SemaphoreSlim(MaxConnections, MaxConnections);
         var consecutiveFailures = 0;
         while (!ct.IsCancellationRequested)
         {
+            var slotHeld = false;
+            NamedPipeServerStream? server = null;
             try
             {
-                using var server = CreateServer();
+                await slots.WaitAsync(ct).ConfigureAwait(false);
+                slotHeld = true;
+
+                server = CreateServer(pipeName);
                 await server.WaitForConnectionAsync(ct).ConfigureAwait(false);
-
-                using var r = new StreamReader(server);
-                var lines = new List<string>();
-                string? line;
-                while ((line = await r.ReadLineAsync(ct).ConfigureAwait(false)) is not null)
-                    lines.Add(line);
-
-                onArgs(lines.ToArray());
                 consecutiveFailures = 0;
+
+                var connected = server;
+                server = null;
+                slotHeld = false;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await ServeConnectionAsync(connected, onArgs, onControl, ct).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // A malformed or vanished client only costs its own connection.
+                    }
+                    finally
+                    {
+                        connected.Dispose();
+                        slots.Release();
+                    }
+                }, CancellationToken.None);
             }
             catch (OperationCanceledException)
             {
@@ -177,35 +213,103 @@ internal static class SingleInstance
             }
             catch
             {
-                // A malformed client, or a bind failure, must not kill the listener outright —
-                // but a bind failure that never clears (e.g. another process/session holding the
-                // pipe name — see the MutexName/PipeName comment) would otherwise retry forever,
-                // 5 times a second, for the life of the process. Give up after a bounded run of failures
+                // A bind failure that never clears (e.g. another process/session holding the
+                // pipe name — see the MutexName comment) would otherwise retry forever, 5 times a
+                // second, for the life of the process. Give up after a bounded run of failures
                 // and act as a lone instance, per this class's own stated degrade policy.
                 if (++consecutiveFailures >= MaxConsecutiveServerFailures)
                     return;
                 try { await Task.Delay(200, ct).ConfigureAwait(false); } catch { return; }
             }
+            finally
+            {
+                server?.Dispose();
+                if (slotHeld)
+                    slots.Release();
+            }
         }
     }
 
-    /// <summary>Builds the listener pipe, restricted on Windows to the current user via an
-    /// explicit ACL — without one, any user on the machine could connect and hand this listener
-    /// arguments that get opened and bring the window forward.</summary>
-    private static NamedPipeServerStream CreateServer()
+    private static async Task ServeConnectionAsync(
+        NamedPipeServerStream server,
+        Action<string[]> onArgs,
+        Func<ControlRequest, CancellationToken, Task<ControlResponse>> onControl,
+        CancellationToken ct)
+    {
+        using var reader = ControlPipe.CreateReader(server);
+        using var writer = ControlPipe.CreateWriter(server);
+
+        using var readCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        readCts.CancelAfter(ClientIoTimeout);
+        var read = await ControlPipe.ReadAsync(reader, readCts.Token).ConfigureAwait(false);
+
+        switch (read.Kind)
+        {
+            case ControlReadKind.Empty:
+                onArgs([]);
+                return;
+            case ControlReadKind.Legacy:
+                onArgs(read.Lines!.ToArray());
+                return;
+            case ControlReadKind.Invalid:
+                await ControlPipe.WriteResponseAsync(writer, read.Failure!, ct).ConfigureAwait(false);
+                break;
+            default:
+                ControlResponse response;
+                try
+                {
+                    response = await onControl(read.Request!, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch
+                {
+                    response = ControlResponse.Fail(ControlError.Internal, "Historia could not handle the request.");
+                }
+                await ControlPipe.WriteResponseAsync(writer, response, ct).ConfigureAwait(false);
+                break;
+        }
+
+        // Let the client read its answer and close first; disposing the server end right away
+        // can discard a reply the client has not read yet.
+        using var drainCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        drainCts.CancelAfter(ClientIoTimeout);
+        try
+        {
+            await reader.ReadToEndAsync(drainCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or IOException)
+        {
+            // The client is gone or never closed; the answer was already written.
+        }
+    }
+
+    /// <summary>Builds one listener pipe instance, restricted to the current user: on Windows via
+    /// an explicit ACL — without one, any user on the machine could connect and hand this listener
+    /// arguments that get opened and bring the window forward — and elsewhere with
+    /// <see cref="PipeOptions.CurrentUserOnly"/>. A second concurrent instance additionally needs
+    /// the <see cref="PipeAccessRights.CreateNewInstance"/> right.</summary>
+    private static NamedPipeServerStream CreateServer(string pipeName)
     {
         if (OperatingSystem.IsWindows())
         {
             var security = new PipeSecurity();
             var self = WindowsIdentity.GetCurrent().User;
             if (self is not null)
-                security.AddAccessRule(new PipeAccessRule(self, PipeAccessRights.ReadWrite, AccessControlType.Allow));
+            {
+                security.AddAccessRule(new PipeAccessRule(
+                    self, PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance, AccessControlType.Allow));
+            }
 
             return NamedPipeServerStreamAcl.Create(
-                PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous,
+                pipeName, PipeDirection.InOut, MaxConnections, PipeTransmissionMode.Byte, PipeOptions.Asynchronous,
                 inBufferSize: 0, outBufferSize: 0, pipeSecurity: security);
         }
 
-        return new NamedPipeServerStream(PipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        return new NamedPipeServerStream(
+            pipeName, PipeDirection.InOut, MaxConnections, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
     }
 }

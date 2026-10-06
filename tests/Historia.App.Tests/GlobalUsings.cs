@@ -10,6 +10,7 @@ global using TextMateSharp.Internal.Types;
 global using TextMateSharp.Registry;
 global using TextMateSharp.Themes;
 global using Historia.Services.Diff;
+global using Historia.Services.ExternalControl;
 
 global using FontStyle = Avalonia.Media.FontStyle;
 global using Avalonia.Controls;
@@ -49,8 +50,11 @@ global using Historia.Theming;
 global using Historia.Views;
 global using Microsoft.Extensions.DependencyInjection;
 global using LibGit2Sharp;
+global using System.Collections.Concurrent;
+global using System.IO.Pipes;
 global using System.Reflection;
 global using System.Runtime.CompilerServices;
+global using System.Security.Cryptography;
 global using Xunit;
 
 global using CloneOptions = Historia.Services.Workspace.CloneOptions;

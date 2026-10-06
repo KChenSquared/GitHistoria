@@ -9,6 +9,7 @@ global using TextMateSharp.Internal.Types;
 global using TextMateSharp.Registry;
 global using TextMateSharp.Themes;
 global using Historia.Services.Diff;
+global using Historia.Services.ExternalControl;
 
 global using FontStyle = Avalonia.Media.FontStyle;
 global using Avalonia.Controls;

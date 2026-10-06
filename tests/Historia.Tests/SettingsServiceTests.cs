@@ -10,7 +10,7 @@ public class SettingsServiceTests : IDisposable
     {
         var svc = SettingsService.Load();
         Assert.Equal(ThemeMode.System, svc.Current.AppTheme);
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.False(svc.Current.ShowAuthorDate);
         Assert.False(svc.Current.EnableMultiLineTabs);
         Assert.Equal(3, svc.Current.MaxTabRows);
@@ -56,13 +56,13 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(ThemeMode.Dark, svc.Current.AppTheme);
         Assert.Equal(6, svc.Current.DiffContextLines);
         Assert.False(svc.Current.AutoFetchEnabled);
         Assert.True(svc.Current.ShowAuthorDate);
         var onDisk = JsonNode.Parse(File.ReadAllText(AppPaths.SettingsFile))!.AsObject();
-        Assert.Equal(22, onDisk["schemaVersion"]!.GetValue<int>());
+        Assert.Equal(23, onDisk["schemaVersion"]!.GetValue<int>());
         Assert.False(onDisk.ContainsKey("writeCommitGraphForLargeRepos"));
         Assert.Equal(6, onDisk["diffContextLines"]!.GetValue<int>());
         Assert.False(onDisk["autoFetchEnabled"]!.GetValue<bool>());
@@ -78,13 +78,13 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(ThemeMode.Dark, svc.Current.AppTheme);
         Assert.Equal(7, svc.Current.DiffContextLines);
         Assert.False(svc.Current.AutoFetchEnabled);
         Assert.True(svc.Current.ShowAuthorDate);
         var onDisk = JsonNode.Parse(File.ReadAllText(AppPaths.SettingsFile))!.AsObject();
-        Assert.Equal(22, onDisk["schemaVersion"]!.GetValue<int>());
+        Assert.Equal(23, onDisk["schemaVersion"]!.GetValue<int>());
         Assert.False(onDisk.ContainsKey("tabWidth"));
         Assert.False(onDisk.ContainsKey("terminalBellStyle"));
         Assert.False(onDisk.ContainsKey("enableBackgroundPolling"));
@@ -107,14 +107,14 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(ThemeMode.System, svc.Current.AppTheme);
         Assert.True(svc.Current.UseCustomTheme);
         Assert.Equal("theme-1", svc.Current.CustomThemeId);
         Assert.Equal(7, svc.Current.DiffContextLines);
         Assert.True(svc.Current.ShowAuthorDate);
         var onDisk = JsonNode.Parse(File.ReadAllText(AppPaths.SettingsFile))!.AsObject();
-        Assert.Equal(22, onDisk["schemaVersion"]!.GetValue<int>());
+        Assert.Equal(23, onDisk["schemaVersion"]!.GetValue<int>());
         Assert.Equal("system", onDisk["appTheme"]!.GetValue<string>());
         Assert.True(onDisk["useCustomTheme"]!.GetValue<bool>());
         Assert.Equal("theme-1", onDisk["customThemeId"]!.GetValue<string>());
@@ -128,7 +128,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(ThemeMode.Dark, svc.Current.AppTheme);
         Assert.False(svc.Current.UseCustomTheme);
         Assert.Equal("theme-1", svc.Current.CustomThemeId);
@@ -159,7 +159,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.True(svc.Current.AutoFetchEnabled);
     }
 
@@ -178,7 +178,7 @@ public class SettingsServiceTests : IDisposable
     {
         File.WriteAllText(AppPaths.SettingsFile, "{ \"schemaVersion\": 5, \"appTheme\": \"dark\" }");
         var svc = SettingsService.Load();
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.True(svc.Current.PersistRepoCache);
     }
 
@@ -220,10 +220,10 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(ThemeMode.Light, svc.Current.AppTheme);
         var onDisk = JsonNode.Parse(File.ReadAllText(AppPaths.SettingsFile))!;
-        Assert.Equal(22, onDisk["schemaVersion"]!.GetValue<int>());
+        Assert.Equal(23, onDisk["schemaVersion"]!.GetValue<int>());
     }
 
     [Fact]
@@ -233,7 +233,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(ThemeMode.Dark, svc.Current.AppTheme);
     }
 
@@ -258,7 +258,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.True(svc.Current.RestoreSessionTabs);
         Assert.Equal(30, svc.Current.MaxRecentRepositories);
     }
@@ -296,7 +296,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Null(svc.Current.TerminalShellPath);
         Assert.Empty(svc.Current.TerminalShellArgs);
         Assert.Equal(13, svc.Current.TerminalFontSize);
@@ -379,7 +379,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(TabWidthMode.Dynamic, svc.Current.TabWidthMode);
         Assert.Equal(AppSettings.DefaultFixedTabWidth, svc.Current.FixedTabWidth);
     }
@@ -442,10 +442,10 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(500_000, svc.Current.SilentCrawlRowCap);
         var onDisk = JsonNode.Parse(File.ReadAllText(AppPaths.SettingsFile))!;
-        Assert.Equal(22, onDisk["schemaVersion"]!.GetValue<int>());
+        Assert.Equal(23, onDisk["schemaVersion"]!.GetValue<int>());
         Assert.Equal(500_000, onDisk["silentCrawlRowCap"]!.GetValue<int>());
     }
 
@@ -457,7 +457,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(500_000, svc.Current.SilentCrawlRowCap);
         Assert.Equal(2_500_000, svc.Current.ResidentRowCap);
         var onDisk = JsonNode.Parse(File.ReadAllText(AppPaths.SettingsFile))!;
@@ -473,7 +473,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(0, svc.Current.SilentCrawlRowCap);
         Assert.Equal(7_000_000, svc.Current.ResidentRowCap);
     }
@@ -489,7 +489,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(GraphLimits.MaxResidentRowsDisk, svc.Current.ResidentRowCap);
     }
 
@@ -500,14 +500,14 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(250_000, svc.Current.SilentCrawlRowCap);
 
         File.WriteAllText(AppPaths.SettingsFile, "{ \"schemaVersion\": 16, \"silentCrawlRowCap\": 0 }");
 
         svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.Equal(0, svc.Current.SilentCrawlRowCap);
     }
 
@@ -520,7 +520,7 @@ public class SettingsServiceTests : IDisposable
 
         var svc = SettingsService.Load();
 
-        Assert.Equal(22, svc.Current.SchemaVersion);
+        Assert.Equal(23, svc.Current.SchemaVersion);
         Assert.False(svc.Current.ShowAuthorDate);
     }
 
@@ -565,4 +565,25 @@ public class SettingsServiceTests : IDisposable
     }
 
     public void Dispose() => _state.Dispose();
+
+    [Fact]
+    public async Task A_v22_document_migrates_to_v23_with_external_control_on()
+    {
+        File.WriteAllText(AppPaths.SettingsFile, "{ \"schemaVersion\": 22, \"appTheme\": \"dark\" }");
+
+        var svc = SettingsService.Load();
+        await svc.FlushAsync();
+
+        Assert.Equal(23, svc.Current.SchemaVersion);
+        Assert.True(svc.Current.ExternalControlEnabled);
+        Assert.Equal(ThemeMode.Dark, svc.Current.AppTheme);
+    }
+
+    [Fact]
+    public void External_control_off_survives_a_reload()
+    {
+        File.WriteAllText(AppPaths.SettingsFile, "{ \"schemaVersion\": 23, \"externalControlEnabled\": false }");
+
+        Assert.False(SettingsService.Load().Current.ExternalControlEnabled);
+    }
 }

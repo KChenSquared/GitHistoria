@@ -150,7 +150,8 @@ public sealed class App : Application
         if (Program.IsPrimaryInstance)
         {
             _singleInstanceCts = new CancellationTokenSource();
-            _ = SingleInstance.RunServerAsync(OnForwardedArguments, _singleInstanceCts.Token);
+            var control = _provider!.GetRequiredService<ExternalControlHost>();
+            _ = SingleInstance.RunServerAsync(OnForwardedArguments, control.HandleAsync, _singleInstanceCts.Token);
         }
         OnForwardedArguments(NonSwitchArgs(Environment.GetCommandLineArgs().Skip(1)));
 
@@ -254,6 +255,13 @@ public sealed class App : Application
         services.AddSingleton<Historia.Services.Profiles.IRepoIdentityService, Historia.Services.Profiles.RepoIdentityService>();
         services.AddSingleton<IRecentRepositoryService, RecentRepositoryService>();
         services.AddSingleton<IWorkspaceService, WorkspaceService>();
+        services.AddSingleton(sp => new ExternalControlHost(
+            sp.GetRequiredService<IWorkspaceService>(),
+            sp.GetRequiredService<ISettingsService>(),
+            sp.GetRequiredService<IGitCliService>(),
+            sp.GetRequiredService<IUiDispatcher>(),
+            sp.GetRequiredService<IAppLog>(),
+            ActivateMainWindow));
         services.AddSingleton<ICloneService, CloneService>();
         services.AddSingleton<IKeyboardCommandRouter, KeyboardCommandRouter>();
         services.AddSingleton<INavigationBus, NavigationBus>();

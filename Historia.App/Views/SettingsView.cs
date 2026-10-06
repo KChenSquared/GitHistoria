@@ -165,6 +165,9 @@ public sealed class SettingsView : UserControl, IDisposable
         networkBody.Children.Add(WithHint(Check("Auto-fetch open repositories", c.AutoFetchEnabled,
             v => _ = _cfg.UpdateAsync(s => s with { AutoFetchEnabled = v })),
             "Fetches each open repository in turn: a 5-minute pause, then one repository a minute. Turn off to stop all background network traffic."));
+        networkBody.Children.Add(WithHint(Check("Allow command-line control (historia-cmdr)", c.ExternalControlEnabled,
+            v => _ = _cfg.UpdateAsync(s => s with { ExternalControlEnabled = v })),
+            "Lets local tools and coding agents open Historia on a commit or diff, or hand you staged changes with a proposed commit message. They can't stage, commit or change your repository."));
         AddCollapsibleSection("Privacy & Network", networkBody, () => _networkExpanded, v => _networkExpanded = v,
             "Identity and SSH-only are set per repository, in Repository settings.");
 

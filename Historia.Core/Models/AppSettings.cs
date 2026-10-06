@@ -28,6 +28,13 @@ public sealed record AppSettings
     /// on.</summary>
     public bool AutoFetchEnabled { get; init; } = true;
 
+    /// <summary>lets local tools (<c>historia-cmdr</c>, and the coding agents that call it) ask
+    /// this Historia over its per-user pipe to open a repository, show a commit or diff, or offer a
+    /// commit message to the commit box. It never changes a repository or a setting. Turning it
+    /// off makes every control request answer <c>disabled</c>; second launches still hand over
+    /// their repository paths. Default on.</summary>
+    public bool ExternalControlEnabled { get; init; } = true;
+
     // ── UI preferences ──
     /// <summary>The Light / Dark / System choice; <c>EffectiveTheme</c> is derived. New installs
     /// follow the OS. <see cref="UseCustomTheme"/> can override it.</summary>
