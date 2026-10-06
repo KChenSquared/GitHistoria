@@ -18,6 +18,7 @@ global using Avalonia.Controls.Primitives.PopupPositioning;
 global using Avalonia.Headless;
 global using Avalonia.Headless.XUnit;
 global using Avalonia.Interactivity;
+global using Avalonia.Layout;
 global using Avalonia.Input;
 global using Avalonia.Media;
 global using Avalonia.Threading;
