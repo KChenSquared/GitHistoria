@@ -75,7 +75,7 @@ internal static class BranchMenu
 
     public static List<Control> Build(
         Target t, RepositoryContext ctx, IDialogService dialogs, INotificationService notify,
-        IStashService stash, Action<string> copyToClipboard)
+        IStashService stash, IRepoActionBus actions, Action<string> copyToClipboard)
     {
         var items = new List<Control>();
 
@@ -142,6 +142,16 @@ internal static class BranchMenu
                     notify.Publish(conflicts > 0 ? NotificationSeverity.Warning : NotificationSeverity.Success,
                         conflicts > 0 ? $"Merge paused on {conflicts} conflict(s) — resolve, then commit." : $"Merged {mergeRef}.");
                 }, "Merge");
+            }));
+        }
+
+        if (!t.IsLocal && t.RemoteAlias is { Length: > 0 } alias && t.Name != "HEAD")
+        {
+            items.Add(MenuLeaf("Delete…", () =>
+            {
+                actions.RequestNetworkAction(new RepoNetworkRequest(
+                    RepoNetworkAction.DeleteRemoteBranch, alias, null, t.Name, ctx));
+                return Task.CompletedTask;
             }));
         }
 
