@@ -55,6 +55,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private readonly IDialogService _dialogs;
     private readonly INotificationService _notifications;
     private readonly IUnsavedWorkRegistry? _unsavedRegistry;
+    private readonly INavigationBus? _nav;
 
     // Cancelled in Dispose to signal in-flight work, but not disposed so in-flight tasks
     // observing its token do not throw ObjectDisposedException. A plain CTS with no timer
@@ -260,6 +261,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _dialogs = sp.GetRequiredService<IDialogService>();
         _notifications = sp.GetRequiredService<INotificationService>();
         _unsavedRegistry = sp.GetService(typeof(IUnsavedWorkRegistry)) as IUnsavedWorkRegistry;
+        _nav = sp.GetService(typeof(INavigationBus)) as INavigationBus;
         _oursEditor.ServicesProvider = sp;
         _theirsEditor.ServicesProvider = sp;
         _resultEditor.ServicesProvider = sp;
@@ -469,6 +471,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
         AddHandler(KeyDownEvent, OnViewKeyDown, RoutingStrategies.Tunnel);
         AddHandler(TextInputEvent, OnViewTextInput, RoutingStrategies.Tunnel);
+        AddHandler(PointerPressedEvent, OnViewPointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
 
         _ctx.State.StatusChanged += OnStatusChanged;
         _ctx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
@@ -539,6 +542,29 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             e.Handled = true;
         }
         _swallowNextSpace = false;
+    }
+
+    private void OnViewPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        ShowChangesPanel();
+    }
+
+    private void ShowChangesPanel()
+    {
+        if (_ctx.State.SelectedCommitId is not null)
+        {
+            _ctx.State.SetSelectedCommit(null);
+        }
+
+        // Skip requesting navigation when already on the repo route because DetailRouter rebuilds the view on every request.
+        if (_nav is not null)
+        {
+            var head = (_nav.CurrentRoute ?? string.Empty).Split('?', 2)[0].TrimStart('/');
+            if (!string.Equals(head, "repo", StringComparison.Ordinal))
+            {
+                _nav.RequestNavigate("repo");
+            }
+        }
     }
 
     private void OnHunkToggleClicked(ConflictSide side, int paneRow)
