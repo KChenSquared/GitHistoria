@@ -275,6 +275,20 @@ public sealed partial class GitGateway(
         await RunNetworkAsync(args, "Push", remote, progress, ct).ConfigureAwait(false);
     }
 
+    public async Task DeleteRemoteBranchAsync(string remote, string branch, IProgress<GitProgress>? progress, CancellationToken ct = default)
+    {
+        try
+        {
+            await RunNetworkAsync(["push", "--progress", remote, "--delete", branch], "Delete remote branch", remote, progress, ct).ConfigureAwait(false);
+        }
+        catch (HistoriaGitException ex) when (ex.Details?.Contains("matches more than one", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            // When a branch and a tag share the same name, git's unqualified delete is ambiguous.
+            // Qualify with refs/heads/ to target the branch specifically.
+            await RunNetworkAsync(["push", "--progress", remote, "--delete", $"refs/heads/{branch}"], "Delete remote branch", remote, progress, ct).ConfigureAwait(false);
+        }
+    }
+
     public Task PruneRemoteAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct = default)
         => RunNetworkAsync(["remote", "prune", name], "Prune", name, progress, ct);
 

@@ -67,7 +67,7 @@ There is no global "turn off confirmations" setting.
 site hand-rolls the destructive treatment on the plain `ConfirmAsync` overload (`destructive:
 true`, `defaultToCancel:`, `DialogIcon.Warning` outside the one entry point's own
 implementation), and a call-site guard scanning every listed destructive service call (submodule
-`RemoveAsync`, rebase `StartAsync`, `DiscardAsync`, `DeleteBranchAsync`, `DeleteTagAsync`, stash
+`RemoveAsync`, rebase `StartAsync`, `DiscardAsync`, `DeleteBranchAsync`, `DeleteRemoteBranchAsync`, `DeleteTagAsync`, stash
 `DropAsync`/`ClearAsync`, worktree `RemoveAsync`, hard `ResetAsync`, `ResolveWithSideAsync`,
 `RecreateConflictAsync`, `AbortOperationAsync`, `SkipCurrentAsync`, force `PushAsync`) so it must
 sit in a method that also calls `ConfirmDestructiveAsync`, or be on an explicit, commented
