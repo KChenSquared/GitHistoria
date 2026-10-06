@@ -444,6 +444,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
                     border.PointerPressed += (_, _) =>
                     {
                         _ctx.State.SetOpenDiff(null);
+                        _ctx.State.SetConflictResolverClosed(false);
                         _ctx.State.SetSelectedConflictPath(file.Path);
                     };
 

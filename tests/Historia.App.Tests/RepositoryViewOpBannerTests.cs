@@ -50,6 +50,78 @@ public class RepositoryViewOpBannerTests : IDisposable
         try { _fixture.Dispose(); } catch { }
     }
 
+    private async Task<(RepositoryView View, Window Window)> ShowRepositoryViewDuringSessionAsync()
+    {
+        _fixture.SetOperation(OperationState.Merging);
+        await _context.State.RefreshStatusAsync();
+        _context.State.SetKeepConflictResolverOpen(true);
+        Assert.True(_context.State.IsConflictSessionActive);
+
+        var repoView = new RepositoryView(_sp);
+        var window = new Window { Width = 800, Height = 600, Content = repoView };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        return (repoView, window);
+    }
+
+    [AvaloniaFact]
+    public async Task Banner_offers_open_resolver_when_closed_during_an_operation()
+    {
+        var (repoView, window) = await ShowRepositoryViewDuringSessionAsync();
+        try
+        {
+            _context.State.SetConflictResolverClosed(true);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(repoView.OpBoxForTesting.IsVisible);
+            Assert.True(repoView.OpOpenResolverButtonForTesting.IsVisible);
+            Assert.Equal("Merging in progress — the conflict resolver is closed.", repoView.OpBannerTextBlockForTesting.Text);
+            Assert.True(repoView.OpContinueButtonForTesting.IsVisible);
+            Assert.True(repoView.OpAbortButtonForTesting.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Banner_hidden_while_resolver_open()
+    {
+        var (repoView, window) = await ShowRepositoryViewDuringSessionAsync();
+        try
+        {
+            Assert.False(_context.State.IsConflictResolverClosed);
+            Assert.False(repoView.OpBoxForTesting.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Open_resolver_button_clears_closed_flag()
+    {
+        var (repoView, window) = await ShowRepositoryViewDuringSessionAsync();
+        try
+        {
+            _context.State.SetConflictResolverClosed(true);
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(repoView.OpOpenResolverButtonForTesting.IsVisible);
+
+            repoView.OpOpenResolverButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.False(_context.State.IsConflictResolverClosed);
+            Assert.False(repoView.OpBoxForTesting.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public async Task Continue_while_running_is_ignored_and_buttons_disabled()
     {
