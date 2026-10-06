@@ -149,7 +149,14 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
    fallback: documented formats only, never written, no handle held past the call, and
    parity-tested against git. The current ones: `HEAD` and ref timestamps (`RefStateToken`),
    the index header (`FileWatcherService`), `packed-refs` (`PackedRefsReader`) and the
-   commit-graph (`CommitGraphIndex`). *(§I-6.3.1)*
+   commit-graph (`CommitGraphIndex`). The one sanctioned write into git's directory is removing
+   **stale lock files** that a git process left behind when it died — git has no command for
+   this, and its own error message tells the user to delete the file. Only `*.lock` files under
+   `refs/`, plus `packed-refs.lock`, `config.lock` and `shallow.lock` in the common directory and
+   `index.lock` and `HEAD.lock` in the git directory, qualify; each must be at least five minutes
+   old, checked again immediately before it is deleted. Removal happens only after the
+   destructive confirmation (Rule 00) names the files, and only while Historia holds that
+   repository's network gate and write lock (`RepoLockFiles`). *(§I-6.3.1)*
 7. **Repository writes run inside the write lock; reads never take it.** Historia's own
    index/HEAD/ref/work-tree writes run inside the repository write lock; reads never take it
    and run with `--no-optional-locks`. The lock is never held across a dialog or a nested

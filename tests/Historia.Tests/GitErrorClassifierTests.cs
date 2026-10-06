@@ -46,6 +46,8 @@ public class GitErrorClassifierTests
     [InlineData("CONFLICT (content): Merge conflict in file.txt\nAutomatic merge failed; fix conflicts and then commit the result.", GitErrorKind.MergeConflict)]
     [InlineData("error: Your local changes to the following files would be overwritten by checkout:", GitErrorKind.UncommittedChanges)]
     [InlineData("fatal: Unable to create '/repo/.git/index.lock': File exists.", GitErrorKind.LockedIndex)]
+    // A fetch whose prune hits a ref lock a dead git process left behind.
+    [InlineData("error: could not delete references: cannot lock ref 'refs/remotes/origin/x': Unable to create 'C:/r/.git/refs/remotes/origin/x.lock': File exists.\n\nAnother git process seems to be running in this repository, e.g.\nan editor opened by 'git commit'. Please make sure all processes\nare terminated then try again.", GitErrorKind.LockedIndex)]
     [InlineData("fatal: not a git repository (or any of the parent directories): .git", GitErrorKind.NotAGitRepository)]
     [InlineData("fatal: detected dubious ownership in repository at '/repo'\nTo add an exception for this directory, call:\n\tgit config --global --add safe.directory /repo", GitErrorKind.UnsafeRepository)]
     [InlineData("This repository is configured for Git LFS but 'git-lfs' was not found on your path.", GitErrorKind.LfsMissing)]

@@ -2,7 +2,8 @@
 
 public enum NotificationSeverity
 {
-    /// <summary>Transient success toast, auto-dismiss ~3 s.</summary>
+    /// <summary>Confirmation that an operation finished (commit, push, pull, fetch). No Copy
+    /// button; closes on its own only when Auto hide notices is on, like every other severity.</summary>
     Success,
 
     /// <summary>Informational.</summary>

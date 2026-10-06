@@ -168,6 +168,88 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
     }
 
     [Fact(Timeout = 60000)]
+    public async Task Opening_a_tab_mid_fetch_lets_the_fetch_finish_then_restarts()
+    {
+        var ws = NewWorkspace();
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+        await ws.OpenAsync(Repo("b.txt").Path);
+
+        var host = new FakeHost();
+        var delay = new ManualDelayer();
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
+        _svc.Start();
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
+
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.BlockNext = release;
+        await delay.WaitForPending("initial idle");
+        delay.Fire();
+        await host.BlockedFetchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // A new tab mid-fetch: the fetch must not be cancelled (cancelling kills git).
+        await ws.OpenAsync(Repo("c.txt").Path);
+        await Task.Delay(100);
+        Assert.False(host.BlockedFetchToken.IsCancellationRequested);
+        Assert.Equal(1, delay.CountOf(AutoFetchService.InitialIdle));
+
+        release.SetResult();
+        await WaitUntil(() => host.Snapshot().Count == 2, "the interrupted fetch completes");
+        Assert.Same(r1, host.Snapshot()[^1]);
+        await WaitUntil(() => delay.CountOf(AutoFetchService.InitialIdle) == 2, "then the cycle restarts");
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task Stopping_still_cancels_an_in_flight_fetch()
+    {
+        var ws = NewWorkspace();
+        await ws.OpenAsync(Repo("a.txt").Path);
+
+        var host = new FakeHost { BlockNext = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var delay = new ManualDelayer();
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
+        _svc.Start();
+        await host.BlockedFetchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        _svc.Stop();
+        Assert.True(host.BlockedFetchToken.IsCancellationRequested);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task A_repo_busy_with_a_user_operation_is_skipped_until_a_later_cycle()
+    {
+        var ws = NewWorkspace();
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+        var r2 = await ws.OpenAsync(Repo("b.txt").Path); // focused
+
+        var host = new FakeHost();
+        var delay = new ManualDelayer();
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
+        _svc.Start();
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
+
+        Assert.True(r1.TryBeginNetworkOperation(new NetworkOperationInfo(NetworkOperationOwner.User, "Pull"), out var userOp));
+        await delay.WaitForPending("initial idle");
+        delay.Fire();
+
+        // Slot 0 (r1) is skipped: nothing fetched, the loop moves on to the next step.
+        await delay.WaitForPending("step to slot 1");
+        Assert.Single(host.Snapshot());
+        Assert.Equal(AutoFetchTabState.PendingThisCycle, _svc.GetTabState(r1));
+
+        userOp.Dispose();
+        delay.Fire();
+        await WaitUntil(() => host.Snapshot().Count == 2, "slot 1");
+        Assert.Same(r2, host.Snapshot()[^1]);
+
+        await delay.WaitForPending("trailing step");
+        delay.Fire();
+        await delay.WaitForPending("next idle");
+        delay.Fire();
+        await WaitUntil(() => host.Snapshot().Count == 3, "r1 fetched next cycle");
+        Assert.Same(r1, host.Snapshot()[^1]);
+    }
+
+    [Fact(Timeout = 60000)]
     public async Task A_pure_reorder_does_not_restart_the_cycle()
     {
         var ws = NewWorkspace();
@@ -486,17 +568,30 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         /// succeeding — used to prove a failed fetch triggers no commit-graph refresh.</summary>
         public bool Fail { get; set; }
 
+        /// <summary>When set, the next <see cref="FetchAsync"/> records its token, signals
+        /// <see cref="BlockedFetchStarted"/> and waits for this to complete before succeeding.</summary>
+        public TaskCompletionSource? BlockNext { get; set; }
+
+        public TaskCompletionSource BlockedFetchStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public CancellationToken BlockedFetchToken { get; private set; }
+
         public Task WhenFullyLoadedAsync(RepositoryContext context, CancellationToken ct)
             => LoadGate is null ? Task.CompletedTask : LoadGate.Task.WaitAsync(ct);
 
-        public Task FetchAsync(RepositoryContext context, CancellationToken ct)
+        public async Task FetchAsync(RepositoryContext context, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
             if (Fail)
                 throw new InvalidOperationException("simulated fetch failure");
+            if (BlockNext is { } block)
+            {
+                BlockNext = null;
+                BlockedFetchToken = ct;
+                BlockedFetchStarted.TrySetResult();
+                await block.Task.WaitAsync(ct);
+            }
             lock (_g)
                 _fetched.Add(context);
-            return Task.CompletedTask;
         }
 
         public List<RepositoryContext> Snapshot()

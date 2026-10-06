@@ -1,5 +1,22 @@
 namespace Historia.Services.Workspace;
 
+/// <summary>Who holds a repository's network gate.</summary>
+public enum NetworkOperationOwner
+{
+    /// <summary>A fetch, pull, push or prune the user started.</summary>
+    User,
+
+    /// <summary>The background auto-fetch.</summary>
+    AutoFetch,
+
+    /// <summary>Repository upkeep, such as removing stale lock files.</summary>
+    Maintenance,
+}
+
+/// <summary>The operation holding a repository's network gate; <paramref name="Label"/> is the
+/// user-facing name ("Fetch", "Auto-fetch", "Lock cleanup").</summary>
+public sealed record NetworkOperationInfo(NetworkOperationOwner Owner, string Label);
+
 /// <summary>
 /// Per-repository-tab handle. Owns the reactive state service, the gateway, the file watcher,
 /// write lock, and a lifetime cancellation scope.
@@ -9,6 +26,8 @@ public sealed class RepositoryContext : IAsyncDisposable
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly AsyncLocal<bool> _isHoldingWriteLock = new();
     private readonly CancellationTokenSource _lifetimeCts = new();
+    private readonly SemaphoreSlim _networkGate = new(1, 1);
+    private NetworkOperationInfo? _networkOp;
     private int _selfOperationDepth;
 
     // Signaled once the graph control's first paint for this context lands (success, failure,
@@ -306,6 +325,56 @@ public sealed class RepositoryContext : IAsyncDisposable
     }
 
     public bool IsSelfOperationInProgress => Volatile.Read(ref _selfOperationDepth) > 0;
+
+    /// <summary>The fetch, pull, push, prune or lock cleanup running on this repository, or null.
+    /// Lets a caller name what it is waiting on.</summary>
+    public NetworkOperationInfo? CurrentNetworkOperation => Volatile.Read(ref _networkOp);
+
+    /// <summary>
+    /// Takes this repository's network gate without waiting, or returns false while another
+    /// network operation holds it. The gate lets one fetch, pull, push, prune or stale-lock cleanup
+    /// run per repository at a time, so two git processes never race on the same ref locks. It is
+    /// not the write lock and may be held across a dialog; a holder that also needs the write lock
+    /// takes the gate first, never the other way round. Dispose the lease to release it.
+    /// </summary>
+    public bool TryBeginNetworkOperation(NetworkOperationInfo info, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IDisposable? lease)
+    {
+        if (!_networkGate.Wait(0))
+        {
+            lease = null;
+            return false;
+        }
+        lease = EnterNetworkOperation(info);
+        return true;
+    }
+
+    /// <summary>Waits for this repository's network gate (see <see cref="TryBeginNetworkOperation"/>).
+    /// Only <paramref name="ct"/> cancels the wait; the caller decides whether that includes
+    /// <see cref="Lifetime"/>.</summary>
+    public async Task<IDisposable> BeginNetworkOperationAsync(NetworkOperationInfo info, CancellationToken ct)
+    {
+        await _networkGate.WaitAsync(ct).ConfigureAwait(false);
+        return EnterNetworkOperation(info);
+    }
+
+    private NetworkOperationLease EnterNetworkOperation(NetworkOperationInfo info)
+    {
+        Volatile.Write(ref _networkOp, info);
+        return new NetworkOperationLease(this);
+    }
+
+    private sealed class NetworkOperationLease(RepositoryContext owner) : IDisposable
+    {
+        private int _released;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0)
+                return;
+            Volatile.Write(ref owner._networkOp, null);
+            owner._networkGate.Release();
+        }
+    }
 
     private sealed class SelfOperationScope(RepositoryContext owner) : IDisposable
     {

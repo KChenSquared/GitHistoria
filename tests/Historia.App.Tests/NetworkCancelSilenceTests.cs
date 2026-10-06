@@ -384,11 +384,11 @@ public sealed class NetworkCancelSilenceTests
 
             // Cancel from the very first progress tick, before the fetch has a chance to
             // complete — the cancellation token is already live by the time that tick fires
-            // (RunAsync assigns _cts, then raises this first tick, before any await).
+            // (the runner registers the operation before raising this first tick).
             void CancelOnFirstTick(object? s, RepoNetworkProgress p)
             {
                 if (p.Progress is not null)
-                    runner.CancelCurrent();
+                    runner.Cancel(p.Repo);
             }
             runner.ProgressChanged += CancelOnFirstTick;
             try

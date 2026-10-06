@@ -125,7 +125,11 @@ public sealed class RepositoryView : UserControl, IDisposable
         _netProgressBox.Dyn(Border.BackgroundProperty, "ColorSurface").Dyn(Border.BorderBrushProperty, "ColorBorder");
         var pg = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         pg.Children.Add(_netProgress);
-        pg.Children.Add(TextButton("Cancel", () => _networkRunner.CancelCurrent()));
+        pg.Children.Add(TextButton("Cancel", () =>
+        {
+            if (_repo is not null)
+                _networkRunner.Cancel(_repo);
+        }));
         _netProgressBox.Child = pg;
 
         var root = new DockPanel { LastChildFill = true };
@@ -169,7 +173,19 @@ public sealed class RepositoryView : UserControl, IDisposable
         }
         (_bannerHost.Content as IDisposable)?.Dispose();
         _bannerHost.Content = null;
+        ShowNetworkProgress(_repo is null ? null : _networkRunner.CurrentProgress(_repo));
         Refresh();
+    }
+
+    private void ShowNetworkProgress(GitProgress? p)
+    {
+        if (p is null)
+        {
+            _netProgressBox.IsVisible = false;
+            return;
+        }
+        _netProgress.Text = $"{p.Phase} {(p.Percent is { } pct ? $"{pct:0}%" : "")}".Trim();
+        _netProgressBox.IsVisible = true;
     }
 
     private void OnStateChanged(object? s, StatusChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
@@ -321,13 +337,7 @@ public sealed class RepositoryView : UserControl, IDisposable
         {
             if (_repo is null || !ReferenceEquals(e.Repo, _repo))
                 return;
-            if (e.Progress is not { } p)
-            {
-                _netProgressBox.IsVisible = false;
-                return;
-            }
-            _netProgress.Text = $"{p.Phase} {(p.Percent is { } pct ? $"{pct:0}%" : "")}".Trim();
-            _netProgressBox.IsVisible = true;
+            ShowNetworkProgress(e.Progress);
         });
 
     public void Dispose()

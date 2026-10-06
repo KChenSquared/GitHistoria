@@ -1,33 +1,91 @@
 ﻿namespace Historia.Views;
 
-/// <summary>Toast stack for <see cref="INotificationService"/>.</summary>
+/// <summary>Toast stack for <see cref="INotificationService"/>. With
+/// <see cref="AppSettings.AutoHideNotices"/> on, every notice closes itself
+/// <see cref="AutoHideAfter"/> after it is first shown (or after the setting is turned on);
+/// with it off, notices stay until dismissed.</summary>
 public sealed class NotificationHostView : UserControl, IDisposable
 {
-    /// <summary>Success toasts (commit / push / pull / fetch) clear themselves after this long.</summary>
-    private static readonly TimeSpan SuccessAutoDismiss = TimeSpan.FromSeconds(2);
+    internal static readonly TimeSpan AutoHideAfter = TimeSpan.FromSeconds(10);
+
+    /// <summary>How long a notice stays before closing itself, or null when it stays until dismissed.</summary>
+    internal static TimeSpan? AutoHideDelay(AppSettings settings) => settings.AutoHideNotices ? AutoHideAfter : null;
 
     private readonly INotificationService _notifications;
+    private readonly ISettingsService _settings;
+    private readonly Func<TimeSpan, Action, IDisposable> _schedule;
     private readonly StackPanel _stack = new() { Spacing = 8, Margin = new Thickness(12), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom };
 
-    // Ids we've already armed an auto-dismiss timer for, so a re-render doesn't stack timers.
-    private readonly HashSet<Guid> _autoDismissArmed = [];
+    // One armed auto-hide timer per shown notice, so a re-render never stacks timers and turning
+    // the setting off can stop them all.
+    private readonly Dictionary<Guid, IDisposable> _autoHideTimers = [];
 
-    public NotificationHostView(INotificationService notifications)
+    public NotificationHostView(INotificationService notifications, ISettingsService settings)
+        : this(notifications, settings, ScheduleOnDispatcher)
+    {
+    }
+
+    /// <summary><paramref name="schedule"/> runs an action once after a delay and returns a handle
+    /// that cancels it; tests pass a manual one.</summary>
+    internal NotificationHostView(INotificationService notifications, ISettingsService settings, Func<TimeSpan, Action, IDisposable> schedule)
     {
         _notifications = notifications;
+        _settings = settings;
+        _schedule = schedule;
         IsHitTestVisible = true;
         Content = _stack;
         _notifications.Changed += OnChanged;
+        _settings.Changed += OnSettingsChanged;
         Render(_notifications.Current);
     }
+
+    /// <summary>Notices with an armed auto-hide timer.</summary>
+    internal int ArmedAutoHideCount => _autoHideTimers.Count;
+
+    private static IDisposable ScheduleOnDispatcher(TimeSpan delay, Action action) => DispatcherTimer.RunOnce(action, delay);
 
     private void OnChanged(object? sender, NotificationsChangedEventArgs e)
         => Avalonia.Threading.Dispatcher.UIThread.Post(() => Render(e.Current));
 
+    private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
+    {
+        if (e.OldSettings.AutoHideNotices != e.NewSettings.AutoHideNotices)
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => SyncAutoHide(_notifications.Current));
+    }
+
+    private void SyncAutoHide(IReadOnlyList<Notification> items)
+    {
+        foreach (var id in _autoHideTimers.Keys.Where(id => items.All(n => n.Id != id)).ToList())
+        {
+            _autoHideTimers[id].Dispose();
+            _autoHideTimers.Remove(id);
+        }
+
+        if (AutoHideDelay(_settings.Current) is not { } delay)
+        {
+            foreach (var timer in _autoHideTimers.Values)
+                timer.Dispose();
+            _autoHideTimers.Clear();
+            return;
+        }
+
+        foreach (var n in items)
+        {
+            if (_autoHideTimers.ContainsKey(n.Id))
+                continue;
+            var id = n.Id;
+            _autoHideTimers[id] = _schedule(delay, () =>
+            {
+                _autoHideTimers.Remove(id);
+                _notifications.Dismiss(id);
+            });
+        }
+    }
+
     private void Render(IReadOnlyList<Notification> items)
     {
         _stack.Children.Clear();
-        _autoDismissArmed.RemoveWhere(id => items.All(n => n.Id != id));
+        SyncAutoHide(items);
 
         foreach (var n in items)
         {
@@ -39,11 +97,8 @@ public sealed class NotificationHostView : UserControl, IDisposable
                 _ => "ColorBorderStrong",
             };
 
-            // Success toasts are informational-only: they drop the Copy button and time out on
-            // their own after 7 s. Errors/warnings keep Copy and stay until dismissed.
+            // Success toasts are informational-only and drop the Copy button.
             var isSuccess = n.Severity == NotificationSeverity.Success;
-            if (isSuccess && _autoDismissArmed.Add(n.Id))
-                DispatcherTimer.RunOnce(() => _notifications.Dismiss(n.Id), SuccessAutoDismiss);
 
             var hasDetails = !string.IsNullOrEmpty(n.Details);
             var copyText = hasDetails ? $"{n.Message}\n\n{n.Details}" : n.Message;
@@ -136,5 +191,12 @@ public sealed class NotificationHostView : UserControl, IDisposable
             await clip.SetTextAsync(text);
     }
 
-    public void Dispose() => _notifications.Changed -= OnChanged;
+    public void Dispose()
+    {
+        _notifications.Changed -= OnChanged;
+        _settings.Changed -= OnSettingsChanged;
+        foreach (var timer in _autoHideTimers.Values)
+            timer.Dispose();
+        _autoHideTimers.Clear();
+    }
 }
