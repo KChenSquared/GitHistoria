@@ -41,10 +41,8 @@ public static class HistoriaPalette
         "diff-add-hl", "diff-del-hl", "diff-empty-bg",
         // diff line-number gutter on added / deleted rows
         "diff-add-gutter", "diff-del-gutter",
-        // conflict resolver washes
-        "conflict-ours-bg", "conflict-theirs-bg", "conflict-base-bg", "conflict-marker-bg", "conflict-resolved-bg",
-        // conflict intra-line highlights
-        "conflict-ours-hl", "conflict-theirs-hl",
+        // conflict resolver base-section and marker-line washes
+        "conflict-base-bg", "conflict-marker-bg",
         // code editor selection
         "code-selection",
         // graph ref badge label and icons — white in every theme, on every lane colour.
@@ -101,13 +99,8 @@ public static class HistoriaPalette
         ("diff-empty-bg", "#80808014"), // B: neutral padding row wash
         ("diff-add-gutter", "#0B2611"), // G: darken($green-900, 8%)
         ("diff-del-gutter", "#2F090A"), // G: darken($red-900, 20%)
-        ("conflict-ours-bg",     "#0078D433"), // B: primary @ 20% alpha
-        ("conflict-theirs-bg",   "#BB800933"), // B: warning @ 20% alpha
         ("conflict-base-bg",     "#9D9DB526"), // B: text-muted @ 15% alpha
         ("conflict-marker-bg",   "#3B3B554D"), // B: border-strong @ 30% alpha
-        ("conflict-resolved-bg", "#2EA04326"), // B: success @ 15% alpha
-        ("conflict-ours-hl",     "#0078D466"), // B: primary @ 40% alpha
-        ("conflict-theirs-hl",   "#BB800966"), // B: warning @ 40% alpha
         ("code-selection",       "#2C3C78"),   // S: indigo-leaning selection
         ("ref-label",     "#FFFFFF"),  // graph ref badge label
         // terminal. term-* are role aliases (B); the ANSI set is VS Code dark_vs
@@ -168,13 +161,8 @@ public static class HistoriaPalette
         ("diff-empty-bg", "#80808014"), // B: neutral padding row wash
         ("diff-add-gutter", "#CDFFD8"), // G: darken($green-100, 3%)
         ("diff-del-gutter", "#FFDCE0"), // G: $red-100
-        ("conflict-ours-bg",     "#005FB826"), // B: primary @ 15% alpha
-        ("conflict-theirs-bg",   "#BB800926"), // B: warning @ 15% alpha
         ("conflict-base-bg",     "#61616126"), // B: neutral grey #616161 @ 15% alpha
         ("conflict-marker-bg",   "#CECECE4D"), // B: border-strong @ 30% alpha
-        ("conflict-resolved-bg", "#2EA04326"), // B: success @ 15% alpha
-        ("conflict-ours-hl",     "#005FB84D"), // B: primary @ 30% alpha
-        ("conflict-theirs-hl",   "#BB80094D"), // B: warning @ 30% alpha
         ("code-selection",       "#ADD6FF"),   // A: editor.selectionBackground
         ("ref-label",     "#FFFFFF"),  // graph ref badge label
         // terminal. term-* are role aliases (B); the ANSI set is VS Code light_vs
@@ -239,13 +227,8 @@ public static class HistoriaPalette
         ("diff-empty-bg", "#00000000"), // = transparent on black ground
         ("diff-add-gutter", "#44ff4433"), // = diff-add-bg
         ("diff-del-gutter", "#ff444433"), // = diff-del-bg
-        ("conflict-ours-bg",     "#00ffff33"), // = accent cyan @ 20% alpha
-        ("conflict-theirs-bg",   "#ffff0033"), // = primary yellow @ 20% alpha
         ("conflict-base-bg",     "#ffffff26"), // = text white @ 15% alpha
         ("conflict-marker-bg",   "#ffffff4d"), // = border @ 30% alpha
-        ("conflict-resolved-bg", "#44ff4433"), // = success @ 20% alpha
-        ("conflict-ours-hl",     "#00ffff66"), // = accent cyan @ 40% alpha
-        ("conflict-theirs-hl",   "#ffff0066"), // = primary yellow @ 40% alpha
         ("code-selection",       "#ffff00"),   // = selection yellow at full opacity
         ("ref-label",     "#ffffff"),
         // terminal. HC has no VS Code counterpart. term-bg/fg come from the HC
