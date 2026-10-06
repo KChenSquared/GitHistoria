@@ -122,6 +122,40 @@ public class StagingPanelConflictRowsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public async Task Clicking_a_conflicted_row_reopens_a_closed_resolver()
+    {
+        _fixture.CreateConflict();
+        await _context.State.RefreshStatusAsync();
+        // A refresh already in flight can finish with the pre-conflict status; closing before the
+        // session starts would be undone by the start.
+        for (int i = 0; i < 50 && !_context.State.IsConflictSessionActive; i++)
+        {
+            await Task.Delay(50);
+            await _context.State.RefreshStatusAsync();
+        }
+        Assert.True(_context.State.IsConflictSessionActive);
+        Dispatcher.UIThread.RunJobs();
+
+        var panel = new StagingPanelView(_sp, _context);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(panel.ConflictedRowCacheForTesting.TryGetValue("f.txt", out var border));
+
+        Click(border!);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("f.txt", _context.State.SelectedConflictPath);
+
+        // The path is already selected, so only the closed flag can bring the resolver back.
+        _context.State.SetConflictResolverClosed(true);
+        Assert.True(_context.State.IsConflictResolverClosed);
+
+        Click(border!);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(_context.State.IsConflictResolverClosed);
+        Assert.Equal("f.txt", _context.State.SelectedConflictPath);
+    }
+
+    [AvaloniaFact]
     public async Task Stage_all_and_select_all_exclude_conflicted_paths()
     {
         _fixture.CreateConflict();

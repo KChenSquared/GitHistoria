@@ -8,6 +8,7 @@ public class RepositoryViewOpBannerTests : IDisposable
     private readonly RepositoryContext _context;
     private readonly OpBannerFakeConflictService _conflicts = new();
     private readonly ConflictResolverViewTests.FakeDialogService _dialogs = new();
+    private readonly UnsavedWorkRegistry _unsavedWork = new();
 
     public RepositoryViewOpBannerTests()
     {
@@ -36,6 +37,7 @@ public class RepositoryViewOpBannerTests : IDisposable
         sc.AddSingleton<IBackgroundWorkGate, BackgroundWorkGate>();
         sc.AddSingleton<IRepoStateCache, RepoStateCache>();
         sc.AddSingleton<IGraphLayoutService, GraphLayoutService>();
+        sc.AddSingleton<IUnsavedWorkRegistry>(_unsavedWork);
         _sp = sc.BuildServiceProvider();
 
         var ws = _sp.GetRequiredService<IWorkspaceService>();
@@ -48,6 +50,154 @@ public class RepositoryViewOpBannerTests : IDisposable
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
         try { _fixture.Dispose(); } catch { }
+    }
+
+    private async Task<(RepositoryView View, Window Window)> ShowRepositoryViewDuringSessionAsync()
+    {
+        _fixture.SetOperation(OperationState.Merging);
+        await _context.State.RefreshStatusAsync();
+        _context.State.SetKeepConflictResolverOpen(true);
+        Assert.True(_context.State.IsConflictSessionActive);
+
+        var repoView = new RepositoryView(_sp);
+        var window = new Window { Width = 800, Height = 600, Content = repoView };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        return (repoView, window);
+    }
+
+    [AvaloniaFact]
+    public async Task Banner_offers_open_resolver_when_closed_during_an_operation()
+    {
+        var (repoView, window) = await ShowRepositoryViewDuringSessionAsync();
+        try
+        {
+            _context.State.SetConflictResolverClosed(true);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(repoView.OpBoxForTesting.IsVisible);
+            Assert.True(repoView.OpOpenResolverButtonForTesting.IsVisible);
+            Assert.Equal("Merging in progress — the conflict resolver is closed.", repoView.OpBannerTextBlockForTesting.Text);
+            Assert.True(repoView.OpContinueButtonForTesting.IsVisible);
+            Assert.True(repoView.OpAbortButtonForTesting.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Banner_hidden_while_resolver_open()
+    {
+        var (repoView, window) = await ShowRepositoryViewDuringSessionAsync();
+        try
+        {
+            Assert.False(_context.State.IsConflictResolverClosed);
+            Assert.False(repoView.OpBoxForTesting.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Open_resolver_button_clears_closed_flag()
+    {
+        var (repoView, window) = await ShowRepositoryViewDuringSessionAsync();
+        try
+        {
+            _context.State.SetConflictResolverClosed(true);
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(repoView.OpOpenResolverButtonForTesting.IsVisible);
+
+            repoView.OpOpenResolverButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.False(_context.State.IsConflictResolverClosed);
+            Assert.False(repoView.OpBoxForTesting.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Open_resolver_offered_for_an_operation_without_continue()
+    {
+        _fixture.CreateConflict();
+        _fixture.SetOperation(OperationState.Bisecting);
+        await _context.State.RefreshStatusAsync();
+        Assert.True(_context.State.IsConflictSessionActive);
+
+        var repoView = new RepositoryView(_sp);
+        var window = new Window { Width = 800, Height = 600, Content = repoView };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            _context.State.SetConflictResolverClosed(true);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(repoView.OpBoxForTesting.IsVisible);
+            Assert.True(repoView.OpOpenResolverButtonForTesting.IsEffectivelyVisible);
+            Assert.False(repoView.OpContinueButtonForTesting.IsVisible);
+            Assert.False(repoView.OpAbortButtonForTesting.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Continue_asks_about_unsaved_resolver_edits()
+    {
+        var (repoView, window) = await ShowRepositoryViewDuringSessionAsync();
+        var work = new FakeUnsavedWork(_context);
+        using var registration = _unsavedWork.Register(work);
+        try
+        {
+            _context.State.SetConflictResolverClosed(true);
+            Dispatcher.UIThread.RunJobs();
+
+            _dialogs.ChooseResult = 2; // Cancel
+            repoView.OpContinueButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Single(_dialogs.ChooseCalls);
+            Assert.Equal(0, work.SaveCalls);
+            Assert.Equal(0, _conflicts.ContinueCalls);
+
+            _dialogs.ChooseResult = 0; // Save
+            repoView.OpContinueButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(2, _dialogs.ChooseCalls.Count);
+            Assert.Equal(1, work.SaveCalls);
+            Assert.Equal(1, _conflicts.ContinueCalls);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private sealed class FakeUnsavedWork(RepositoryContext context) : IUnsavedWork
+    {
+        public int SaveCalls { get; private set; }
+        public RepositoryContext Context { get; } = context;
+        public string Description => "the conflict resolution in f.txt";
+
+        public Task<bool> SaveAsync()
+        {
+            SaveCalls++;
+            return Task.FromResult(true);
+        }
+
+        public void Discard() { }
     }
 
     [AvaloniaFact]

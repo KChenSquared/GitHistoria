@@ -2,8 +2,10 @@ namespace Historia.Views;
 
 /// <summary>
 /// Controls the content displayed in the center panel of the main window.
-/// Manages content precedence: OpenDiff -> DiffView; else conflict session -> ConflictResolverView; else CommitGraphControl.
-/// Ensures proper lifecycle management, view disposal, and resolver session state retention.
+/// Manages content precedence: OpenDiff -> DiffView; else conflict session the user has not closed, or unsaved
+/// resolver work after the session ended -> ConflictResolverView; else CommitGraphControl.
+/// Ensures proper lifecycle management, view disposal, and resolver session state retention. A closed resolver
+/// stays cached with its edits, so reopening it shows the same view.
 /// </summary>
 public sealed class CenterPaneController : IDisposable
 {
@@ -80,6 +82,7 @@ public sealed class CenterPaneController : IDisposable
             _activeCtx.State.OpenDiffChanged -= OnOpenDiffChanged;
             _activeCtx.State.StatusChanged -= OnStatusChanged;
             _activeCtx.State.ConflictSessionChanged -= OnConflictSessionChanged;
+            _activeCtx.State.ConflictResolverClosedChanged -= OnConflictResolverClosedChanged;
 
             var existing = _conflictHost.TryGet(_activeCtx);
             if (!_activeCtx.State.IsConflictSessionActive && existing?.HasUnsavedWork != true)
@@ -95,6 +98,7 @@ public sealed class CenterPaneController : IDisposable
             _activeCtx.State.OpenDiffChanged += OnOpenDiffChanged;
             _activeCtx.State.StatusChanged += OnStatusChanged;
             _activeCtx.State.ConflictSessionChanged += OnConflictSessionChanged;
+            _activeCtx.State.ConflictResolverClosedChanged += OnConflictResolverClosedChanged;
         }
 
         UpdateContent();
@@ -107,6 +111,9 @@ public sealed class CenterPaneController : IDisposable
         => Dispatcher.UIThread.Post(UpdateContent);
 
     private void OnConflictSessionChanged(object? sender, EventArgs e)
+        => Dispatcher.UIThread.Post(UpdateContent);
+
+    private void OnConflictResolverClosedChanged(object? sender, EventArgs e)
         => Dispatcher.UIThread.Post(UpdateContent);
 
     public void UpdateContent()
@@ -142,7 +149,16 @@ public sealed class CenterPaneController : IDisposable
         bool isSessionActive = _activeCtx.State.IsConflictSessionActive;
         bool hasUnsaved = existing?.HasUnsavedWork == true;
 
-        if (isSessionActive || hasUnsaved)
+        // Only a live session can be closed: with no conflicts or operation left, nothing would
+        // bring back a hidden resolver holding edits.
+        if (isSessionActive && _activeCtx.State.IsConflictResolverClosed)
+        {
+            if (!ReferenceEquals(_centerHost.Content, _graph))
+            {
+                _centerHost.Content = _graph;
+            }
+        }
+        else if (isSessionActive || hasUnsaved)
         {
             var resolver = _conflictHost.GetOrCreate(_activeCtx);
             if (resolver is null)
@@ -204,6 +220,7 @@ public sealed class CenterPaneController : IDisposable
             _activeCtx.State.OpenDiffChanged -= OnOpenDiffChanged;
             _activeCtx.State.StatusChanged -= OnStatusChanged;
             _activeCtx.State.ConflictSessionChanged -= OnConflictSessionChanged;
+            _activeCtx.State.ConflictResolverClosedChanged -= OnConflictResolverClosedChanged;
 
             var existing = _conflictHost.TryGet(_activeCtx);
             if (!_activeCtx.State.IsConflictSessionActive && existing?.HasUnsavedWork != true)

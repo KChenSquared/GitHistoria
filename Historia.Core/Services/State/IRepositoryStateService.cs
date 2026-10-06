@@ -48,12 +48,23 @@ public interface IRepositoryStateService
     /// <summary>Which conflicted file the resolver shows; written by the staging panel on click and by the resolver when it switches on its own; raised on the UI dispatcher.</summary>
     string? SelectedConflictPath { get; }
 
+    /// <summary>
+    /// True while the user has closed the conflict resolver. Closing hides it without saving or
+    /// discarding: the view and its unsaved edits stay alive. The flag resets to false whenever the
+    /// conflict session starts or ends, and when conflicts reappear after all were resolved (a
+    /// rebase or cherry-pick stopping on its next commit).
+    /// </summary>
+    bool IsConflictResolverClosed { get; }
+
     /// <summary>The diff currently occupying the center panel, or null when the graph is shown.</summary>
     DiffRequest? OpenDiff { get; }
 
     // ── Mutations: safe to call from any thread ──
     void SetKeepConflictResolverOpen(bool keep);
     void SetSelectedConflictPath(string? path);
+
+    /// <summary>Closes (true) or reopens (false) the conflict resolver; a no-op when unchanged.</summary>
+    void SetConflictResolverClosed(bool closed);
     void SetSelectedCommit(GitObjectId? id);
     void SetSelectedPaths(IReadOnlyList<string> paths);
 
@@ -94,4 +105,7 @@ public interface IRepositoryStateService
 
     /// <summary>Raised on the UI dispatcher whenever SelectedConflictPath changes.</summary>
     event EventHandler<SelectedConflictPathChangedEventArgs>? SelectedConflictPathChanged;
+
+    /// <summary>Raised on the UI dispatcher whenever IsConflictResolverClosed changes, including its resets.</summary>
+    event EventHandler? ConflictResolverClosedChanged;
 }

@@ -12,7 +12,10 @@ namespace Historia.Services.Theming;
 /// <c>chrome</c>, <c>surface</c>, <c>surface-2</c> and <c>term-bg</c> are all white, with no
 /// near-white panels, and every text token is pure black. Every other entry carries its VS Code
 /// key (Table A, verified verbatim from the theme JSON) or its derivation (Table B, recomputed
-/// from the others).
+/// from the others). The diff line washes, changed-text washes and gutter tints take GitHub
+/// Desktop's Primer values (Table G: <c>primer-support</c> 4.0.0 colour-system variables, with the
+/// Sass expression that yields each), so added and deleted rows read as the greens and reds
+/// GitHub Desktop paints on its own editor field.
 /// </para>
 /// </summary>
 public static class HistoriaPalette
@@ -36,10 +39,10 @@ public static class HistoriaPalette
         "diff-add-bg", "diff-del-bg",
         // diff intra-line highlights & padding
         "diff-add-hl", "diff-del-hl", "diff-empty-bg",
-        // conflict resolver washes
-        "conflict-ours-bg", "conflict-theirs-bg", "conflict-base-bg", "conflict-marker-bg", "conflict-resolved-bg",
-        // conflict intra-line highlights
-        "conflict-ours-hl", "conflict-theirs-hl",
+        // diff line-number gutter on added / deleted rows
+        "diff-add-gutter", "diff-del-gutter",
+        // conflict resolver base-section and marker-line washes
+        "conflict-base-bg", "conflict-marker-bg",
         // code editor selection
         "code-selection",
         // graph ref badge label and icons — white in every theme, on every lane colour.
@@ -89,18 +92,15 @@ public static class HistoriaPalette
         ("git-untracked", "#2EA043"),   // B: = git-added (no hue distinction)
         ("git-conflict",  "#F85149"),   // B: = danger
         ("git-ignored",   "#9D9DB5"),   // B: = text-muted
-        ("diff-add-bg",   "#2EA04326"), // B: git-added @ 15% alpha
-        ("diff-del-bg",   "#F8514926"), // B: git-deleted @ 15% alpha
-        ("diff-add-hl",   "#2EA04359"), // B: git-added @ 35% alpha (stronger intra-line wash)
-        ("diff-del-hl",   "#F8514959"), // B: git-deleted @ 35% alpha (stronger intra-line wash)
+        ("diff-add-bg",   "#113A1B"),   // G: darken($green-900, 3%)
+        ("diff-del-bg",   "#450C0F"),   // G: darken($red-900, 15%)
+        ("diff-add-hl",   "#22863A"),   // G: $green-600
+        ("diff-del-hl",   "#B31D28"),   // G: $red-700
         ("diff-empty-bg", "#80808014"), // B: neutral padding row wash
-        ("conflict-ours-bg",     "#0078D433"), // B: primary @ 20% alpha
-        ("conflict-theirs-bg",   "#BB800933"), // B: warning @ 20% alpha
+        ("diff-add-gutter", "#0B2611"), // G: darken($green-900, 8%)
+        ("diff-del-gutter", "#2F090A"), // G: darken($red-900, 20%)
         ("conflict-base-bg",     "#9D9DB526"), // B: text-muted @ 15% alpha
         ("conflict-marker-bg",   "#3B3B554D"), // B: border-strong @ 30% alpha
-        ("conflict-resolved-bg", "#2EA04326"), // B: success @ 15% alpha
-        ("conflict-ours-hl",     "#0078D466"), // B: primary @ 40% alpha
-        ("conflict-theirs-hl",   "#BB800966"), // B: warning @ 40% alpha
         ("code-selection",       "#2C3C78"),   // S: indigo-leaning selection
         ("ref-label",     "#FFFFFF"),  // graph ref badge label
         // terminal. term-* are role aliases (B); the ANSI set is VS Code dark_vs
@@ -154,18 +154,15 @@ public static class HistoriaPalette
         ("git-untracked", "#2EA043"),   // B: = git-added
         ("git-conflict",  "#F85149"),   // B: = danger
         ("git-ignored",   "#616161"),   // B: neutral grey — ignored files stay de-emphasised
-        ("diff-add-bg",   "#2EA04326"), // B: git-added @ 15% alpha
-        ("diff-del-bg",   "#F8514926"), // B: git-deleted @ 15% alpha
-        ("diff-add-hl",   "#2EA0434D"), // B: git-added @ 30% alpha (stronger intra-line wash)
-        ("diff-del-hl",   "#F851494D"), // B: git-deleted @ 30% alpha (stronger intra-line wash)
+        ("diff-add-bg",   "#E6FFED"),   // G: darken($green-000, 2%)
+        ("diff-del-bg",   "#FFEEF0"),   // G: $red-000
+        ("diff-add-hl",   "#ACF2BD"),   // G: literal
+        ("diff-del-hl",   "#FDB8C0"),   // G: literal
         ("diff-empty-bg", "#80808014"), // B: neutral padding row wash
-        ("conflict-ours-bg",     "#005FB826"), // B: primary @ 15% alpha
-        ("conflict-theirs-bg",   "#BB800926"), // B: warning @ 15% alpha
+        ("diff-add-gutter", "#CDFFD8"), // G: darken($green-100, 3%)
+        ("diff-del-gutter", "#FFDCE0"), // G: $red-100
         ("conflict-base-bg",     "#61616126"), // B: neutral grey #616161 @ 15% alpha
         ("conflict-marker-bg",   "#CECECE4D"), // B: border-strong @ 30% alpha
-        ("conflict-resolved-bg", "#2EA04326"), // B: success @ 15% alpha
-        ("conflict-ours-hl",     "#005FB84D"), // B: primary @ 30% alpha
-        ("conflict-theirs-hl",   "#BB80094D"), // B: warning @ 30% alpha
         ("code-selection",       "#ADD6FF"),   // A: editor.selectionBackground
         ("ref-label",     "#FFFFFF"),  // graph ref badge label
         // terminal. term-* are role aliases (B); the ANSI set is VS Code light_vs
@@ -228,13 +225,10 @@ public static class HistoriaPalette
         ("diff-add-hl",   "#44ff4466"), // = git-added @ 40% alpha
         ("diff-del-hl",   "#ff444466"), // = git-deleted @ 40% alpha
         ("diff-empty-bg", "#00000000"), // = transparent on black ground
-        ("conflict-ours-bg",     "#00ffff33"), // = accent cyan @ 20% alpha
-        ("conflict-theirs-bg",   "#ffff0033"), // = primary yellow @ 20% alpha
+        ("diff-add-gutter", "#44ff4433"), // = diff-add-bg
+        ("diff-del-gutter", "#ff444433"), // = diff-del-bg
         ("conflict-base-bg",     "#ffffff26"), // = text white @ 15% alpha
         ("conflict-marker-bg",   "#ffffff4d"), // = border @ 30% alpha
-        ("conflict-resolved-bg", "#44ff4433"), // = success @ 20% alpha
-        ("conflict-ours-hl",     "#00ffff66"), // = accent cyan @ 40% alpha
-        ("conflict-theirs-hl",   "#ffff0066"), // = primary yellow @ 40% alpha
         ("code-selection",       "#ffff00"),   // = selection yellow at full opacity
         ("ref-label",     "#ffffff"),
         // terminal. HC has no VS Code counterpart. term-bg/fg come from the HC

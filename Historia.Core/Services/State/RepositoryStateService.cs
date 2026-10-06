@@ -24,6 +24,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     private DiffRequest? _openDiff;
     private bool _keepConflictResolverOpen;
     private string? _selectedConflictPath;
+    private bool _conflictResolverClosed;
 
     public event EventHandler<StatusChangedEventArgs>? StatusChanged;
     public event EventHandler<SelectionChangedEventArgs>? SelectedCommitChanged;
@@ -34,6 +35,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public event EventHandler<OpenDiffChangedEventArgs>? OpenDiffChanged;
     public event EventHandler? ConflictSessionChanged;
     public event EventHandler<SelectedConflictPathChangedEventArgs>? SelectedConflictPathChanged;
+    public event EventHandler? ConflictResolverClosedChanged;
 
     private readonly IGitGateway _gateway;
     private readonly SingleFlightCoalescer _refsCoalescer;
@@ -81,6 +83,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public bool KeepConflictResolverOpen { get { lock (_sync) return _keepConflictResolverOpen; } }
     public bool IsConflictSessionActive { get { lock (_sync) return ComputeIsConflictSessionActive(_status, _pendingOperation, _keepConflictResolverOpen); } }
     public string? SelectedConflictPath { get { lock (_sync) return _selectedConflictPath; } }
+    public bool IsConflictResolverClosed { get { lock (_sync) return _conflictResolverClosed; } }
 
     private static bool ComputeIsConflictSessionActive(RepositoryStatus status, OperationState operation, bool keepOpen)
     {
@@ -92,6 +95,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     {
         bool flipped;
         bool nowActive;
+        bool closedCleared = false;
         lock (_sync)
         {
             if (_keepConflictResolverOpen == keep)
@@ -104,10 +108,27 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             {
                 _selectedConflictPath = null;
             }
+            if (flipped)
+            {
+                closedCleared = _conflictResolverClosed;
+                _conflictResolverClosed = false;
+            }
         }
 
         if (flipped)
-            HandleConflictSessionFlipped(nowActive);
+            HandleConflictSessionFlipped(nowActive, closedCleared);
+    }
+
+    public void SetConflictResolverClosed(bool closed)
+    {
+        lock (_sync)
+        {
+            if (_conflictResolverClosed == closed)
+                return;
+            _conflictResolverClosed = closed;
+        }
+
+        Raise(() => ConflictResolverClosedChanged?.Invoke(this, EventArgs.Empty));
     }
 
     public void SetSelectedConflictPath(string? path)
@@ -125,9 +146,11 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             Raise(() => SelectedConflictPathChanged?.Invoke(this, new SelectedConflictPathChangedEventArgs(path)));
     }
 
-    private void HandleConflictSessionFlipped(bool nowActive)
+    private void HandleConflictSessionFlipped(bool nowActive, bool closedCleared)
     {
         Raise(() => ConflictSessionChanged?.Invoke(this, EventArgs.Empty));
+        if (closedCleared)
+            Raise(() => ConflictResolverClosedChanged?.Invoke(this, EventArgs.Empty));
 
         if (nowActive)
         {
@@ -212,6 +235,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         bool openDiffCleared;
         bool conflictSessionFlipped;
         bool nowActive;
+        bool closedCleared = false;
         lock (_sync)
         {
             bool wasActive = ComputeIsConflictSessionActive(_status, _pendingOperation, _keepConflictResolverOpen);
@@ -226,6 +250,10 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                 _keepConflictResolverOpen = false;
             }
 
+            // A rebase or cherry-pick that stops on its next commit keeps the session active, so
+            // conflicts reappearing after all were resolved reopen a closed resolver too.
+            bool conflictsAppeared = _status.Conflicted.Count == 0 && status.Conflicted.Count > 0;
+
             _status = status;
             _repository = info;
             operationChanged = _pendingOperation != operation;
@@ -236,6 +264,11 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             if (conflictSessionFlipped && !nowActive)
             {
                 _selectedConflictPath = null;
+            }
+            if (conflictSessionFlipped || conflictsAppeared)
+            {
+                closedCleared = _conflictResolverClosed;
+                _conflictResolverClosed = false;
             }
 
             // the centre panel shows the open file diff in place of the commit graph.
@@ -252,7 +285,9 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         QueueStatusRaise(status);
 
         if (conflictSessionFlipped)
-            HandleConflictSessionFlipped(nowActive);
+            HandleConflictSessionFlipped(nowActive, closedCleared);
+        else if (closedCleared)
+            Raise(() => ConflictResolverClosedChanged?.Invoke(this, EventArgs.Empty));
 
         if (openDiffCleared)
             Raise(() => OpenDiffChanged?.Invoke(this, new OpenDiffChangedEventArgs(null)));

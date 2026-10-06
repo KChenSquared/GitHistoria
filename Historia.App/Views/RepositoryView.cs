@@ -31,6 +31,7 @@ public sealed class RepositoryView : UserControl, IDisposable
     private readonly ContentControl _bannerHost = new();
     private readonly TextBlock _opBanner = Text("", "ColorText", 12);
     private readonly Border _opBox;
+    private readonly Button _opOpenResolverBtn;
     private readonly Button _opContinueBtn;
     private readonly Button _opAbortBtn;
     private readonly StackPanel _opActions;
@@ -49,6 +50,8 @@ public sealed class RepositoryView : UserControl, IDisposable
     internal TextBlock WorkingCopyTextBlockForTesting => _workingCopyText;
     internal Border OpBoxForTesting => _opBox;
     internal Button OpContinueButtonForTesting => _opContinueBtn;
+    internal Button OpOpenResolverButtonForTesting => _opOpenResolverBtn;
+    internal TextBlock OpBannerTextBlockForTesting => _opBanner;
     internal Button OpAbortButtonForTesting => _opAbortBtn;
 
     public RepositoryView(IServiceProvider sp)
@@ -101,9 +104,12 @@ public sealed class RepositoryView : UserControl, IDisposable
         _networkRunner.ProgressChanged += OnNetworkProgressChanged;
 
         _opBanner.TextWrapping = TextWrapping.Wrap;
+        _opOpenResolverBtn = TextButton("Open resolver", () => _repo?.State.SetConflictResolverClosed(false));
+        _opOpenResolverBtn.IsVisible = false;
         _opContinueBtn = TextButton("Continue", () => _ = OnOpBannerContinueAsync(), primary: true);
         _opAbortBtn = TextButton("Abort", () => _ = OnOpBannerAbortAsync());
         _opActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        _opActions.Children.Add(_opOpenResolverBtn);
         _opActions.Children.Add(_opContinueBtn);
         _opActions.Children.Add(_opAbortBtn);
 
@@ -157,6 +163,7 @@ public sealed class RepositoryView : UserControl, IDisposable
         if (_repo is not null)
         {
             _repo.State.StatusChanged -= OnStateChanged;
+            _repo.State.ConflictResolverClosedChanged -= OnResolverClosedChanged;
             _repo.State.SelectedCommitChanged -= OnSelChanged;
             _repo.State.RefsChanged -= OnStateChanged2;
             _stagingPanel?.Dispose();
@@ -168,6 +175,7 @@ public sealed class RepositoryView : UserControl, IDisposable
         if (_repo is not null)
         {
             _repo.State.StatusChanged += OnStateChanged;
+            _repo.State.ConflictResolverClosedChanged += OnResolverClosedChanged;
             _repo.State.SelectedCommitChanged += OnSelChanged;
             _repo.State.RefsChanged += OnStateChanged2;
         }
@@ -189,6 +197,7 @@ public sealed class RepositoryView : UserControl, IDisposable
     }
 
     private void OnStateChanged(object? s, StatusChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
+    private void OnResolverClosedChanged(object? s, EventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
     private void OnStateChanged2(object? s, RefsChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
     private void OnSelChanged(object? s, SelectionChangedEventArgs e) => Avalonia.Threading.Dispatcher.UIThread.Post(Refresh);
 
@@ -223,11 +232,17 @@ public sealed class RepositoryView : UserControl, IDisposable
         _ab.Text = (st.AheadBy > 0 ? $"↑{st.AheadBy} " : "") + (st.BehindBy > 0 ? $"↓{st.BehindBy}" : "");
 
         var op = _repo.State.PendingOperation;
-        if (op != OperationState.None && !_repo.State.IsConflictSessionActive)
+        bool sessionActive = _repo.State.IsConflictSessionActive;
+        bool resolverClosed = sessionActive && _repo.State.IsConflictResolverClosed;
+        if (op != OperationState.None && (!sessionActive || resolverClosed))
         {
-            _opBanner.Text = $"Repository is in {op} state with no conflicts.";
+            _opBanner.Text = resolverClosed
+                ? $"{op} in progress — the conflict resolver is closed."
+                : $"Repository is in {op} state with no conflicts.";
+            _opOpenResolverBtn.IsVisible = resolverClosed;
             bool canContinue = op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
-            _opActions.IsVisible = canContinue;
+            _opContinueBtn.IsVisible = _opAbortBtn.IsVisible = canContinue;
+            _opActions.IsVisible = canContinue || resolverClosed;
             _opBox.IsVisible = true;
         }
         else
@@ -277,6 +292,15 @@ public sealed class RepositoryView : UserControl, IDisposable
     private async Task OnOpBannerContinueAsync()
     {
         if (_repo == null || _opBusy) return;
+
+        // A closed resolver can still hold edits; continuing would commit without them.
+        var unsaved = _sp.GetService<Historia.Services.UI.IUnsavedWorkRegistry>()?.For(_repo);
+        if (unsaved is { Count: > 0 } && !await Historia.Services.UI.UnsavedWorkPrompt.ResolveAsync(unsaved, _dialogs))
+        {
+            return;
+        }
+
+        if (_opBusy) return;
         _opBusy = true;
         _opContinueBtn.IsEnabled = _opAbortBtn.IsEnabled = false;
         try

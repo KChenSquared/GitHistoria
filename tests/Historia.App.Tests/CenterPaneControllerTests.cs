@@ -165,6 +165,99 @@ public class CenterPaneControllerTests : IDisposable
         Assert.Same(graph, centerHost.Content);
     }
 
+    private async Task<(ContentControl CenterHost, Border Graph, CenterPaneController Controller, ConflictResolverView Resolver)> ShowResolverAsync()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "some text", DiskHash = "h1" };
+        _fixture.CreateConflict();
+        await _context.State.RefreshStatusAsync();
+
+        var centerHost = new ContentControl();
+        var graph = new Border();
+        var controller = new CenterPaneController(centerHost, graph, _conflictHost, _workspace, _sp);
+        Dispatcher.UIThread.RunJobs();
+
+        var resolver = Assert.IsType<ConflictResolverView>(centerHost.Content);
+        await resolver.LoadAsync();
+        return (centerHost, graph, controller, resolver);
+    }
+
+    [AvaloniaFact]
+    public async Task Closed_resolver_shows_graph_and_keeps_the_view()
+    {
+        var (centerHost, graph, controller, resolver) = await ShowResolverAsync();
+        using var _ = controller;
+        resolver.ResultEditorForTesting.Document.Insert(0, "edit\n");
+        Assert.True(resolver.HasUnsavedWork);
+
+        _context.State.SetConflictResolverClosed(true);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(graph, centerHost.Content);
+        Assert.Same(resolver, _conflictHost.TryGet(_context));
+        Assert.True(resolver.HasUnsavedWork);
+        Assert.True(_context.State.IsConflictSessionActive);
+    }
+
+    [AvaloniaFact]
+    public async Task Reopening_shows_the_same_resolver_instance()
+    {
+        var (centerHost, graph, controller, resolver) = await ShowResolverAsync();
+        using var _ = controller;
+
+        _context.State.SetConflictResolverClosed(true);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Same(graph, centerHost.Content);
+
+        _context.State.SetConflictResolverClosed(false);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(resolver, centerHost.Content);
+        Assert.Same(resolver, _conflictHost.TryGet(_context));
+    }
+
+    [AvaloniaFact]
+    public async Task Closed_flag_cannot_hide_unsaved_work_after_the_session_ends()
+    {
+        var (centerHost, _, controller, resolver) = await ShowResolverAsync();
+        using var _ = controller;
+        resolver.ResultEditorForTesting.Document.Insert(0, "edit\n");
+
+        _fixture.MarkResolved();
+        _fixture.ClearOperation();
+        await _context.State.RefreshStatusAsync();
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(_context.State.IsConflictSessionActive);
+
+        _context.State.SetConflictResolverClosed(true);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(resolver, centerHost.Content);
+        Assert.True(resolver.HasUnsavedWork);
+    }
+
+    [AvaloniaFact]
+    public async Task New_session_after_close_opens_resolver()
+    {
+        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
+        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "some text", DiskHash = "h1" };
+
+        var centerHost = new ContentControl();
+        var graph = new Border();
+        using var controller = new CenterPaneController(centerHost, graph, _conflictHost, _workspace, _sp);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Same(graph, centerHost.Content);
+
+        _context.State.SetConflictResolverClosed(true);
+        _fixture.CreateConflict();
+        await _context.State.RefreshStatusAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(_context.State.IsConflictSessionActive);
+        Assert.False(_context.State.IsConflictResolverClosed);
+        Assert.IsType<ConflictResolverView>(centerHost.Content);
+    }
+
     [AvaloniaFact]
     public void Replaced_diff_view_is_disposed()
     {

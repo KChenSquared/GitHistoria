@@ -46,7 +46,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         public void Discard() => _owner.DiscardUnsavedState();
     }
 
-    public enum RegionActionChoice { Ours, Theirs, BothOursFirst, BothTheirsFirst, Base }
+    // Thickness of the Ours | Theirs and top | Result dividers; matches the window's sidebar dividers.
+    private const double PaneDividerThickness = 4;
 
     private readonly IServiceProvider _sp;
     private readonly RepositoryContext _ctx;
@@ -118,10 +119,12 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     private readonly ConflictPaneEditor _resultEditor = new() { IsReadOnly = false };
     private readonly ConflictResolverMinimap _minimap = new();
     private readonly ContentControl _editorArea = new();
-    private readonly Panel _editorOverlay = new();
-
-    private readonly StackPanel _floatingRegionStrip = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
-    private readonly Border _floatingRegionBox;
+    private readonly Grid _splitGrid;
+    private readonly ConflictLineNumberMargin _resultNumberMargin;
+    private readonly Rectangle _paneDivider;
+    private readonly Rectangle _resultDivider;
+    private readonly GridSplitter _resultSplitter;
+    private readonly Button _closeBtn;
 
     private readonly List<Button> _actionButtons = [];
     private readonly List<Button> _dynamicActionButtons = [];
@@ -236,6 +239,18 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     internal ConflictToggleMargin TheirsToggleMarginForTesting => _theirsToggleMargin;
     internal ConflictToggleMargin ResultToggleMarginForTesting => _resultToggleMargin;
     internal string ComposedTextForTesting => _session.ComposeOutput();
+    internal Rectangle PaneDividerForTesting => _paneDivider;
+    internal Rectangle ResultDividerForTesting => _resultDivider;
+    internal GridSplitter ResultSplitterForTesting => _resultSplitter;
+    internal Grid SplitGridForTesting => _splitGrid;
+    internal Button CloseButtonForTesting => _closeBtn;
+    internal ConflictLineNumberMargin ResultNumberMarginForTesting => _resultNumberMargin;
+
+    /// <summary>Clicks the hunk check box on <paramref name="paneRow"/> of the Ours or Theirs pane.</summary>
+    internal void ClickHunkForTesting(ConflictSide side, int paneRow) => OnHunkToggleClicked(side, paneRow);
+
+    /// <summary>The hunk box drawn on <paramref name="paneRow"/> of the Ours or Theirs pane.</summary>
+    internal ConflictToggleGlyph HunkGlyphForTesting(ConflictSide side, int paneRow) => PaneHunkGlyph(side, paneRow);
 
     public ConflictResolverView(IServiceProvider sp, RepositoryContext ctx)
     {
@@ -254,24 +269,25 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _session.Changed += OnSessionChanged;
 
         // Margins and Renderers
-        _oursToggleMargin = new ConflictToggleMargin(_oursEditor, line => _session.HunkGlyph(ConflictSide.Ours, line), _ => "Use these ours lines");
-        _oursToggleMargin.ToggleClicked += (_, line) => OnHunkToggleClicked(ConflictSide.Ours, line);
+        _oursToggleMargin = new ConflictToggleMargin(_oursEditor, row => PaneHunkGlyph(ConflictSide.Ours, row), _ => "Use these ours lines");
+        _oursToggleMargin.ToggleClicked += (_, row) => OnHunkToggleClicked(ConflictSide.Ours, row);
         _oursEditor.TextArea.LeftMargins.Add(_oursToggleMargin);
-        _oursEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_oursEditor, () => GetPaneLines(ConflictSide.Ours)));
+        _oursEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_oursEditor, () => GetPaneLines(ConflictSide.Ours), row => PaneTint(ConflictSide.Ours, row)));
         _oursEditor.TextArea.TextView.BackgroundRenderers.Add(
             new ConflictBackgroundRenderer(_oursEditor, () => ConflictSide.Ours, () => _parse, () => GetPaneLines(ConflictSide.Ours), () => _snapshot?.Analyses));
 
-        _theirsToggleMargin = new ConflictToggleMargin(_theirsEditor, line => _session.HunkGlyph(ConflictSide.Theirs, line), _ => "Use these theirs lines");
-        _theirsToggleMargin.ToggleClicked += (_, line) => OnHunkToggleClicked(ConflictSide.Theirs, line);
+        _theirsToggleMargin = new ConflictToggleMargin(_theirsEditor, row => PaneHunkGlyph(ConflictSide.Theirs, row), _ => "Use these theirs lines");
+        _theirsToggleMargin.ToggleClicked += (_, row) => OnHunkToggleClicked(ConflictSide.Theirs, row);
         _theirsEditor.TextArea.LeftMargins.Add(_theirsToggleMargin);
-        _theirsEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_theirsEditor, () => GetPaneLines(ConflictSide.Theirs)));
+        _theirsEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_theirsEditor, () => GetPaneLines(ConflictSide.Theirs), row => PaneTint(ConflictSide.Theirs, row)));
         _theirsEditor.TextArea.TextView.BackgroundRenderers.Add(
             new ConflictBackgroundRenderer(_theirsEditor, () => ConflictSide.Theirs, () => _parse, () => GetPaneLines(ConflictSide.Theirs), () => _snapshot?.Analyses));
 
         _resultToggleMargin = new ConflictToggleMargin(_resultEditor, _session.RowGlyph, line => _session.IsExcluded(line) ? "Keep this line" : "Drop this line");
         _resultToggleMargin.ToggleClicked += (_, line) => OnRowToggleClicked(line);
         _resultEditor.TextArea.LeftMargins.Add(_resultToggleMargin);
-        _resultEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_resultEditor));
+        _resultNumberMargin = new ConflictLineNumberMargin(_resultEditor, getTint: ResultTint);
+        _resultEditor.TextArea.LeftMargins.Add(_resultNumberMargin);
         _resultEditor.TextArea.TextView.BackgroundRenderers.Add(
             new ConflictBackgroundRenderer(_resultEditor, () => null, () => _parse, getRowVisual: _session.RowVisual));
         _excludedColorizer = new ConflictExcludedLineColorizer(_session.IsExcluded);
@@ -357,28 +373,20 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         navigation.Children.Add(_conflictsCountText);
         navigation.Children.Add(_nextConflictBtn);
 
+        // Closing hides the resolver and keeps its edits; it never saves or discards.
+        _closeBtn = IconButton("close", "Close the resolver — unsaved edits are kept", () => _ctx.State.SetConflictResolverClosed(true));
+        _closeBtn.VerticalAlignment = VerticalAlignment.Center;
+        var trailing = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+        trailing.Children.Add(_opBar);
+        trailing.Children.Add(_closeBtn);
+
         var toolbar = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,*"), Margin = new Thickness(8, 4) };
         Grid.SetColumn(fileActions, 0);
         Grid.SetColumn(navigation, 1);
-        Grid.SetColumn(_opBar, 2);
+        Grid.SetColumn(trailing, 2);
         toolbar.Children.Add(fileActions);
         toolbar.Children.Add(navigation);
-        toolbar.Children.Add(_opBar);
-
-        // Floating region action box
-        _floatingRegionBox = new Border
-        {
-            Child = _floatingRegionStrip,
-            Padding = new Thickness(6, 3),
-            CornerRadius = new CornerRadius(4),
-            BorderThickness = new Thickness(1),
-            IsVisible = false,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 6, 24, 0),
-        };
-        _floatingRegionBox.Dyn(Border.BackgroundProperty, "ColorSurface2")
-                          .Dyn(Border.BorderBrushProperty, "ColorBorder");
+        toolbar.Children.Add(trailing);
 
         // Two-column Ours | Theirs grid, each pane under a caption naming its side
         var topPanesGrid = new Grid
@@ -392,43 +400,43 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         Grid.SetColumn(theirsCaption, 2);
         Grid.SetRow(_oursEditor, 1);
         Grid.SetColumn(_oursEditor, 0);
-        var sep = new Rectangle { Width = 1, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Stretch };
-        sep.Dyn(Shape.FillProperty, "ColorBorder");
-        Grid.SetColumn(sep, 1);
-        Grid.SetRowSpan(sep, 2);
+        _paneDivider = new Rectangle { Width = PaneDividerThickness, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Stretch };
+        _paneDivider.Dyn(Shape.FillProperty, "ColorBorder");
+        Grid.SetColumn(_paneDivider, 1);
+        Grid.SetRowSpan(_paneDivider, 2);
         Grid.SetRow(_theirsEditor, 1);
         Grid.SetColumn(_theirsEditor, 2);
         topPanesGrid.Children.Add(oursCaption);
         topPanesGrid.Children.Add(theirsCaption);
         topPanesGrid.Children.Add(_oursEditor);
-        topPanesGrid.Children.Add(sep);
+        topPanesGrid.Children.Add(_paneDivider);
         topPanesGrid.Children.Add(_theirsEditor);
 
         // Editor layout: TopPanes / Splitter / Result
-        var splitGrid = new Grid
+        _splitGrid = new Grid
         {
-            RowDefinitions = new RowDefinitions("*,5,*"),
+            RowDefinitions = new RowDefinitions($"*,{PaneDividerThickness},*"),
             ColumnDefinitions = new ColumnDefinitions("*,12"),
         };
         Grid.SetRow(topPanesGrid, 0);
         Grid.SetColumn(topPanesGrid, 0);
 
-        // A 1 px line marks the boundary; the transparent splitter over it stays the drag target.
-        var hDivider = new Rectangle { Height = 1, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Center };
-        hDivider.Dyn(Shape.FillProperty, "ColorBorder");
-        Grid.SetRow(hDivider, 1);
-        Grid.SetColumn(hDivider, 0);
+        // A divider bar marks the boundary; the transparent splitter over it stays the drag target.
+        _resultDivider = new Rectangle { Height = PaneDividerThickness, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Center };
+        _resultDivider.Dyn(Shape.FillProperty, "ColorBorder");
+        Grid.SetRow(_resultDivider, 1);
+        Grid.SetColumn(_resultDivider, 0);
 
-        var hSplitter = new GridSplitter
+        _resultSplitter = new GridSplitter
         {
-            Height = 5,
+            Height = PaneDividerThickness,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             Background = Brushes.Transparent,
             Focusable = false,
         };
-        Grid.SetRow(hSplitter, 1);
-        Grid.SetColumn(hSplitter, 0);
+        Grid.SetRow(_resultSplitter, 1);
+        Grid.SetColumn(_resultSplitter, 0);
 
         Grid.SetRow(_resultEditor, 2);
         Grid.SetColumn(_resultEditor, 0);
@@ -437,15 +445,13 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         Grid.SetRowSpan(_minimap, 3);
         Grid.SetColumn(_minimap, 1);
 
-        splitGrid.Children.Add(topPanesGrid);
-        splitGrid.Children.Add(hDivider);
-        splitGrid.Children.Add(hSplitter);
-        splitGrid.Children.Add(_resultEditor);
-        splitGrid.Children.Add(_minimap);
+        _splitGrid.Children.Add(topPanesGrid);
+        _splitGrid.Children.Add(_resultDivider);
+        _splitGrid.Children.Add(_resultSplitter);
+        _splitGrid.Children.Add(_resultEditor);
+        _splitGrid.Children.Add(_minimap);
 
-        _editorOverlay.Children.Add(splitGrid);
-        _editorOverlay.Children.Add(_floatingRegionBox);
-        _editorArea.Content = _editorOverlay;
+        _editorArea.Content = _splitGrid;
 
         // Toolbar & banner container
         var rightTop = new StackPanel { Spacing = 4, Margin = new Thickness(4, 2) };
@@ -466,6 +472,8 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
         _ctx.State.StatusChanged += OnStatusChanged;
         _ctx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
+        _ctx.State.ConflictSessionChanged += OnConflictSessionChanged;
+        UpdateCloseButton();
         _ = LoadAsync();
     }
 
@@ -533,9 +541,10 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _swallowNextSpace = false;
     }
 
-    private void OnHunkToggleClicked(ConflictSide side, int line)
+    private void OnHunkToggleClicked(ConflictSide side, int paneRow)
     {
-        if (_isBusy || !_isEditable)
+        int line = PaneDocLine(side, paneRow);
+        if (line < 0 || _isBusy || !_isEditable)
         {
             return;
         }
@@ -587,7 +596,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         {
             RefreshSessionVisuals();
         }
-        UpdateFloatingRegionBar();
     }
 
     /// <summary>Redraws what a selection change alters without moving text: struck lines, check
@@ -599,6 +607,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _oursEditor.TextArea.TextView.Redraw();
         _theirsEditor.TextArea.TextView.Redraw();
         _resultEditor.TextArea.TextView.Redraw();
+        _resultNumberMargin.InvalidateVisual();
     }
 
     private (int Start, int End)[] ManagedRanges()
@@ -717,6 +726,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             bool stopChanged = _stopId != null && labels.StopId != _stopId;
             _stopId = labels.StopId;
             SetSideCaptions(labels);
+            UpdateCloseButton();
 
             var op = _ctx.State.PendingOperation;
             if (op == OperationState.None)
@@ -791,6 +801,19 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
     }
 
+    private void OnConflictSessionChanged(object? sender, EventArgs e)
+        => Dispatcher.UIThread.Post(() =>
+        {
+            if (!_disposed)
+            {
+                UpdateCloseButton();
+            }
+        });
+
+    /// <summary>Closing needs a live session: once it has ended nothing would bring back a hidden
+    /// resolver, so one kept open only for its unsaved edits cannot be closed.</summary>
+    private void UpdateCloseButton() => _closeBtn.IsVisible = _ctx.State.IsConflictSessionActive;
+
     private void OnSelectedConflictPathChanged(object? sender, SelectedConflictPathChangedEventArgs e)
     {
         Dispatcher.UIThread.Post(async () =>
@@ -856,6 +879,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             var labels = await _conflicts.GetSideLabelsAsync(_ctx, _viewCts.Token);
             _stopId = labels.StopId;
             SetSideCaptions(labels);
+            UpdateCloseButton();
 
             var op = _ctx.State.PendingOperation;
             if (op == OperationState.None)
@@ -919,7 +943,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _parseVersion = null;
         _snapshot = null;
         _minimap.Parse = null;
-        _floatingRegionBox.IsVisible = false;
         _conflictsCountText.IsVisible = false;
         _damagedMarkersHint.IsVisible = false;
         _changedOnDiskBanner.IsVisible = false;
@@ -1014,9 +1037,9 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             _isEditable = true;
             UpdateActionButtonsEnabled();
 
-            if (!ReferenceEquals(_editorArea.Content, _editorOverlay))
+            if (!ReferenceEquals(_editorArea.Content, _splitGrid))
             {
-                _editorArea.Content = _editorOverlay;
+                _editorArea.Content = _splitGrid;
             }
 
             _resultEditor.IsReadOnly = false;
@@ -1039,7 +1062,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _snapshot = null;
         _minimap.Parse = null;
         _minimap.ResolvedRanges = null;
-        _floatingRegionBox.IsVisible = false;
         _conflictsCountText.IsVisible = false;
         _damagedMarkersHint.IsVisible = false;
 
@@ -1105,7 +1127,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
             _debounceCts?.Cancel();
             UpdateConflictParseSync();
             UpdateEditorsFromParse();
-            UpdateFloatingRegionBar();
             return;
         }
 
@@ -1301,6 +1322,31 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         return side == ConflictSide.Ours ? _snapshot?.OursLines : _snapshot?.TheirsLines;
     }
 
+    /// <summary>The Result line of a side's row in a top pane; -1 for a marker, padding or common
+    /// row, which carry no hunk box.</summary>
+    private int PaneDocLine(ConflictSide side, int paneRow)
+    {
+        var lines = GetPaneLines(side);
+        if (lines == null || paneRow < 0 || paneRow >= lines.Count)
+        {
+            return -1;
+        }
+
+        var line = lines[paneRow];
+        return line.Type is ConflictPaneLineType.Ours or ConflictPaneLineType.Theirs ? line.DocumentLineIndex : -1;
+    }
+
+    private ConflictToggleGlyph PaneHunkGlyph(ConflictSide side, int paneRow)
+        => _session.HunkGlyph(side, PaneDocLine(side, paneRow));
+
+    private ConflictRowTint PaneTint(ConflictSide side, int row)
+    {
+        var lines = GetPaneLines(side);
+        return lines != null && row >= 0 && row < lines.Count ? ConflictRowTints.ForPane(lines[row].Type) : ConflictRowTint.None;
+    }
+
+    private ConflictRowTint ResultTint(int row) => ConflictRowTints.ForResult(row, _session.RowVisual(row), _parse);
+
     /// <summary>The conflicts the arrows and the counter step through — unresolved marker regions
     /// and managed regions — by document line, in order.</summary>
     internal IReadOnlyList<(int Start, int End)> NavigableRegions()
@@ -1377,198 +1423,10 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
     private void OnResultCaretPositionChanged(object? sender, EventArgs e)
     {
-        UpdateFloatingRegionBar();
         if (_isEditable)
         {
             UpdateConflictsCount();
         }
-    }
-
-    private void UpdateFloatingRegionBar()
-    {
-        int caretLine = _resultEditor.TextArea.Caret.Line - 1;
-        if (_isEditable && _session.RegionAt(caretLine) is { } managed)
-        {
-            ShowManagedRegionBar(managed);
-            return;
-        }
-
-        if (_parse == null || _parse.Regions.Count == 0)
-        {
-            _floatingRegionBox.IsVisible = false;
-            return;
-        }
-
-        var region = _parse.Regions.FirstOrDefault(r => caretLine >= r.StartLine && caretLine <= r.EndLine);
-
-        if (region == null)
-        {
-            _floatingRegionBox.IsVisible = false;
-            return;
-        }
-
-        _floatingRegionStrip.Children.Clear();
-        _dynamicActionButtons.Clear();
-        _floatingRegionStrip.Children.Add(DynamicActionButton("Use ours", () => ApplyRegionAction(region, RegionActionChoice.Ours)));
-        _floatingRegionStrip.Children.Add(DynamicActionButton("Use theirs", () => ApplyRegionAction(region, RegionActionChoice.Theirs)));
-        _floatingRegionStrip.Children.Add(DynamicActionButton("Both (ours first)", () => ApplyRegionAction(region, RegionActionChoice.BothOursFirst)));
-        _floatingRegionStrip.Children.Add(DynamicActionButton("Both (theirs first)", () => ApplyRegionAction(region, RegionActionChoice.BothTheirsFirst)));
-
-        if (region.HasBase)
-        {
-            _floatingRegionStrip.Children.Add(DynamicActionButton("Use base", () => ApplyRegionAction(region, RegionActionChoice.Base)));
-        }
-
-        _floatingRegionBox.IsVisible = true;
-    }
-
-    private void ShowManagedRegionBar(ConflictSelectionSession.ManagedRegion region)
-    {
-        _floatingRegionStrip.Children.Clear();
-        _dynamicActionButtons.Clear();
-        _floatingRegionStrip.Children.Add(DynamicActionButton("Use ours", () => ApplyManagedRegionAction(region, RegionActionChoice.Ours)));
-        _floatingRegionStrip.Children.Add(DynamicActionButton("Use theirs", () => ApplyManagedRegionAction(region, RegionActionChoice.Theirs)));
-        _floatingRegionStrip.Children.Add(DynamicActionButton("Both (ours first)", () => ApplyManagedRegionAction(region, RegionActionChoice.BothOursFirst)));
-        _floatingRegionStrip.Children.Add(DynamicActionButton("Both (theirs first)", () => ApplyManagedRegionAction(region, RegionActionChoice.BothTheirsFirst)));
-        if (region.Original.HasBase)
-        {
-            _floatingRegionStrip.Children.Add(DynamicActionButton("Use base", () => ApplyManagedRegionAction(region, RegionActionChoice.Base)));
-        }
-        _floatingRegionStrip.Children.Add(DynamicActionButton("Restore conflict", () => RestoreConflict(region)));
-        _floatingRegionBox.IsVisible = true;
-    }
-
-    private static void ApplyChoice(ConflictSelection selection, RegionActionChoice choice)
-    {
-        switch (choice)
-        {
-            case RegionActionChoice.Ours:
-                selection.SetHunk(ConflictSide.Theirs, false);
-                selection.SetHunk(ConflictSide.Ours, true);
-                break;
-            case RegionActionChoice.Theirs:
-                selection.SetHunk(ConflictSide.Ours, false);
-                selection.SetHunk(ConflictSide.Theirs, true);
-                break;
-            case RegionActionChoice.BothOursFirst:
-                selection.SetHunk(ConflictSide.Ours, true);
-                selection.SetHunk(ConflictSide.Theirs, true);
-                selection.SetOrder(ConflictSide.Ours);
-                break;
-            case RegionActionChoice.BothTheirsFirst:
-                selection.SetHunk(ConflictSide.Ours, true);
-                selection.SetHunk(ConflictSide.Theirs, true);
-                selection.SetOrder(ConflictSide.Theirs);
-                break;
-        }
-    }
-
-    /// <summary>A region popup action on a managed conflict: ours / theirs / both set its
-    /// selection (it stays toggleable); "Use base" replaces it with the base lines as plain text.</summary>
-    public void ApplyManagedRegionAction(ConflictSelectionSession.ManagedRegion region, RegionActionChoice choice)
-    {
-        if (!_session.Regions.Contains(region) || !_isEditable || _isBusy)
-        {
-            return;
-        }
-
-        if (choice == RegionActionChoice.Base)
-        {
-            _session.ReplaceWithText(region, region.Original.BaseLines ?? []);
-        }
-        else
-        {
-            _session.ApplySelection(region, s => ApplyChoice(s, choice));
-        }
-    }
-
-    /// <summary>Puts a managed conflict's original marker block back.</summary>
-    public void RestoreConflict(ConflictSelectionSession.ManagedRegion region)
-    {
-        if (!_session.Regions.Contains(region) || !_isEditable || _isBusy)
-        {
-            return;
-        }
-
-        _session.Restore(region);
-    }
-
-    /// <summary>
-    /// A region popup action on an unresolved (marker) conflict: ours / theirs / both make it a
-    /// managed conflict with that selection; "Use base" replaces the block with the base lines.
-    /// </summary>
-    public void ApplyRegionAction(ConflictRegion targetRegion, RegionActionChoice side)
-    {
-        // Guard against stale offsets: if version moved, re-parse synchronously on UI thread
-        if (_parseVersion == null || _resultEditor.Document.Version.CompareAge(_parseVersion) != 0)
-        {
-            UpdateConflictParseSync();
-        }
-
-        if (_parse == null)
-        {
-            return;
-        }
-
-        // Find region again by line
-        int line = targetRegion.StartLine;
-        var freshRegion = _parse.Regions.FirstOrDefault(r => line >= r.StartLine && line <= r.EndLine)
-                          ?? _parse.Regions.FirstOrDefault(r => targetRegion.OursStartLine >= r.StartLine && targetRegion.OursStartLine <= r.EndLine);
-
-        if (freshRegion == null)
-        {
-            return;
-        }
-
-        if (side != RegionActionChoice.Base)
-        {
-            _session.Activate(freshRegion, s => ApplyChoice(s, side), AnalysisFor(freshRegion));
-            UpdateFloatingRegionBar();
-            return;
-        }
-
-        var replacementLines = side switch
-        {
-            RegionActionChoice.Ours => freshRegion.OursLines,
-            RegionActionChoice.Theirs => freshRegion.TheirsLines,
-            RegionActionChoice.BothOursFirst => freshRegion.OursLines.Concat(freshRegion.TheirsLines).ToList(),
-            RegionActionChoice.BothTheirsFirst => freshRegion.TheirsLines.Concat(freshRegion.OursLines).ToList(),
-            RegionActionChoice.Base => freshRegion.BaseLines,
-            _ => freshRegion.OursLines,
-        };
-
-        var linesToUse = replacementLines ?? freshRegion.OursLines;
-
-        int endLineIdx = freshRegion.EndLine;
-        string delim = (endLineIdx >= 0 && endLineIdx < _parse.Delimiters.Count && !string.IsNullOrEmpty(_parse.Delimiters[endLineIdx]))
-            ? _parse.Delimiters[endLineIdx]
-            : (_parse.Delimiters.FirstOrDefault(d => !string.IsNullOrEmpty(d)) ?? "\n");
-
-        var doc = _resultEditor.Document;
-        var startDocLine = doc.GetLineByNumber(freshRegion.StartLine + 1);
-        var endDocLine = doc.GetLineByNumber(freshRegion.EndLine + 1);
-
-        int startOffset = startDocLine.Offset;
-
-        using (doc.RunUpdate())
-        {
-            if (linesToUse.Count == 0)
-            {
-                int endOffset = endDocLine.Offset + endDocLine.TotalLength;
-                doc.Replace(startOffset, endOffset - startOffset, string.Empty);
-            }
-            else
-            {
-                int endOffset = endDocLine.EndOffset;
-                string replacement = string.Join(delim, linesToUse);
-                doc.Replace(startOffset, endOffset - startOffset, replacement);
-            }
-        }
-
-        RegisterUnsavedWork();
-        UpdateConflictParseSync();
-        UpdateEditorsFromParse();
-        UpdateFloatingRegionBar();
     }
 
     private void SyncScroll(ConflictPaneEditor source, Vector offset)
@@ -2208,6 +2066,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         _disposed = true;
         _ctx.State.StatusChanged -= OnStatusChanged;
         _ctx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
+        _ctx.State.ConflictSessionChanged -= OnConflictSessionChanged;
         _viewCts.Cancel();
         _switchCts?.Cancel();
         _switchCts?.Dispose();

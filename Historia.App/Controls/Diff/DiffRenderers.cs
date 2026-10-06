@@ -20,12 +20,34 @@ public sealed class DiffVerticalSeparatorMargin : AbstractMargin
     protected override Size MeasureOverride(Size availableSize) => new(1, 0);
 }
 
+/// <summary>The gutter tint a diff row gets behind its line number and +/- indicator.</summary>
+internal static class DiffGutterTint
+{
+    /// <summary>The gutter brush for added and deleted rows; null for every other row.</summary>
+    internal static IBrush? GutterBrush(DiffDisplayLineType type) => type switch
+    {
+        DiffDisplayLineType.Addition => PaletteBrushes.Get("ColorDiffAddGutter"),
+        DiffDisplayLineType.Deletion => PaletteBrushes.Get("ColorDiffDelGutter"),
+        _ => null,
+    };
+
+    /// <summary>Fills the full width of <paramref name="line"/>'s row in a margin with <paramref name="brush"/>.</summary>
+    internal static void FillRow(DrawingContext context, TextView view, VisualLine line, double width, IBrush brush)
+    {
+        var top = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineTop) - view.VerticalOffset;
+        var bottom = line.GetTextLineVisualYPosition(line.TextLines[^1], VisualYPosition.LineBottom) - view.VerticalOffset;
+        context.DrawRectangle(brush, null, new Rect(0, top, width, bottom - top));
+    }
+}
+
 /// <summary>
 /// Line number margin displaying old or new line numbers for diff rows.
 /// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
 /// </summary>
 public sealed class DiffLineNumberMargin : AbstractMargin
 {
+    private const double Pad = 8;
+
     private readonly bool _isOld;
     private readonly DiffPresenterBase _presenter;
     private readonly ShapedTextCache _textCache = new(TextCacheCapacity);
@@ -41,13 +63,19 @@ public sealed class DiffLineNumberMargin : AbstractMargin
 
     internal ShapedTextCache TextCacheForTesting => _textCache;
 
+    /// <summary>The gutter brush the margin paints behind 0-based <paramref name="rowIndex"/>, or null.</summary>
+    internal IBrush? TintForRowForTesting(int rowIndex)
+        => rowIndex >= 0 && rowIndex < _presenter.Rows.Count ? DiffGutterTint.GutterBrush(_presenter.Rows[rowIndex].Type) : null;
+
+    /// <summary>Gutter rows the last <see cref="Render"/> tinted.</summary>
+    internal int TintedRowsDrawnForTesting { get; private set; }
+
     public DiffLineNumberMargin(DiffPresenterBase presenter, bool isOld)
     {
         _presenter = presenter;
         _isOld = isOld;
         _typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
         _lastFontSize = _presenter.FontSize;
-        Margin = new Thickness(8, 0);
         ClipToBounds = true;
     }
 
@@ -78,6 +106,7 @@ public sealed class DiffLineNumberMargin : AbstractMargin
             return;
         }
 
+        TintedRowsDrawnForTesting = 0;
         var rows = _presenter.Rows;
         var foregroundBrush = PaletteBrushes.Get("ColorTextFaint");
 
@@ -103,6 +132,12 @@ public sealed class DiffLineNumberMargin : AbstractMargin
             }
 
             var row = rows[index - 1];
+            if (DiffGutterTint.GutterBrush(row.Type) is { } tint)
+            {
+                DiffGutterTint.FillRow(context, view, line, Bounds.Width, tint);
+                TintedRowsDrawnForTesting++;
+            }
+
             var lineNumber = _isOld ? row.OldLineText : row.NewLineText;
             if (string.IsNullOrEmpty(lineNumber))
             {
@@ -111,7 +146,7 @@ public sealed class DiffLineNumberMargin : AbstractMargin
 
             var y = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineMiddle) - view.VerticalOffset;
             var txt = _textCache.Get(lineNumber, _typeface, _lastFontSize, foregroundBrush);
-            txt.Draw(context, new Point(Bounds.Width - txt.Width, y - (txt.Height * 0.5)));
+            txt.Draw(context, new Point(Bounds.Width - Pad - txt.Width, y - (txt.Height * 0.5)));
         }
     }
 
@@ -120,7 +155,7 @@ public sealed class DiffLineNumberMargin : AbstractMargin
         var maxLine = _presenter.Model?.MaxLineNumber ?? 0;
         if (maxLine <= 0)
         {
-            return new Size(24, 0);
+            return new Size(24 + (2 * Pad), 0);
         }
 
         var typeface = new Typeface(_presenter.FontFamily);
@@ -132,7 +167,7 @@ public sealed class DiffLineNumberMargin : AbstractMargin
             _presenter.FontSize,
             Brushes.White);
 
-        return new Size(test.Width, 0);
+        return new Size(test.Width + (2 * Pad), 0);
     }
 }
 
@@ -142,6 +177,8 @@ public sealed class DiffLineNumberMargin : AbstractMargin
 /// </summary>
 public sealed class DiffLineModifyTypeMargin : AbstractMargin
 {
+    private const double Pad = 4;
+
     private readonly DiffPresenterBase _presenter;
     private readonly ShapedTextCache _textCache = new(capacity: 4);
     private Typeface _typeface;
@@ -149,12 +186,18 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
 
     internal ShapedTextCache TextCacheForTesting => _textCache;
 
+    /// <summary>The gutter brush the margin paints behind 0-based <paramref name="rowIndex"/>, or null.</summary>
+    internal IBrush? TintForRowForTesting(int rowIndex)
+        => rowIndex >= 0 && rowIndex < _presenter.Rows.Count ? DiffGutterTint.GutterBrush(_presenter.Rows[rowIndex].Type) : null;
+
+    /// <summary>Gutter rows the last <see cref="Render"/> tinted.</summary>
+    internal int TintedRowsDrawnForTesting { get; private set; }
+
     public DiffLineModifyTypeMargin(DiffPresenterBase presenter)
     {
         _presenter = presenter;
         _typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
         _lastFontSize = _presenter.FontSize;
-        Margin = new Thickness(4, 0);
         ClipToBounds = true;
     }
 
@@ -185,6 +228,7 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
             return;
         }
 
+        TintedRowsDrawnForTesting = 0;
         var rows = _presenter.Rows;
 
         var typeface = new Typeface(_presenter.FontFamily, _presenter.FontStyle, _presenter.FontWeight);
@@ -212,6 +256,12 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
             }
 
             var row = rows[index - 1];
+            if (DiffGutterTint.GutterBrush(row.Type) is { } tint)
+            {
+                DiffGutterTint.FillRow(context, view, line, Bounds.Width, tint);
+                TintedRowsDrawnForTesting++;
+            }
+
             TextLayout? indicator = row.Type switch
             {
                 DiffDisplayLineType.Addition => _textCache.Get("+", _typeface, _lastFontSize, addBrush),
@@ -222,7 +272,7 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
             if (indicator != null)
             {
                 var y = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineMiddle) - view.VerticalOffset;
-                indicator.Draw(context, new Point(0, y - (indicator.Height * 0.5)));
+                indicator.Draw(context, new Point(Pad, y - (indicator.Height * 0.5)));
             }
         }
     }
@@ -237,7 +287,7 @@ public sealed class DiffLineModifyTypeMargin : AbstractMargin
             typeface,
             _presenter.FontSize,
             Brushes.White);
-        return new Size(test.Width, 0);
+        return new Size(test.Width + (2 * Pad), 0);
     }
 }
 
