@@ -20,6 +20,11 @@ public interface IGitGateway
     Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default);
     Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default);
 
+    /// <summary>The staged diff split into one patch per file, in path order. With
+    /// <paramref name="againstHeadParent"/> it is taken against <c>HEAD^</c> (the empty tree for a root
+    /// commit), so an amend sees the amended commit's own changes too.</summary>
+    Task<IReadOnlyList<(string Path, string Patch)>> GetStagedPatchesAsync(bool againstHeadParent, CancellationToken ct = default);
+
     /// <summary>Ahead/behind between any two refs via <c>git rev-list --left-right --count</c>.
     /// Returns <see langword="null"/> when either ref cannot be resolved, e.g. a branch with no
     /// upstream — that is an ordinary case for a caller asking "is this ahead?", not an error.</summary>

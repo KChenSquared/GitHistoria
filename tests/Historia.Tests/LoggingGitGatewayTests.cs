@@ -195,6 +195,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
         public Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<TagInfo>>>();
         public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<RemoteInfo>>>();
         public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => No<Task<FileDiff>>();
+        public Task<IReadOnlyList<(string Path, string Patch)>> GetStagedPatchesAsync(bool againstHeadParent, CancellationToken ct = default) => No<Task<IReadOnlyList<(string Path, string Patch)>>>();
         public AheadBehind? DivergenceResult { get; set; }
         public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default)
             => DivergenceResult is { } ab ? Task.FromResult<AheadBehind?>(ab) : No<Task<AheadBehind?>>();

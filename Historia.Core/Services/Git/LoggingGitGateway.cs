@@ -81,6 +81,9 @@ public sealed class LoggingGitGateway(IGitGateway inner, string repositoryPath) 
     public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default)
         => Run("GetFileDiffAsync", () => inner.GetFileDiffAsync(request, ct));
 
+    public Task<IReadOnlyList<(string Path, string Patch)>> GetStagedPatchesAsync(bool againstHeadParent, CancellationToken ct = default)
+        => Run($"GetStagedPatchesAsync(amend={againstHeadParent})", () => inner.GetStagedPatchesAsync(againstHeadParent, ct), r => Count(r, "files"));
+
     public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default)
         => Run($"GetDivergenceAsync({local}...{remote})", () => inner.GetDivergenceAsync(local, remote, ct),
             r => r is { } ab ? $"+{ab.Ahead}/-{ab.Behind}" : "none");
