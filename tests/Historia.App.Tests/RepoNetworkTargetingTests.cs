@@ -114,4 +114,27 @@ public sealed class RepoNetworkTargetingTests
 
         Assert.False(RepoNetworkActionRunner.TargetHasUpstream(branches, "origin/feature"));
     }
+
+    [Fact]
+    public void RemoteBranchDeleteEffect_names_ref_and_keeps_local()
+    {
+        var text = RepoNetworkActionRunner.RemoteBranchDeleteEffect("origin", "feat");
+
+        Assert.Contains("origin/feat", text);
+        Assert.Contains("on origin", text);
+        Assert.Contains("local branch", text);
+        Assert.Contains("kept", text);
+        Assert.DoesNotContain("Are you sure", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void OpLabel_is_readable_for_delete_and_unchanged_for_others()
+    {
+        Assert.Equal("Delete remote branch", RepoNetworkActionRunner.OpLabel(RepoNetworkAction.DeleteRemoteBranch));
+        Assert.Equal("Fetch", RepoNetworkActionRunner.OpLabel(RepoNetworkAction.Fetch));
+        Assert.Equal("Pull", RepoNetworkActionRunner.OpLabel(RepoNetworkAction.Pull));
+        Assert.Equal("Push", RepoNetworkActionRunner.OpLabel(RepoNetworkAction.Push));
+        Assert.Equal("Prune", RepoNetworkActionRunner.OpLabel(RepoNetworkAction.Prune));
+    }
 }
+

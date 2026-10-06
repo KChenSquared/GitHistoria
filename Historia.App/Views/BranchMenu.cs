@@ -23,6 +23,54 @@ internal static class BranchMenu
         // than string-splitting Name/UpstreamName, which may itself contain a slash.
         string? RemoteAlias = null);
 
+    /// <summary>Max characters of a branch/tag name shown in a context-menu item before it's
+    /// ellipsis-trimmed — long names otherwise force the right-click popup
+    /// wider than the screen.</summary>
+    internal const int MenuNameMaxChars = 25;
+
+    /// <summary>Ellipsis-trims a branch/tag name to <see cref="MenuNameMaxChars"/> for display in
+    /// a menu item — e.g. "Checkout origin/feature/very-long-name as a new branch" — without
+    /// affecting the untrimmed name callers still use for the actual git operation.</summary>
+    internal static string TruncateBranchLabelForMenu(string name) =>
+        name.Length <= MenuNameMaxChars ? name : name[..(MenuNameMaxChars - 1)] + "…";
+
+    /// <summary>Builds the per-remote submenus for a branch label pill. This is the single
+    /// place to add per-remote items to the pill menu.</summary>
+    internal static IReadOnlyList<MenuItem> BuildRemoteBranchSubmenus(
+        string branch,
+        IReadOnlyList<string> remotes,
+        string? currentBranch,
+        Func<string, Task> merge,
+        Func<string, Task> delete)
+    {
+        if (remotes.Count == 0)
+            return [];
+
+        var submenus = new List<MenuItem>(remotes.Count);
+        foreach (var remote in remotes)
+        {
+            var header = TruncateBranchLabelForMenu($"{remote}/{branch}");
+            var remoteRef = $"{remote}/{branch}";
+
+            Control mergeItem = currentBranch is not null
+                ? MenuLeaf($"Merge into '{TruncateBranchLabelForMenu(currentBranch)}'…", () => merge(remoteRef))
+                : new MenuItem { Header = "Merge into current branch", IsEnabled = false };
+
+            var deleteItem = MenuLeaf("Delete…", () => delete(remote));
+
+            var item = new MenuItem { Header = header };
+            item.ItemsSource = new Control[]
+            {
+                mergeItem,
+                new Separator(),
+                deleteItem,
+            };
+            submenus.Add(item);
+        }
+
+        return submenus;
+    }
+
     /// <summary>Resolves (ahead, behind) for <paramref name="t"/> against its counterpart
     /// and returns the matching push/pull/fast-forward menu item(s), or empty when there is no
     /// counterpart, the lookup fails, or the refs are identical. <c>git pull</c> always merges
@@ -75,7 +123,7 @@ internal static class BranchMenu
 
     public static List<Control> Build(
         Target t, RepositoryContext ctx, IDialogService dialogs, INotificationService notify,
-        IStashService stash, Action<string> copyToClipboard)
+        IStashService stash, IRepoActionBus actions, Action<string> copyToClipboard)
     {
         var items = new List<Control>();
 
@@ -142,6 +190,16 @@ internal static class BranchMenu
                     notify.Publish(conflicts > 0 ? NotificationSeverity.Warning : NotificationSeverity.Success,
                         conflicts > 0 ? $"Merge paused on {conflicts} conflict(s) — resolve, then commit." : $"Merged {mergeRef}.");
                 }, "Merge");
+            }));
+        }
+
+        if (!t.IsLocal && t.RemoteAlias is { Length: > 0 } alias && t.Name != "HEAD")
+        {
+            items.Add(MenuLeaf("Delete…", () =>
+            {
+                actions.RequestNetworkAction(new RepoNetworkRequest(
+                    RepoNetworkAction.DeleteRemoteBranch, alias, null, t.Name, ctx));
+                return Task.CompletedTask;
             }));
         }
 

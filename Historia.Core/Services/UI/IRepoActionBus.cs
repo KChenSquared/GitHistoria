@@ -8,6 +8,7 @@ public enum RepoNetworkAction
     Pull,
     Push,
     Prune,
+    DeleteRemoteBranch,
 }
 
 /// <summary>A network action request, optionally targeted at a specific remote/branch pair
@@ -15,7 +16,9 @@ public enum RepoNetworkAction
 /// <paramref name="RemoteBranch"/> is its name on <paramref name="Remote"/> (null means the
 /// same name as <paramref name="Branch"/>). <see langword="null"/> targets fall back to the
 /// runner's usual resolution — <c>origin</c> if present, else the first remote, and the current
-/// branch. <paramref name="Repo"/> pins the request to one repository (e.g. the staging panel's
+/// branch. For <see cref="RepoNetworkAction.DeleteRemoteBranch"/>, <paramref name="Remote"/> and
+/// <paramref name="RemoteBranch"/> are both required, and <paramref name="Branch"/> is unused.
+/// <paramref name="Repo"/> pins the request to one repository (e.g. the staging panel's
 /// own, whichever tab is focused by the time it runs); null means the focused repository.</summary>
 public readonly record struct RepoNetworkRequest(
     RepoNetworkAction Action,

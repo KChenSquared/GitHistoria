@@ -52,6 +52,7 @@ public class GitErrorClassifierTests
     [InlineData("fatal: detected dubious ownership in repository at '/repo'\nTo add an exception for this directory, call:\n\tgit config --global --add safe.directory /repo", GitErrorKind.UnsafeRepository)]
     [InlineData("This repository is configured for Git LFS but 'git-lfs' was not found on your path.", GitErrorKind.LfsMissing)]
     [InlineData("fatal: refusing to merge unrelated histories", GitErrorKind.UnrelatedHistories)]
+    [InlineData("error: unable to delete 'b': remote ref does not exist", GitErrorKind.RefNotFound)]
     public void Classify_maps_known_stderr(string stderr, GitErrorKind expected)
         => Assert.Equal(expected, GitErrorClassifier.Classify(exitCode: 128, stderr));
 

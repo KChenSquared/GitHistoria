@@ -83,6 +83,10 @@ public interface IGitGateway
     Task PullAsync(string remote, string branch, GitPullOptions options, IProgress<GitProgress>? progress, CancellationToken ct = default);
     Task PushAsync(string remote, PushSpec spec, IProgress<GitProgress>? progress, CancellationToken ct = default);
 
+    /// <summary>Deletes the branch <paramref name="branch"/> on <paramref name="remote"/> via
+    /// <c>push --delete</c>. Git drops the matching remote-tracking ref.</summary>
+    Task DeleteRemoteBranchAsync(string remote, string branch, IProgress<GitProgress>? progress, CancellationToken ct = default);
+
     /// <summary>Deletes the remote-tracking branches of <paramref name="name"/> whose branch no
     /// longer exists on the remote. Destructive — a pruned ref can be the last pointer to
     /// commits — so callers confirm first.</summary>
