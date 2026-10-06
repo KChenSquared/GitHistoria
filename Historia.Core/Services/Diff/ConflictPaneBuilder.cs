@@ -88,16 +88,10 @@ public static class ConflictPaneBuilder
                         var origin = span.Lines[offset + i];
                         if (origin.Origin == sideOrigin)
                         {
-                            if (origin.IsDeletion)
-                            {
-                                result.Add(new ConflictPaneLine(ConflictPaneLineType.Deletion, string.Empty, null, lineIdx + i));
-                                shown++;
-                            }
-                            else
-                            {
-                                result.Add(new ConflictPaneLine(sideType, origin.SourceText, sideLineNumber++, lineIdx + i));
-                                shown++;
-                            }
+                            result.Add(origin.IsDeletion
+                                ? new ConflictPaneLine(ConflictPaneLineType.Deletion, string.Empty, null, lineIdx + i)
+                                : new ConflictPaneLine(sideType, origin.SourceText, sideLineNumber++, lineIdx + i));
+                            shown++;
                         }
                     }
 

@@ -421,9 +421,12 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
                     {
                         // Drop the struck rows whose lines still stand on their own (no other live
                         // row starts there; a row whose line was deleted has collapsed), bottom up.
+                        // A deletion row's line goes only while it is still empty.
                         var live = region.Rows.Where(r => !(r.Length == 0 && r.AttachedLength > 0)).ToList();
                         var deletable = live
-                            .Where(r => (!region.Selection.IsIncluded(r.Side, r.Index) || region.Selection.IsDeletionRow(r.Side, r.Index))
+                            .Where(r => (region.Selection.IsDeletionRow(r.Side, r.Index)
+                                            ? _document.GetLineByOffset(r.StartOffset).Length == 0
+                                            : !region.Selection.IsIncluded(r.Side, r.Index))
                                         && r.StartOffset == _document.GetLineByOffset(r.StartOffset).Offset
                                         && !live.Any(o => o != r && _document.GetLineByOffset(o.StartOffset).LineNumber == _document.GetLineByOffset(r.StartOffset).LineNumber))
                             .Select(r => _document.GetLineByOffset(r.StartOffset))
@@ -860,12 +863,10 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
 
         foreach (var region in _markerRegions)
         {
-            if (region.OursLineCount > 0 || (region.OursLineCount == 0 && region.TheirsLineCount > 0))
+            // A side with no lines still gets a box, on its deletion row, when the other side has lines.
+            if (region.OursLineCount + region.TheirsLineCount > 0)
             {
                 _oursHunkGlyphs[region.OursStartLine] = ConflictToggleGlyph.Unchecked;
-            }
-            if (region.TheirsLineCount > 0 || (region.TheirsLineCount == 0 && region.OursLineCount > 0))
-            {
                 _theirsHunkGlyphs[region.TheirsStartLine] = ConflictToggleGlyph.Unchecked;
             }
         }

@@ -569,6 +569,31 @@ public sealed class ConflictSelectionSessionTests
     }
 
     [AvaloniaFact]
+    public void Freeze_keeps_deletion_row_line_holding_text()
+    {
+        const string text = "top\n<<<<<<< HEAD\n=======\ntheirs 1\n>>>>>>> branch\nbottom\n";
+        var (doc, session) = Make(text);
+        session.Activate(Region(doc), s =>
+        {
+            s.SetHunk(ConflictSide.Ours, true);
+            s.SetHunk(ConflictSide.Theirs, true);
+        });
+
+        // The document API bypasses the read-only sections, so text can reach the deletion row.
+        doc.Insert(doc.GetLineByNumber(2).Offset, "typed");
+        Pump();
+        Assert.Single(session.Regions);
+
+        var theirsLine = Line(doc, "theirs 1");
+        doc.Remove(theirsLine.Offset, theirsLine.TotalLength);
+        Pump();
+
+        Assert.Empty(session.Regions);
+        Assert.Equal("top\ntyped\nbottom\n", doc.Text);
+        Assert.Equal(doc.Text, session.ComposeOutput());
+    }
+
+    [AvaloniaFact]
     public void Deletion_row_as_last_line_without_final_newline_composes_without_trailing_break()
     {
         const string text = "top\n<<<<<<< HEAD\n=======\ntheirs\n>>>>>>> b";
