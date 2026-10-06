@@ -4,6 +4,7 @@
     <Project Path="tests/Historia.Tests/Historia.Tests.csproj" />
   </Folder>
   <Project Path="Historia.App/Historia.App.csproj" />
+  <Project Path="Historia.Cmdr/Historia.Cmdr.csproj" />
   <Project Path="Historia.Core/Historia.Core.csproj" />
   <Project Path="Historia.ScenarioLab/Historia.ScenarioLab.csproj" />
 </Solution>

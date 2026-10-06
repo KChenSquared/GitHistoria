@@ -168,6 +168,31 @@ xattr -dr com.apple.quarantine Historia.app
 
 ---
 
+## ⌨️ Command-line control
+
+`historia-cmdr` (built beside `Historia.exe`) tells a running Historia what to show, so a script
+or a coding agent can point you at the exact commit, file or change to look at. It prints one
+line of JSON and exits `0` when Historia is showing it. It starts Historia if none is running.
+
+```bash
+historia-cmdr show HEAD                     # select and centre a commit
+historia-cmdr diff HEAD src/a.cs --line 42  # one file's diff, scrolled to a line
+historia-cmdr compare main HEAD src/a.cs    # a file between two revisions
+historia-cmdr changes src/a.cs --staged     # an uncommitted change
+historia-cmdr selection                     # what Historia is showing now
+```
+
+An agent can also hand you a change it staged: `historia-cmdr propose-commit -F -` (message on
+standard input) opens the staged diff and pre-fills the commit box. You review the files and
+click **Commit**; if you already typed a message, it is offered, not swapped in.
+
+It navigates and proposes, nothing else — it can't stage, commit or change your repository or
+settings. It talks to Historia over a local, per-user pipe, never the network, and can be turned
+off in **Settings → Privacy & Network**. Sample skills for Claude Code and GitHub Copilot (VS Code)
+are in [`docs/agent-integration/`](docs/agent-integration/README.md).
+
+---
+
 ## 📄 License
 
 Historia is free software: you can redistribute it and/or modify it under the terms of
