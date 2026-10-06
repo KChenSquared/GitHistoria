@@ -93,8 +93,13 @@ public class ExternalControlReadOnlyTests
         Assert.NotEmpty(FindForbidden("x.cs", "state.ClearPendingCommitMessage();"));
         Assert.NotEmpty(FindForbidden("x.cs", "File.WriteAllText(p, t);"));
         Assert.NotEmpty(FindDisallowedMembers("state.SetSelectedPaths(x); _workspace.CloseAsync(c);"));
+        Assert.NotEmpty(FindDisallowedMembers("ctx.State.SetSelectedPaths(x);"));
+        Assert.NotEmpty(FindDisallowedMembers("_workspace.Focused.State.ClearPendingCommitMessage();"));
+        Assert.NotEmpty(FindDisallowedMembers("_workspace.Focused.Gateway.Stage(x);"));
         Assert.Empty(FindForbidden("x.cs", "state.SetOpenDiff(null);"));
         Assert.Empty(FindDisallowedMembers("state.SetOpenDiff(null); ctx.State.ProposeCommitMessage(m);"));
+        Assert.Empty(FindDisallowedMembers("ctx.State.ProposeCommitMessage(m); ctx.State.OpenDiff"));
+        Assert.Empty(FindDisallowedMembers("_workspace.Focused.State.SelectedCommitId"));
     }
 
     private static List<string> FindForbidden(string rel, string text)
@@ -109,15 +114,28 @@ public class ExternalControlReadOnlyTests
         return found;
     }
 
+    /// <summary>Receivers named directly, and the two properties through which a chained call
+    /// reaches the same collaborators: <c>.State</c> is a repository's state, <c>.Focused</c> its
+    /// context.</summary>
+    private static readonly (Regex Pattern, string? Receiver)[] MemberAccess =
+    [
+        (new(@"\b(_workspace|state|ctx|_settings)\.(\w+)", RegexOptions.Compiled), null),
+        (new(@"\.State\.(\w+)", RegexOptions.Compiled), "state"),
+        (new(@"\.Focused\.(\w+)", RegexOptions.Compiled), "ctx"),
+    ];
+
     private static List<string> FindDisallowedMembers(string strippedText)
     {
         var found = new List<string>();
-        foreach (Match m in Regex.Matches(strippedText, @"\b(_workspace|state|ctx|_settings)\.(\w+)"))
+        foreach (var (pattern, fixedReceiver) in MemberAccess)
         {
-            var receiver = m.Groups[1].Value;
-            var member = m.Groups[2].Value;
-            if (!AllowedMembers[receiver].Contains(member))
-                found.Add($"{receiver}.{member}");
+            foreach (Match m in pattern.Matches(strippedText))
+            {
+                var receiver = fixedReceiver ?? m.Groups[1].Value;
+                var member = m.Groups[^1].Value;
+                if (!AllowedMembers[receiver].Contains(member))
+                    found.Add($"{receiver}.{member}");
+            }
         }
         return found.Distinct().ToList();
     }
