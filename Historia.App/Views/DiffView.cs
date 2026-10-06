@@ -15,6 +15,7 @@ public sealed class DiffView : UserControl, IDisposable
     private readonly IPatchService? _patches;
     private readonly INotificationService? _notifications;
     private readonly Button _toggleButton;
+    private readonly Button _closeButton;
     private FileDiff? _diff;
     private DiffDisplayModel? _model;
     private bool _sideBySide;
@@ -30,6 +31,7 @@ public sealed class DiffView : UserControl, IDisposable
     public DiffMinimap MinimapForTesting => _minimap;
     public FileDiff? DiffForTesting => _diff;
     public Button ToggleButtonForTesting => _toggleButton;
+    internal Button CloseButtonForTesting => _closeButton;
     public void ToggleModeForTesting() => OnToggleMode();
     internal int LastModelCreationThreadId { get; private set; }
 
@@ -66,9 +68,11 @@ public sealed class DiffView : UserControl, IDisposable
         Grid.SetColumn(_toggleButton, 3);
         header.Children.Add(_toggleButton);
 
-        var close = TextButton("Close", () => ctx.State.SetOpenDiff(null));
-        Grid.SetColumn(close, 4);
-        header.Children.Add(close);
+        _closeButton = TextButton("X", () => ctx.State.SetOpenDiff(null));
+        ToolTip.SetTip(_closeButton, "Close");
+        Avalonia.Automation.AutomationProperties.SetName(_closeButton, "Close");
+        Grid.SetColumn(_closeButton, 4);
+        header.Children.Add(_closeButton);
 
         _minimap = new DiffMinimap
         {
