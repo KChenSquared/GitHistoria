@@ -117,6 +117,61 @@ public sealed class DiffMarginTextTests
 
     private static int VisibleLines(Setup s) => s.Presenter.TextArea.TextView.VisualLines.Count;
 
+    private static int RowIndexOf(Setup s, DiffDisplayLineType type)
+        => s.Presenter.Rows.Select((r, i) => (r, i)).First(x => x.r.Type == type).i;
+
+    [AvaloniaFact]
+    public void Number_margin_tints_added_and_deleted_rows()
+    {
+        using var applier = new AvaloniaThemeApplier(new StubThemeService());
+        using var s = Show();
+        int added = RowIndexOf(s, DiffDisplayLineType.Addition);
+        int deleted = RowIndexOf(s, DiffDisplayLineType.Deletion);
+        int context = RowIndexOf(s, DiffDisplayLineType.Context);
+
+        var addGutter = HistoriaPalette.Get(EffectiveTheme.Dark, "diff-add-gutter").ToAvalonia();
+        var delGutter = HistoriaPalette.Get(EffectiveTheme.Dark, "diff-del-gutter").ToAvalonia();
+        foreach (var m in s.Numbers)
+        {
+            Assert.Equal(addGutter, Assert.IsAssignableFrom<ISolidColorBrush>(m.TintForRowForTesting(added)).Color);
+            Assert.Equal(delGutter, Assert.IsAssignableFrom<ISolidColorBrush>(m.TintForRowForTesting(deleted)).Color);
+            Assert.Null(m.TintForRowForTesting(context));
+        }
+    }
+
+    [AvaloniaFact]
+    public void Modify_type_margin_tints_rows()
+    {
+        using var applier = new AvaloniaThemeApplier(new StubThemeService());
+        using var s = Show();
+        var addGutter = HistoriaPalette.Get(EffectiveTheme.Dark, "diff-add-gutter").ToAvalonia();
+        var delGutter = HistoriaPalette.Get(EffectiveTheme.Dark, "diff-del-gutter").ToAvalonia();
+        Assert.Equal(addGutter, Assert.IsAssignableFrom<ISolidColorBrush>(s.Modify.TintForRowForTesting(RowIndexOf(s, DiffDisplayLineType.Addition))).Color);
+        Assert.Equal(delGutter, Assert.IsAssignableFrom<ISolidColorBrush>(s.Modify.TintForRowForTesting(RowIndexOf(s, DiffDisplayLineType.Deletion))).Color);
+        Assert.Null(s.Modify.TintForRowForTesting(RowIndexOf(s, DiffDisplayLineType.Context)));
+    }
+
+    [AvaloniaFact]
+    public void Number_margin_width_includes_inner_padding()
+    {
+        using var s = Show();
+        var p = s.Presenter;
+        var numberWidth = new FormattedText(
+            p.Model!.MaxLineNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            System.Globalization.CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight,
+            new Typeface(p.FontFamily),
+            p.FontSize,
+            Brushes.White).Width;
+
+        foreach (var m in s.Numbers)
+        {
+            Assert.Equal(new Thickness(0), m.Margin);
+            Assert.Equal(numberWidth + 16, m.DesiredSize.Width, 0.5);
+        }
+        Assert.Equal(new Thickness(0), s.Modify.Margin);
+    }
+
     [AvaloniaFact]
     public void A_repeat_frame_shapes_nothing()
     {
