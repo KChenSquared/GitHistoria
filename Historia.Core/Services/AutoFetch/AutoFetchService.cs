@@ -234,6 +234,9 @@ public sealed class AutoFetchService : IAutoFetchService
                 // Positional, not per-tab: the repo at slot `pos` when this step fires is the one
                 // fetched — reordering tabs is deliberately not re-targeted. The count
                 // is read once per cycle; a net add/close cancels `cct` and restarts.
+                // The fetch itself runs on the run token, never `cct`: cancelling kills git, and a
+                // kill during its ref update leaves *.lock files that break every later fetch. A
+                // restart requested mid-fetch therefore takes effect once the fetch finishes.
                 var count = _workspace.OpenRepositories.Count;
                 for (var pos = 0; pos < count; pos++)
                 {
@@ -241,12 +244,13 @@ public sealed class AutoFetchService : IAutoFetchService
                         await _delay(PerRepoStep, cct).ConfigureAwait(false);
 
                     var repos = _workspace.OpenRepositories;
-                    if (pos < repos.Count && await SafeFetchAsync(repos[pos], cct).ConfigureAwait(false))
+                    if (pos < repos.Count && await SafeFetchAsync(repos[pos], ct).ConfigureAwait(false))
                     {
                         lock (_sync)
                             _fetchedThisCycle.Add(repos[pos]);
                         RaiseTabStates();
                     }
+                    cct.ThrowIfCancellationRequested();
                 }
 
                 await _delay(PerRepoStep, cct).ConfigureAwait(false);
@@ -260,14 +264,23 @@ public sealed class AutoFetchService : IAutoFetchService
 
     /// <summary>
     /// runs one fetch for <paramref name="context"/>. On success, also refreshes that repo's
-    /// commit-graph and, for an inactive tab, queues its headless disk cache. Failures stop quietly.
+    /// commit-graph and, for an inactive tab, queues its headless disk cache. A repository whose
+    /// network gate is held — a fetch, pull or push the user started, or a lock cleanup — is
+    /// skipped until the next cycle. Failures stop quietly here; the host reports them.
     /// </summary>
     /// <returns><c>true</c> if the fetch completed without error.</returns>
     private async Task<bool> SafeFetchAsync(RepositoryContext context, CancellationToken ct)
     {
+        if (!context.TryBeginNetworkOperation(new NetworkOperationInfo(NetworkOperationOwner.AutoFetch, "Auto-fetch"), out var lease))
+        {
+            Diagnostics.PerfLog.Mark($"auto-fetch: skipped, {context.CurrentNetworkOperation?.Label ?? "another operation"} running ({context.DisplayName})");
+            return false;
+        }
+
         try
         {
-            await _host.FetchAsync(context, ct).ConfigureAwait(false);
+            using (lease)
+                await _host.FetchAsync(context, ct).ConfigureAwait(false);
 
             // Refresh this repo's commit-graph after every successful fetch (the
             // [InitialFetch] callers above and the [AutoFetch] loop both go through here). Itself
@@ -293,9 +306,14 @@ public sealed class AutoFetchService : IAutoFetchService
         {
             throw;
         }
-        catch
+        catch (HistoriaGitException)
         {
-            // a failed auto-fetch stops quietly.
+            // Already in the developer log; the host decides whether the user hears about it.
+            return false;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(AppLogLevel.Warn, "auto-fetch", $"{context.DisplayName}: {ex.GetType().Name}: {ex.Message}");
             return false;
         }
     }
