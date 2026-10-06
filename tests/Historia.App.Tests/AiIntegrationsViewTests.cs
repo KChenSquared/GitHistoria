@@ -474,6 +474,26 @@ public class AiIntegrationsViewTests
     }
 
     [AvaloniaFact]
+    public async Task An_unexpected_model_list_failure_is_reported_not_swallowed()
+    {
+        var rig = new Rig();
+        await rig.Add("C", p => p with { Server = "https://example.test/v1", ApiKey = "k", Model = "kept" });
+        rig.Client.ListResult = () => throw new InvalidOperationException("odd shape");
+        var view = rig.View();
+        var editor = view.EditorForTesting!;
+
+        Click(editor.ModelRefresh);
+        await view.ModelFetchForTesting;
+        Dispatcher.UIThread.RunJobs();
+
+        var note = Assert.Single(rig.Notifications.Published);
+        Assert.Equal(NotificationSeverity.Error, note.Severity);
+        Assert.Contains("Couldn't load the model list", note.Message);
+        Assert.True(editor.Model.IsEnabled);
+        Assert.Equal("kept", rig.Profiles.Profiles.Single().Model);
+    }
+
+    [AvaloniaFact]
     public async Task Refreshing_with_no_server_asks_for_one_without_a_request()
     {
         var rig = new Rig();

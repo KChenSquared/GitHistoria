@@ -569,6 +569,11 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
             if (!_disposed && _editor == e)
                 PublishError(_notifications, ex, "Couldn't load the model list");
         }
+        catch (Exception ex)
+        {
+            if (!_disposed && _editor == e)
+                _notifications?.Publish(NotificationSeverity.Error, ex.NotificationMessage("Couldn't load the model list"), ex.NotificationDetails());
+        }
         finally
         {
             if (_editor == e)
