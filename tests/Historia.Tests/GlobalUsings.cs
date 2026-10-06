@@ -29,6 +29,8 @@ global using System.Collections.Concurrent;
 global using System.Collections.Immutable;
 global using System.Diagnostics;
 global using System.IO.Compression;
+global using System.Net;
+global using System.Net.Http.Headers;
 global using System.Reflection;
 global using System.Runtime.CompilerServices;
 global using System.Runtime.Loader;
