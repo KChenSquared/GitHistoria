@@ -149,21 +149,10 @@ node_modules/
 .npm/
 .yarn/
 
-# Sibling clones used only as reference material for v8 M4 (not part of the app)
-/GitComet/
-/desktop/
-
-vscode-git-graph
-
 # --------------------------------------------------------------------
 # Dev Tooling Reports
 # --------------------------------------------------------------------
 /dev/loc-report.md
-
-
-/sourcegit
-/github-desktop
-/XTerm
 
 # Local Claude Code instructions
 /CLAUDE.local.md
