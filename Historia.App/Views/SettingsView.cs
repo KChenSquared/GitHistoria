@@ -272,6 +272,10 @@ public sealed class SettingsView : UserControl, IDisposable
         // ── Advanced ──
         var advBody = new StackPanel { Spacing = 8 };
 
+        advBody.Children.Add(WithHint(Check("Auto hide notices", c.AutoHideNotices,
+            v => _ = _cfg.UpdateAsync(s => s with { AutoHideNotices = v })),
+            "Closes notices in the bottom-right corner after 10 seconds. Turn off to keep them until you close them."));
+
         advBody.Children.Add(WithHint(Check("Keep commit details on disk", c.GraphMetadataFromDisk,
             v => _ = _cfg.UpdateAsync(s => s with { GraphMetadataFromDisk = v })),
             "Reads commit messages, authors and dates from a disk cache to save memory on large repositories. Takes effect after restart."));
