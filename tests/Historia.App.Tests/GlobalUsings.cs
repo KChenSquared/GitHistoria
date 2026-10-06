@@ -29,6 +29,7 @@ global using Historia.Controls;
 global using Historia.Layout;
 global using Historia.Models;
 global using Historia.Platform;
+global using Historia.Services.Ai;
 global using Historia.Services.AutoFetch;
 global using Historia.Services.Git;
 global using Historia.Services.Graph;

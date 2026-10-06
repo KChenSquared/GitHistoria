@@ -3,6 +3,7 @@ global using DiffPlex.Model;
 global using Historia.Diagnostics;
 global using Historia.Models;
 global using Historia.Primitives;
+global using Historia.Services.Ai;
 global using Historia.Services.Diff;
 global using Historia.Services.Git;
 global using Historia.Services.Graph;

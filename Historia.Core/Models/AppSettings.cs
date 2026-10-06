@@ -192,6 +192,13 @@ public sealed record AppSettings
     /// <summary>Issue-key → URL rules applied to commit messages. Account-free.</summary>
     public IReadOnlyList<IssueAutolinkRule> IssueAutolinks { get; init; } = [];
 
+    /// <summary>The AI integrations, in the order they were added.</summary>
+    public IReadOnlyList<AiServiceProfile> AiServices { get; init; } = [];
+
+    /// <summary>The one active AI integration, or null when AI commit messages are off. An id
+    /// that matches no profile reads as null.</summary>
+    public string? ActiveAiServiceId { get; init; }
+
     /// <summary>Word-wrap diff lines instead of horizontal scroll.</summary>
     public bool DiffWordWrap { get; init; }
 
