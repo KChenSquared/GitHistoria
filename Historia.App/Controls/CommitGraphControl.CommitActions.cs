@@ -106,6 +106,11 @@ public sealed partial class CommitGraphControl
             () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout");
     }
 
+    // Resolved on use: only a badge pull needs it, and it shares the repository's network gate
+    // with Fetch / Pull / Push and auto-fetch.
+    private Historia.Services.UI.IRepoNetworkActionRunner NetworkRunner =>
+        _services.GetRequiredService<Historia.Services.UI.IRepoNetworkActionRunner>();
+
     /// <summary>Double-clicking a remote badge whose local counterpart exists switches to
     /// the local branch, then — only when the badge that was actually clicked was the remote one
     /// (a local-badge double-click stays a plain, silent checkout) — measures divergence against
@@ -138,7 +143,8 @@ public sealed partial class CommitGraphControl
         {
             // ahead == 0 && behind > 0: a guaranteed fast-forward — nothing local to lose.
             await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
-                () => ctx.Gateway.PullAsync(remote, name, GitPullOptions.From(_settings.Current), null, ctx.Lifetime), "Pull");
+                () => NetworkRunner.RunExclusiveAsync(ctx, "Pull",
+                    (p, ct) => ctx.Gateway.PullAsync(remote, name, GitPullOptions.From(_settings.Current), p, ct)), "Pull");
             return;
         }
 
@@ -146,7 +152,8 @@ public sealed partial class CommitGraphControl
                 $"{upstream} has {div.Behind} commit(s) you don't have, and you have {div.Ahead} it doesn't. Pull and merge?"))
             return;
         await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
-            () => ctx.Gateway.PullAsync(remote, name, GitPullOptions.From(_settings.Current), null, ctx.Lifetime), "Pull");
+            () => NetworkRunner.RunExclusiveAsync(ctx, "Pull",
+                (p, ct) => ctx.Gateway.PullAsync(remote, name, GitPullOptions.From(_settings.Current), p, ct)), "Pull");
     }
 
     private void ShowPillContextMenu(GraphDecoration deco)

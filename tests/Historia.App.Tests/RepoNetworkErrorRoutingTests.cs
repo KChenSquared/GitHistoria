@@ -5,8 +5,8 @@ namespace HistoriaApp.Tests;
 /// (never the non-fast-forward chooser or a force push), a non-fast-forward still opens the
 /// chooser, the toast names the operation once, a request on a busy repository gets a notice
 /// naming what is running while other repositories stay free, a request that finds auto-fetch
-/// running waits for it (cancellably), and a request pinned to a repository runs there whichever
-/// tab is focused.
+/// running waits for it (cancellably), a network retry started outside that flow follows the same
+/// rules, and a request pinned to a repository runs there whichever tab is focused.
 /// </summary>
 [Trait("tier", "ui")]
 public sealed class RepoNetworkErrorRoutingTests
@@ -149,6 +149,21 @@ public sealed class RepoNetworkErrorRoutingTests
             File.WriteAllText(path, "");
             File.SetLastWriteTimeUtc(path, DateTime.UtcNow - age);
             return path;
+        }
+
+        /// <summary>Sets the clone to prune on fetch and deletes a branch from the remote whose
+        /// remote-tracking ref has a stale <c>.lock</c>, so the next fetch fails in git's own
+        /// "cannot lock ref … File exists" form.</summary>
+        public PushFixture BlockPruneWithStaleLock(TimeSpan age)
+        {
+            RunGit(LocalPath, "push", "origin", "HEAD:refs/heads/gone");
+            RunGit(LocalPath, "fetch", "origin");
+            RunGit(RemotePath, "branch", "-D", "gone");
+            RunGit(LocalPath, "config", "fetch.prune", "true");
+            var path = Path.Combine(LocalPath, ".git", "refs", "remotes", "origin", "gone.lock");
+            File.WriteAllText(path, "");
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow - age);
+            return this;
         }
 
         public PushFixture PointOriginAt(string url)
@@ -478,6 +493,79 @@ public sealed class RepoNetworkErrorRoutingTests
     }
 
     [AvaloniaFact]
+    public async Task An_exclusive_operation_on_a_busy_repo_gets_a_notice_and_does_not_run()
+    {
+        using var fixture = new PushFixture();
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+
+        var ran = false;
+        Assert.True(repo.TryBeginNetworkOperation(new NetworkOperationInfo(NetworkOperationOwner.User, "Fetch"), out var held));
+        using (held)
+        {
+            await h.Runner.RunExclusiveAsync(repo, "Pull", (_, _) =>
+            {
+                ran = true;
+                return Task.CompletedTask;
+            });
+        }
+
+        Assert.False(ran);
+        var info = Assert.Single(h.Notify.Published);
+        Assert.Equal($"Fetch on {repo.DisplayName} is still running.", info.Message);
+    }
+
+    [AvaloniaFact]
+    public async Task An_exclusive_operation_waits_for_auto_fetch_and_runs_holding_the_gate()
+    {
+        using var fixture = new PushFixture();
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+
+        Assert.True(repo.TryBeginNetworkOperation(new NetworkOperationInfo(NetworkOperationOwner.AutoFetch, "Auto-fetch"), out var autoFetch));
+        void ReleaseOnWait(object? s, RepoNetworkProgress p)
+        {
+            if (p.Progress?.Phase == "Waiting for auto-fetch…")
+                autoFetch.Dispose();
+        }
+        h.Runner.ProgressChanged += ReleaseOnWait;
+        NetworkOperationInfo? heldWhileRunning = null;
+        try
+        {
+            await h.Runner.RunExclusiveAsync(repo, "Pull", (_, _) =>
+            {
+                heldWhileRunning = repo.CurrentNetworkOperation;
+                return Task.CompletedTask;
+            });
+        }
+        finally
+        {
+            h.Runner.ProgressChanged -= ReleaseOnWait;
+        }
+
+        Assert.Equal(new NetworkOperationInfo(NetworkOperationOwner.User, "Pull"), heldWhileRunning);
+        Assert.Null(repo.CurrentNetworkOperation);
+        Assert.Null(h.Runner.CurrentProgress(repo));
+    }
+
+    [AvaloniaFact]
+    public async Task Cancelling_an_exclusive_operation_ends_silently()
+    {
+        using var fixture = new PushFixture();
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+
+        await h.Runner.RunExclusiveAsync(repo, "Pull", async (_, ct) =>
+        {
+            h.Runner.Cancel(repo);
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+
+        Assert.Empty(h.Notify.Published);
+        Assert.Null(repo.CurrentNetworkOperation);
+    }
+
+    [AvaloniaFact]
     public async Task A_request_pinned_to_a_repo_runs_there_even_when_another_is_focused()
     {
         using var diverged = new PushFixture().Diverge();
@@ -581,6 +669,23 @@ public sealed class RepoNetworkErrorRoutingTests
         fixture.Diverge();
         await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
         Assert.Equal(2, h.Notify.Published.Count(n => n.Severity == NotificationSeverity.Warning));
+    }
+
+    [AvaloniaFact]
+    public async Task Auto_fetch_blocked_by_a_stale_lock_warns_once_with_the_remedy()
+    {
+        using var fixture = new PushFixture().BlockPruneWithStaleLock(TimeSpan.FromHours(3));
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+        var host = h.Services.GetRequiredService<IAutoFetchHost>();
+
+        var failure = await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
+        await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
+
+        Assert.Equal(GitErrorKind.LockedIndex, failure.Kind);
+        var warning = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Warning);
+        Assert.Equal($"Auto-fetch of {repo.DisplayName} failed: another git process is using the repository.", warning.Message);
+        Assert.Equal("Remove stale lock files…", Assert.Single(warning.Actions).Label);
     }
 
     [AvaloniaFact]

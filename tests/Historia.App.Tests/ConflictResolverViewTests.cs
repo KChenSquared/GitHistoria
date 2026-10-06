@@ -2361,6 +2361,8 @@ public class ConflictResolverViewTests : IDisposable
             => Task.CompletedTask;
         public void Cancel(RepositoryContext repo) { }
         GitProgress? IRepoNetworkActionRunner.CurrentProgress(RepositoryContext repo) => null;
+        public Task RunExclusiveAsync(RepositoryContext repo, string label, Func<IProgress<GitProgress>, CancellationToken, Task> operation)
+            => operation(new Progress<GitProgress>(), CancellationToken.None);
     }
 
     internal sealed class TestRepoFixture : IDisposable

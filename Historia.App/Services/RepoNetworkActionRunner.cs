@@ -26,6 +26,15 @@ public interface IRepoNetworkActionRunner
 
     /// <summary>The latest progress of <paramref name="repo"/>'s operation; null when none is running.</summary>
     GitProgress? CurrentProgress(RepositoryContext repo);
+
+    /// <summary>
+    /// Runs a network command started outside the Fetch / Pull / Push flow — a card's retry, a
+    /// badge's fast-forward — under the same per-repository rules: a notice naming what is running
+    /// when <paramref name="repo"/> is busy (and <paramref name="operation"/> does not run), a
+    /// cancellable wait behind auto-fetch, and progress plus Cancel in the repository view. A
+    /// cancellation ends silently; any other failure propagates to the caller.
+    /// </summary>
+    Task RunExclusiveAsync(RepositoryContext repo, string label, Func<IProgress<GitProgress>, CancellationToken, Task> operation);
 }
 
 /// <inheritdoc cref="IRepoNetworkActionRunner"/>
@@ -346,7 +355,22 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             remote = remotes.Any(r => r.Name == "origin") ? "origin" : remotes[0].Name;
         }
 
-        var running = new RunningOp(op.ToString(), CancellationTokenSource.CreateLinkedTokenSource(repo.Lifetime));
+        await RunGatedAsync(repo, op.ToString(), ct => ExecuteAsync(repo, op, remote, request, ct));
+    }
+
+    public Task RunExclusiveAsync(RepositoryContext repo, string label, Func<IProgress<GitProgress>, CancellationToken, Task> operation) =>
+        RunGatedAsync(repo, label, ct =>
+        {
+            Report(repo, new GitProgress { Phase = $"{label}…" });
+            return operation(new Progress<GitProgress>(p => Report(repo, p)), ct);
+        });
+
+    /// <summary>Registers <paramref name="label"/> as <paramref name="repo"/>'s running operation,
+    /// takes the network gate (see <see cref="EnterGateAsync"/>) and runs <paramref name="body"/>
+    /// holding both; a cancellation at any point ends silently.</summary>
+    private async Task RunGatedAsync(RepositoryContext repo, string label, Func<CancellationToken, Task> body)
+    {
+        var running = new RunningOp(label, CancellationTokenSource.CreateLinkedTokenSource(repo.Lifetime));
         bool registered;
         string? takenBy = null;
         lock (_opsSync)
@@ -366,14 +390,14 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         IDisposable? gate = null;
         try
         {
-            gate = await EnterGateAsync(repo, running.Label, ct);
+            gate = await EnterGateAsync(repo, label, ct);
             if (gate is null)
                 return;
-            await ExecuteAsync(repo, op, remote, request, ct);
+            await body(ct);
         }
         catch (OperationCanceledException)
         {
-            AppLog.Write(AppLogLevel.Info, "declined", $"{op} cancelled while waiting for auto-fetch");
+            AppLog.Write(AppLogLevel.Info, "declined", $"{label} cancelled");
         }
         finally
         {
@@ -497,7 +521,8 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.Details,
             [
                 new NotificationAction("Stash & retry", () => BranchMenu.StashAndRetryAsync(repo, _notifications, _stashes,
-                    () => repo.Gateway.PullAsync(remote, pullTarget, GitPullOptions.From(_settings.Current), null, repo.Lifetime), "Pull")),
+                    () => RunExclusiveAsync(repo, "Pull",
+                        (p, pct) => repo.Gateway.PullAsync(remote, pullTarget, GitPullOptions.From(_settings.Current), p, pct)), "Pull")),
             ]);
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.RemoteRejected && op == RepoNetworkAction.Push && branch is not null)
@@ -513,7 +538,11 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                     // finally, not a trailing call: identical trees merge clean, but if they don't,
                     // the merge still throws and the UI needs the refreshed (conflicted) state to
                     // show the resolver panel instead of looking like nothing happened.
-                    try { await repo.Gateway.PullAsync(remote, branch, GitPullOptions.From(_settings.Current) with { AllowUnrelatedHistories = true }, null, repo.Lifetime); }
+                    try
+                    {
+                        await RunExclusiveAsync(repo, "Pull", (p, pct) => repo.Gateway.PullAsync(remote, branch,
+                            GitPullOptions.From(_settings.Current) with { AllowUnrelatedHistories = true }, p, pct));
+                    }
                     finally { await repo.State.RefreshAllAsync(repo.Lifetime); }
                 }),
                 new NotificationAction($"Reset to {remote}/{branch}", async () =>
