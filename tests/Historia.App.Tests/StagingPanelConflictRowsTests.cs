@@ -126,6 +126,14 @@ public class StagingPanelConflictRowsTests : IDisposable
     {
         _fixture.CreateConflict();
         await _context.State.RefreshStatusAsync();
+        // A refresh already in flight can finish with the pre-conflict status; closing before the
+        // session starts would be undone by the start.
+        for (int i = 0; i < 50 && !_context.State.IsConflictSessionActive; i++)
+        {
+            await Task.Delay(50);
+            await _context.State.RefreshStatusAsync();
+        }
+        Assert.True(_context.State.IsConflictSessionActive);
         Dispatcher.UIThread.RunJobs();
 
         var panel = new StagingPanelView(_sp, _context);
