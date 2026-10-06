@@ -3,6 +3,7 @@ namespace Historia.Services.State;
 public sealed record StatusChangedEventArgs(RepositoryStatus Status);
 public sealed record SelectionChangedEventArgs(GitObjectId? CommitId);
 public sealed record RevealCommitEventArgs(GitObjectId CommitId);
+public sealed record CommitMessageProposedEventArgs(string Message);
 public sealed record RefsChangedEventArgs(
     IReadOnlyList<BranchInfo> Branches,
     IReadOnlyList<TagInfo> Tags,
@@ -59,6 +60,10 @@ public interface IRepositoryStateService
     /// <summary>The diff currently occupying the center panel, or null when the graph is shown.</summary>
     DiffRequest? OpenDiff { get; }
 
+    /// <summary>The latest commit message offered by an external tool and not yet taken or
+    /// dismissed by the commit box, or null. Never persisted.</summary>
+    string? PendingCommitMessage { get; }
+
     // ── Mutations: safe to call from any thread ──
     void SetKeepConflictResolverOpen(bool keep);
     void SetSelectedConflictPath(string? path);
@@ -74,6 +79,18 @@ public interface IRepositoryStateService
     /// A no-op consumer is fine; the graph is the only listener.
     /// </summary>
     void RequestRevealCommit(GitObjectId id);
+
+    /// <summary>
+    /// Offers <paramref name="message"/> to the commit-message draft; a newer proposal replaces an
+    /// older one. It never commits: the commit box decides whether to fill itself or to offer the
+    /// text, and the user still reviews the staged files and clicks Commit. This is the path from
+    /// the external-control host to the staging panel.
+    /// </summary>
+    void ProposeCommitMessage(string message);
+
+    /// <summary>Forgets the pending proposal. Only the commit box calls this, once it has taken
+    /// the text or the user has dismissed it. Raises no event.</summary>
+    void ClearPendingCommitMessage();
 
     /// <summary>Opens or closes the center diff. Idempotent; safe to call from any thread.</summary>
     void SetOpenDiff(DiffRequest? request);
@@ -93,6 +110,9 @@ public interface IRepositoryStateService
 
     /// <summary>Raised on the UI dispatcher when something asks the graph to scroll a commit into view.</summary>
     event EventHandler<RevealCommitEventArgs>? RevealCommitRequested;
+
+    /// <summary>Raised on the UI dispatcher when a commit message is proposed; see <see cref="ProposeCommitMessage"/>.</summary>
+    event EventHandler<CommitMessageProposedEventArgs>? CommitMessageProposed;
     event EventHandler<RefsChangedEventArgs>? RefsChanged;
     event EventHandler<ProfileChangedEventArgs>? ActiveProfileChanged;
     event EventHandler<OperationStateChangedEventArgs>? OperationStateChanged;

@@ -25,10 +25,12 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     private bool _keepConflictResolverOpen;
     private string? _selectedConflictPath;
     private bool _conflictResolverClosed;
+    private string? _pendingCommitMessage;
 
     public event EventHandler<StatusChangedEventArgs>? StatusChanged;
     public event EventHandler<SelectionChangedEventArgs>? SelectedCommitChanged;
     public event EventHandler<RevealCommitEventArgs>? RevealCommitRequested;
+    public event EventHandler<CommitMessageProposedEventArgs>? CommitMessageProposed;
     public event EventHandler<RefsChangedEventArgs>? RefsChanged;
     public event EventHandler<ProfileChangedEventArgs>? ActiveProfileChanged;
     public event EventHandler<OperationStateChangedEventArgs>? OperationStateChanged;
@@ -207,6 +209,30 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
 
     public void RequestRevealCommit(GitObjectId id) =>
         Raise(() => RevealCommitRequested?.Invoke(this, new RevealCommitEventArgs(id)));
+
+    public string? PendingCommitMessage
+    {
+        get
+        {
+            lock (_sync)
+                return _pendingCommitMessage;
+        }
+    }
+
+    public void ProposeCommitMessage(string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        lock (_sync)
+            _pendingCommitMessage = message;
+
+        Raise(() => CommitMessageProposed?.Invoke(this, new CommitMessageProposedEventArgs(message)));
+    }
+
+    public void ClearPendingCommitMessage()
+    {
+        lock (_sync)
+            _pendingCommitMessage = null;
+    }
 
     public void SetActiveProfile(GitProfile? profile)
     {
