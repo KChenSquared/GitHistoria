@@ -164,3 +164,6 @@ vscode-git-graph
 /sourcegit
 /github-desktop
 /XTerm
+
+# Local Claude Code instructions
+/CLAUDE.local.md
