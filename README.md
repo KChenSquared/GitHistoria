@@ -93,9 +93,6 @@ users on all repos. It is built around:
   — Technical architecture, Git data access strategy, and DAG graph layout engine.
 - 📜 [**Historia Constitution**](docs/constitution.md) — Architectural invariants, security
   policies, and performance ceilings.
-- 🗺️ [**Version Plans**](Historia-DevDocs/versionPlans/) — The active milestone's plan.
-  Older version plans are moved into an offline archive to keep the working set small and
-  prevent context drift; `ComprehensiveDesign/` is the living spec.
 - 🛣️ [**Roadmap**](docs/roadmap.md) — Planned features for upcoming releases.
 - 🤝 [**Contributing Guide**](docs/contributing.md) — Environment setup, coding standards,
   PR guidelines, and core tenets.
@@ -190,3 +187,12 @@ the diff viewer and conflict editor adapted from
 [SourceGit](https://github.com/sourcegit-scm/sourcegit) (MIT); editor libraries
 AvaloniaEdit, TextMateSharp, onigwrap, and DiffPlex; and terminal libraries XTerm.NET,
 Porta.Pty, and Microsoft.Windows.Console.ConPTY.
+
+---
+
+## 🙏 Acknowledgements
+
+Historia stands on the shoulders of the open source Git clients that came before it.
+Thank you to everyone who has built and shared one. Special thanks to
+[SourceGit](https://github.com/sourcegit-scm/sourcegit), from which Historia has
+directly reused code.
