@@ -31,6 +31,15 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private bool _disposed;
     private IDisposable? _commitShortcut;
 
+    // A commit message offered by an external tool (a coding agent) that the box did not take.
+    private Border? _offerBar;
+    private TextBlock? _offerText;
+    private Button? _offerUse;
+    private Button? _offerDismiss;
+    private string? _offered;
+    private TextBlock? _agentNote;
+    private string? _agentNoteText;
+
     private readonly TextBox _message = new()
     {
         AcceptsReturn = true,
@@ -68,6 +77,11 @@ public sealed class StagingPanelView : UserControl, IDisposable
     internal Button? AiSettingsForTesting => _aiSettings;
     internal Panel? MessageCellForTesting { get; private set; }
     internal bool IsGeneratingForTesting => _generateCts is not null;
+    internal Border? OfferBarForTesting => _offerBar;
+    internal Button? OfferUseForTesting => _offerUse;
+    internal Button? OfferDismissForTesting => _offerDismiss;
+    internal TextBlock? AgentNoteForTesting => _agentNote;
+    internal Task OfferUseForTestingAsync() => UseOfferAsync();
 
     /// <summary>The generation in flight, if any; completes when it has finished and the box is editable again.</summary>
     internal Task GenerationForTesting { get; private set; } = Task.CompletedTask;
@@ -111,7 +125,12 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
         _message.Text = DraftByRepo.GetValueOrDefault(ctx.Id, "");
         ScrollViewer.SetVerticalScrollBarVisibility(_message, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
-        _message.TextChanged += (_, _) => UpdateCounter();
+        _message.TextChanged += (_, _) =>
+        {
+            UpdateCounter();
+            if (_agentNote is { IsVisible: true } && _message.Text != _agentNoteText)
+                HideAgentNote();
+        };
         UpdateCounter();
         _commitShortcut = _keyboard.Register("Ctrl+Enter", () => CommitAsync(false));
 
@@ -149,6 +168,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         MessageCellForTesting = messageCell;
         if (_aiProfiles is not null && _aiPanel is not null && _aiGenerator is not null)
             messageCell.Children.Add(BuildAiButtons());
+        BuildAgentProposalViews();
 
         // Co-authored-by trailers from every other profile.
         var activeEmail = ctx.State.ActiveProfile?.GitUserEmail;
@@ -181,7 +201,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
         actions.Children.Add(_stashStaged);
 
         var messageBox = new StackPanel { Spacing = 6, Margin = new Thickness(12, 8, 12, 12) };
+        messageBox.Children.Add(_offerBar!);
         messageBox.Children.Add(messageCell);
+        messageBox.Children.Add(_agentNote!);
         messageBox.Children.Add(guideRow);
         messageBox.Children.Add(_author);
         messageBox.Children.Add(actions);
@@ -340,8 +362,125 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _status = ctx.State.Status;
         ctx.State.StatusChanged += OnStatusChanged;
         ctx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
+        ctx.State.CommitMessageProposed += OnCommitMessageProposed;
         RenderLists();
+
+        if (ctx.State.PendingCommitMessage is { } pending)
+            ApplyProposal(pending);
     }
+
+    // ── Commit messages proposed by an external tool ──────────────────────────────────────────
+
+    private void BuildAgentProposalViews()
+    {
+        _offerText = Text("A coding agent proposed a commit message.", "ColorText", 12);
+        _offerText.VerticalAlignment = VerticalAlignment.Center;
+        _offerText.TextWrapping = TextWrapping.Wrap;
+        _offerUse = TextButton("Use it", () => _ = UseOfferAsync());
+        _offerDismiss = TextButton("Dismiss", DismissOffer);
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        buttons.Children.Add(_offerUse);
+        buttons.Children.Add(_offerDismiss);
+
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 8 };
+        row.Children.Add(_offerText);
+        Grid.SetColumn(buttons, 1);
+        row.Children.Add(buttons);
+
+        _offerBar = new Border
+        {
+            Child = row,
+            BorderThickness = new Thickness(3, 0, 0, 0),
+            Padding = new Thickness(8, 4),
+            IsVisible = false,
+        }.Dyn(Border.BorderBrushProperty, "ColorAccent").Dyn(Border.BackgroundProperty, "ColorSurface2");
+
+        _agentNote = Text("Message proposed by a coding agent. Review the staged files before committing.", "ColorTextMuted", 11);
+        _agentNote.TextWrapping = TextWrapping.Wrap;
+        _agentNote.IsVisible = false;
+    }
+
+    private void OnCommitMessageProposed(object? sender, CommitMessageProposedEventArgs e)
+    {
+        if (!_disposed)
+            ApplyProposal(e.Message);
+    }
+
+    /// <summary>Puts the proposal in the box when that cannot lose anything — the box is empty or
+    /// already holds the same text — and otherwise offers it in the bar above the box. A proposal
+    /// never commits, never touches Amend and never moves focus.</summary>
+    private void ApplyProposal(string proposal)
+    {
+        var current = _message.Text ?? "";
+        var busy = _message.IsReadOnly || _committing;
+        if (!busy && (string.IsNullOrWhiteSpace(current)
+                      || string.Equals(current.Trim(), proposal.Trim(), StringComparison.Ordinal)))
+        {
+            TakeProposal(proposal);
+            return;
+        }
+
+        _offered = proposal;
+        _offerBar!.IsVisible = true;
+        ToolTip.SetTip(_offerBar, proposal.Length <= 300 ? proposal : proposal[..300] + "…");
+    }
+
+    private void TakeProposal(string proposal)
+    {
+        _message.Text = proposal;
+        _ctx.State.ClearPendingCommitMessage();
+        HideOffer();
+        _agentNoteText = _message.Text;
+        _agentNote!.IsVisible = true;
+    }
+
+    private async Task UseOfferAsync()
+    {
+        if (_disposed || _offered is null || _message.IsReadOnly || _committing)
+            return;
+
+        var offer = _ctx.State.PendingCommitMessage ?? _offered;
+        var draft = _message.Text ?? "";
+        if (!string.IsNullOrWhiteSpace(draft)
+            && !string.Equals(draft.Trim(), offer.Trim(), StringComparison.Ordinal)
+            && !await ConfirmReplaceDraftAsync("the coding agent's message", draft.Length))
+            return;
+
+        if (_disposed || _message.IsReadOnly || _committing)
+            return;
+
+        TakeProposal(_ctx.State.PendingCommitMessage ?? offer);
+    }
+
+    private void DismissOffer()
+    {
+        _ctx.State.ClearPendingCommitMessage();
+        HideOffer();
+    }
+
+    private void HideOffer()
+    {
+        _offered = null;
+        if (_offerBar is not null)
+        {
+            _offerBar.IsVisible = false;
+            ToolTip.SetTip(_offerBar, null);
+        }
+    }
+
+    private void HideAgentNote()
+    {
+        _agentNoteText = null;
+        if (_agentNote is not null)
+            _agentNote.IsVisible = false;
+    }
+
+    /// <summary>Asks before a typed draft is thrown away for generated or proposed text.</summary>
+    private Task<bool> ConfirmReplaceDraftAsync(string replacement, int draftLength) =>
+        _dialogs.ConfirmDestructiveAsync("Replace commit message",
+            $"Replace your commit message draft ({draftLength} characters) with {replacement}? Your draft is discarded.",
+            "Replace");
 
     private const double AiButtonSize = 22;
     private const string WandTip = "Generate Commit Message";
@@ -440,9 +579,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
         var draft = _message.Text ?? "";
         if (!string.IsNullOrWhiteSpace(draft)
-            && !await _dialogs.ConfirmDestructiveAsync("Replace commit message",
-                $"Replace your commit message draft ({draft.Length} characters) with an AI-generated message? Your draft is discarded.",
-                "Replace"))
+            && !await ConfirmReplaceDraftAsync("an AI-generated message", draft.Length))
             return;
         if (_disposed || _generateCts is not null)
             return;
@@ -965,6 +1102,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
             _message.Text = "";
             _amend.IsChecked = false;
             DraftByRepo.Remove(_ctx.Id);
+            _ctx.State.ClearPendingCommitMessage();
+            HideOffer();
+            HideAgentNote();
             await _ctx.State.RefreshAllAsync(_ctx.Lifetime);
             _notifications.Publish(NotificationSeverity.Success, "Commit created.");
 
@@ -1058,6 +1198,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             _aiProfiles.Changed -= _onAiChanged;
         _ctx.State.StatusChanged -= OnStatusChanged;
         _ctx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
+        _ctx.State.CommitMessageProposed -= OnCommitMessageProposed;
         _commitShortcut?.Dispose();
         var msg = _message.Text ?? "";
         if (msg.Length > 0) DraftByRepo[_ctx.Id] = msg;
