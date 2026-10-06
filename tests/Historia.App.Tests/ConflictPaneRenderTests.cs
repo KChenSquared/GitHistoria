@@ -431,4 +431,95 @@ public sealed class ConflictPaneRenderTests
             window.Close();
         }
     }
+
+    [AvaloniaFact]
+    public void Row_tints_classify_pane_lines()
+    {
+        Assert.Equal(ConflictRowTint.Add, ConflictRowTints.ForPane(ConflictPaneLineType.Ours));
+        Assert.Equal(ConflictRowTint.Add, ConflictRowTints.ForPane(ConflictPaneLineType.Theirs));
+        Assert.Equal(ConflictRowTint.Marker, ConflictRowTints.ForPane(ConflictPaneLineType.Marker));
+        Assert.Equal(ConflictRowTint.None, ConflictRowTints.ForPane(ConflictPaneLineType.Common));
+        Assert.Equal(ConflictRowTint.None, ConflictRowTints.ForPane(ConflictPaneLineType.Padding));
+    }
+
+    [AvaloniaFact]
+    public void Row_tints_classify_result_lines()
+    {
+        var parse = ConflictMarkerParser.Parse("top\n<<<<<<< a\nours\n||||||| base\nbase line\n=======\ntheirs\n>>>>>>> b\nbottom");
+        Assert.Single(parse.Regions);
+
+        var expected = new[]
+        {
+            ConflictRowTint.None,
+            ConflictRowTint.Marker,
+            ConflictRowTint.Add,
+            ConflictRowTint.Marker,
+            ConflictRowTint.Base,
+            ConflictRowTint.Marker,
+            ConflictRowTint.Add,
+            ConflictRowTint.Marker,
+            ConflictRowTint.None,
+        };
+        for (var line = 0; line < expected.Length; line++)
+        {
+            Assert.Equal(expected[line], ConflictRowTints.ForResult(line, ConflictRowVisual.None, parse));
+        }
+
+        Assert.Equal(ConflictRowTint.Add, ConflictRowTints.ForResult(0, ConflictRowVisual.Ours, null));
+        Assert.Equal(ConflictRowTint.Add, ConflictRowTints.ForResult(0, ConflictRowVisual.Theirs | ConflictRowVisual.RegionTop, null));
+        Assert.Equal(ConflictRowTint.Del, ConflictRowTints.ForResult(0, ConflictRowVisual.Ours | ConflictRowVisual.Excluded, null));
+        Assert.Equal(ConflictRowTint.Del, ConflictRowTints.ForResult(0, ConflictRowVisual.Theirs | ConflictRowVisual.Excluded | ConflictRowVisual.RegionBottom, null));
+        Assert.Equal(ConflictRowTint.None, ConflictRowTints.ForResult(0, ConflictRowVisual.Added, null));
+        Assert.Equal(ConflictRowTint.Del, ConflictRowTints.ForResult(1, ConflictRowVisual.Excluded, parse));
+    }
+
+    [AvaloniaFact]
+    public void Tint_brushes_map_to_diff_tokens()
+    {
+        using var applier = new AvaloniaThemeApplier(new StubThemeService());
+
+        static void AssertColor(string token, IBrush? brush)
+            => Assert.Equal(HistoriaPalette.Get(EffectiveTheme.Dark, token).ToAvalonia(), Assert.IsAssignableFrom<ISolidColorBrush>(brush).Color);
+
+        AssertColor("diff-add-bg", ConflictRowTints.BackgroundBrush(ConflictRowTint.Add));
+        AssertColor("diff-del-bg", ConflictRowTints.BackgroundBrush(ConflictRowTint.Del));
+        AssertColor("conflict-base-bg", ConflictRowTints.BackgroundBrush(ConflictRowTint.Base));
+        AssertColor("conflict-marker-bg", ConflictRowTints.BackgroundBrush(ConflictRowTint.Marker));
+        Assert.Null(ConflictRowTints.BackgroundBrush(ConflictRowTint.None));
+
+        AssertColor("diff-add-gutter", ConflictRowTints.GutterBrush(ConflictRowTint.Add));
+        AssertColor("diff-del-gutter", ConflictRowTints.GutterBrush(ConflictRowTint.Del));
+        Assert.Null(ConflictRowTints.GutterBrush(ConflictRowTint.Base));
+        Assert.Null(ConflictRowTints.GutterBrush(ConflictRowTint.Marker));
+        Assert.Null(ConflictRowTints.GutterBrush(ConflictRowTint.None));
+    }
+
+    [AvaloniaFact]
+    public void Line_number_margin_tints_rows_from_getTint()
+    {
+        var editor = new TextEditor
+        {
+            Document = new TextDocument(string.Join('\n', Enumerable.Range(1, 200).Select(i => $"line {i}"))),
+        };
+        var margin = new ConflictLineNumberMargin(editor, getTint: row => row % 2 == 0 ? ConflictRowTint.Add : ConflictRowTint.Del);
+        editor.TextArea.LeftMargins.Insert(0, margin);
+        var window = new Window { Width = 600, Height = 400, Content = editor };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            editor.TextArea.TextView.EnsureVisualLines();
+
+            Assert.Equal(ConflictRowTint.Add, margin.TintForRowForTesting(0));
+            Assert.Equal(ConflictRowTint.Del, margin.TintForRowForTesting(1));
+            Assert.Equal(new Thickness(0), margin.Margin);
+            RenderMargin(margin);
+
+            Assert.Equal(ConflictRowTint.None, new ConflictLineNumberMargin(editor).TintForRowForTesting(0));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }

@@ -148,27 +148,144 @@ public class ConflictPaneEditor : CodeEditor
     }
 }
 
+/// <summary>How a conflict pane row is washed: green for what is kept, red for what is dropped.</summary>
+public enum ConflictRowTint { None, Add, Del, Base, Marker }
+
 /// <summary>
-/// Line number margin for conflict panes with 1:1 aligned document line numbers.
+/// Maps conflict pane and Result rows to their wash and gutter tints. Kept rows (and both sides'
+/// lines of an unresolved block) take the diff addition colours, dropped rows the deletion colours,
+/// and marker and base lines stay neutral.
+/// </summary>
+public static class ConflictRowTints
+{
+    /// <summary>The tint of a side-pane row.</summary>
+    public static ConflictRowTint ForPane(ConflictPaneLineType type) => type switch
+    {
+        ConflictPaneLineType.Ours or ConflictPaneLineType.Theirs => ConflictRowTint.Add,
+        ConflictPaneLineType.Marker => ConflictRowTint.Marker,
+        _ => ConflictRowTint.None,
+    };
+
+    /// <summary>
+    /// The tint of a Result line: a managed row by its visual, otherwise the line's role inside an
+    /// unresolved marker block.
+    /// </summary>
+    public static ConflictRowTint ForResult(int lineIdx, ConflictRowVisual visual, ConflictParse? parse)
+    {
+        if (visual != ConflictRowVisual.None)
+        {
+            return ForManagedRow(visual);
+        }
+
+        var region = FindRegion(parse, lineIdx);
+        return region == null ? ConflictRowTint.None : ForRegionLine(lineIdx, region);
+    }
+
+    /// <summary>The tint of a managed row.</summary>
+    internal static ConflictRowTint ForManagedRow(ConflictRowVisual visual)
+    {
+        if ((visual & ConflictRowVisual.Excluded) != 0)
+        {
+            return ConflictRowTint.Del;
+        }
+
+        return (visual & (ConflictRowVisual.Ours | ConflictRowVisual.Theirs)) != 0 ? ConflictRowTint.Add : ConflictRowTint.None;
+    }
+
+    /// <summary>The tint of <paramref name="lineIdx"/>, a line of the unresolved marker block <paramref name="region"/>.</summary>
+    internal static ConflictRowTint ForRegionLine(int lineIdx, ConflictRegion region)
+    {
+        if (lineIdx == region.StartLine || lineIdx == region.SeparatorLine || lineIdx == region.EndLine
+            || (region.HasBase && lineIdx == region.BaseMarkerLine))
+        {
+            return ConflictRowTint.Marker;
+        }
+
+        if (lineIdx >= region.OursStartLine && lineIdx <= region.OursEndLine)
+        {
+            return ConflictRowTint.Add;
+        }
+
+        if (region.HasBase && lineIdx >= region.BaseStartLine && lineIdx <= region.BaseEndLine)
+        {
+            return ConflictRowTint.Base;
+        }
+
+        return lineIdx >= region.TheirsStartLine && lineIdx <= region.TheirsEndLine ? ConflictRowTint.Add : ConflictRowTint.None;
+    }
+
+    /// <summary>The marker block containing <paramref name="lineIdx"/>, or null.</summary>
+    internal static ConflictRegion? FindRegion(ConflictParse? parse, int lineIdx)
+    {
+        if (parse == null)
+        {
+            return null;
+        }
+
+        var regions = parse.Regions;
+        for (int i = 0; i < regions.Count; i++)
+        {
+            if (lineIdx >= regions[i].StartLine && lineIdx <= regions[i].EndLine)
+            {
+                return regions[i];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The row wash for <paramref name="tint"/>, or null when the row is unwashed.</summary>
+    public static IBrush? BackgroundBrush(ConflictRowTint tint) => tint switch
+    {
+        ConflictRowTint.Add => PaletteBrushes.Get("ColorDiffAddBg"),
+        ConflictRowTint.Del => PaletteBrushes.Get("ColorDiffDelBg"),
+        ConflictRowTint.Base => PaletteBrushes.Get("ColorConflictBaseBg"),
+        ConflictRowTint.Marker => PaletteBrushes.Get("ColorConflictMarkerBg"),
+        _ => null,
+    };
+
+    /// <summary>The line-number gutter tint for <paramref name="tint"/>, or null when the gutter is untinted.</summary>
+    public static IBrush? GutterBrush(ConflictRowTint tint) => tint switch
+    {
+        ConflictRowTint.Add => PaletteBrushes.Get("ColorDiffAddGutter"),
+        ConflictRowTint.Del => PaletteBrushes.Get("ColorDiffDelGutter"),
+        _ => null,
+    };
+}
+
+/// <summary>
+/// Line number margin for conflict panes, numbered by the pane's own lines. A row that is kept or
+/// dropped tints its whole gutter row.
 /// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
 /// </summary>
 public sealed class ConflictLineNumberMargin : AbstractMargin
 {
+    private const double Pad = 8;
+
     private readonly TextEditor _editor;
     private readonly Func<IReadOnlyList<ConflictPaneLine>?>? _getLines;
+    private readonly Func<int, ConflictRowTint>? _getTint;
     private readonly ShapedTextCache _textCache = new(DiffLineNumberMargin.TextCacheCapacity);
     private Typeface _typeface;
     private double _lastFontSize;
 
     internal ShapedTextCache TextCacheForTesting => _textCache;
 
-    public ConflictLineNumberMargin(TextEditor editor, Func<IReadOnlyList<ConflictPaneLine>?>? getLines = null)
+    /// <summary>The tint the margin paints behind 0-based <paramref name="row"/>.</summary>
+    internal ConflictRowTint TintForRowForTesting(int row) => _getTint?.Invoke(row) ?? ConflictRowTint.None;
+
+    /// <param name="getTint">How a row (0-based document line) tints its gutter; null leaves the
+    /// gutter untinted.</param>
+    public ConflictLineNumberMargin(
+        TextEditor editor,
+        Func<IReadOnlyList<ConflictPaneLine>?>? getLines = null,
+        Func<int, ConflictRowTint>? getTint = null)
     {
         _editor = editor;
         _getLines = getLines;
+        _getTint = getTint;
         _typeface = new Typeface(_editor.FontFamily, _editor.FontStyle, _editor.FontWeight);
         _lastFontSize = _editor.FontSize;
-        Margin = new Thickness(8, 0);
         ClipToBounds = true;
     }
 
@@ -234,6 +351,11 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
                 numText = docLineNumber.ToString(CultureInfo.InvariantCulture);
             }
 
+            if (_getTint != null && ConflictRowTints.GutterBrush(_getTint(docLineNumber - 1)) is { } tint)
+            {
+                DiffGutterTint.FillRow(context, view, line, Bounds.Width, tint);
+            }
+
             if (string.IsNullOrEmpty(numText))
             {
                 continue;
@@ -241,7 +363,7 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
 
             var y = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineMiddle) - view.VerticalOffset;
             var txt = _textCache.Get(numText, _typeface, _lastFontSize, foregroundBrush);
-            txt.Draw(context, new Point(Bounds.Width - txt.Width, y - (txt.Height * 0.5)));
+            txt.Draw(context, new Point(Bounds.Width - Pad - txt.Width, y - (txt.Height * 0.5)));
         }
     }
 
@@ -255,7 +377,7 @@ public sealed class ConflictLineNumberMargin : AbstractMargin
             _typeface,
             _editor.FontSize,
             Brushes.White);
-        return new Size(test.Width + 8, 0);
+        return new Size(test.Width + (2 * Pad), 0);
     }
 }
 
@@ -563,9 +685,7 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
                 return;
             }
 
-            var oursBg = PaletteBrushes.Get("ColorConflictOursBg");
-            var theirsBg = PaletteBrushes.Get("ColorConflictTheirsBg");
-            var markerBg = PaletteBrushes.Get("ColorConflictMarkerBg");
+            var changedTextBrush = PaletteBrushes.Get("ColorDiffAddHl");
 
             var analyses = _getAnalysis?.Invoke();
             Dictionary<int, RegionLineHighlight>? hlMap = null;
@@ -603,14 +723,7 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
                 var startY = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineTop) - textView.VerticalOffset;
                 var endY = line.GetTextLineVisualYPosition(lastTextLine, VisualYPosition.LineBottom) - textView.VerticalOffset;
 
-                IBrush? bg = paneLine.Type switch
-                {
-                    ConflictPaneLineType.Ours => oursBg,
-                    ConflictPaneLineType.Theirs => theirsBg,
-                    ConflictPaneLineType.Marker => markerBg,
-                    _ => null,
-                };
-
+                var bg = ConflictRowTints.BackgroundBrush(ConflictRowTints.ForPane(paneLine.Type));
                 if (bg != null)
                 {
                     drawingContext.DrawRectangle(bg, null, new Rect(0, startY, width, endY - startY));
@@ -618,9 +731,7 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
 
                 if (hlMap != null && hlMap.TryGetValue(paneLine.DocumentLineIndex, out var hl) && hl.Spans.Count > 0)
                 {
-                    var hlBrush = currentSide == ConflictSide.Ours
-                        ? PaletteBrushes.Get("ColorConflictOursHl")
-                        : PaletteBrushes.Get("ColorConflictTheirsHl");
+                    var hlBrush = changedTextBrush;
 
                     int processingIdxStart = 0;
                     int processingIdxEnd = 0;
@@ -679,12 +790,6 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
                 return;
             }
 
-            var markerBg = PaletteBrushes.Get("ColorConflictMarkerBg");
-            var oursBg = PaletteBrushes.Get("ColorConflictOursBg");
-            var baseBg = PaletteBrushes.Get("ColorConflictBaseBg");
-            var theirsBg = PaletteBrushes.Get("ColorConflictTheirsBg");
-            var oursExcludedBg = PaletteBrushes.GetTranslucent("ColorConflictOursBg", 0x40);
-            var theirsExcludedBg = PaletteBrushes.GetTranslucent("ColorConflictTheirsBg", 0x40);
             var blockBorderPen = PaletteBrushes.Pen("ColorAccent", 1);
 
             foreach (var line in textView.VisualLines)
@@ -702,10 +807,7 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
                     var rowTop = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineTop) - textView.VerticalOffset;
                     var rowBottom = line.GetTextLineVisualYPosition(line.TextLines[^1], VisualYPosition.LineBottom) - textView.VerticalOffset;
                     RowLinesDrawnForTesting++;
-                    bool excluded = (visual & ConflictRowVisual.Excluded) != 0;
-                    IBrush? rowBg = (visual & ConflictRowVisual.Ours) != 0 ? (excluded ? oursExcludedBg : oursBg)
-                        : (visual & ConflictRowVisual.Theirs) != 0 ? (excluded ? theirsExcludedBg : theirsBg)
-                        : null;
+                    var rowBg = ConflictRowTints.BackgroundBrush(ConflictRowTints.ForManagedRow(visual));
                     if (rowBg != null)
                     {
                         drawingContext.DrawRectangle(rowBg, null, new Rect(0, rowTop, width, rowBottom - rowTop));
@@ -726,7 +828,7 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
                     continue;
                 }
 
-                var region = parse!.Regions.FirstOrDefault(r => lineIdx >= r.StartLine && lineIdx <= r.EndLine);
+                var region = ConflictRowTints.FindRegion(parse, lineIdx);
 
                 if (region == null)
                 {
@@ -737,24 +839,10 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
                 var lastTextLine = line.TextLines[^1];
                 var startY = line.GetTextLineVisualYPosition(line.TextLines[0], VisualYPosition.LineTop) - textView.VerticalOffset;
                 var endY = line.GetTextLineVisualYPosition(lastTextLine, VisualYPosition.LineBottom) - textView.VerticalOffset;
-                var rect = new Rect(0, startY, width, endY - startY);
-
-                if (lineIdx == region.StartLine || lineIdx == region.SeparatorLine || lineIdx == region.EndLine
-                    || (region.HasBase && lineIdx == region.BaseMarkerLine))
+                var regionBg = ConflictRowTints.BackgroundBrush(ConflictRowTints.ForRegionLine(lineIdx, region));
+                if (regionBg != null)
                 {
-                    drawingContext.DrawRectangle(markerBg, null, rect);
-                }
-                else if (lineIdx >= region.OursStartLine && lineIdx <= region.OursEndLine)
-                {
-                    drawingContext.DrawRectangle(oursBg, null, rect);
-                }
-                else if (region.HasBase && lineIdx >= region.BaseStartLine && lineIdx <= region.BaseEndLine)
-                {
-                    drawingContext.DrawRectangle(baseBg, null, rect);
-                }
-                else if (lineIdx >= region.TheirsStartLine && lineIdx <= region.TheirsEndLine)
-                {
-                    drawingContext.DrawRectangle(theirsBg, null, rect);
+                    drawingContext.DrawRectangle(regionBg, null, new Rect(0, startY, width, endY - startY));
                 }
 
                 // Region border
