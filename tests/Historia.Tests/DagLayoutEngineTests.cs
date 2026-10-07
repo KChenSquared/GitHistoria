@@ -886,17 +886,74 @@ public class DagLayoutEngineTests
     }
 
     [Fact]
-    public void Merge_edge_keeps_the_parent_lane_when_no_lane_is_clear()
+    public void Merge_edge_opens_a_new_lane_when_no_lane_is_clear()
     {
+        // Without tip 18: rows 0..7 = ids 20,19,17,16,15,14,13,12. The merge is row 3, tip 15
+        // takes the only free lane (1) at row 4, and parent 13 lands under it at row 6.
         var r = Compute(MergeOverBusyParentLane(withSpareLane: false));
 
         var merge = Assert.Single(r.Layout.Edges, e => e.Type == EdgeType.MergeIn);
-        Assert.Equal(-1, merge.ViaLane);
-        Assert.Equal(2, r.Layout.TotalLaneCount); // never widened to make room
+        Assert.Equal(2, merge.ViaLane);
+        Assert.Equal(3, r.Layout.TotalLaneCount);
 
         var turn = Assert.Single(r.Layout.GetRowElbows(3).ToArray());
         Assert.Equal(ElbowKind.LeaveBottom, turn.Kind);
-        Assert.Equal(1, turn.ToLane);
+        Assert.Equal(2, turn.ToLane);
+        Assert.Contains(
+            r.Layout.GetRowElbows(6).ToArray(),
+            e => e.Kind == ElbowKind.EnterTop && e.FromLane == 2 && e.ToLane == 1);
+    }
+
+    [Fact]
+    public void Lane_opened_for_a_merge_edge_is_reused_by_the_next_branch()
+    {
+        // Same shape plus a tip (11) after the merge's parent: it takes the lane the merge line
+        // opened, which is free again once the line ends, so the graph stays three lanes wide.
+        var commits = MergeOverBusyParentLane(withSpareLane: false).Take(7)
+            .Concat([C(11, 10), C(12, 10), C(10)])
+            .ToArray();
+        var r = Compute(commits);
+
+        Assert.Equal(2, Assert.Single(r.Layout.Edges, e => e.Type == EdgeType.MergeIn).ViaLane);
+        Assert.Equal(2, r.Layout.Rows[7].LaneIndex); // tip 11
+        Assert.Equal(3, r.Layout.TotalLaneCount);
+    }
+
+    [Fact]
+    public void Merge_into_the_checked_out_branchs_fork_point_does_not_cross_its_commits()
+    {
+        // The checked-out branch (30 -> 28) sits on the trunk and forks from 26. origin/main (29)
+        // merges 26 as its second parent, so 26 lands in lane 0 under the branch's own commits
+        // and no existing lane is empty over the span. The merge line must not run down lane 0.
+        var commits = new[] { C(30, 28), C(29, 27, 26), C(28, 26), C(27, 25), C(26, 25), C(25) };
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(30)] = [new GraphDecorationInput(DecorationType.LocalBranch, "feature", IsLocal: true, IsHead: true)],
+            [Sha(29)] = [new GraphDecorationInput(DecorationType.RemoteBranch, "origin/main")],
+        };
+        var r = Compute(commits, deco: deco);
+
+        Assert.Equal(0, r.Layout.Rows[0].LaneIndex); // checked-out tip
+        Assert.Equal(1, r.Layout.Rows[1].LaneIndex); // origin/main merge
+        Assert.Equal(0, r.Layout.Rows[4].LaneIndex); // fork point 26
+
+        var merge = Assert.Single(r.Layout.Edges, e => e.Type == EdgeType.MergeIn);
+        Assert.Equal(2, merge.ViaLane);
+
+        var turn = Assert.Single(r.Layout.GetRowElbows(1).ToArray());
+        Assert.Equal(ElbowKind.LeaveBottom, turn.Kind);
+        Assert.Equal(1, turn.FromLane);
+        Assert.Equal(2, turn.ToLane);
+
+        // Nothing of the merge line is drawn in lane 0 over the branch's commit 28 (row 2).
+        Assert.DoesNotContain(
+            r.Layout.GetRowSegments(2).ToArray(),
+            s => s.Lane == 0 && s.ColorIndex == r.Layout.Rows[4].ColorIndex && s.Type == LaneSegmentType.Full);
+        foreach (var row in new[] { 2, 3 })
+            Assert.Contains(r.Layout.GetRowSegments(row).ToArray(), s => s.Type == LaneSegmentType.Full && s.Lane == 2);
+        Assert.Contains(
+            r.Layout.GetRowElbows(4).ToArray(),
+            e => e.Kind == ElbowKind.EnterTop && e.FromLane == 2 && e.ToLane == 0);
     }
 
     [Fact]

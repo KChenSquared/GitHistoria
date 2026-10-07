@@ -138,12 +138,19 @@ public sealed class DagLayoutEngine
                     // A merge edge runs down this commit's lane from the merge row. When that lane
                     // held other commits in between, the line would pass over them and read as
                     // though they were merged, so it takes a free lane that stayed empty over the
-                    // whole span instead. No such lane: it keeps this lane rather than widening
-                    // the graph.
+                    // whole span instead, or a new lane when none did.
                     var viaLane = -1;
                     if (type == EdgeType.MergeIn && fromLane != compacted && laneLastBusy > res.ChildRow)
                     {
                         var (viaRaw, via) = FindClearLane(s, res.ChildRow, fromLane, compacted);
+                        if (viaRaw < 0 && s.LaneCeiling < s.MaxLanes - 1)
+                        {
+                            // The new lane carries only this line, which ends here, so it goes
+                            // straight to the free list for the next branch to reuse.
+                            viaRaw = s.LaneCeiling++;
+                            via = Compact(s, viaRaw);
+                            ReleaseLane(s, viaRaw);
+                        }
                         if (viaRaw >= 0)
                         {
                             MarkBusy(s, viaRaw, row);
@@ -808,7 +815,7 @@ public sealed class DagLayoutEngine
     /// closest to <paramref name="toLane"/> so the merge line's horizontal legs stay short
     /// (the lower lane wins a tie). Only lanes in <see cref="GraphLayoutState.FreeLanes"/> are
     /// considered and none is taken from it, so later lane allocation, the lane count and lane
-    /// colours are unchanged. Returns (-1, -1) when no lane qualifies.
+    /// colours are unchanged when one qualifies. Returns (-1, -1) when none does.
     /// </summary>
     private static (int RawLane, int Lane) FindClearLane(GraphLayoutState s, int fromRow, int fromLane, int toLane)
     {

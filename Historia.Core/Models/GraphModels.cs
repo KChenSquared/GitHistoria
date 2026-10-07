@@ -107,7 +107,7 @@ public readonly record struct GraphEdge
     private readonly int _viaLaneBiased;
 
     /// <summary>For a <see cref="EdgeType.MergeIn"/> edge whose parent's lane holds other commits
-    /// between the merge row and the parent, the free lane the edge runs down instead: it leaves
+    /// between the merge row and the parent, the empty lane the edge runs down instead: it leaves
     /// the merge node into this lane and turns into the parent's node at <see cref="ToRow"/>.
     /// -1 (the default) when the edge runs down <see cref="ToLane"/> itself.</summary>
     public int ViaLane
