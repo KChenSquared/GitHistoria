@@ -99,6 +99,7 @@ public static class GitErrorClassifier
             "no such ref",
             "pathspec",
             "bad object",
+            "remote ref does not exist",
         ]),
     ];
 

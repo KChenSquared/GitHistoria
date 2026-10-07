@@ -172,7 +172,7 @@ public sealed partial class CommitGraphControl
         if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
         {
             if (deco.IsLocal)
-                items.Add(MenuLeaf($"Checkout {TruncateBranchLabelForMenu(name)}", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+                items.Add(MenuLeaf($"Checkout {BranchMenu.TruncateBranchLabelForMenu(name)}", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
                     () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout")));
 
             if (remotes.Length > 0)
@@ -182,15 +182,16 @@ public sealed partial class CommitGraphControl
                 foreach (var rem in remotes)
                 {
                     var tracking = $"{rem}/{name}";
-                    items.Add(MenuLeaf($"Checkout {TruncateBranchLabelForMenu(tracking)} as a new branch", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+                    items.Add(MenuLeaf($"Checkout {BranchMenu.TruncateBranchLabelForMenu(tracking)} as a new branch", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
                         () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout")));
                 }
             }
 
             var primaryRef = deco.IsLocal ? name : (remotes.Length > 0 ? $"{remotes[0]}/{name}" : name);
             items.Add(new Separator());
-            items.Add(MenuLeaf($"Merge {TruncateBranchLabelForMenu(primaryRef)} into current", () => MergeAsync(ctx, primaryRef, primaryRef)));
-            items.Add(MenuLeaf($"Rebase current branch onto {TruncateBranchLabelForMenu(primaryRef)}", () => _nav.RequestNavigate($"rebase?onto={Uri.EscapeDataString(primaryRef)}")));
+            if (deco.IsLocal)
+                items.Add(MenuLeaf($"Merge {BranchMenu.TruncateBranchLabelForMenu(name)} into current", () => MergeAsync(ctx, name, name)));
+            items.Add(MenuLeaf($"Rebase current branch onto {BranchMenu.TruncateBranchLabelForMenu(primaryRef)}", () => _nav.RequestNavigate($"rebase?onto={Uri.EscapeDataString(primaryRef)}")));
 
             if (deco.IsLocal)
             {
@@ -201,12 +202,12 @@ public sealed partial class CommitGraphControl
                     if (string.IsNullOrWhiteSpace(newName) || newName == name) return;
                     await Guard(() => ctx.Gateway.RenameBranchAsync(name, newName.Trim(), ctx.Lifetime), ctx, "Rename");
                 }));
-                items.Add(MenuLeaf("Delete", () => BranchMenu.DeleteAsync(ctx, _dialogs, _notifications, name)));
+                items.Add(MenuLeaf("Delete local…", () => BranchMenu.DeleteAsync(ctx, _dialogs, _notifications, name)));
             }
         }
         else if (deco.Type == DecorationType.Tag)
         {
-            items.Add(MenuLeaf($"Delete tag {TruncateBranchLabelForMenu(name)}", async () =>
+            items.Add(MenuLeaf($"Delete tag {BranchMenu.TruncateBranchLabelForMenu(name)}", async () =>
             {
                 if (!await _dialogs.ConfirmDestructiveAsync("Delete tag", $"Delete local tag '{name}'? This cannot be undone.", "Delete")) return;
                 await Guard(() => ctx.Gateway.DeleteTagAsync(name, ctx.Lifetime), ctx, "Delete tag");
@@ -232,9 +233,29 @@ public sealed partial class CommitGraphControl
             items.Add(MenuLeaf("Copy branch name", () => CopyText(copyName)));
         }
 
-        if (items.Count > 0)
+        var remoteSection = deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch
+            ? BranchMenu.BuildRemoteBranchSubmenus(
+                name,
+                remotes,
+                _state?.CurrentBranch?.Name,
+                r => MergeAsync(ctx, r, r),
+                rem =>
+                {
+                    _actionBus.RequestNetworkAction(new RepoNetworkRequest(
+                        RepoNetworkAction.DeleteRemoteBranch, rem, null, name, ctx));
+                    return Task.CompletedTask;
+                })
+            : (IReadOnlyList<MenuItem>)[];
+
+        var remoteControls = remoteSection.Count > 0
+            ? (items.Count > 0 ? remoteSection.Cast<Control>().Concat([new Separator()]).ToList() : remoteSection.Cast<Control>().ToList())
+            : [];
+
+        var allItems = remoteControls.Concat(items).ToList();
+
+        if (allItems.Count > 0)
         {
-            var menu = new ContextMenu { ItemsSource = items };
+            var menu = new ContextMenu { ItemsSource = allItems };
 
             // Mirror the sidebar's divergence-aware push/pull/fast-forward items, resolved
             // lazily on Opening (git process) rather than at menu-build time.
@@ -273,7 +294,11 @@ public sealed partial class CommitGraphControl
                         catch { return; }
                         if (divergenceItems.Count == 0 || !ReferenceEquals(menu, opened) || !menu.IsOpen)
                             return;
-                        menu.ItemsSource = divergenceItems.Concat(new Control[] { new Separator() }).Concat(baseItems).ToList();
+                        menu.ItemsSource = remoteControls
+                            .Concat(divergenceItems)
+                            .Concat([new Separator()])
+                            .Concat(baseItems)
+                            .ToList();
                     };
                 }
             }
@@ -286,7 +311,7 @@ public sealed partial class CommitGraphControl
             {
                 var fullLabel = deco.Type == DecorationType.Tag ? name
                     : deco.IsLocal ? name : (remotes.Length > 0 ? $"{remotes[0]}/{name}" : name);
-                if (fullLabel.Length > MenuNameMaxChars)
+                if (fullLabel.Length > BranchMenu.MenuNameMaxChars)
                 {
                     ToolTip.SetTip(menu, fullLabel);
                     ToolTip.SetPlacement(menu, PlacementMode.TopEdgeAlignedLeft);
@@ -303,17 +328,6 @@ public sealed partial class CommitGraphControl
             OpenMenu(menu);
         }
     }
-
-    /// <summary>Max characters of a branch/tag name shown in a context-menu item before it's
-    /// ellipsis-trimmed — long names otherwise force the right-click popup
-    /// wider than the screen.</summary>
-    private const int MenuNameMaxChars = 25;
-
-    /// <summary>Ellipsis-trims a branch/tag name to <see cref="MenuNameMaxChars"/> for display in
-    /// a menu item — e.g. "Checkout origin/feature/very-long-name as a new branch" — without
-    /// affecting the untrimmed name callers still use for the actual git operation.</summary>
-    private static string TruncateBranchLabelForMenu(string name) =>
-        name.Length <= MenuNameMaxChars ? name : name[..(MenuNameMaxChars - 1)] + "…";
 
     private void ShowDropIntentMenu(GitObjectId commitId, string shortSha, string branchLabel)
     {

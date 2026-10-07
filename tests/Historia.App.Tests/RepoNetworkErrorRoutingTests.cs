@@ -172,6 +172,51 @@ public sealed class RepoNetworkErrorRoutingTests
             return this;
         }
 
+        public PushFixture PushBranch(string branch)
+        {
+            RunGit(LocalPath, "branch", branch);
+            RunGit(LocalPath, "push", "origin", branch);
+            return this;
+        }
+
+        public PushFixture Checkout(string branch)
+        {
+            RunGit(LocalPath, "checkout", branch);
+            return this;
+        }
+
+        /// <summary>Replaces <paramref name="name"/> on the remote with a same-named tag, as if
+        /// someone else deleted the branch, leaving the local remote-tracking ref stale.</summary>
+        public PushFixture ReplaceRemoteBranchWithTag(string name)
+        {
+            RunGit(RemotePath, "branch", "-D", name);
+            RunGit(RemotePath, "tag", name, "main");
+            return this;
+        }
+
+        public bool RemoteHasBranch(string branch) => RemoteLists("branch", branch);
+
+        public bool RemoteHasTag(string tag) => RemoteLists("tag", tag);
+
+        private bool RemoteLists(string kind, string name)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("git")
+            {
+                WorkingDirectory = RemotePath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add(kind);
+            psi.ArgumentList.Add("--list");
+            psi.ArgumentList.Add(name);
+            using var p = System.Diagnostics.Process.Start(psi)!;
+            var stdout = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            return !string.IsNullOrWhiteSpace(stdout);
+        }
+
         private static void Configure(string dir)
         {
             RunGit(dir, "config", "user.name", "Test");
@@ -699,5 +744,82 @@ public sealed class RepoNetworkErrorRoutingTests
         await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
 
         Assert.DoesNotContain(h.Notify.Published, n => n.Severity == NotificationSeverity.Warning);
+    }
+
+    [AvaloniaFact]
+    public async Task A_declined_remote_branch_delete_deletes_nothing()
+    {
+        using var fixture = new PushFixture().PushBranch("a").PushBranch("b");
+        await using var h = new Harness();
+        h.Dialogs.ConfirmAnswer = false;
+        var ctx = await h.OpenAsync(fixture.LocalPath);
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
+            new RepoNetworkRequest(RepoNetworkAction.DeleteRemoteBranch, "origin", null, "b")));
+
+        Assert.Equal(1, h.Dialogs.ConfirmDestructiveCalls);
+        Assert.True(fixture.RemoteHasBranch("b"));
+        Assert.Contains(ctx.State.Branches, br => br.IsRemote && br.Name == "origin/b");
+        Assert.DoesNotContain(h.Notify.Published, n => n.Severity == NotificationSeverity.Success);
+    }
+
+    [AvaloniaFact]
+    public async Task A_confirmed_remote_branch_delete_removes_it_and_its_tracking_ref()
+    {
+        using var fixture = new PushFixture().PushBranch("a").PushBranch("b");
+        await using var h = new Harness();
+        h.Dialogs.ConfirmAnswer = true;
+        var ctx = await h.OpenAsync(fixture.LocalPath);
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
+            new RepoNetworkRequest(RepoNetworkAction.DeleteRemoteBranch, "origin", null, "b")));
+
+        Assert.Equal(1, h.Dialogs.ConfirmDestructiveCalls);
+        Assert.False(fixture.RemoteHasBranch("b"));
+        Assert.True(fixture.RemoteHasBranch("a"));
+        Assert.True(fixture.RemoteHasBranch("main"));
+        Assert.DoesNotContain(ctx.State.Branches, br => br.IsRemote && br.Name == "origin/b");
+        var success = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Success);
+        Assert.Equal("Deleted origin/b.", success.Message);
+    }
+
+    [AvaloniaFact]
+    public async Task A_remote_branch_delete_without_a_target_never_falls_back()
+    {
+        using var fixture = new PushFixture().PushBranch("a").PushBranch("b").Checkout("a");
+        await using var h = new Harness();
+        h.Dialogs.ConfirmAnswer = true;
+        await h.OpenAsync(fixture.LocalPath);
+
+        // Refused before the operation starts, so there is no idle tick to wait for. Resolving the
+        // runner subscribes it to the bus (RunToIdleAsync does this as a side effect).
+        _ = h.Runner;
+        h.Bus.RequestNetworkAction(
+            new RepoNetworkRequest(RepoNetworkAction.DeleteRemoteBranch, "origin", null, RemoteBranch: null));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, h.Dialogs.ConfirmDestructiveCalls);
+        var warning = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Warning);
+        Assert.Equal("No remote branch to delete.", warning.Message);
+        Assert.True(fixture.RemoteHasBranch("a"));
+        Assert.True(fixture.RemoteHasBranch("b"));
+    }
+
+    [AvaloniaFact]
+    public async Task An_already_deleted_remote_branch_drops_its_stale_row_and_keeps_a_same_named_tag()
+    {
+        using var fixture = new PushFixture().PushBranch("b").ReplaceRemoteBranchWithTag("b");
+        await using var h = new Harness();
+        h.Dialogs.ConfirmAnswer = true;
+        var ctx = await h.OpenAsync(fixture.LocalPath);
+        Assert.Contains(ctx.State.Branches, br => br.IsRemote && br.Name == "origin/b");
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
+            new RepoNetworkRequest(RepoNetworkAction.DeleteRemoteBranch, "origin", null, "b")));
+
+        Assert.Equal(1, h.Dialogs.ConfirmDestructiveCalls);
+        Assert.DoesNotContain(h.Notify.Published, n => n.Severity == NotificationSeverity.Error);
+        Assert.True(fixture.RemoteHasTag("b"));
+        Assert.DoesNotContain(ctx.State.Branches, br => br.IsRemote && br.Name == "origin/b");
     }
 }

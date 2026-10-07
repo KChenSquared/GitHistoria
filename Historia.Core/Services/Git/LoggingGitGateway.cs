@@ -171,6 +171,9 @@ public sealed class LoggingGitGateway(IGitGateway inner, string repositoryPath) 
     public Task PushAsync(string remote, PushSpec spec, IProgress<GitProgress>? progress, CancellationToken ct = default)
         => Run($"PushAsync({remote})", () => inner.PushAsync(remote, spec, progress, ct));
 
+    public Task DeleteRemoteBranchAsync(string remote, string branch, IProgress<GitProgress>? progress, CancellationToken ct = default)
+        => Run($"DeleteRemoteBranchAsync({remote}, {branch})", () => inner.DeleteRemoteBranchAsync(remote, branch, progress, ct));
+
     public Task PruneRemoteAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct = default)
         => Run($"PruneRemoteAsync({name})", () => inner.PruneRemoteAsync(name, progress, ct));
 

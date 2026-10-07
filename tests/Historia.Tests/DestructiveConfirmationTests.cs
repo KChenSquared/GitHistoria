@@ -76,6 +76,7 @@ public class DestructiveConfirmationTests
         (new(@"_rebase\.StartAsync\s*\(", RegexOptions.Compiled), "rebase StartAsync"),
         (new(@"\.DiscardAsync\s*\(", RegexOptions.Compiled), "DiscardAsync"),
         (new(@"\.DeleteBranchAsync\s*\(", RegexOptions.Compiled), "DeleteBranchAsync"),
+        (new(@"\.DeleteRemoteBranchAsync\s*\(", RegexOptions.Compiled), "DeleteRemoteBranchAsync"),
         (new(@"\.DeleteTagAsync\s*\(", RegexOptions.Compiled), "DeleteTagAsync"),
         (new(@"_stashes\.DropAsync\s*\(", RegexOptions.Compiled), "stash DropAsync"),
         (new(@"_stashes\.ClearAsync\s*\(", RegexOptions.Compiled), "stash ClearAsync"),

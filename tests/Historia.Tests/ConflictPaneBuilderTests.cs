@@ -284,4 +284,122 @@ public class ConflictPaneBuilderTests
         Assert.Equal("theirs", theirs[2].Text);
         Assert.Equal("", theirs[4].Text);
     }
+
+    [Fact]
+    public void Empty_ours_marker_region_shows_one_deletion_row()
+    {
+        const string guideShape =
+            "Introduction\n<<<<<<< HEAD\n=======\nStatus: Staging Preview v1.1\n>>>>>>> 209e2e8\nMaintainer: team";
+        var parse = ConflictMarkerParser.Parse(guideShape);
+        var region = Assert.Single(parse.Regions);
+        Assert.Equal(0, region.OursLineCount);
+        Assert.Equal(1, region.TheirsLineCount);
+
+        var ours = ConflictPaneBuilder.Build(parse, ConflictSide.Ours);
+        var theirs = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs);
+
+        Assert.Equal(parse.LineCount, ours.Count);
+        Assert.Equal(parse.LineCount, theirs.Count);
+
+        Assert.Equal(
+            [ConflictPaneLineType.Marker, ConflictPaneLineType.Deletion, ConflictPaneLineType.Padding, ConflictPaneLineType.Marker],
+            ours.Skip(region.StartLine).Take(region.EndLine - region.StartLine + 1).Select(l => l.Type));
+
+        var deletionLine = ours[region.StartLine + 1];
+        Assert.Equal(ConflictPaneLineType.Deletion, deletionLine.Type);
+        Assert.Null(deletionLine.LineNumber);
+        Assert.Equal(string.Empty, deletionLine.Text);
+        Assert.Equal(region.OursStartLine, deletionLine.DocumentLineIndex);
+
+        // Theirs pane unchanged
+        Assert.Equal(ConflictPaneLineType.Theirs, theirs[region.StartLine + 1].Type);
+        Assert.Equal("Status: Staging Preview v1.1", theirs[region.StartLine + 1].Text);
+        Assert.Equal(2, theirs[region.StartLine + 1].LineNumber);
+
+        // Line numbers after the region unchanged
+        Assert.Equal(2, ours[5].LineNumber);
+        Assert.Equal(3, theirs[5].LineNumber);
+    }
+
+    [Fact]
+    public void Empty_theirs_marker_region_shows_one_deletion_row()
+    {
+        const string text =
+            "Introduction\n<<<<<<< HEAD\nStatus: Old\n=======\n>>>>>>> 209e2e8\nMaintainer: team";
+        var parse = ConflictMarkerParser.Parse(text);
+        var region = Assert.Single(parse.Regions);
+        Assert.Equal(1, region.OursLineCount);
+        Assert.Equal(0, region.TheirsLineCount);
+
+        var ours = ConflictPaneBuilder.Build(parse, ConflictSide.Ours);
+        var theirs = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs);
+
+        Assert.Equal(parse.LineCount, ours.Count);
+        Assert.Equal(parse.LineCount, theirs.Count);
+
+        Assert.Equal(
+            [ConflictPaneLineType.Marker, ConflictPaneLineType.Ours, ConflictPaneLineType.Padding, ConflictPaneLineType.Marker],
+            ours.Skip(region.StartLine).Take(region.EndLine - region.StartLine + 1).Select(l => l.Type));
+
+        Assert.Equal(
+            [ConflictPaneLineType.Marker, ConflictPaneLineType.Deletion, ConflictPaneLineType.Padding, ConflictPaneLineType.Marker],
+            theirs.Skip(region.StartLine).Take(region.EndLine - region.StartLine + 1).Select(l => l.Type));
+
+        var deletionLine = theirs[region.StartLine + 1];
+        Assert.Equal(ConflictPaneLineType.Deletion, deletionLine.Type);
+        Assert.Null(deletionLine.LineNumber);
+        Assert.Equal(string.Empty, deletionLine.Text);
+        Assert.Equal(region.TheirsStartLine, deletionLine.DocumentLineIndex);
+
+        // Ours pane line
+        Assert.Equal(ConflictPaneLineType.Ours, ours[region.StartLine + 1].Type);
+        Assert.Equal("Status: Old", ours[region.StartLine + 1].Text);
+        Assert.Equal(2, ours[region.StartLine + 1].LineNumber);
+
+        // Line numbers after the region unchanged
+        Assert.Equal(3, ours[5].LineNumber);
+        Assert.Equal(2, theirs[5].LineNumber);
+    }
+
+    [Fact]
+    public void Managed_span_deletion_origin_shows_deletion_row()
+    {
+        var parse = ConflictMarkerParser.Parse("top\nline 1\nline 2\nbottom");
+        var span = new ConflictManagedSpan(1, [
+            new ConflictLineOrigin(ConflictRowOrigin.Ours, 0, string.Empty, IsDeletion: true),
+            new ConflictLineOrigin(ConflictRowOrigin.Theirs, 0, "theirs a")
+        ]);
+
+        var ours = ConflictPaneBuilder.Build(parse, ConflictSide.Ours, [span]);
+        var theirs = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs, [span]);
+
+        Assert.Equal(parse.LineCount, ours.Count);
+        Assert.Equal(parse.LineCount, theirs.Count);
+
+        // Ours has deletion at row 1, then padding at row 2
+        Assert.Equal(ConflictPaneLineType.Common, ours[0].Type);
+        Assert.Equal(ConflictPaneLineType.Deletion, ours[1].Type);
+        Assert.Equal(string.Empty, ours[1].Text);
+        Assert.Null(ours[1].LineNumber);
+        Assert.Equal(1, ours[1].DocumentLineIndex);
+
+        Assert.Equal(ConflictPaneLineType.Padding, ours[2].Type);
+        Assert.Null(ours[2].LineNumber);
+
+        Assert.Equal(ConflictPaneLineType.Common, ours[3].Type);
+        Assert.Equal(2, ours[3].LineNumber);
+
+        // Theirs has theirs line at row 1, padding at row 2
+        Assert.Equal(ConflictPaneLineType.Common, theirs[0].Type);
+        Assert.Equal(ConflictPaneLineType.Theirs, theirs[1].Type);
+        Assert.Equal("theirs a", theirs[1].Text);
+        Assert.Equal(2, theirs[1].LineNumber);
+        Assert.Equal(2, theirs[1].DocumentLineIndex);
+
+        Assert.Equal(ConflictPaneLineType.Padding, theirs[2].Type);
+        Assert.Null(theirs[2].LineNumber);
+
+        Assert.Equal(ConflictPaneLineType.Common, theirs[3].Type);
+        Assert.Equal(3, theirs[3].LineNumber);
+    }
 }

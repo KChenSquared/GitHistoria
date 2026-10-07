@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public class ConflictResolverViewTests : IDisposable
@@ -12,6 +12,7 @@ public class ConflictResolverViewTests : IDisposable
     private readonly ConflictResolverHost _conflictHost;
     private readonly IWorkspaceService _workspace;
     private readonly RepositoryContext _context;
+    private readonly NavigationBus _nav = new();
 
     private sealed class StubThemeService : IThemeService
     {
@@ -51,6 +52,7 @@ public class ConflictResolverViewTests : IDisposable
         sc.AddSingleton<IConflictService>(_conflicts);
         sc.AddSingleton<IDialogService>(_dialogs);
         sc.AddSingleton<IRepoActionBus, RepoActionBus>();
+        sc.AddSingleton<INavigationBus>(_nav);
         sc.AddSingleton<IUnsavedWorkRegistry>(_unsavedRegistry);
         sc.AddSingleton<IThemeService>(themeService);
         sc.AddSingleton(_syntaxHost);
@@ -3212,6 +3214,269 @@ public class ConflictResolverViewTests : IDisposable
 
         Assert.True(view.HasUnsavedWork);
         Assert.False(view.CloseButtonForTesting.IsVisible);
+    }
+
+    #endregion
+
+    #region Click-to-show changes panel
+
+    [AvaloniaFact]
+    public async Task Press_on_result_from_home_route_navigates_to_repo()
+    {
+        _nav.ReportRoute("");
+        var requested = new List<string>();
+        _nav.NavigationRequested += requested.Add;
+
+        var view = await LoadTwoConflictViewAsync();
+        var window = new Window { Width = 800, Height = 600, Content = view };
+        window.Show();
+        window.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            var editor = view.ResultEditorForTesting;
+            var point = editor.TranslatePoint(new Point(editor.Bounds.Width / 2, editor.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(point, MouseButton.Left);
+            window.MouseUp(point, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Single(requested, "repo");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Press_when_already_on_repo_route_does_not_renavigate()
+    {
+        _nav.ReportRoute("repo");
+        var requested = new List<string>();
+        _nav.NavigationRequested += requested.Add;
+
+        var view = await LoadTwoConflictViewAsync();
+        var window = new Window { Width = 800, Height = 600, Content = view };
+        window.Show();
+        window.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            var editor = view.ResultEditorForTesting;
+            var point = editor.TranslatePoint(new Point(editor.Bounds.Width / 2, editor.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(point, MouseButton.Left);
+            window.MouseUp(point, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Empty(requested);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Press_with_commit_selected_clears_selection()
+    {
+        _nav.ReportRoute("repo");
+        var commitId = new GitObjectId("1234567890abcdef1234567890abcdef12345678");
+        _context.State.SetSelectedCommit(commitId);
+        Assert.NotNull(_context.State.SelectedCommitId);
+
+        var view = await LoadTwoConflictViewAsync();
+        var window = new Window { Width = 800, Height = 600, Content = view };
+        window.Show();
+        window.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            var editor = view.ResultEditorForTesting;
+            var point = editor.TranslatePoint(new Point(editor.Bounds.Width / 2, editor.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(point, MouseButton.Left);
+            window.MouseUp(point, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Null(_context.State.SelectedCommitId);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Press_on_toolbar_button_still_runs_button_and_shows_panel()
+    {
+        _nav.ReportRoute("");
+        var requested = new List<string>();
+        _nav.NavigationRequested += requested.Add;
+
+        var view = await LoadTwoConflictViewAsync();
+        var window = new Window { Width = 800, Height = 600, Content = view };
+        window.Show();
+        window.UpdateLayout();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            var btn = view.NextConflictButtonForTesting;
+            var point = btn.TranslatePoint(new Point(btn.Bounds.Width / 2, btn.Bounds.Height / 2), window)!.Value;
+            int initialLine = view.ResultEditorForTesting.TextArea.Caret.Line;
+
+            window.MouseDown(point, MouseButton.Left);
+            window.MouseUp(point, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Single(requested, "repo");
+            Assert.NotEqual(initialLine, view.ResultEditorForTesting.TextArea.Caret.Line);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Press_on_hunk_toggle_still_toggles()
+    {
+        var (view, window) = await ShowViewAsync(TwoConflictText);
+        try
+        {
+            _nav.ReportRoute("");
+            var requested = new List<string>();
+            _nav.NavigationRequested += requested.Add;
+
+            var r0 = view.CurrentParseForTesting!.Regions[0];
+            Assert.Equal(ConflictToggleGlyph.Unchecked, view.HunkGlyphForTesting(ConflictSide.Theirs, 2));
+
+            var editor = view.TheirsEditorForTesting;
+            var margin = view.TheirsToggleMarginForTesting;
+            var textView = editor.TextArea.TextView;
+            textView.EnsureVisualLines();
+            double y = textView.GetVisualTopByDocumentLine(2 + 1) - textView.VerticalOffset + textView.DefaultLineHeight / 2;
+            var point = margin.TranslatePoint(new Point(margin.Bounds.Width / 2, y), window)!.Value;
+
+            window.MouseDown(point, MouseButton.Left);
+            window.MouseUp(point, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Single(requested, "repo");
+            Assert.NotNull(view.SessionForTesting.RegionAt(r0.OursStartLine));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    #endregion
+
+    #region Deletion rows in the resolver
+
+    private const string GuideConflictText =
+        "Introduction\n<<<<<<< HEAD\n=======\nStatus: Staging Preview v1.1\n>>>>>>> 209e2e8\nMaintainer: team\n";
+
+    [AvaloniaFact]
+    public async Task Empty_ours_conflict_shows_deletion_row_with_box()
+    {
+        var (view, window) = await ShowViewAsync(GuideConflictText);
+        try
+        {
+            var region = Assert.Single(view.CurrentParseForTesting!.Regions);
+            Assert.Equal(0, region.OursLineCount);
+            Assert.Equal(1, region.TheirsLineCount);
+
+            int row = region.StartLine + 1;
+            var oursLine = view.SnapshotForTesting!.OursLines[row];
+            Assert.Equal(ConflictPaneLineType.Deletion, oursLine.Type);
+            Assert.Equal(ConflictToggleGlyph.Unchecked, view.HunkGlyphForTesting(ConflictSide.Ours, row));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Checking_deletion_box_activates_region_with_deletion_row()
+    {
+        var (view, window) = await ShowViewAsync(GuideConflictText);
+        try
+        {
+            var r0 = Assert.Single(view.CurrentParseForTesting!.Regions);
+            int row = r0.StartLine + 1;
+
+            view.ClickHunkForTesting(ConflictSide.Ours, row);
+
+            Assert.Empty(view.CurrentParseForTesting!.Regions);
+            var managedRegion = Assert.Single(view.SessionForTesting.Regions);
+            Assert.True(managedRegion.Selection.IsDeletion(ConflictSide.Ours));
+            Assert.Equal(ConflictHunkState.Checked, managedRegion.Selection.HunkState(ConflictSide.Ours));
+            Assert.Equal(ConflictHunkState.Unchecked, managedRegion.Selection.HunkState(ConflictSide.Theirs));
+
+            Assert.True(view.SessionForTesting.IsDeletionRow(1));
+            Assert.False(view.SessionForTesting.IsExcluded(1));
+            Assert.True(view.SessionForTesting.IsExcluded(2));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Deletion_and_theirs_checked_saves_only_theirs()
+    {
+        var (view, window) = await ShowViewAsync(GuideConflictText);
+        try
+        {
+            var r0 = Assert.Single(view.CurrentParseForTesting!.Regions);
+            int row = r0.StartLine + 1;
+
+            view.ClickHunkForTesting(ConflictSide.Ours, row);
+            view.ClickHunkForTesting(ConflictSide.Theirs, view.SessionForTesting.Regions[0].StartLine);
+
+            Assert.Equal(ConflictHunkState.Checked, view.SessionForTesting.Regions[0].Selection.HunkState(ConflictSide.Ours));
+            Assert.Equal(ConflictHunkState.Checked, view.SessionForTesting.Regions[0].Selection.HunkState(ConflictSide.Theirs));
+            Assert.Equal(
+                "Introduction\nStatus: Staging Preview v1.1\nMaintainer: team\n",
+                view.ComposedTextForTesting);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Deletion_alone_mark_resolved_does_not_prompt_emptied()
+    {
+        var (view, window) = await ShowViewAsync(GuideConflictText);
+        try
+        {
+            var r0 = Assert.Single(view.CurrentParseForTesting!.Regions);
+            int row = r0.StartLine + 1;
+
+            view.ClickHunkForTesting(ConflictSide.Ours, row);
+
+            Assert.Empty(view.CurrentParseForTesting!.Regions);
+            Assert.Equal(0, view.SessionForTesting.EmptyRegionCount);
+
+            await view.SaveAndMarkResolvedAsync();
+
+            Assert.Empty(_dialogs.ConfirmCalls);
+            var call = Assert.Single(_conflicts.SaveResolutionCalls);
+            Assert.Equal("Introduction\nMaintainer: team\n", call.Text);
+            Assert.True(call.Stage);
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     #endregion

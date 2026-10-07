@@ -882,7 +882,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             CounterpartRef: counterpartRef,
             RemoteAlias: remoteAlias);
 
-        var baseItems = BranchMenu.Build(target, ctx, _dialogs, _notifications, _stashes,
+        var baseItems = BranchMenu.Build(target, ctx, _dialogs, _notifications, _stashes, _actions,
             s => TopLevel.GetTopLevel(this)?.Clipboard?.SetTextAsync(s));
 
         var menu = new ContextMenu { ItemsSource = baseItems };
