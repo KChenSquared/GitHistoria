@@ -89,7 +89,9 @@ public sealed class CommitMessageGenerator(IAiProfileService profiles, IAiClient
     }
 
     /// <summary>Lists the service's models, picks the replacement and saves it to the profile
-    /// before the caller retries, so the switch persists even if the retry fails.</summary>
+    /// before the caller retries, so the switch persists even if the retry fails. With no model
+    /// set, the list is the first request to the service, so its failure (a bad Server, key or
+    /// connection) is reported as it is rather than as a missing model.</summary>
     private async Task<string> SwitchModelAsync(
         AiServiceProfile profile, IAiChatClient client, string? key, string oldModel, CancellationToken ct)
     {
@@ -98,7 +100,7 @@ public sealed class CommitMessageGenerator(IAiProfileService profiles, IAiClient
         {
             ids = await client.ListModelsAsync(Request(profile, key, oldModel, ""), ct).ConfigureAwait(false);
         }
-        catch (AiException ex)
+        catch (AiException ex) when (!string.IsNullOrWhiteSpace(oldModel))
         {
             throw Unavailable(oldModel, ex.Details ?? ex.Message);
         }

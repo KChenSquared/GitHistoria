@@ -358,6 +358,24 @@ public class CommitMessageGeneratorTests
         Assert.Equal("gemini-2.5-flash", rig.ModelOnProfile);
     }
 
+    [Theory]
+    [InlineData(AiErrorKind.InvalidServer)]
+    [InlineData(AiErrorKind.Unauthorized)]
+    [InlineData(AiErrorKind.Network)]
+    public async Task A_blank_model_whose_list_fails_reports_the_list_failure(AiErrorKind kind)
+    {
+        var rig = new Rig();
+        await rig.ActivateGemini(model: "");
+        rig.Client.ListResult = () => throw new AiException(kind, "the real problem");
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => rig.Run());
+
+        Assert.Equal(kind, ex.Kind);
+        Assert.Equal("the real problem", ex.Message);
+        Assert.Empty(rig.Client.Completes);
+        Assert.Equal("", rig.ModelOnProfile);
+    }
+
     [Fact]
     public async Task A_model_that_was_just_picked_and_is_still_missing_does_not_loop()
     {
