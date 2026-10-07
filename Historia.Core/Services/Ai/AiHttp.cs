@@ -61,7 +61,7 @@ public sealed class AiHttp
             {
                 using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(overall.Token);
                 attemptCts.CancelAfter(_attemptTimeout);
-                using var request = createRequest();
+                using var request = CreateRequest(createRequest);
                 using var response = await _client
                     .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, attemptCts.Token)
                     .ConfigureAwait(false);
@@ -101,6 +101,33 @@ public sealed class AiHttp
             var kind = refine?.Invoke(status, body) ?? Classify(status, body);
             throw Fail(kind, status, reason, body, secrets);
         }
+    }
+
+    /// <summary>Builds one attempt's request and refuses it before sending unless its address is an
+    /// absolute http or https URL. A Server such as <c>localhost:11434/v1</c> parses as a URL with
+    /// the scheme <c>localhost</c>, and one without a scheme as a relative URL; HttpClient rejects
+    /// both with exceptions that say nothing about the Server field.</summary>
+    private static HttpRequestMessage CreateRequest(Func<HttpRequestMessage> createRequest)
+    {
+        HttpRequestMessage request;
+        try
+        {
+            request = createRequest();
+        }
+        catch (UriFormatException ex)
+        {
+            throw new AiException(AiErrorKind.InvalidServer, Summary(AiErrorKind.InvalidServer, 0), null, ex);
+        }
+
+        if (request.RequestUri is { IsAbsoluteUri: true } uri
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            && uri.Host.Length > 0)
+        {
+            return request;
+        }
+
+        request.Dispose();
+        throw new AiException(AiErrorKind.InvalidServer, Summary(AiErrorKind.InvalidServer, 0));
     }
 
     private async Task WaitAsync(TimeSpan wait, CancellationToken overall, CancellationToken caller,
@@ -158,6 +185,7 @@ public sealed class AiHttp
 
     internal static string Summary(AiErrorKind kind, int status) => kind switch
     {
+        AiErrorKind.InvalidServer => "The Server address isn't a valid http:// or https:// URL. Check the Server in AI Integrations.",
         AiErrorKind.Unauthorized => "The AI service rejected the API key.",
         AiErrorKind.NotFound => "The AI service address or model wasn't found. Check the Server and Model in AI Integrations.",
         AiErrorKind.ModelNotFound => "The AI service doesn't have the selected model.",
@@ -175,8 +203,13 @@ public sealed class AiHttp
         var text = Redact($"HTTP {status} {reason}\n{body}", secrets);
         if (Encoding.UTF8.GetByteCount(text) > MaxDetailsBytes)
         {
+            // Cut on a character boundary: back off while the first excluded byte continues a
+            // multi-byte sequence, so the kept bytes never end in half a character.
             var bytes = Encoding.UTF8.GetBytes(text);
-            text = Encoding.UTF8.GetString(bytes, 0, MaxDetailsBytes) + "…";
+            var cut = MaxDetailsBytes;
+            while (cut > 0 && (bytes[cut] & 0xC0) == 0x80)
+                cut--;
+            text = Encoding.UTF8.GetString(bytes, 0, cut) + "…";
         }
         return text;
     }

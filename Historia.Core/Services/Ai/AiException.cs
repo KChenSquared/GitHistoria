@@ -15,6 +15,9 @@ public enum AiErrorKind
     /// <summary>A Custom profile has no model chosen.</summary>
     NoModel,
 
+    /// <summary>The Server is not an absolute http or https address; nothing was sent.</summary>
+    InvalidServer,
+
     /// <summary>401 or 403.</summary>
     Unauthorized,
 

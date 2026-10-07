@@ -572,6 +572,43 @@ public class AiClientTests
         Assert.DoesNotContain("sk-kkk", ex.Details);
     }
 
+    // Two-byte characters with both paddings, so one of the two cases cuts mid-character.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task Truncated_details_never_end_in_half_a_character(int padding)
+    {
+        var body = new string('x', padding) + new string('é', 2000);
+        var h = new FakeHandler().Enqueue(HttpStatusCode.BadRequest, body);
+
+        var ex = await Assert.ThrowsAsync<AiException>(() => new OpenAiCompatibleClient(Http(h)).CompleteAsync(Req(Server), default));
+
+        Assert.NotNull(ex.Details);
+        Assert.DoesNotContain('�', ex.Details);
+        Assert.EndsWith("é…", ex.Details);
+        Assert.InRange(Encoding.UTF8.GetByteCount(ex.Details[..^1]), 2047, 2048);
+    }
+
+    [Theory]
+    [InlineData("localhost:11434/v1")]
+    [InlineData("ollama.local/v1")]
+    [InlineData("http://")]
+    [InlineData("ftp://{host}/v1")]
+    [InlineData("http://[bad")]
+    public async Task A_server_that_is_not_an_http_url_is_refused_before_sending(string server)
+    {
+        server = server.Replace("{host}", Host, StringComparison.Ordinal);
+        var h = new FakeHandler();
+
+        var openAi = await Assert.ThrowsAsync<AiException>(() => new OpenAiCompatibleClient(Http(h)).ListModelsAsync(Req(server), default));
+        var gemini = await Assert.ThrowsAsync<AiException>(() => new GeminiClient(Http(h)).CompleteAsync(Req(server), default));
+
+        Assert.Equal(AiErrorKind.InvalidServer, openAi.Kind);
+        Assert.Equal(AiErrorKind.InvalidServer, gemini.Kind);
+        Assert.Contains("Server", openAi.Message);
+        Assert.Empty(h.Requests);
+    }
+
     [Fact]
     public void The_factory_picks_the_client_for_each_kind()
     {
