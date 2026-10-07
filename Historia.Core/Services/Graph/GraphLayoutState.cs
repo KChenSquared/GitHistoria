@@ -22,6 +22,11 @@ public sealed class GraphLayoutState
     /// <summary>Raw lanes released and available for reuse (always the lowest is taken first).</summary>
     internal readonly SortedSet<int> FreeLanes = [];
 
+    /// <summary>raw lane → the last row anything occupied it: a node, or a line that ended there.
+    /// Lanes past the end, or never used, read as -1. A merge edge may run down a lane only when
+    /// nothing occupied it after the merge row.</summary>
+    internal int[] LaneLastBusyRow = [];
+
     /// <summary>parent id → the child reservations expecting it.</summary>
     internal readonly Dictionary<GitObjectId, List<Reservation>> Reservations = [];
 

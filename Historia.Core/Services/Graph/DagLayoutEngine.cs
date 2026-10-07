@@ -95,6 +95,8 @@ public sealed class DagLayoutEngine
             }
 
             var compacted = Compact(s, rawLane);
+            var laneLastBusy = LastBusyRow(s, rawLane);
+            MarkBusy(s, rawLane, row);
 
             // ── Color (seed once per compacted lane) ──
             var color = ResolveColor(s, compacted, deco, commit.Id);
@@ -112,7 +114,10 @@ public sealed class DagLayoutEngine
                     // reservation (RawLane -1) never claimed one. Done for every reservation,
                     // including a de-duplicated one.
                     if (res.RawLane >= 0 && res.RawLane != rawLane)
+                    {
+                        MarkBusy(s, res.RawLane, row);
                         ReleaseLane(s, res.RawLane);
+                    }
 
                     if (seenChildRows is not null && !seenChildRows.Add(res.ChildRow))
                         continue;
@@ -129,6 +134,23 @@ public sealed class DagLayoutEngine
                     // MergeIn edge is drawn in the SOURCE (merged-in) branch's colour — this
                     // commit's own lane colour — not the destination (merge commit's) lane.
                     var fromColor = s.LaneColor.GetValueOrDefault(fromLane, color);
+
+                    // A merge edge runs down this commit's lane from the merge row. When that lane
+                    // held other commits in between, the line would pass over them and read as
+                    // though they were merged, so it takes a free lane that stayed empty over the
+                    // whole span instead. No such lane: it keeps this lane rather than widening
+                    // the graph.
+                    var viaLane = -1;
+                    if (type == EdgeType.MergeIn && fromLane != compacted && laneLastBusy > res.ChildRow)
+                    {
+                        var (viaRaw, via) = FindClearLane(s, res.ChildRow, fromLane, compacted);
+                        if (viaRaw >= 0)
+                        {
+                            MarkBusy(s, viaRaw, row);
+                            viaLane = via;
+                        }
+                    }
+
                     var newEdge = new GraphEdge
                     {
                         FromRow = res.ChildRow,
@@ -143,6 +165,7 @@ public sealed class DagLayoutEngine
                         // (the first-parent edge continues straight through the same lane).
                         // Only the elbow at ToRow switches to the merged-in branch's colour.
                         LeadColorIndex = fromColor,
+                        ViaLane = viaLane,
                     };
                     s.RealEdges.Add(newEdge);
                     IndexNewRealEdge(s, s.RealEdges.Count - 1, newEdge);
@@ -378,7 +401,8 @@ public sealed class DagLayoutEngine
 
             if (edge.ToRow >= 0 && edge.ToRow < rowCount && edge.Type != EdgeType.OffWindow && InWin(edge.ToRow))
             {
-                if (edge.FromLane == edge.ToLane || mergeTurn) segCounts[edge.ToRow - a]++;
+                var viaTurn = mergeTurn && edge.ViaLane >= 0;
+                if (!viaTurn && (edge.FromLane == edge.ToLane || mergeTurn)) segCounts[edge.ToRow - a]++;
                 else elbCounts[edge.ToRow - a]++;
             }
         }
@@ -406,7 +430,11 @@ public sealed class DagLayoutEngine
             var color = edge.ColorIndex;
             var fromIsRealRow = edge.FromRow >= 0 && edge.FromRow < rowCount;
             var mergeTurn = edge.Type == EdgeType.MergeIn && edge.FromLane != edge.ToLane && fromIsRealRow;
-            var passLane = mergeTurn ? edge.ToLane : edge.FromLane;
+            // A merge edge routed around a busy parent lane runs down its via lane and turns into
+            // the parent's node at ToRow; otherwise it runs down the parent's lane itself.
+            var viaTurn = mergeTurn && edge.ViaLane >= 0;
+            var mergeLane = viaTurn ? edge.ViaLane : edge.ToLane;
+            var passLane = mergeTurn ? mergeLane : edge.FromLane;
             var passColor = mergeTurn ? color : leadColor;
 
             if (fromIsRealRow && InWin(edge.FromRow))
@@ -416,7 +444,7 @@ public sealed class DagLayoutEngine
                     allElbows[elbHeads[edge.FromRow - a]++] = new RowElbow
                     {
                         FromLane = edge.FromLane,
-                        ToLane = edge.ToLane,
+                        ToLane = mergeLane,
                         ColorIndex = color,
                         Kind = ElbowKind.LeaveBottom,
                     };
@@ -447,7 +475,7 @@ public sealed class DagLayoutEngine
 
             if (edge.ToRow >= 0 && edge.ToRow < rowCount && edge.Type != EdgeType.OffWindow && InWin(edge.ToRow))
             {
-                if (edge.FromLane == edge.ToLane || mergeTurn)
+                if (!viaTurn && (edge.FromLane == edge.ToLane || mergeTurn))
                 {
                     allSegments[segHeads[edge.ToRow - a]++] = new RowLaneSegment
                     {
@@ -460,7 +488,7 @@ public sealed class DagLayoutEngine
                 {
                     allElbows[elbHeads[edge.ToRow - a]++] = new RowElbow
                     {
-                        FromLane = edge.FromLane,
+                        FromLane = viaTurn ? edge.ViaLane : edge.FromLane,
                         ToLane = edge.ToLane,
                         ColorIndex = color,
                         Kind = ElbowKind.EnterTop,
@@ -758,6 +786,50 @@ public sealed class DagLayoutEngine
 
         if (rawLane < s.LaneCeiling)
             s.FreeLanes.Add(rawLane);
+    }
+
+    private static int LastBusyRow(GraphLayoutState s, int rawLane) =>
+        rawLane < s.LaneLastBusyRow.Length ? s.LaneLastBusyRow[rawLane] : -1;
+
+    private static void MarkBusy(GraphLayoutState s, int rawLane, int row)
+    {
+        if (rawLane >= s.LaneLastBusyRow.Length)
+        {
+            var old = s.LaneLastBusyRow.Length;
+            var size = Math.Max(rawLane + 1, Math.Max(16, old * 2));
+            Array.Resize(ref s.LaneLastBusyRow, size);
+            Array.Fill(s.LaneLastBusyRow, -1, old, size - old);
+        }
+        s.LaneLastBusyRow[rawLane] = row;
+    }
+
+    /// <summary>
+    /// The free lane, already on screen, that nothing occupied after <paramref name="fromRow"/>,
+    /// closest to <paramref name="toLane"/> so the merge line's horizontal legs stay short
+    /// (the lower lane wins a tie). Only lanes in <see cref="GraphLayoutState.FreeLanes"/> are
+    /// considered and none is taken from it, so later lane allocation, the lane count and lane
+    /// colours are unchanged. Returns (-1, -1) when no lane qualifies.
+    /// </summary>
+    private static (int RawLane, int Lane) FindClearLane(GraphLayoutState s, int fromRow, int fromLane, int toLane)
+    {
+        var bestRaw = -1;
+        var best = -1;
+        var bestDistance = int.MaxValue;
+        foreach (var raw in s.FreeLanes)
+        {
+            if (LastBusyRow(s, raw) >= fromRow || !s.CompactionMap.TryGetValue(raw, out var lane))
+                continue;
+            if (lane == fromLane || lane == toLane)
+                continue;
+            var distance = Math.Abs(lane - toLane);
+            if (distance < bestDistance || (distance == bestDistance && lane < best))
+            {
+                bestRaw = raw;
+                best = lane;
+                bestDistance = distance;
+            }
+        }
+        return (bestRaw, best);
     }
 
     private static int Compact(GraphLayoutState s, int rawLane)

@@ -103,6 +103,18 @@ public readonly record struct GraphEdge
     /// that lane keeps carrying its own line for this same row span, so the merge stub must match
     /// it or the two would visibly clash as two differently-coloured lines sharing one lane.</summary>
     public required int LeadColorIndex { get; init; }
+
+    private readonly int _viaLaneBiased;
+
+    /// <summary>For a <see cref="EdgeType.MergeIn"/> edge whose parent's lane holds other commits
+    /// between the merge row and the parent, the free lane the edge runs down instead: it leaves
+    /// the merge node into this lane and turns into the parent's node at <see cref="ToRow"/>.
+    /// -1 (the default) when the edge runs down <see cref="ToLane"/> itself.</summary>
+    public int ViaLane
+    {
+        get => _viaLaneBiased - 1;
+        init => _viaLaneBiased = value + 1;
+    }
 }
 
 public enum EdgeType

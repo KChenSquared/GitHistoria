@@ -841,6 +841,88 @@ public class DagLayoutEngineTests
             s => s.Type == LaneSegmentType.TopToNode && s.Lane == 1);
     }
 
+    /// <summary>Rows 0..8 = ids 20,19,18,17,16,15,14,13,12. Three tips (20, 19, 18) meet at 17,
+    /// freeing lanes 1 and 2 at row 3. Merge 16 (row 4, lane 0) has its second parent 13 at row 7.
+    /// Tip 15 (row 5) takes lane 1 and builds on 13, so 13 lands in lane 1 under commit 15. With
+    /// <paramref name="withSpareLane"/> false, tip 18 is left out and no lane stays empty.</summary>
+    private static RawCommit[] MergeOverBusyParentLane(bool withSpareLane)
+    {
+        var tips = withSpareLane
+            ? new[] { C(20, 17), C(19, 17), C(18, 17) }
+            : new[] { C(20, 17), C(19, 17) };
+        return [.. tips, C(17, 16), C(16, 14, 13), C(15, 13), C(14, 12), C(13, 12), C(12)];
+    }
+
+    [Fact]
+    public void Merge_edge_takes_a_clear_lane_when_the_parent_lane_holds_other_commits()
+    {
+        var commits = MergeOverBusyParentLane(withSpareLane: true);
+        var r = Compute(commits);
+
+        Assert.Equal(0, r.Layout.Rows[4].LaneIndex); // merge 16
+        Assert.Equal(1, r.Layout.Rows[5].LaneIndex); // tip 15, between the merge and its parent
+        Assert.Equal(1, r.Layout.Rows[7].LaneIndex); // second parent 13
+        Assert.Equal(3, r.Layout.TotalLaneCount);    // the reroute reuses lane 2, adds none
+
+        var merge = Assert.Single(r.Layout.Edges, e => e.Type == EdgeType.MergeIn);
+        Assert.Equal(2, merge.ViaLane);
+
+        // Leaves the merge node into lane 2, not into the parent's lane 1.
+        var turn = Assert.Single(r.Layout.GetRowElbows(4).ToArray());
+        Assert.Equal(ElbowKind.LeaveBottom, turn.Kind);
+        Assert.Equal(0, turn.FromLane);
+        Assert.Equal(2, turn.ToLane);
+
+        // Runs down lane 2 past commit 15, in the merged-in branch's colour.
+        foreach (var row in new[] { 5, 6 })
+            Assert.Contains(
+                r.Layout.GetRowSegments(row).ToArray(),
+                s => s.Type == LaneSegmentType.Full && s.Lane == 2 && s.ColorIndex == r.Layout.Rows[7].ColorIndex);
+
+        // Turns into the parent's node from lane 2.
+        Assert.Contains(
+            r.Layout.GetRowElbows(7).ToArray(),
+            e => e.Kind == ElbowKind.EnterTop && e.FromLane == 2 && e.ToLane == 1);
+    }
+
+    [Fact]
+    public void Merge_edge_keeps_the_parent_lane_when_no_lane_is_clear()
+    {
+        var r = Compute(MergeOverBusyParentLane(withSpareLane: false));
+
+        var merge = Assert.Single(r.Layout.Edges, e => e.Type == EdgeType.MergeIn);
+        Assert.Equal(-1, merge.ViaLane);
+        Assert.Equal(2, r.Layout.TotalLaneCount); // never widened to make room
+
+        var turn = Assert.Single(r.Layout.GetRowElbows(3).ToArray());
+        Assert.Equal(ElbowKind.LeaveBottom, turn.Kind);
+        Assert.Equal(1, turn.ToLane);
+    }
+
+    [Fact]
+    public void Rerouted_merge_edge_keeps_extension_identical_to_a_full_recomputation()
+    {
+        var commits = MergeOverBusyParentLane(withSpareLane: true);
+        var full = Compute(commits);
+
+        // Split between the merge (row 4) and its parent (row 7).
+        var partial = _engine.Compute(commits, null, 6);
+        var extended = _engine.Extend(partial, commits.Skip(6).ToList(), null, commits.Length);
+
+        Assert.Equal(full.Layout.Rows, extended.Layout.Rows);
+        Assert.Equal(full.Layout.Edges, extended.Layout.Edges);
+        AssertSameLines(full.Layout, extended.Layout);
+    }
+
+    [Fact]
+    public void Merge_edge_with_a_clear_parent_lane_is_not_rerouted()
+    {
+        var commits = new[] { C(6, 5, 3), C(5, 4), C(4, 2), C(3, 2), C(2, 1), C(1) };
+        var r = Compute(commits);
+
+        Assert.All(r.Layout.Edges, e => Assert.Equal(-1, e.ViaLane));
+    }
+
     // ── uncapped lanes + ±4 colour de-collision ──
 
     [Fact]
