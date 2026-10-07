@@ -50,6 +50,21 @@ public class RepositoryStateServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public void SetOpenDiff_raises_again_for_an_equal_request_with_a_focus_line()
+    {
+        var state = NewState();
+        var focused = Req("a.txt") with { FocusLine = 12 };
+        state.SetOpenDiff(focused);
+
+        var seen = new List<DiffRequest?>();
+        state.OpenDiffChanged += (_, e) => seen.Add(e.Request);
+        state.SetOpenDiff(Req("a.txt") with { FocusLine = 12 });
+
+        Assert.Equal([focused], seen);
+        Assert.Equal(focused, state.OpenDiff);
+    }
+
+    [Fact]
     public void RequestRevealCommit_raises_RevealCommitRequested()
     {
         var state = NewState();
@@ -604,6 +619,7 @@ public class RepositoryStateServiceTests : IAsyncDisposable
         public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default) => Task.FromResult<(string?, string?)>((null, null));
         public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<(string Path, string? Patch)>> GetStagedPatchesAsync(bool againstHeadParent, long? maxPatchBytes = null, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<(string? Name, string? Email)> GetGlobalIdentityAsync(CancellationToken ct = default) => Task.FromResult<(string?, string?)>((null, null));
         public Task<bool> GetGpgSignConfiguredAsync(CancellationToken ct = default) => Task.FromResult(false);
 

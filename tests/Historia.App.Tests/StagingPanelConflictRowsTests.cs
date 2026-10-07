@@ -5,18 +5,47 @@ public class StagingPanelConflictRowsTests : IDisposable
 {
     private readonly TestRepoFixture _fixture;
     private readonly ServiceProvider _sp;
-    private readonly RepositoryContext _context;
+    private readonly IWorkspaceService _workspace;
+    private RepositoryContext _context;
 
     public StagingPanelConflictRowsTests()
     {
         _fixture = new TestRepoFixture();
         _sp = CreateServices();
         _sp.GetRequiredService<Historia.Theming.AvaloniaThemeApplier>();
-        var ws = _sp.GetRequiredService<IWorkspaceService>();
-        _context = ws.OpenAsync(_fixture.Path).GetAwaiter().GetResult();
+        _workspace = _sp.GetRequiredService<IWorkspaceService>();
+        _context = _workspace.OpenAsync(_fixture.Path).GetAwaiter().GetResult();
         _context.State.RefreshRefsAsync().GetAwaiter().GetResult();
-        ws.Focus(_context);
+        _workspace.Focus(_context);
     }
+
+    /// <summary>Closes the tab, moves the fixture to a copy of a conflict template, applies
+    /// <paramref name="prepare"/> and opens the result, so no watcher sees the repository change and
+    /// no refresh it starts overlaps the test's own. Then refreshes until the conflict session
+    /// starts: a refresh that joins one already running can return an older snapshot.</summary>
+    private async Task OpenConflictAsync(Action<TestRepoFixture> load, Action? prepare = null)
+    {
+        var old = _context;
+        await Task.Run(async () => await _workspace.CloseAsync(old));
+        load(_fixture);
+        prepare?.Invoke();
+        _context = await Task.Run(() => _workspace.OpenAsync(_fixture.Path));
+        await _context.State.RefreshRefsAsync();
+        _workspace.Focus(_context);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (true)
+        {
+            await _context.State.RefreshStatusAsync();
+            Dispatcher.UIThread.RunJobs();
+            if (_context.State.IsConflictSessionActive)
+                return;
+            Assert.True(DateTime.UtcNow < deadline, "Timed out waiting for the conflict session to start.");
+            await Task.Delay(50);
+        }
+    }
+
+    private Task OpenMergeConflictAsync(Action? prepare = null) => OpenConflictAsync(f => f.LoadMergeConflict(), prepare);
 
     public void Dispose()
     {
@@ -40,9 +69,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     [AvaloniaFact]
     public async Task Conflicted_files_render_inside_Changes_with_red_header_and_Conflict_label()
     {
-        _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await OpenMergeConflictAsync();
 
         var panel = new StagingPanelView(_sp, _context);
         Dispatcher.UIThread.RunJobs();
@@ -67,9 +94,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     [AvaloniaFact]
     public async Task Conflicted_rows_have_no_checkbox_and_no_discard()
     {
-        _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await OpenMergeConflictAsync();
 
         var panel = new StagingPanelView(_sp, _context);
         Dispatcher.UIThread.RunJobs();
@@ -84,9 +109,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     [AvaloniaFact]
     public async Task Separate_conflict_strip_is_gone()
     {
-        _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await OpenMergeConflictAsync();
 
         var panel = new StagingPanelView(_sp, _context);
         Dispatcher.UIThread.RunJobs();
@@ -99,9 +122,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     [AvaloniaFact]
     public async Task Clicking_conflicted_row_closes_diff_and_sets_SelectedConflictPath()
     {
-        _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await OpenMergeConflictAsync();
 
         var panel = new StagingPanelView(_sp, _context);
         Dispatcher.UIThread.RunJobs();
@@ -124,17 +145,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     [AvaloniaFact]
     public async Task Clicking_a_conflicted_row_reopens_a_closed_resolver()
     {
-        _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
-        // A refresh already in flight can finish with the pre-conflict status; closing before the
-        // session starts would be undone by the start.
-        for (int i = 0; i < 50 && !_context.State.IsConflictSessionActive; i++)
-        {
-            await Task.Delay(50);
-            await _context.State.RefreshStatusAsync();
-        }
-        Assert.True(_context.State.IsConflictSessionActive);
-        Dispatcher.UIThread.RunJobs();
+        await OpenMergeConflictAsync();
 
         var panel = new StagingPanelView(_sp, _context);
         Dispatcher.UIThread.RunJobs();
@@ -158,10 +169,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     [AvaloniaFact]
     public async Task Stage_all_and_select_all_exclude_conflicted_paths()
     {
-        _fixture.CreateConflict();
-        File.WriteAllText(System.IO.Path.Combine(_fixture.Path, "u.txt"), "untracked content\n");
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await OpenMergeConflictAsync(() => File.WriteAllText(System.IO.Path.Combine(_fixture.Path, "u.txt"), "untracked content\n"));
 
         var panel = new StagingPanelView(_sp, _context);
         Dispatcher.UIThread.RunJobs();
@@ -189,9 +197,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     [AvaloniaFact]
     public async Task Highlight_follows_SelectedConflictPath()
     {
-        _fixture.CreateConflicts("f.txt", "g.txt");
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await OpenConflictAsync(f => f.LoadMergeConflicts());
 
         var panel = new StagingPanelView(_sp, _context);
         var window = new Window { Content = panel };
@@ -230,10 +236,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     [AvaloniaFact]
     public async Task Changes_count_includes_conflicted()
     {
-        _fixture.CreateConflict();
-        File.WriteAllText(System.IO.Path.Combine(_fixture.Path, "u.txt"), "untracked content\n");
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await OpenMergeConflictAsync(() => File.WriteAllText(System.IO.Path.Combine(_fixture.Path, "u.txt"), "untracked content\n"));
 
         var panel = new StagingPanelView(_sp, _context);
         Dispatcher.UIThread.RunJobs();
@@ -308,84 +311,54 @@ public class StagingPanelConflictRowsTests : IDisposable
 
     private sealed class TestRepoFixture : IDisposable
     {
-        public string Path { get; }
+        public string Path { get; private set; }
 
         public TestRepoFixture()
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-staging-conflict-tests-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path);
-            RunGit(Path, "init", "-b", "main");
-            RunGit(Path, "config", "user.name", "Test");
-            RunGit(Path, "config", "user.email", "test@example.com");
-
-            var file = System.IO.Path.Combine(Path, "f.txt");
-            File.WriteAllText(file, "init\n");
-            RunGit(Path, "add", ".");
-            RunGit(Path, "commit", "-m", "initial commit", "--no-gpg-sign");
+            Path = NewPath();
+            RepoTemplates.Initial(Path);
         }
 
-        public void CreateConflict()
+        private static string NewPath() =>
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-staging-conflict-tests-" + Guid.NewGuid().ToString("N"));
+
+        /// <summary>Moves the fixture to a copy of the merge-conflict template (a conflict in
+        /// <c>f.txt</c>). The copy is not atomic, so only call this while no tab has the repository
+        /// open; <see cref="Path"/> changes.</summary>
+        public void LoadMergeConflict() => MoveTo(RepoTemplates.MergeConflict);
+
+        /// <summary>As <see cref="LoadMergeConflict"/>, with both <c>f.txt</c> and <c>g.txt</c>
+        /// conflicted.</summary>
+        public void LoadMergeConflicts() => MoveTo(dir => RepoTemplates.CopyTo("merge-conflicts-f-g", dir, tpl =>
         {
-            RunGit(Path, "checkout", "-b", "branch1");
-            File.WriteAllText(System.IO.Path.Combine(Path, "f.txt"), "branch1 line\n");
-            RunGit(Path, "commit", "-am", "branch1 commit", "--no-gpg-sign");
-
-            RunGit(Path, "checkout", "main");
-            File.WriteAllText(System.IO.Path.Combine(Path, "f.txt"), "main line\n");
-            RunGit(Path, "commit", "-am", "main commit", "--no-gpg-sign");
-
-            RunGit(Path, "merge", "branch1");
-        }
-
-        public void CreateConflicts(params string[] files)
-        {
-            RunGit(Path, "checkout", "-b", "branch_conflict");
-            foreach (var f in files)
+            RepoTemplates.Initial(tpl);
+            RepoTemplates.Git(tpl, "checkout", "-b", "branch_conflict");
+            foreach (var f in new[] { "f.txt", "g.txt" })
             {
-                File.WriteAllText(System.IO.Path.Combine(Path, f), "branch line for " + f + "\n");
-                RunGit(Path, "add", f);
+                File.WriteAllText(System.IO.Path.Combine(tpl, f), "branch line for " + f + "\n");
+                RepoTemplates.Git(tpl, "add", f);
             }
-            RunGit(Path, "commit", "-m", "branch commit", "--no-gpg-sign");
+            RepoTemplates.Git(tpl, "commit", "-m", "branch commit", "--no-gpg-sign");
 
-            RunGit(Path, "checkout", "main");
-            foreach (var f in files)
+            RepoTemplates.Git(tpl, "checkout", "main");
+            foreach (var f in new[] { "f.txt", "g.txt" })
             {
-                File.WriteAllText(System.IO.Path.Combine(Path, f), "main line for " + f + "\n");
-                RunGit(Path, "add", f);
+                File.WriteAllText(System.IO.Path.Combine(tpl, f), "main line for " + f + "\n");
+                RepoTemplates.Git(tpl, "add", f);
             }
-            RunGit(Path, "commit", "-m", "main commit", "--no-gpg-sign");
+            RepoTemplates.Git(tpl, "commit", "-m", "main commit", "--no-gpg-sign");
 
-            RunGit(Path, "merge", "branch_conflict");
-        }
+            RepoTemplates.Git(tpl, "merge", "branch_conflict");
+        }));
 
-        private static void RunGit(string dir, params string[] args)
+        private void MoveTo(Action<string> copy)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            psi.Environment["GIT_AUTHOR_NAME"] = "Test";
-            psi.Environment["GIT_AUTHOR_EMAIL"] = "test@example.com";
-            psi.Environment["GIT_COMMITTER_NAME"] = "Test";
-            psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            p.WaitForExit();
+            var old = Path;
+            Path = NewPath();
+            copy(Path);
+            RepoTemplates.Delete(old);
         }
 
-        public void Dispose()
-        {
-            try
-            {
-                if (Directory.Exists(Path))
-                    Directory.Delete(Path, recursive: true);
-            }
-            catch { }
-        }
+        public void Dispose() => RepoTemplates.Delete(Path);
     }
 }

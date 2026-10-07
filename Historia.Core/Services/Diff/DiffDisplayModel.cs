@@ -345,6 +345,36 @@ public sealed class DiffDisplayModel
         return blocks;
     }
 
+    /// <summary>
+    /// The 1-based display line (as the presenters number lines) showing line
+    /// <paramref name="newLine"/> of the new file, or the nearest line that has a new-file number
+    /// when it lies outside every hunk; the earlier line wins a tie. Null when no row has one.
+    /// Side-by-side rows are aligned between the panes, so one index serves both.
+    /// </summary>
+    public int? FindDisplayLineForNewLine(int newLine, bool sideBySide)
+    {
+        var rows = sideBySide ? SideBySideNewRows : CombinedRows;
+        int? best = null;
+        var bestDistance = int.MaxValue;
+
+        for (var i = 0; i < rows.Count; i++)
+        {
+            if (rows[i].NewLineNumber is not { } n)
+                continue;
+
+            var distance = Math.Abs(n - newLine);
+            if (distance < bestDistance)
+            {
+                best = i + 1;
+                bestDistance = distance;
+                if (distance == 0)
+                    break;
+            }
+        }
+
+        return best;
+    }
+
     public IReadOnlyList<DiffLineRef> GetSelectedLinesForCombined(int startLine, int endLine)
     {
         var result = new List<DiffLineRef>();

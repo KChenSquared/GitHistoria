@@ -10,16 +10,18 @@ When contributing to Historia, keep these core tenets in mind:
 
 0. **Confirm Before Destroying Anything (highest priority):** No code path may discard the
    user's uncommitted work or irreversibly rewrite their history without an explicit
-   confirmation the user actively accepts. The confirmation is a modal alert
-   (`IDialogService.ConfirmAsync` / `ChooseAsync`) with the red `warning`
-   (`DialogIcon.Warning`), it names the exact effect, and **Cancel** is the primary (blue)
-   button and the keyboard default (`defaultToCancel: true`) while remaining the rightmost
-   button. See constitution **Rule 00**. This outranks every other principle below, including
-   performance.
+   confirmation the user actively accepts. The confirmation is a modal alert raised through
+   `IDialogService.ConfirmDestructiveAsync` (or `ChooseAsync` with `DialogIcon.Warning` when
+   there are several remedies) — the only entry points. They hard-wire the red `warning`, the
+   exact effect named, and **Cancel** as the primary (blue) button and the keyboard default
+   while it stays the rightmost button. Hand-rolling that treatment on the plain `ConfirmAsync`
+   overload fails `DestructiveConfirmationTests`. See constitution **Rule 00**. This outranks
+   every other principle below, including performance.
 1. **Performance First:** Historia is built to match the speed of native clients like Git-Fork. Avoid unnecessary allocations in hot paths (commit log parsing, DAG calculation, diff rendering). Always profile and benchmark performance-critical code.
 2. **Never Block the UI Thread:** All Git operations, I/O, and heavy computations must execute on background threads and communicate via non-blocking asynchronous patterns.
 3. **Simplicity & Polish:** Strive for clean, intuitive UI interactions. Complex Git concepts should be rendered clearly and visually.
 4. **Progressive Disclosure:** Design interfaces that reveal complexity only as needed. Common workflows (staging, unstaging, committing, switching branches, reading the graph) must remain streamlined, clutter-free, and instantly approachable. Advanced capabilities (interactive rebase, worktree management, submodules, terminal access, deep diagnostic metadata) should be surfaced gracefully through context menus, collapsible drawers, or dedicated drill-downs rather than dominating the primary screen space. Errors must show clean, actionable human descriptions first, preserving raw Git stderr behind a details disclosure.
+5. **Built for Agentic Coding:** Two ways. Historia is where you review what coding agents wrote: `historia-cmdr` lets an agent open Historia on the commit, diff or uncommitted change it just produced, or hand over staged files with a proposed commit message, and only you commit (constitution [Rule 40](constitution.md#automation--agents)). And the codebase is built for agent contributors: the constitution is written to be followed mechanically, tests enforce what can regress silently, and multi-file work follows a phased plan whose parallel milestones own disjoint files (see [Working with coding agents](#6-working-with-coding-agents)).
 
 ---
 
@@ -87,12 +89,18 @@ dotnet run
 ```
 Historia/
 ├── Historia.slnx              # Main solution file
+├── AGENTS.md                  # Shared instructions for coding agents
+├── CLAUDE.md                  # Points Claude Code at AGENTS.md
 ├── Historia.App/              # Avalonia UI application project
+├── Historia.Cmdr/             # historia-cmdr, the command-line client for agent control
 ├── Historia.Core/             # Portable domain models, services, and git gateway
-├── tests/Historia.Tests/      # Automated test suite
+├── Historia.ScenarioLab/      # Test scenario generator and runner
+├── tests/Historia.Tests/      # Core test suite
+├── tests/Historia.App.Tests/  # Headless Avalonia UI test suite
 ├── assets/                    # Application logos, splash art, and icons
 ├── dev/                       # Automation scripts and development tools
 └── docs/                      # Project documentation and guidelines
+    └── agent-integration/     # Sample skills for Claude Code and GitHub Copilot
 ```
 
 ---
@@ -112,7 +120,38 @@ Historia/
 
 ---
 
-## 6. Git & Contribution Workflow
+## 6. Working with Coding Agents
+
+Agent-assisted contributions are welcome. This section is how the repository keeps them safe.
+
+### Guardrails
+- **The constitution is written to be followed mechanically.** [`docs/constitution.md`](constitution.md) states each invariant as a rule an agent can check its change against, and Rule 00 (never destroy the user's work without a confirmation they accept) outranks all of them.
+- **Tests enforce what can regress silently.** For example `DestructiveConfirmationTests` (destructive actions go through `ConfirmDestructiveAsync`), `OfflineAssetTests` (no network URL in any `.cs` or `.axaml`), `PaletteParityTests` (one palette) and `ExternalControlReadOnlyTests` (agent-facing control code reaches no write path). A change that breaks one fails the build, whoever wrote it.
+- **An agent that meets a rule it cannot satisfy stops and reports.** It must not route around the rule.
+
+### Instruction files
+[`AGENTS.md`](../AGENTS.md) is the single source of instructions for coding agents. `CLAUDE.md` and `.github/copilot-instructions.md` point to it. Change `AGENTS.md`, not the copies.
+
+### Plans for multi-file work
+Work that touches several files follows a phased plan:
+- Phases run in sequence; the milestones inside a phase run in parallel.
+- Parallel milestones own disjoint files, so each can run in its own git worktree.
+- Each milestone lists what it owns, its steps, its tests, its acceptance criteria and its commit.
+- Every gate is automated; manual checks are collected in a file for afterwards.
+- A verification phase follows the implementation, and design documents are updated last.
+
+### Reviewing agent output
+Review it in Historia. With `historia-cmdr` an agent can open Historia on the exact commit, file diff, comparison or uncommitted change it produced; see [`docs/agent-integration/README.md`](agent-integration/README.md) for the sample skills. An agent can also stage its own files and propose the commit message, so you review the staged files and click Commit yourself. Read the diff, not the agent's summary or its message.
+
+### Policy
+- The contributor is responsible for every line, agent-written or not.
+- An agent's change passes the same gates and review as any other.
+- The pull request description says which parts were agent-written.
+- A `Co-Authored-By` trailer for the agent is allowed, not required.
+
+---
+
+## 7. Git & Contribution Workflow
 
 ### 1. Branch Naming
 Create a feature branch from `main` using the following prefixes:
@@ -141,17 +180,18 @@ I adhere to [Conventional Commits](https://www.conventionalcommits.org/):
 2. Run unit and integration tests (`dev/test.ps1 -Tier fast` during development, `dev/test.ps1 -Tier all` before pushing).
 3. For performance-sensitive code, include benchmark results or profiling notes in the PR description.
 4. Keep PRs focused on a single logical change for ease of review.
+5. If coding agents helped, say which parts in the description.
 
 ---
 
-## 7. Reporting Issues & Requesting Features
+## 8. Reporting Issues & Requesting Features
 
 - **Bug Reports:** Open an issue with clear reproduction steps, repo size/context, your Windows & .NET version, and any relevant error logs or screenshots.
 - **Feature Proposals:** Start a discussion or open an issue outlining the user problem, proposed UX flow, and technical considerations.
 
 ---
 
-## 8. License
+## 9. License
 
 By contributing to Historia, you agree that your contributions will be licensed under the project's existing open-source license, the [GNU General Public License v3.0](../LICENSE).
 

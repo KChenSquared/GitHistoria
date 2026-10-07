@@ -29,6 +29,7 @@ public sealed class SettingsHelpHintTests
         ["Cache sidebar between launches"] = "Saves each repository's branches, tags, stashes and more so the sidebar appears instantly, then refreshes from Git. Turning it off deletes the cache.",
         ["Privacy & Network"] = "Identity and SSH-only are set per repository, in Repository settings.",
         ["Auto-fetch open repositories"] = "Fetches each open repository in turn: a 5-minute pause, then one repository a minute. Turn off to stop all background network traffic.",
+        ["Allow command-line control (historia-cmdr)"] = "Lets local tools and coding agents open Historia on a commit or diff, or hand you staged changes with a proposed commit message. They can't stage, commit or change your repository.",
         ["Layout"] = "Also changes when you switch layout in the diff viewer.",
         ["Context lines"] = "Unchanged lines shown around each change.",
         ["Wrap long lines"] = "Unified layout only.",
@@ -53,7 +54,7 @@ public sealed class SettingsHelpHintTests
     [
         "Appearance", "Theme", "High contrast", "Wrap tabs onto more rows", "Maximum rows", "Fixed tab width",
         "Tab width (px)", "Show author date", "Scroll direction", "Match system", "Standard", "Inverted",
-        "Cache sidebar between launches", "Privacy & Network", "Auto-fetch open repositories", "Diff viewer",
+        "Cache sidebar between launches", "Privacy & Network", "Auto-fetch open repositories", "Allow command-line control (historia-cmdr)", "Diff viewer",
         "Layout", "Unified", "Side by side", "Context lines", "Wrap long lines", "Issue autolinks",
         "Pattern (regex)", "Link URL ($1 = first group)", "Git", "Prune deleted remote branches on fetch",
         "Pull with rebase", "Reopen tabs on launch", "Ask for a stash message", "Terminal", "Shell",

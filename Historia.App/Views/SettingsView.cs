@@ -8,6 +8,7 @@ public sealed class SettingsView : UserControl, IDisposable
     private readonly IDialogService _dialogs;
     private readonly IGraphLayoutService _graph;
     private readonly Historia.Services.Storage.IRepoStateCache _repoCache;
+    private readonly IAiIntegrationsPanel? _aiPanel;
     private readonly StackPanel _root = new() { Spacing = 18, Margin = new Thickness(32), MaxWidth = 640 };
 
     // Survives the full Rebuild() that fires on every settings change.
@@ -25,9 +26,11 @@ public sealed class SettingsView : UserControl, IDisposable
         _dialogs = sp.GetRequiredService<IDialogService>();
         _graph = sp.GetRequiredService<IGraphLayoutService>();
         _repoCache = sp.GetRequiredService<Historia.Services.Storage.IRepoStateCache>();
+        _aiPanel = sp.GetService<IAiIntegrationsPanel>();
 
         _onCfg = (_, _) => Post();
         _onTheme = (_, _) => Post();
+        _onAiPanel = (_, _) => Post();
 
         Content = ClosablePane(new ScrollViewer { Content = _root }, sp);
         this.Dyn(BackgroundProperty, "ColorChrome");
@@ -38,6 +41,8 @@ public sealed class SettingsView : UserControl, IDisposable
         this.AddHandler(PointerPressedEvent, OnRootPointerPressedTunnel, RoutingStrategies.Tunnel);
         _cfg.Changed += _onCfg;
         _theme.ThemeChanged += _onTheme;
+        if (_aiPanel != null)
+            _aiPanel.OpenChanged += _onAiPanel;
         Rebuild();
     }
 
@@ -48,7 +53,7 @@ public sealed class SettingsView : UserControl, IDisposable
     /// run — no commit logic moves or is duplicated. Tunnel routing so this runs before the
     /// pressed control's own handler, and <c>e.Handled</c> is left alone so that control still
     /// receives the press normally.</summary>
-    private static void OnRootPointerPressedTunnel(object? sender, PointerPressedEventArgs e)
+    internal static void OnRootPointerPressedTunnel(object? sender, PointerPressedEventArgs e)
     {
         if (e.Source is not Visual v)
             return;
@@ -68,6 +73,7 @@ public sealed class SettingsView : UserControl, IDisposable
     private void Post() => Avalonia.Threading.Dispatcher.UIThread.Post(Rebuild);
     private readonly EventHandler<SettingsChangedEventArgs> _onCfg;
     private readonly EventHandler<ThemeChangedEventArgs> _onTheme;
+    private readonly EventHandler _onAiPanel;
 
     private void Rebuild()
     {
@@ -159,6 +165,9 @@ public sealed class SettingsView : UserControl, IDisposable
         networkBody.Children.Add(WithHint(Check("Auto-fetch open repositories", c.AutoFetchEnabled,
             v => _ = _cfg.UpdateAsync(s => s with { AutoFetchEnabled = v })),
             "Fetches each open repository in turn: a 5-minute pause, then one repository a minute. Turn off to stop all background network traffic."));
+        networkBody.Children.Add(WithHint(Check("Allow command-line control (historia-cmdr)", c.ExternalControlEnabled,
+            v => _ = _cfg.UpdateAsync(s => s with { ExternalControlEnabled = v })),
+            "Lets local tools and coding agents open Historia on a commit or diff, or hand you staged changes with a proposed commit message. They can't stage, commit or change your repository."));
         AddCollapsibleSection("Privacy & Network", networkBody, () => _networkExpanded, v => _networkExpanded = v,
             "Identity and SSH-only are set per repository, in Repository settings.");
 
@@ -340,6 +349,20 @@ public sealed class SettingsView : UserControl, IDisposable
         advBody.Margin = new Thickness(0, 10, 0, 0);
 
         AddCollapsibleSection("Advanced", advBody, () => _advExpanded, v => _advExpanded = v);
+
+        // ── AI Integration: expanded exactly while the AI Integrations window is open ──
+        if (_aiPanel is { } aiPanel)
+        {
+            var aiBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
+            aiBody.Children.Add(Text("AI services open in the centre pane.", "ColorTextMuted", 12));
+            AddCollapsibleSection("AI Integration", aiBody, () => aiPanel.IsOpen, v =>
+            {
+                if (v)
+                    aiPanel.Open();
+                else
+                    aiPanel.Close();
+            });
+        }
     }
 
     /// <summary>
@@ -539,6 +562,8 @@ public sealed class SettingsView : UserControl, IDisposable
     {
         _cfg.Changed -= _onCfg;
         _theme.ThemeChanged -= _onTheme;
+        if (_aiPanel != null)
+            _aiPanel.OpenChanged -= _onAiPanel;
     }
 }
 

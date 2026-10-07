@@ -9,6 +9,7 @@ global using TextMateSharp.Internal.Types;
 global using TextMateSharp.Registry;
 global using TextMateSharp.Themes;
 global using Historia.Services.Diff;
+global using Historia.Services.ExternalControl;
 
 global using FontStyle = Avalonia.Media.FontStyle;
 global using Avalonia.Controls;
@@ -39,6 +40,7 @@ global using Historia.Layout;
 global using Historia.Models;
 global using Historia.Platform;
 global using Historia.Rendering;
+global using Historia.Services.Ai;
 global using Historia.Services.AutoFetch;
 global using Historia.Services.Git;
 global using Historia.Services.Git.Helpers;

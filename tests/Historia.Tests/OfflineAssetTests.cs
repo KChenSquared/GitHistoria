@@ -27,6 +27,7 @@ public class OfflineAssetTests
         "https://github.com/owner/repo.git",                        // clone-dialog input watermark (not fetched)
         "https://github.com/settings/tokens/new?scopes=repo&description=Historia", // "Sign in with GitHub" — user-initiated browser open
         "https://GitHistoria.com/autolink?issue=$1",                // Issue autolinks hint example (display text, not fetched)
+        "https://generativelanguage.googleapis.com/v1beta",         // Gemini template default; requested only when the user generates or fetches models
     };
 
     private static readonly string[] BinaryExtensions =

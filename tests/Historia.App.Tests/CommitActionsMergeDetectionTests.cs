@@ -197,6 +197,7 @@ public sealed class CommitActionsMergeDetectionTests
         public Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default) => throw new NotImplementedException();
         public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default) => throw new NotImplementedException();
         public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<(string Path, string? Patch)>> GetStagedPatchesAsync(bool againstHeadParent, long? maxPatchBytes = null, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default) => throw new NotImplementedException();
         public Task<(string? Name, string? Email)> GetGlobalIdentityAsync(CancellationToken ct = default) => throw new NotImplementedException();

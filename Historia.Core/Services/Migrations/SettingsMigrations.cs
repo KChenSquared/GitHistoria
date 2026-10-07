@@ -342,4 +342,17 @@ public sealed class SettingsV21ToV22 : IJsonMigration
         document[key] is JsonValue v && v.TryGetValue<int>(out var n) && n == value;
 }
 
+/// <summary>v22 → v23: adds <c>externalControlEnabled</c>. Additive — an absent value keeps the
+/// record default (on), so existing settings files gain the setting without an edit.</summary>
+public sealed class SettingsV22ToV23 : IJsonMigration
+{
+    public int FromVersion => 22;
+    public int ToVersion => 23;
+
+    public void Apply(JsonObject document)
+    {
+        document["schemaVersion"] = 23;
+    }
+}
+
 

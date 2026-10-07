@@ -20,6 +20,13 @@ public interface IGitGateway
     Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default);
     Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default);
 
+    /// <summary>The staged diff split into one patch per file, in path order. With
+    /// <paramref name="againstHeadParent"/> it is taken against <c>HEAD^</c> (the empty tree for a root
+    /// commit), so an amend sees the amended commit's own changes too. With
+    /// <paramref name="maxPatchBytes"/>, git's output is read only that far: every file whose patch
+    /// lies past it is still listed, with a null patch. Without it, a diff over 64 MB fails.</summary>
+    Task<IReadOnlyList<(string Path, string? Patch)>> GetStagedPatchesAsync(bool againstHeadParent, long? maxPatchBytes = null, CancellationToken ct = default);
+
     /// <summary>Ahead/behind between any two refs via <c>git rev-list --left-right --count</c>.
     /// Returns <see langword="null"/> when either ref cannot be resolved, e.g. a branch with no
     /// upstream — that is an ordinary case for a caller asking "is this ahead?", not an error.</summary>

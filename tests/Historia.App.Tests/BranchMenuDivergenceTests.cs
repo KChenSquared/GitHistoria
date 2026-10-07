@@ -27,6 +27,7 @@ public sealed class BranchMenuDivergenceTests
         public Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<TagInfo>>>();
         public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default) => No<Task<IReadOnlyList<RemoteInfo>>>();
         public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => No<Task<FileDiff>>();
+        public Task<IReadOnlyList<(string Path, string? Patch)>> GetStagedPatchesAsync(bool againstHeadParent, long? maxPatchBytes = null, CancellationToken ct = default) => No<Task<IReadOnlyList<(string Path, string? Patch)>>>();
         public Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default) => No<Task<(string?, string?)>>();
         public Task<(string? Name, string? Email)> GetGlobalIdentityAsync(CancellationToken ct = default) => No<Task<(string?, string?)>>();
         public Task<bool> GetGpgSignConfiguredAsync(CancellationToken ct = default) => No<Task<bool>>();

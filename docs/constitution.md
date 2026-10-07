@@ -8,7 +8,9 @@ the split set under [`Historia-DevDocs/ComprehensiveDesign/`](../Historia-DevDoc
 
 **A rule here outranks convenience, consistency with other code, and the obvious
 implementation.** If a rule blocks you, raise it — do not route around it. If you break one
-deliberately, say so in the PR and say why.
+deliberately, say so in the PR and say why. The rules are written so human and coding-agent
+contributors can follow them mechanically, and an agent's change is held to them exactly like a
+human's.
 
 ---
 
@@ -69,13 +71,12 @@ true`, `defaultToCancel:`, `DialogIcon.Warning` outside the one entry point's ow
 implementation), and a call-site guard scanning every listed destructive service call (submodule
 `RemoveAsync`, rebase `StartAsync`, `DiscardAsync`, `DeleteBranchAsync`, `DeleteTagAsync`, stash
 `DropAsync`/`ClearAsync`, worktree `RemoveAsync`, hard `ResetAsync`, `ResolveWithSideAsync`,
-`RecreateConflictAsync`, `AbortOperationAsync`, `SkipCurrentAsync`, force `PushAsync`) so it must
+`RecreateConflictAsync`, `AbortOperationAsync`, `SkipCurrentAsync`, `DeleteAiServiceAsync`, force `PushAsync`) so it must
 sit in a method that also calls `ConfirmDestructiveAsync`, or be on an explicit, commented
 allowlist. `HistoriaApp.Tests.DestructiveConfirmDialogTests` guards the dialog builder itself —
 that Cancel gets the primary class while staying rightmost. A destructive call site with no
 confirm at all, or one that regresses to a bare confirm, fails the build. *(Rule 36.)*
-Implementation and the current call-site inventory:
-[`versionPlans/v10-destructive-action-confirmation-plan.md`](../Historia-DevDocs/versionPlans/v10-destructive-action-confirmation-plan.md).
+The call-site inventory is the allowlist in `DestructiveConfirmationTests`.
 
 ---
 
@@ -96,7 +97,8 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
    **Auto-fetch** (§12.1) is the one sanctioned exception to "only what the user initiated": while
    `AutoFetchEnabled` is on (default on) it periodically `git fetch`es every open repo over its
    configured transport, regardless of profile/token. Opening a repo with a remote is treated as
-   the consent; the setting is the opt-out, and it must stay a single visible toggle that turns
+   the consent — by hand, or through `historia-cmdr` while external control is enabled (rule 40);
+   the setting is the opt-out, and it must stay a single visible toggle that turns
    *all* of it off — never a call that cannot be disabled. *(§I-5.5, §12.1, §13)*
 **0.3 — Three tiers, and only the third is negotiable.**
    - **Preinstalled platform — assume it.** Present on a stock Windows 11 machine: **Segoe UI**
@@ -248,7 +250,7 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     themes do not recolour syntax tokens — they inherit the syntax theme of their underlying base
     theme (`Dark`, `Light`, or `HighContrast`), which means a custom theme whose `bg` contradicts its
     base theme (e.g., a light `bg` authored on a Dark base) will produce poorly readable syntax tokens.
-    This exception was adopted by user decision (2026-09-23) to provide VS Code-grade syntax grammars
+    This exception was adopted (2026-09-23) to provide VS Code-grade syntax grammars
     and high-fidelity token highlighting across 100+ programming languages without requiring the manual
     definition and maintenance of thousands of language-specific token rules in `HistoriaPalette`.
 27. *(Removed.)*
@@ -279,6 +281,9 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
 
 31. **Secrets live in Windows Credential Manager.** `profiles.json` stores reference keys;
     profiles store SSH key *paths* and GPG key *ids*, never key material. *(§I-12)*
+    **Exception — AI API keys and request headers** are stored in `settings.json`. They are
+    currently not treated as secrets, because they are easily revoked and the feature targets
+    free-tier accounts. *(2026-10-06)*
 32. **SSH keys are per-process environment, never process-global.** Two tabs on two profiles
     must be able to push concurrently. *(§I-6.5.2)*
 
@@ -361,3 +366,22 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
       silently and misleads. If the reason behind the code matters, state it in the comment
       itself. The dependency runs one way: design documents may point at code, code never
       points at documents.
+
+---
+
+## Automation & agents
+
+40. **Agent-facing surfaces navigate and propose; only the user acts.** Anything an external tool
+    can send Historia — today, `historia-cmdr` over the per-user control pipe — may open, focus and
+    navigate, and may offer text to an editable draft the user must still act on (today, the commit
+    message). It never changes the repository, index, refs, working tree or settings, never stages
+    or commits, and never replaces something the user typed without `ConfirmDestructiveAsync`. It
+    stays local and per-user, and one visible setting turns it off. Opening a repository through it
+    is recorded in the session and the Recent list exactly like a manual open. A new verb that is
+    neither plain navigation nor a proposal the user must act on does not ship as an agent verb.
+    This is the external-control instance of **Rule 00**, as rule 14 is the Git instance.
+    `ExternalControlReadOnlyTests` scans the control host and every control file for any write path
+    (the git gateway, the write lock, settings writes, dialogs, staging patches, file writes,
+    starting processes) and for use of anything outside an allowlist of navigation members, so a
+    mutating call fails the build; `StagingPanelProposalTests` checks that a proposal never replaces
+    a typed draft silently and never commits.

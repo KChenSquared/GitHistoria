@@ -21,7 +21,24 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private readonly Historia.Services.UI.IExternalLauncher _launcher;
     private readonly Historia.Services.PowerTools.IStashService _stash;
     private readonly IRepoActionBus _actionBus;
+    private readonly IAiProfileService? _aiProfiles;
+    private readonly IAiIntegrationsPanel? _aiPanel;
+    private readonly ICommitMessageGenerator? _aiGenerator;
+    private Button? _wand;
+    private Button? _aiSettings;
+    private EventHandler? _onAiChanged;
+    private CancellationTokenSource? _generateCts;
+    private bool _disposed;
     private IDisposable? _commitShortcut;
+
+    // A commit message offered by an external tool (a coding agent) that the box did not take.
+    private Border? _offerBar;
+    private TextBlock? _offerText;
+    private Button? _offerUse;
+    private Button? _offerDismiss;
+    private string? _offered;
+    private TextBlock? _agentNote;
+    private string? _agentNoteText;
 
     private readonly TextBox _message = new()
     {
@@ -29,7 +46,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         Height = 96,
         Watermark = "Commit message (subject; blank line; body)",
         TextWrapping = TextWrapping.Wrap,
-        Padding = new Thickness(6, 6, 6, 20), // reserve space for the in-box counter
+        Padding = new Thickness(6, 6, 6, 30), // reserve space for the in-box counter and the AI buttons
     };
     private readonly TextBox _author = new() { Watermark = "Author override (Name <email>)" };
     private readonly CheckBox _amend = new() { Content = "Amend last commit" };
@@ -54,6 +71,23 @@ public sealed class StagingPanelView : UserControl, IDisposable
     internal StackPanel ChangesRowsForTesting => _changesRows;
     internal TextBlock ChangesHeaderForTesting => _changesHeader;
     internal IReadOnlyDictionary<string, Border> ConflictedRowCacheForTesting => _conflictedRowCache;
+    internal TextBox MessageForTesting => _message;
+    internal CheckBox AmendForTesting => _amend;
+    internal Button? WandForTesting => _wand;
+    internal Button? AiSettingsForTesting => _aiSettings;
+    internal Panel? MessageCellForTesting { get; private set; }
+    internal bool IsGeneratingForTesting => _generateCts is not null;
+    internal Border? OfferBarForTesting => _offerBar;
+    internal Button? OfferUseForTesting => _offerUse;
+    internal Button? OfferDismissForTesting => _offerDismiss;
+    internal TextBlock? AgentNoteForTesting => _agentNote;
+    internal Task OfferUseForTestingAsync() => UseOfferAsync();
+
+    /// <summary>The generation in flight, if any; completes when it has finished and the box is editable again.</summary>
+    internal Task GenerationForTesting { get; private set; } = Task.CompletedTask;
+
+    /// <summary>The Ctrl+Enter commit path, callable without a keyboard.</summary>
+    internal Task CommitForTestingAsync() => CommitAsync(false);
 
     // Checked paths per section, preserved across StatusChanged re-renders where the path still exists.
     private readonly HashSet<string> _checkedChanges = new(StringComparer.Ordinal);
@@ -80,6 +114,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _launcher = sp.GetRequiredService<Historia.Services.UI.IExternalLauncher>();
         _stash = sp.GetRequiredService<Historia.Services.PowerTools.IStashService>();
         _actionBus = sp.GetRequiredService<IRepoActionBus>();
+        _aiProfiles = sp.GetService<IAiProfileService>();
+        _aiPanel = sp.GetService<IAiIntegrationsPanel>();
+        _aiGenerator = sp.GetService<ICommitMessageGenerator>();
 
         _commit = TextButton("Commit", () => _ = CommitAsync(false), primary: true);
         var commitPush = TextButton("Commit & Push", () => _ = CommitAsync(true));
@@ -88,7 +125,12 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
         _message.Text = DraftByRepo.GetValueOrDefault(ctx.Id, "");
         ScrollViewer.SetVerticalScrollBarVisibility(_message, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
-        _message.TextChanged += (_, _) => UpdateCounter();
+        _message.TextChanged += (_, _) =>
+        {
+            UpdateCounter();
+            if (_agentNote is { IsVisible: true } && _message.Text != _agentNoteText)
+                HideAgentNote();
+        };
         UpdateCounter();
         _commitShortcut = _keyboard.Register("Ctrl+Enter", () => CommitAsync(false));
 
@@ -123,6 +165,10 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _counter.Margin = new Thickness(0, 0, 8, 4);
         _counter.IsHitTestVisible = false;
         messageCell.Children.Add(_counter);
+        MessageCellForTesting = messageCell;
+        if (_aiProfiles is not null && _aiPanel is not null && _aiGenerator is not null)
+            messageCell.Children.Add(BuildAiButtons());
+        BuildAgentProposalViews();
 
         // Co-authored-by trailers from every other profile.
         var activeEmail = ctx.State.ActiveProfile?.GitUserEmail;
@@ -155,7 +201,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
         actions.Children.Add(_stashStaged);
 
         var messageBox = new StackPanel { Spacing = 6, Margin = new Thickness(12, 8, 12, 12) };
+        messageBox.Children.Add(_offerBar!);
         messageBox.Children.Add(messageCell);
+        messageBox.Children.Add(_agentNote!);
         messageBox.Children.Add(guideRow);
         messageBox.Children.Add(_author);
         messageBox.Children.Add(actions);
@@ -314,7 +362,268 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _status = ctx.State.Status;
         ctx.State.StatusChanged += OnStatusChanged;
         ctx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
+        ctx.State.CommitMessageProposed += OnCommitMessageProposed;
         RenderLists();
+
+        if (ctx.State.PendingCommitMessage is { } pending)
+            ApplyProposal(pending);
+    }
+
+    // ── Commit messages proposed by an external tool ──────────────────────────────────────────
+
+    private void BuildAgentProposalViews()
+    {
+        _offerText = Text("A coding agent proposed a commit message.", "ColorText", 12);
+        _offerText.VerticalAlignment = VerticalAlignment.Center;
+        _offerText.TextWrapping = TextWrapping.Wrap;
+        _offerUse = TextButton("Use it", () => _ = UseOfferAsync());
+        _offerDismiss = TextButton("Dismiss", DismissOffer);
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        buttons.Children.Add(_offerUse);
+        buttons.Children.Add(_offerDismiss);
+
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 8 };
+        row.Children.Add(_offerText);
+        Grid.SetColumn(buttons, 1);
+        row.Children.Add(buttons);
+
+        _offerBar = new Border
+        {
+            Child = row,
+            BorderThickness = new Thickness(3, 0, 0, 0),
+            Padding = new Thickness(8, 4),
+            IsVisible = false,
+        }.Dyn(Border.BorderBrushProperty, "ColorAccent").Dyn(Border.BackgroundProperty, "ColorSurface2");
+
+        _agentNote = Text("Message proposed by a coding agent. Review the staged files before committing.", "ColorTextMuted", 11);
+        _agentNote.TextWrapping = TextWrapping.Wrap;
+        _agentNote.IsVisible = false;
+    }
+
+    private void OnCommitMessageProposed(object? sender, CommitMessageProposedEventArgs e)
+    {
+        if (!_disposed)
+            ApplyProposal(e.Message);
+    }
+
+    /// <summary>Puts the proposal in the box when that cannot lose anything — the box is empty or
+    /// already holds the same text — and otherwise offers it in the bar above the box. A proposal
+    /// never commits, never touches Amend and never moves focus.</summary>
+    private void ApplyProposal(string proposal)
+    {
+        var current = _message.Text ?? "";
+        var busy = _message.IsReadOnly || _committing;
+        if (!busy && (string.IsNullOrWhiteSpace(current)
+                      || string.Equals(current.Trim(), proposal.Trim(), StringComparison.Ordinal)))
+        {
+            TakeProposal(proposal);
+            return;
+        }
+
+        _offered = proposal;
+        _offerBar!.IsVisible = true;
+        ToolTip.SetTip(_offerBar, proposal.Length <= 300 ? proposal : proposal[..300] + "…");
+    }
+
+    private void TakeProposal(string proposal)
+    {
+        _message.Text = proposal;
+        _ctx.State.ClearPendingCommitMessage();
+        HideOffer();
+        _agentNoteText = _message.Text;
+        _agentNote!.IsVisible = true;
+    }
+
+    private async Task UseOfferAsync()
+    {
+        if (_disposed || _offered is null || _message.IsReadOnly || _committing)
+            return;
+
+        var offer = _ctx.State.PendingCommitMessage ?? _offered;
+        var draft = _message.Text ?? "";
+        if (!string.IsNullOrWhiteSpace(draft)
+            && !string.Equals(draft.Trim(), offer.Trim(), StringComparison.Ordinal)
+            && !await ConfirmReplaceDraftAsync("the coding agent's message", draft.Length))
+            return;
+
+        if (_disposed || _message.IsReadOnly || _committing)
+            return;
+
+        TakeProposal(_ctx.State.PendingCommitMessage ?? offer);
+    }
+
+    private void DismissOffer()
+    {
+        _ctx.State.ClearPendingCommitMessage();
+        HideOffer();
+    }
+
+    private void HideOffer()
+    {
+        _offered = null;
+        if (_offerBar is not null)
+        {
+            _offerBar.IsVisible = false;
+            ToolTip.SetTip(_offerBar, null);
+        }
+    }
+
+    private void HideAgentNote()
+    {
+        _agentNoteText = null;
+        if (_agentNote is not null)
+            _agentNote.IsVisible = false;
+    }
+
+    /// <summary>Asks before a typed draft is thrown away for generated or proposed text.</summary>
+    private Task<bool> ConfirmReplaceDraftAsync(string replacement, int draftLength) =>
+        _dialogs.ConfirmDestructiveAsync("Replace commit message",
+            $"Replace your commit message draft ({draftLength} characters) with {replacement}? Your draft is discarded.",
+            "Replace");
+
+    private const double AiButtonSize = 22;
+    private const string WandTip = "Generate Commit Message";
+
+    /// <summary>The wand (generate) and settings buttons in the message box's bottom-left corner.
+    /// The wand is green while an AI integration is active and grey, with its tooltip still
+    /// shown, when none is.</summary>
+    private Control BuildAiButtons()
+    {
+        _wand = new Button
+        {
+            Width = AiButtonSize,
+            Height = AiButtonSize,
+            Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(1),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+        };
+        ToolTip.SetShowOnDisabled(_wand, true);
+        _wand.Click += (_, _) => GenerationForTesting = GenerateAsync();
+
+        _aiSettings = new Button
+        {
+            Width = AiButtonSize,
+            Height = AiButtonSize,
+            Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Content = IconGlyphPath("settings", 16, "ColorText"),
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+        };
+        ToolTip.SetTip(_aiSettings, "Setup AI Integration");
+        _aiSettings.Click += (_, _) => _aiPanel!.Open(_aiProfiles!.ActiveProfile?.Id);
+
+        _onAiChanged = (_, _) => Dispatcher.UIThread.Post(RefreshAiButtons);
+        _aiProfiles!.Changed += _onAiChanged;
+        RefreshAiButtons();
+
+        return new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(6, 0, 0, 4),
+            Children = { _wand, _aiSettings },
+        };
+    }
+
+    private void RefreshAiButtons()
+    {
+        if (_disposed || _wand is null || _aiProfiles is null)
+            return;
+
+        var enabled = _aiProfiles.ActiveProfile is not null;
+        var generating = _generateCts is not null;
+        _wand.IsEnabled = enabled || generating;
+        _wand.Content = IconGlyphPath("wand_stars", 16, enabled ? "ColorSuccess" : "ColorTextFaint");
+        _wand.Dyn(Button.BorderBrushProperty, enabled ? "ColorSuccess" : "ColorBorder");
+        ToolTip.SetTip(_wand, generating ? "Generating… click to cancel" : WandTip);
+    }
+
+    /// <summary>Writes a commit message for the staged changes into the box. A second click while
+    /// one is running cancels it. The box is read-only while the request runs, and the draft is
+    /// replaced only after the request succeeds.</summary>
+    private async Task GenerateAsync()
+    {
+        if (_generateCts is { } running)
+        {
+            running.Cancel();
+            return;
+        }
+        var profile = _aiProfiles?.ActiveProfile;
+        if (profile is null || _aiPanel is null || _aiGenerator is null)
+            return;
+
+        var amend = _amend.IsChecked == true;
+        if (_status.Staged.Count == 0 && !amend)
+        {
+            _notifications.Publish(NotificationSeverity.Warning, "Stage changes before generating a commit message.");
+            return;
+        }
+
+        var keyless = profile.Kind == AiServiceKind.Custom && !profile.ReadApiKeyFromEnv && string.IsNullOrWhiteSpace(profile.ApiKey);
+        if (!_aiProfiles!.HasApiKey(profile) && !keyless)
+        {
+            _aiPanel.Open(profile.Id);
+            _notifications.Publish(NotificationSeverity.Warning,
+                $"{_aiProfiles.DisplayLabel(profile)} has no API key. Add one in AI Integrations.");
+            return;
+        }
+
+        var draft = _message.Text ?? "";
+        if (!string.IsNullOrWhiteSpace(draft)
+            && !await ConfirmReplaceDraftAsync("an AI-generated message", draft.Length))
+            return;
+        if (_disposed || _generateCts is not null)
+            return;
+
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_ctx.Lifetime);
+        _generateCts = cts;
+        _message.IsReadOnly = true;
+        RefreshAiButtons();
+        try
+        {
+            var result = await _aiGenerator.GenerateAsync(_ctx, amend, cts.Token);
+            if (_disposed || cts.IsCancellationRequested)
+                return;
+
+            _message.Text = result.Message;
+            var label = _aiProfiles.DisplayLabel(_aiProfiles.ActiveProfile ?? profile);
+            _notifications.Publish(NotificationSeverity.Info, $"Commit message generated by {label}.");
+            if (result.ReplacedModel is not null && result.NewModel is not null)
+                _notifications.Publish(NotificationSeverity.Warning,
+                    $"'{result.ReplacedModel}' is no longer available. '{label}' now uses '{result.NewModel}'.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (AiException ex)
+        {
+            if (!_disposed)
+                AiIntegrationsView.PublishError(_notifications, ex);
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed)
+                _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Generating the commit message"), ex.NotificationDetails());
+        }
+        finally
+        {
+            _generateCts = null;
+            cts.Dispose();
+            if (!_disposed)
+            {
+                _message.IsReadOnly = false;
+                RefreshAiButtons();
+            }
+        }
     }
 
     private Button ArrowButton(string icon, string tintKey, string tip, Action onClick)
@@ -729,7 +1038,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private async Task CommitAsync(bool push)
     {
-        if (_committing || _status.Conflicted.Count > 0) return;
+        // While a generated message is on its way, Ctrl+Enter must not commit the old draft just
+        // before the generated text replaces it.
+        if (_committing || _generateCts is not null || _status.Conflicted.Count > 0) return;
         if (string.IsNullOrWhiteSpace(_message.Text) || (_status.Staged.Count == 0 && _amend.IsChecked != true))
         {
             _notifications.Publish(NotificationSeverity.Warning, "Stage changes and enter a message before committing.");
@@ -753,6 +1064,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
         }
 
         _committing = true;
+        // A proposal that arrives while the commit runs is meant for the next commit; only the
+        // one already pending now is spent by this commit.
+        var pendingAtStart = _ctx.State.PendingCommitMessage;
         try
         {
             var profile = _ctx.State.ActiveProfile;
@@ -791,6 +1105,11 @@ public sealed class StagingPanelView : UserControl, IDisposable
             _message.Text = "";
             _amend.IsChecked = false;
             DraftByRepo.Remove(_ctx.Id);
+            if (pendingAtStart is not null)
+                _ctx.State.ClearPendingCommitMessage(onlyIf: pendingAtStart);
+            if (_ctx.State.PendingCommitMessage is null)
+                HideOffer();
+            HideAgentNote();
             await _ctx.State.RefreshAllAsync(_ctx.Lifetime);
             _notifications.Publish(NotificationSeverity.Success, "Commit created.");
 
@@ -804,7 +1123,12 @@ public sealed class StagingPanelView : UserControl, IDisposable
         {
             _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Commit"), ex.NotificationDetails());
         }
-        finally { _committing = false; }
+        finally
+        {
+            _committing = false;
+            if (!_disposed && _ctx.State.PendingCommitMessage is { } pending)
+                ApplyProposal(pending);
+        }
     }
 
     /// <summary>The push half of Commit &amp; Push: the current branch to <c>origin</c> (else the
@@ -876,8 +1200,15 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
+        // Cancelled before the draft is saved: the generated text would otherwise land in a dead
+        // view while the draft cache kept the old text.
+        _generateCts?.Cancel();
+        if (_aiProfiles is not null && _onAiChanged is not null)
+            _aiProfiles.Changed -= _onAiChanged;
         _ctx.State.StatusChanged -= OnStatusChanged;
         _ctx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
+        _ctx.State.CommitMessageProposed -= OnCommitMessageProposed;
         _commitShortcut?.Dispose();
         var msg = _message.Text ?? "";
         if (msg.Length > 0) DraftByRepo[_ctx.Id] = msg;

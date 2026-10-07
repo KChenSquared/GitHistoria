@@ -92,6 +92,11 @@ public sealed record DiffRequest
 
     public int ContextLines { get; init; } = 3;
     public WhitespaceMode Whitespace { get; init; } = WhitespaceMode.Show;
+
+    /// <summary>A 1-based line number in the new (right-hand) file for the viewer to scroll to once
+    /// the diff is shown. The gateway ignores it; it is part of the request so a different line
+    /// reopens the diff.</summary>
+    public int? FocusLine { get; init; }
 }
 
 public enum DiffSource

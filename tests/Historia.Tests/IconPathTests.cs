@@ -159,18 +159,27 @@ public class IconPathTests
                     }
                     break;
                 case 'm':
-                    if (isFirst)
-                    {
-                        curX = NextNum();
-                        curY = NextNum();
-                        startX = curX; startY = curY;
-                        Track(curX, curY);
-                        isFirst = false;
-                    }
+                    // Only the first pair is a moveto and starts a subpath (a later Z returns to
+                    // it); the rest are implicit relative linetos. The very first moveto is absolute.
+                    var movedTo = false;
                     while (HasNum())
                     {
-                        curX += NextNum();
-                        curY += NextNum();
+                        if (isFirst)
+                        {
+                            curX = NextNum();
+                            curY = NextNum();
+                            isFirst = false;
+                        }
+                        else
+                        {
+                            curX += NextNum();
+                            curY += NextNum();
+                        }
+                        if (!movedTo)
+                        {
+                            startX = curX; startY = curY;
+                            movedTo = true;
+                        }
                         Track(curX, curY);
                     }
                     break;

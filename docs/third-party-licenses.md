@@ -273,7 +273,7 @@ SOFTWARE.
 
 ## SourceGit
 
-Components of the diff viewer and conflict editor (diff presenters, custom line number and separator margins, minimap, block navigation, Myers inline diff algorithm, 1:1 conflict-pane alignment, and TextMate theme/grammar registry helper) are adapted from [SourceGit](https://github.com/sourcegit-scm/sourcegit).
+Components of the diff viewer and conflict editor (diff presenters, custom line number and separator margins, minimap, block navigation, Myers inline diff algorithm, 1:1 conflict-pane alignment, and TextMate theme/grammar registry helper), and the AI commit-message feature (the commit-message prompt, the reply cleanup, the extra-headers format and the reasoning-effort levels), are adapted from [SourceGit](https://github.com/sourcegit-scm/sourcegit).
 
 Copyright (c) 2026 sourcegit
 

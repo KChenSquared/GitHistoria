@@ -28,6 +28,13 @@ public sealed record AppSettings
     /// on.</summary>
     public bool AutoFetchEnabled { get; init; } = true;
 
+    /// <summary>lets local tools (<c>historia-cmdr</c>, and the coding agents that call it) ask
+    /// this Historia over its per-user pipe to open a repository, show a commit or diff, or offer a
+    /// commit message to the commit box. It never changes a repository or a setting. Turning it
+    /// off makes every control request answer <c>disabled</c>; second launches still hand over
+    /// their repository paths. Default on.</summary>
+    public bool ExternalControlEnabled { get; init; } = true;
+
     // ── UI preferences ──
     /// <summary>The Light / Dark / System choice; <c>EffectiveTheme</c> is derived. New installs
     /// follow the OS. <see cref="UseCustomTheme"/> can override it.</summary>
@@ -191,6 +198,13 @@ public sealed record AppSettings
 
     /// <summary>Issue-key → URL rules applied to commit messages. Account-free.</summary>
     public IReadOnlyList<IssueAutolinkRule> IssueAutolinks { get; init; } = [];
+
+    /// <summary>The AI integrations, in the order they were added.</summary>
+    public IReadOnlyList<AiServiceProfile> AiServices { get; init; } = [];
+
+    /// <summary>The one active AI integration, or null when AI commit messages are off. An id
+    /// that matches no profile reads as null.</summary>
+    public string? ActiveAiServiceId { get; init; }
 
     /// <summary>Word-wrap diff lines instead of horizontal scroll.</summary>
     public bool DiffWordWrap { get; init; }

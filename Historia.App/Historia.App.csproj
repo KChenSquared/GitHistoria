@@ -36,6 +36,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Historia.Core\Historia.Core.csproj" />
+    <!-- historia-cmdr.exe is built into this output folder so it sits beside Historia.exe. -->
+    <ProjectReference Include="..\Historia.Cmdr\Historia.Cmdr.csproj" />
   </ItemGroup>
 
   <ItemGroup>
