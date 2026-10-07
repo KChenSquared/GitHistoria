@@ -45,21 +45,25 @@ Every scenario script begins with a structured comment header parsed by the Scen
 # @short: <description in 72 characters or fewer>
 ```
 
-Optional long description:
+Structured long description with state and checklist:
 ```bash
 #!/usr/bin/env bash
-# @short: Local1 must merge Local2's pushed commit: conflicts in 3 files
+# @short: Local1 mid-merge (merge style); Local2 the same merge under zdiff3
 # @long:
-#  This scenario reproduces a multi-file merge conflict between Local1 and Local2.
+#  State:
+#  - Local1: mid-merge on feature/login-rework (conflictStyle=merge).
+#  - Local2: mid-merge on feature/login-rework (conflictStyle=zdiff3).
 #
-#  Local1 has fetched origin/main but has not yet merged it.
+#  Check:
+#  - Conflict resolver UI navigation, inline spans, and region resolution.
 ```
 
 Rules:
 1. **Line 1** must be `#!/usr/bin/env bash`.
 2. `# @short:` is **required** and must not exceed 72 characters.
 3. `# @long:` is **optional**. Each line of the body must start with `#  ` (hash followed by two spaces), and paragraph breaks are represented by a lone `#`.
-4. The header block terminates at the first line that does not match this structure. Any ordinary comments or script commands follow after.
+4. Header `@long` blocks should clearly specify `State:` (what Local1 and Local2 contain when opened) and `Check:` (what items to verify in Historia).
+5. The header block terminates at the first line that does not match this structure. Any ordinary comments or script commands follow after.
 
 ---
 
@@ -79,7 +83,11 @@ lab_done
 Rules:
 - `lab_begin` enables `set -euo pipefail`, verifies all environment variables, checks that `Local1`, `Local2`, and `Remotes` are completely empty, exports the deterministic git configuration, and starts the clock.
 - **Never touch paths outside the `SCENARIO_*` variables.**
-- **Never run interactive commands.**
+- **Never run interactive commands.** Standard input is redirected from `/dev/null`.
+- **Pinned configuration:** Always pin repository configuration using `lab_pin_config <dir>` on every local left for Historia. Historia reads the user's system and global configuration, so repository-level settings ensure reproducibility across machines.
+- **Mid-operation scripts:** Scenarios leaving a repository mid-operation (merge, rebase, cherry-pick, revert, etc.) must start from `lab_use_template _base` and cannot use custom templates.
+- **Do not commit after conflicts:** Never invoke `lab_commit` after triggering an expected conflict, as `lab_commit` executes `git add -A` which would mark all conflicts resolved.
+- **Byte properties and line endings:** Script files must strictly use LF line endings and contain no CR, BOM, or NUL bytes. Special file contents (BOM, CRLF, NUL, Latin-1, UTF-16) must be generated dynamically using `printf` escapes or `iconv`.
 
 ---
 
@@ -110,19 +118,8 @@ Load it at the beginning of a scenario:
 lab_use_template _base
 ```
 
-### Script-Specific Templates and Caching
-A script may snapshot its own state into `templates/<SCENARIO_NAME>/` via `lab_save_template`:
-
-```bash
-if lab_has_template; then
-    lab_use_template
-else
-    # Build scenario from scratch...
-    lab_save_template
-fi
-```
-
-**Staleness Caveat:** When using the cache pattern, subsequent runs reuse the cached snapshot. If you modify the script generation logic, delete the `templates/<script-name>/` directory so ScenarioLab rebuilds it.
+### Template Limitations for Mid-Operation States
+Per-script templates cannot snapshot working trees left in conflict (since `lab_save_template` archives `.git` only, and `lab_use_template` runs `git reset --hard`). Mid-operation scripts build directly from `_base` in a few seconds. Under headless execution (`SCENARIO_HEADLESS=1`), `lab_save_template` is safely treated as a no-op so tracked template directories are never modified during test runs.
 
 ---
 
@@ -144,16 +141,45 @@ To ensure identical commit SHAs across repeated runs, `scenario.sh` enforces:
 
 ---
 
-## 9. Self-Checks with `lab_assert`
+## 9. Helper Library Functions
 
-Use `lab_assert <description> <command...>` to verify that the scenario created the exact intended git state:
+`lib/scenario.sh` provides helpers for building, controlling, and asserting scenario state:
+
+### Repository Configuration & Requirements
+- **`lab_pin_config <dir> [key value]...`**: Pins `core.autocrlf false` and `merge.conflictStyle merge` in `<dir>`'s local config, followed by any additional key-value overrides.
+- **`lab_require <command> <reason>`**: Checks if `<command>` is runnable on the current system. If not, prints `[SKIP] <reason>` and exits with code 3.
+
+### Operation & Conflict Execution
+- **`lab_expect_conflict <dir> <desc> <git-command...>`**: Runs the specified git command in `<dir>` and verifies that `git ls-files -u` is non-empty, regardless of the process exit code (`checkout -m` exits 0 on conflict, whereas merge/rebase/pick exit 1). Fails if no unmerged files exist.
+- **`lab_gen_lines <file> <count> <prefix>`**: Deterministically generates `<count>` lines using `awk` with format `"<prefix> %06d <fixed filler>"` without randomness.
+
+### Assertions & State Checks
+- **`lab_assert <desc> <command...>`**: Evaluates `<command...>`; prints `[FAIL] <desc>` and exits 1 if the command returns non-zero.
+- **`lab_assert_status <dir> <path> <XY>`**: Verifies that `git status --porcelain=v1 -- <path>` starts with `${XY} ` (e.g. `UU`, `AA`, `UD`, `DU`, `AU`, `UA`, `DD`, `M `, ` M`, `MM`, `R `).
+- **`lab_count_markers <file> <char> [size] [encoding]`**: Returns the number of conflict marker lines starting with exactly `<size>` repeats (default 7) of `<char>` (`<`, `|`, `=`, `>`) followed by a space, `\r`, or end-of-line. When `<encoding>` is supplied, decodes through `iconv -f <enc> -t UTF-8` first.
+- **`lab_assert_op <dir> <none|merge|rebase|cherry-pick|revert|bisect>`**: Inspects git sequencer markers (`rebase-merge/`, `rebase-apply/`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `MERGE_HEAD`, `BISECT_LOG`) and asserts that the operation matches the expected state.
+- **`lab_done`**: Prints commit logs for Local 1, Local 2, and bare remotes, reports detected operation state and porcelain status for each local repository, and prints completion success banner.
+
+---
+
+## 9.1. Headless Runner and Linter
+
+`lib/run-headless.sh` allows running and validating scenarios from the command line without opening the ScenarioLab GUI:
 
 ```bash
-lab_assert "Local1 is 1 ahead and 1 behind origin" [ "$AHEAD_BEHIND" = "1	1" ]
-lab_assert "mainRemote has release tag v1.0.0" git -C "$SCENARIO_REMOTES/ui-kit" rev-parse --verify refs/tags/v1.0.0
+bash Historia.ScenarioLab/lib/run-headless.sh [--twice] [--keep] [--lint-only] [path...]
 ```
 
-If a command fails, `lab_assert` outputs `[FAIL] <description>` and halts execution immediately.
+Options:
+- `path...`: One or more script files or directories (default: `scripts/`).
+- `--lint-only`: Checks script formatting, headers, uniqueness, line endings, and safety rules without executing.
+- `--twice`: Runs each scenario twice in isolated sandboxes and compares cryptographic fingerprints (refs, HEAD, index stages, porcelain status, sequencer files, and file SHA1s) to ensure strict determinism across runs.
+- `--keep`: Preserves the temporary sandbox directories instead of removing them on exit.
+
+Exit codes:
+- `0`: All scripts PASSED or SKIPPED cleanly.
+- `1`: One or more scripts FAILED or lint errors occurred.
+- `3`: (Internal per-script exit code for SKIPPED requirements).
 
 ---
 
