@@ -12,13 +12,13 @@ public static class CommitMessagePrompt
     /// <summary>
     /// The instruction, the branch, the complete list of staged changes, then the diff of each
     /// file in path order. With a <paramref name="capBytes"/>, whole-file diffs are added until the
-    /// next one would exceed it; the rest are listed as omitted. Status letters are
-    /// <c>A M D T R C</c>.
+    /// next one would exceed it, or was never read because it lay past the cap; the rest are listed
+    /// as omitted. Status letters are <c>A M D T R C</c>.
     /// </summary>
     public static string Build(
         string branch,
         IReadOnlyList<(string Status, string Path, string? OldPath)> files,
-        IReadOnlyList<(string Path, string Patch)> diffs,
+        IReadOnlyList<(string Path, string? Patch)> diffs,
         long? capBytes,
         string additionalPrompt)
     {
@@ -48,14 +48,14 @@ public static class CommitMessagePrompt
             sb.Append("### ").AppendLine(path);
             if (!capped && capBytes is { } cap)
             {
-                var size = Encoding.UTF8.GetByteCount(patch);
-                if (used + size > cap)
+                var size = patch is null ? long.MaxValue : Encoding.UTF8.GetByteCount(patch);
+                if (patch is null || used + size > cap)
                     capped = true;
                 else
                     used += size;
             }
 
-            if (capped)
+            if (capped || patch is null)
             {
                 sb.AppendLine(OmittedDiffNote);
                 continue;

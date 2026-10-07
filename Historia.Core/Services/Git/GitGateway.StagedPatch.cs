@@ -20,7 +20,8 @@ public sealed partial class GitGateway
         "--diff-algorithm=minimal",
     ];
 
-    public async Task<IReadOnlyList<(string Path, string Patch)>> GetStagedPatchesAsync(bool againstHeadParent, CancellationToken ct = default)
+    public async Task<IReadOnlyList<(string Path, string? Patch)>> GetStagedPatchesAsync(
+        bool againstHeadParent, long? maxPatchBytes = null, CancellationToken ct = default)
     {
         var baseArgs = new List<string>(StagedPatchFlags);
         if (againstHeadParent)
@@ -31,26 +32,38 @@ public sealed partial class GitGateway
             Arguments = ["diff", .. baseArgs],
             WorkingDirectory = context.RepositoryPath,
             RawStandardOutput = true,
-            MaxStandardOutputBytes = MaxStagedPatchBytes,
+            MaxStandardOutputBytes = maxPatchBytes is { } budget ? Math.Min(budget, MaxStagedPatchBytes) : MaxStagedPatchBytes,
             Timeout = TimeSpan.FromSeconds(60),
             ExtraEnvironment = LiteralPathspecEnv,
         }, ct).ConfigureAwait(false);
 
-        if (patch.OutputTruncated)
+        var truncated = patch.OutputTruncated;
+        if (truncated && maxPatchBytes is null)
             throw new HistoriaGitException(GitErrorKind.Unknown, "The staged changes are too large to read.");
-        if (!patch.IsSuccess)
+        if (!truncated && !patch.IsSuccess)
             throw HistoriaGitException.FromCli(patch, "GetStagedPatches");
 
         var chunks = SplitPatch(patch.StandardOutput);
-        if (chunks.Count == 0)
+        // The read stopped mid-file, so the last chunk is incomplete.
+        if (truncated && chunks.Count > 0)
+            chunks.RemoveAt(chunks.Count - 1);
+        if (!truncated && chunks.Count == 0)
             return [];
 
-        var names = await ReadStagedPathsAsync(baseArgs, ct).ConfigureAwait(false);
-        var paired = names.Count == chunks.Count;
+        var owners = await ReadChunkOwnersAsync(baseArgs, ct).ConfigureAwait(false);
+        var result = new List<(string, string?)>(Math.Max(chunks.Count, owners.Count));
+        if (!truncated || chunks.Count > owners.Count)
+        {
+            var paired = owners.Count == chunks.Count;
+            for (var i = 0; i < chunks.Count; i++)
+                result.Add((paired ? owners[i] : PathFromHeader(chunks[i]), chunks[i]));
+            return result;
+        }
 
-        var result = new List<(string, string)>(chunks.Count);
-        for (var i = 0; i < chunks.Count; i++)
-            result.Add((paired ? names[i] : PathFromHeader(chunks[i]), chunks[i]));
+        // The chunks read are a prefix of git's output, so they pair with a prefix of the owners;
+        // every file past the read comes back without a patch.
+        for (var i = 0; i < owners.Count; i++)
+            result.Add((owners[i], i < chunks.Count ? chunks[i] : null));
         return result;
     }
 
@@ -68,7 +81,9 @@ public sealed partial class GitGateway
             : await GetEmptyTreeIdAsync(ct).ConfigureAwait(false);
     }
 
-    private async Task<List<string>> ReadStagedPathsAsync(IReadOnlyList<string> baseArgs, CancellationToken ct)
+    /// <summary>The path each patch chunk belongs to, in git's order. A type change prints as a
+    /// deletion and an addition, so its path owns two chunks; an unmerged path prints none.</summary>
+    private async Task<List<string>> ReadChunkOwnersAsync(IReadOnlyList<string> baseArgs, CancellationToken ct)
     {
         var listing = await cli.RunAsync(new GitCliRequest
         {
@@ -84,17 +99,21 @@ public sealed partial class GitGateway
             throw HistoriaGitException.FromCli(listing, "GetStagedPatches");
 
         var fields = listing.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        var paths = new List<string>();
+        var owners = new List<string>();
         // Each entry is STATUS NUL path NUL; a rename or copy carries the old path first.
         for (var i = 0; i < fields.Length;)
         {
-            var takes = fields[i].StartsWith('R') || fields[i].StartsWith('C') ? 2 : 1;
+            var status = fields[i];
+            var takes = status.StartsWith('R') || status.StartsWith('C') ? 2 : 1;
             if (i + takes >= fields.Length)
                 break;
-            paths.Add(fields[i + takes]);
+            var path = fields[i + takes];
+            var chunkCount = status.StartsWith('T') ? 2 : status.StartsWith('U') ? 0 : 1;
+            for (var c = 0; c < chunkCount; c++)
+                owners.Add(path);
             i += takes + 1;
         }
-        return paths;
+        return owners;
     }
 
     private static List<string> SplitPatch(string text)

@@ -10,7 +10,7 @@ public class CommitMessagePromptTests
         ("D", "z.txt", null),
     ];
 
-    private static IReadOnlyList<(string Path, string Patch)> Diffs(params (string, string)[] d) => d;
+    private static IReadOnlyList<(string Path, string? Patch)> Diffs(params (string, string?)[] d) => d;
 
     [Fact]
     public void Unlimited_includes_every_diff_in_path_order()
@@ -96,5 +96,16 @@ public class CommitMessagePromptTests
         for (var i = text.IndexOf(needle, StringComparison.Ordinal); i >= 0; i = text.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
             count++;
         return count;
+    }
+
+    [Fact]
+    public void A_diff_that_was_never_read_is_omitted_with_every_file_after_it()
+    {
+        var prompt = CommitMessagePrompt.Build("main", Files,
+            Diffs(("a.txt", "AAA"), ("new name.txt", null), ("z.txt", "ZZZ")), 1_000, "");
+
+        Assert.Contains("AAA", prompt);
+        Assert.DoesNotContain("ZZZ", prompt);
+        Assert.Equal(2, CountOf(prompt, CommitMessagePrompt.OmittedDiffNote));
     }
 }

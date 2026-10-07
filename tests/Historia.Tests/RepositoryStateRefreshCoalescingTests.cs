@@ -490,7 +490,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         public Task<IReadOnlyList<FileStatusEntry>> GetCommitFilesAsync(GitObjectId id, int parentIndex, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default) => Task.FromResult<(string?, string?)>((null, null));
         public Task<FileDiff> GetFileDiffAsync(DiffRequest request, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<IReadOnlyList<(string Path, string Patch)>> GetStagedPatchesAsync(bool againstHeadParent, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<IReadOnlyList<(string Path, string? Patch)>> GetStagedPatchesAsync(bool againstHeadParent, long? maxPatchBytes = null, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<(string? Name, string? Email)> GetGlobalIdentityAsync(CancellationToken ct = default) => Task.FromResult<(string?, string?)>((null, null));
         public Task<bool> GetGpgSignConfiguredAsync(CancellationToken ct = default) => Task.FromResult(false);
 

@@ -7,10 +7,10 @@ public sealed class GitGatewayStagedPatchTests : IAsyncDisposable
 
     public async ValueTask DisposeAsync() => await _host.DisposeAsync();
 
-    private async Task<IReadOnlyList<(string Path, string Patch)>> Staged(TestRepositoryBuilder repo, bool amend = false)
+    private async Task<IReadOnlyList<(string Path, string? Patch)>> Staged(TestRepositoryBuilder repo, bool amend = false, long? maxPatchBytes = null)
     {
         await using var ctx = _host.Open(repo.Path);
-        return await ctx.Gateway.GetStagedPatchesAsync(amend);
+        return await ctx.Gateway.GetStagedPatchesAsync(amend, maxPatchBytes);
     }
 
     [Fact]
@@ -169,5 +169,55 @@ public sealed class GitGatewayStagedPatchTests : IAsyncDisposable
         var patch = Assert.Single(await Staged(repo)).Patch;
 
         Assert.DoesNotContain("\r\n", patch);
+    }
+
+    [Fact]
+    public async Task With_a_byte_budget_files_past_it_are_listed_without_a_patch()
+    {
+        using var repo = TestRepositoryBuilder.Create();
+        repo.WriteFile("a.txt", "a\n");
+        repo.Stage().Commit("initial");
+        repo.WriteFile("a.txt", "a\nb\n");
+        repo.WriteFile("big.txt", string.Concat(Enumerable.Repeat("0123456789abcdef\n", 20_000)));
+        repo.WriteFile("z.txt", "z\n");
+        repo.Stage();
+
+        var patches = await Staged(repo, maxPatchBytes: 4096);
+
+        Assert.Equal(["a.txt", "big.txt", "z.txt"], patches.Select(p => p.Path).ToArray());
+        Assert.Contains("+b", patches[0].Patch);
+        Assert.Null(patches[1].Patch);
+        Assert.Null(patches[2].Patch);
+    }
+
+    [Fact]
+    public async Task Without_a_budget_every_patch_is_read()
+    {
+        using var repo = TestRepositoryBuilder.Create();
+        repo.WriteFile("big.txt", string.Concat(Enumerable.Repeat("0123456789abcdef\n", 20_000)));
+        repo.Stage();
+
+        var patch = Assert.Single(await Staged(repo)).Patch;
+
+        Assert.NotNull(patch);
+        Assert.Contains("+0123456789abcdef", patch);
+    }
+
+    [Fact]
+    public async Task A_type_change_owns_both_of_its_chunks_and_later_paths_stay_paired()
+    {
+        using var repo = TestRepositoryBuilder.Create();
+        repo.WriteFile("f.txt", "hello\n");
+        repo.WriteFile("g.txt", "x\n");
+        repo.Stage().Commit("initial");
+        var blob = repo.Git("hash-object", "-w", "g.txt").Trim();
+        repo.Git("update-index", "--cacheinfo", $"120000,{blob},f.txt");
+        repo.WriteFile("g.txt", "x\ny\n");
+        repo.Stage("g.txt");
+
+        var patches = await Staged(repo);
+
+        Assert.Equal(["f.txt", "f.txt", "g.txt"], patches.Select(p => p.Path).ToArray());
+        Assert.Contains("+y", patches[2].Patch);
     }
 }

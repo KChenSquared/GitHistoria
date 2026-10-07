@@ -38,12 +38,14 @@ public sealed class CommitMessageGenerator(IAiProfileService profiles, IAiClient
             model = picked = await SwitchModelAsync(profile, client, key, "", ct).ConfigureAwait(false);
         }
 
-        var patches = await gateway.GetStagedPatchesAsync(amend, ct).ConfigureAwait(false);
+        // With a size limit, git's output is read only as far as the prompt can use.
+        var cap = AiDiffCap.ToBytes(profile.DiffCapUnits);
+        var patches = await gateway.GetStagedPatchesAsync(amend, cap, ct).ConfigureAwait(false);
         if (patches.Count == 0)
             throw new AiException(AiErrorKind.NothingStaged, "Stage changes before generating a commit message.");
 
         var files = amend || status.Staged.Count == 0 ? FilesFromPatches(patches) : FilesFromStatus(status.Staged);
-        var prompt = CommitMessagePrompt.Build(branch, files, patches, AiDiffCap.ToBytes(profile.DiffCapUnits), profile.AdditionalPrompt);
+        var prompt = CommitMessagePrompt.Build(branch, files, patches, cap, profile.AdditionalPrompt);
 
         using var op = AppLog.Operation("ai",
             $"commit message  profile={profile.Id} kind={profile.Kind} model={model} files={files.Count} promptBytes={Encoding.UTF8.GetByteCount(prompt)}");
@@ -137,12 +139,18 @@ public sealed class CommitMessageGenerator(IAiProfileService profiles, IAiClient
     };
 
     /// <summary>The change list recovered from each patch's extended header, for an amend (the
-    /// status list doesn't cover the amended commit's own changes).</summary>
-    private static List<(string Status, string Path, string? OldPath)> FilesFromPatches(IReadOnlyList<(string Path, string Patch)> patches)
+    /// status list doesn't cover the amended commit's own changes). A file past the size limit has
+    /// no patch to read and is listed as modified.</summary>
+    private static List<(string Status, string Path, string? OldPath)> FilesFromPatches(IReadOnlyList<(string Path, string? Patch)> patches)
     {
         var files = new List<(string, string, string?)>(patches.Count);
         foreach (var (path, patch) in patches)
         {
+            if (patch is null)
+            {
+                files.Add(("M", path, null));
+                continue;
+            }
             var header = patch.Length > 2048 ? patch[..2048] : patch;
             string? oldPath = null;
             string status;
