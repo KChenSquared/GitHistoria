@@ -131,4 +131,23 @@ public sealed class RepositoryStateCommitProposalTests : IAsyncDisposable
             public void Dispose() { }
         }
     }
+
+    [Fact]
+    public void Clearing_a_spent_proposal_keeps_a_newer_one()
+    {
+        var (state, ui) = NewState();
+        state.ProposeCommitMessage("feat: first");
+        ui.Drain();
+        var spent = state.PendingCommitMessage;
+
+        state.ProposeCommitMessage("feat: second");
+        ui.Drain();
+        state.ClearPendingCommitMessage(onlyIf: spent);
+
+        Assert.Equal("feat: second", state.PendingCommitMessage);
+
+        state.ClearPendingCommitMessage(onlyIf: state.PendingCommitMessage);
+
+        Assert.Null(state.PendingCommitMessage);
+    }
 }

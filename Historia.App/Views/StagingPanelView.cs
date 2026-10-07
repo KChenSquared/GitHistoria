@@ -1064,6 +1064,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
         }
 
         _committing = true;
+        // A proposal that arrives while the commit runs is meant for the next commit; only the
+        // one already pending now is spent by this commit.
+        var pendingAtStart = _ctx.State.PendingCommitMessage;
         try
         {
             var profile = _ctx.State.ActiveProfile;
@@ -1102,8 +1105,10 @@ public sealed class StagingPanelView : UserControl, IDisposable
             _message.Text = "";
             _amend.IsChecked = false;
             DraftByRepo.Remove(_ctx.Id);
-            _ctx.State.ClearPendingCommitMessage();
-            HideOffer();
+            if (pendingAtStart is not null)
+                _ctx.State.ClearPendingCommitMessage(onlyIf: pendingAtStart);
+            if (_ctx.State.PendingCommitMessage is null)
+                HideOffer();
             HideAgentNote();
             await _ctx.State.RefreshAllAsync(_ctx.Lifetime);
             _notifications.Publish(NotificationSeverity.Success, "Commit created.");
@@ -1118,7 +1123,12 @@ public sealed class StagingPanelView : UserControl, IDisposable
         {
             _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Commit"), ex.NotificationDetails());
         }
-        finally { _committing = false; }
+        finally
+        {
+            _committing = false;
+            if (!_disposed && _ctx.State.PendingCommitMessage is { } pending)
+                ApplyProposal(pending);
+        }
     }
 
     /// <summary>The push half of Commit &amp; Push: the current branch to <c>origin</c> (else the

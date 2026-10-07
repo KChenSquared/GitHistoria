@@ -89,8 +89,10 @@ public interface IRepositoryStateService
     void ProposeCommitMessage(string message);
 
     /// <summary>Forgets the pending proposal. Only the commit box calls this, once it has taken
-    /// the text or the user has dismissed it. Raises no event.</summary>
-    void ClearPendingCommitMessage();
+    /// the text or the user has dismissed it. With <paramref name="onlyIf"/>, it forgets the
+    /// proposal only while that same proposal is still the pending one, so a newer one survives.
+    /// Raises no event.</summary>
+    void ClearPendingCommitMessage(string? onlyIf = null);
 
     /// <summary>Opens or closes the center diff. Idempotent, except that an equal request with a
     /// <see cref="DiffRequest.FocusLine"/> is raised again so the viewer re-scrolls to that line.

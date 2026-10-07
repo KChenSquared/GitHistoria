@@ -229,10 +229,13 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         Raise(() => CommitMessageProposed?.Invoke(this, new CommitMessageProposedEventArgs(message)));
     }
 
-    public void ClearPendingCommitMessage()
+    public void ClearPendingCommitMessage(string? onlyIf = null)
     {
         lock (_sync)
-            _pendingCommitMessage = null;
+        {
+            if (onlyIf is null || ReferenceEquals(_pendingCommitMessage, onlyIf))
+                _pendingCommitMessage = null;
+        }
     }
 
     public void SetActiveProfile(GitProfile? profile)
