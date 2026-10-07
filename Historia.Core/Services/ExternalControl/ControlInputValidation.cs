@@ -1,7 +1,8 @@
 namespace Historia.Services.ExternalControl;
 
-/// <summary>Validation of everything an external caller supplies. Pure functions, used on both
-/// ends of the pipe so a hostile value is refused before it can reach a git argument list.</summary>
+/// <summary>Validation of everything an external caller supplies, used on both ends of the pipe so
+/// a hostile value is refused before it can reach a git argument list. Pure functions, except
+/// <see cref="MatchOnDiskCase"/>, which reads a directory listing.</summary>
 public static class ControlInputValidation
 {
     public const int MaxRevisionLength = 256;
@@ -81,6 +82,54 @@ public static class ControlInputValidation
 
         relative = candidate;
         return true;
+    }
+
+    /// <summary>
+    /// On a case-insensitive file system, rewrites each segment of the repo-relative
+    /// <paramref name="relative"/> that exists under <paramref name="repoRoot"/> to its spelling on
+    /// disk, because git matches a path case-sensitively even there: <c>src/foo.cs</c> would find
+    /// nothing for a tracked <c>Src/Foo.cs</c>. Segments that are not on disk (a deleted file) are
+    /// kept as given. Reads the directory listing only.
+    /// </summary>
+    public static string MatchOnDiskCase(string repoRoot, string relative)
+    {
+        if (!(OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()))
+            return relative;
+
+        var segments = relative.Split('/');
+        var dir = repoRoot;
+        var options = new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = true };
+        for (var i = 0; i < segments.Length; i++)
+        {
+            string? onDisk = null;
+            try
+            {
+                if (!Directory.Exists(dir))
+                    break;
+                foreach (var entry in Directory.EnumerateFileSystemEntries(dir, "*", options))
+                {
+                    var name = System.IO.Path.GetFileName(entry);
+                    if (string.Equals(name, segments[i], StringComparison.Ordinal))
+                    {
+                        onDisk = name;
+                        break;
+                    }
+                    if (onDisk is null && string.Equals(name, segments[i], StringComparison.OrdinalIgnoreCase))
+                        onDisk = name;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                break;
+            }
+
+            if (onDisk is null)
+                break;
+            segments[i] = onDisk;
+            dir = System.IO.Path.Combine(dir, onDisk);
+        }
+
+        return string.Join('/', segments);
     }
 
     /// <summary>

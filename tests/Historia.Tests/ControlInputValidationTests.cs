@@ -175,4 +175,32 @@ public sealed class ControlInputValidationTests
     {
         Assert.False(ControlInputValidation.NormalizeCommitMessage(new string('é', 9 * 1024), out _, out _));
     }
+
+    [Fact]
+    public void Existing_segments_take_their_on_disk_case_and_missing_ones_are_kept()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ctl-case-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "Src", "Views"));
+        File.WriteAllText(Path.Combine(root, "Src", "Views", "Foo.cs"), "");
+        try
+        {
+            var foo = ControlInputValidation.MatchOnDiskCase(root, "src/views/foo.cs");
+            var gone = ControlInputValidation.MatchOnDiskCase(root, "src/views/Gone.cs");
+
+            if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
+            {
+                Assert.Equal("Src/Views/Foo.cs", foo);
+                Assert.Equal("Src/Views/Gone.cs", gone);
+            }
+            else
+            {
+                Assert.Equal("src/views/foo.cs", foo);
+                Assert.Equal("src/views/Gone.cs", gone);
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }

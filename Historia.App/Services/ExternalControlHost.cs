@@ -150,6 +150,8 @@ public sealed class ExternalControlHost
         {
             return (ControlResponse.Fail(ControlError.PathInvalid, "That path is not inside the repository."), name);
         }
+        if (relativePath is not null)
+            relativePath = ControlInputValidation.MatchOnDiskCase(root, relativePath);
 
         await OnUiAsync(() => _workspace.EnsureInitialized(ctx)).ConfigureAwait(false);
         if (request.Verb != ControlVerb.Open)
