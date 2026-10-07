@@ -273,12 +273,9 @@ public class ConflictResolverViewTests : IDisposable
         };
 
         await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        await PumpUntilAsync(() => view.ChangedOnDiskBannerForTesting.IsVisible, "the changed-on-disk banner");
 
         Assert.Contains("dirty line", view.ResultEditorForTesting.Text);
-        Assert.True(view.ChangedOnDiskBannerForTesting.IsVisible);
     }
 
     [AvaloniaFact]
@@ -339,7 +336,7 @@ public class ConflictResolverViewTests : IDisposable
 
         _fixture.SetOperation(OperationState.Merging);
         _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
+        await RefreshUntilAsync(() => _context.State.IsConflictSessionActive, "the conflict session to start");
 
         var centerHost = new ContentControl();
         var graph = new Border();
@@ -354,8 +351,7 @@ public class ConflictResolverViewTests : IDisposable
 
         // Mark resolved
         _fixture.MarkResolved();
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await RefreshUntilAsync(() => _context.State.Status.Conflicted.Count == 0, "the resolved file to leave the conflict list");
 
         // Center pane should still retain the resolver because KeepConflictResolverOpen is true and op is Merging
         Assert.NotNull(_conflictHost.TryGet(_context));
@@ -371,7 +367,7 @@ public class ConflictResolverViewTests : IDisposable
 
         _fixture.SetOperation(OperationState.Rebasing);
         _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
+        await RefreshUntilAsync(() => _context.State.IsConflictSessionActive, "the conflict session to start");
 
         var centerHost = new ContentControl();
         var graph = new Border();
@@ -407,10 +403,8 @@ public class ConflictResolverViewTests : IDisposable
 
         _fixture.SetOperation(OperationState.Bisecting);
         await _context.State.RefreshStatusAsync();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        await PumpUntilAsync(() => repoView.OpBoxForTesting.IsVisible, "the operation banner");
 
-        Assert.True(repoView.OpBoxForTesting.IsVisible);
         Assert.False(repoView.OpContinueButtonForTesting.IsEffectivelyVisible);
 
         window.Close();
@@ -433,12 +427,7 @@ public class ConflictResolverViewTests : IDisposable
         Assert.True(view.HasUnsavedWork);
 
         _fixture.ClearOperation();
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.True(view.ExternalEndedBannerForTesting.IsVisible);
+        await RefreshUntilAsync(() => view.ExternalEndedBannerForTesting.IsVisible, "the operation-ended banner");
     }
 
     [AvaloniaFact]
@@ -529,10 +518,8 @@ public class ConflictResolverViewTests : IDisposable
 
         // Type character in line 0 ("header")
         view.ResultEditorForTesting.Document.Insert(6, "!");
-        await Task.Delay(250);
-        Dispatcher.UIThread.RunJobs();
+        await PumpUntilAsync(() => view.OursEditorForTesting.Document.Text.Contains("header!"), "the edit to reach the panes");
 
-        Assert.Contains("header!", view.OursEditorForTesting.Document.Text);
         Assert.Contains("header!", view.TheirsEditorForTesting.Document.Text);
     }
 
@@ -613,7 +600,7 @@ public class ConflictResolverViewTests : IDisposable
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash1" };
 
         _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
+        await RefreshUntilAsync(() => _context.State.IsConflictSessionActive, "the conflict session to start");
 
         var centerHost = new ContentControl();
         var graph = new Border();
@@ -669,11 +656,7 @@ public class ConflictResolverViewTests : IDisposable
             await ws.CloseAsync(_context);
         });
 
-        Dispatcher.UIThread.RunJobs();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Null(_conflictHost.TryGet(_context));
+        await PumpUntilAsync(() => _conflictHost.TryGet(_context) is null, "the closed tab's resolver to be released");
     }
 
     [AvaloniaFact]
@@ -692,11 +675,7 @@ public class ConflictResolverViewTests : IDisposable
         _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-2" };
         _conflicts.Conflicts = [];
         await _context.State.RefreshStatusAsync();
-
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.False(_context.State.KeepConflictResolverOpen);
+        await PumpUntilAsync(() => !_context.State.KeepConflictResolverOpen, "keep-open to clear");
     }
 
     [AvaloniaFact]
@@ -1025,10 +1004,8 @@ public class ConflictResolverViewTests : IDisposable
         // Advance stop
         _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-2", OursTitle = "Ours2", TheirsTitle = "Theirs2" };
         await _context.State.RefreshStatusAsync();
-        await Task.Delay(50);
-        Dispatcher.UIThread.RunJobs();
+        await PumpUntilAsync(() => view.OursCaptionForTesting.Text == "Ours · Ours2", "the next stop's labels");
 
-        Assert.Equal("Ours · Ours2", view.OursCaptionForTesting.Text);
         Assert.Equal("Theirs · Theirs2", view.TheirsCaptionForTesting.Text);
     }
 
@@ -1052,10 +1029,7 @@ public class ConflictResolverViewTests : IDisposable
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash2" };
         await _context.State.RefreshStatusAsync();
-        await Task.Delay(50);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.False(view.ResultEditorForTesting.IsReadOnly);
+        await PumpUntilAsync(() => !view.ResultEditorForTesting.IsReadOnly, "the reconflicted file to become editable");
     }
 
     [AvaloniaFact]
@@ -1161,11 +1135,9 @@ public class ConflictResolverViewTests : IDisposable
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "different disk text", DiskHash = "hash2" };
 
         await _context.State.RefreshStatusAsync();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        await PumpUntilAsync(() => view.ChangedOnDiskBannerForTesting.IsVisible, "the changed-on-disk banner");
 
         Assert.Contains("unsaved edit", view.ResultEditorForTesting.Text);
-        Assert.True(view.ChangedOnDiskBannerForTesting.IsVisible);
     }
 
     [AvaloniaFact]
@@ -1187,12 +1159,10 @@ public class ConflictResolverViewTests : IDisposable
         _conflicts.SideLabels = _conflicts.SideLabels with { StopId = "stop-2" };
 
         await _context.State.RefreshStatusAsync();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        await PumpUntilAsync(() => view.ChangedOnDiskBannerForTesting.IsVisible, "the changed-on-disk banner");
 
         Assert.Contains("unsaved edit in f", view.ResultEditorForTesting.Text);
         Assert.Equal("f.txt", view.CurrentFileForTesting?.FilePath);
-        Assert.True(view.ChangedOnDiskBannerForTesting.IsVisible);
     }
 
     [AvaloniaFact]
@@ -1212,10 +1182,8 @@ public class ConflictResolverViewTests : IDisposable
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "reloaded stop 2 text", DiskHash = "hash2" };
 
         await _context.State.RefreshStatusAsync();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        await PumpUntilAsync(() => view.ResultEditorForTesting.Text == "reloaded stop 2 text", "the next stop's text");
 
-        Assert.Equal("reloaded stop 2 text", view.ResultEditorForTesting.Text);
         Assert.False(view.ChangedOnDiskBannerForTesting.IsVisible);
     }
 
@@ -1454,11 +1422,8 @@ public class ConflictResolverViewTests : IDisposable
         _conflicts.LoadWorkingCopyCalls = 0;
 
         await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        await PumpUntilAsync(() => _conflicts.GetDiskHashCalls >= 1, "the disk-hash check");
 
-        Assert.True(_conflicts.GetDiskHashCalls >= 1);
         Assert.Equal(0, _conflicts.LoadWorkingCopyCalls);
     }
 
@@ -1484,11 +1449,9 @@ public class ConflictResolverViewTests : IDisposable
             return Task.FromResult(_conflicts.Conflicts);
         };
 
-        // Fire status change 1 and wait for coalesce timer (50ms)
+        // Fire status change 1 and wait for it to pass the coalesce timer (50ms)
         await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        await PumpUntilAsync(() => callCount >= 1, "the first conflict refresh");
 
         // Refresh 1 is now in-flight, awaiting tcs.Task in GetConflictsAsync
         Assert.Equal(1, callCount);
@@ -1509,9 +1472,7 @@ public class ConflictResolverViewTests : IDisposable
 
         // Complete the in-flight refresh 1
         tcs.SetResult(_conflicts.Conflicts);
-        Dispatcher.UIThread.RunJobs();
-        await Task.Delay(50);
-        Dispatcher.UIThread.RunJobs();
+        await PumpUntilAsync(() => callCount >= 2, "the pending conflict refresh");
 
         // Now the second (pending) refresh should have run and finished
         Assert.Equal(2, callCount);
@@ -1539,9 +1500,8 @@ public class ConflictResolverViewTests : IDisposable
         _context.State.SetSelectedConflictPath("g.txt");
         Dispatcher.UIThread.RunJobs();
 
-        // Wait well past debounce (150ms)
-        await Task.Delay(300);
-        Dispatcher.UIThread.RunJobs();
+        // Wait past debounce (150ms) for both panes to build
+        await PumpUntilAsync(() => ConflictPaneBuilder.BuildCallCount - initialCount >= 2, "the panes to build");
 
         int finalCount = ConflictPaneBuilder.BuildCallCount;
         Assert.Equal(2, finalCount - initialCount);
@@ -1564,11 +1524,7 @@ public class ConflictResolverViewTests : IDisposable
         Assert.Empty(view.SnapshotForTesting.Analyses);
 
         // Part 1: Region analysis arrives after switch
-        for (int i = 0; i < 50 && (view.SnapshotForTesting?.Analyses.Count ?? 0) == 0; i++)
-        {
-            await Task.Delay(20);
-            Dispatcher.UIThread.RunJobs();
-        }
+        await PumpUntilAsync(() => (view.SnapshotForTesting?.Analyses.Count ?? 0) > 0, "the region analysis");
         Assert.Equal(2, view.SnapshotForTesting!.Analyses.Count);
 
         // Part 2: Switch to g.txt and immediately change document so version moves
@@ -1577,6 +1533,12 @@ public class ConflictResolverViewTests : IDisposable
         // always ahead of that post, instead of racing the analysis after RunJobs returns.
         var versionBeforeSwitch = view.ResultEditorForTesting.Document.Version;
         int analysesAtSwitch = -1;
+        var staleInstalls = 0;
+        view.SnapshotInstalledForTesting += snapshot =>
+        {
+            if (view.ResultEditorForTesting.Document.Version.CompareAge(snapshot.Version) != 0)
+                staleInstalls++;
+        };
         _context.State.SetSelectedConflictPath("g.txt");
         Dispatcher.UIThread.Post(() =>
         {
@@ -1589,19 +1551,14 @@ public class ConflictResolverViewTests : IDisposable
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(0, analysesAtSwitch);
 
-        // Wait a short time for the switch background task to finish and post to dispatcher
-        await Task.Delay(30);
-        Dispatcher.UIThread.RunJobs();
-
-        // The background analysis that targeted the pre-edit version was dropped (version moved),
-        // and debounce (150ms) hasn't fired yet, so snapshot analyses is still empty!
-        Assert.Empty(view.SnapshotForTesting!.Analyses);
-
-        // After waiting past debounce (150ms), the debounced analysis arrives
-        await Task.Delay(200);
-        Dispatcher.UIThread.RunJobs();
-        Assert.Equal(2, view.SnapshotForTesting!.Analyses.Count);
+        // The debounced analysis of the edited text arrives (150ms)...
+        await PumpUntilAsync(() => view.SnapshotForTesting!.Analyses.Count == 2
+            && view.ResultEditorForTesting.Document.Version.CompareAge(view.SnapshotForTesting.Version) == 0,
+            "the analysis of the edited text");
         Assert.True(view.ResultEditorForTesting.Document.Version.CompareAge(versionBeforeSwitch) > 0);
+
+        // ...and the analysis the switch started for the pre-edit text was dropped, never installed.
+        Assert.Equal(0, staleInstalls);
     }
 
     [AvaloniaFact]
@@ -1614,11 +1571,7 @@ public class ConflictResolverViewTests : IDisposable
         await view.LoadAsync();
         Dispatcher.UIThread.RunJobs();
 
-        for (int i = 0; i < 50 && (view.SnapshotForTesting?.Analyses.Count ?? 0) < 2; i++)
-        {
-            await Task.Delay(20);
-            Dispatcher.UIThread.RunJobs();
-        }
+        await PumpUntilAsync(() => (view.SnapshotForTesting?.Analyses.Count ?? 0) >= 2, "the region analyses");
 
         Assert.NotNull(view.SnapshotForTesting);
         Assert.Equal(2, view.SnapshotForTesting.Analyses.Count);
@@ -1999,14 +1952,10 @@ public class ConflictResolverViewTests : IDisposable
         view.ResultEditorForTesting.Document.Insert(0, "unsaved edit" + Environment.NewLine);
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = TwoConflictText, DiskHash = "hash-changed-on-disk" };
         await _context.State.RefreshStatusAsync();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
-        Assert.True(view.ChangedOnDiskBannerForTesting.IsVisible, "precondition: banner shown for f.txt");
+        await PumpUntilAsync(() => view.ChangedOnDiskBannerForTesting.IsVisible, "precondition: banner shown for f.txt");
         _dialogs.ChooseResult = 1; // Discard
         _context.State.SetSelectedConflictPath("g.txt");
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
-        Assert.Equal("g.txt", view.CurrentFileForTesting?.FilePath);
+        await PumpUntilAsync(() => view.CurrentFileForTesting?.FilePath == "g.txt", "the switch to g.txt");
         Assert.False(view.ChangedOnDiskBannerForTesting.IsVisible, "banner should not carry over to g.txt");
     }
 
@@ -2035,8 +1984,7 @@ public class ConflictResolverViewTests : IDisposable
         {
             _conflicts.OnLoadWorkingCopyAsync = (path, ct) => path == "g.txt" ? throw new IOException("locked") : Task.CompletedTask;
             _context.State.SetSelectedConflictPath("g.txt");
-            await Task.Delay(100);
-            Dispatcher.UIThread.RunJobs();
+            await PumpUntilAsync(() => lastError is not null || unhandled is not null, "the load failure to be reported");
         }
         finally { Dispatcher.UIThread.UnhandledException -= H; }
 
@@ -2368,21 +2316,27 @@ public class ConflictResolverViewTests : IDisposable
 
     internal sealed class TestRepoFixture : IDisposable
     {
-        public string Path { get; }
+        public string Path { get; private set; }
         public string GitDir => System.IO.Path.Combine(Path, ".git");
 
         public TestRepoFixture()
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-conflict-tests-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path);
-            RunGit(Path, "init", "-b", "main");
-            RunGit(Path, "config", "user.name", "Test");
-            RunGit(Path, "config", "user.email", "test@example.com");
+            Path = NewPath();
+            RepoTemplates.Initial(Path);
+        }
 
-            var file = System.IO.Path.Combine(Path, "f.txt");
-            File.WriteAllText(file, "init\n");
-            RunGit(Path, "add", ".");
-            RunGit(Path, "commit", "-m", "initial commit", "--no-gpg-sign");
+        private static string NewPath() =>
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-conflict-tests-" + Guid.NewGuid().ToString("N"));
+
+        /// <summary>Moves the fixture to a fresh copy of the merge-conflict template: the state
+        /// <see cref="CreateConflict"/> produces, without running git. The copy is not atomic, so
+        /// only call this while no tab has the repository open; <see cref="Path"/> changes.</summary>
+        public void LoadMergeConflict()
+        {
+            var old = Path;
+            Path = NewPath();
+            RepoTemplates.MergeConflict(Path);
+            RepoTemplates.Delete(old);
         }
 
         public void SetOperation(OperationState op)
@@ -2418,53 +2372,11 @@ public class ConflictResolverViewTests : IDisposable
             try { Directory.Delete(System.IO.Path.Combine(GitDir, "rebase-apply"), true); } catch { }
         }
 
-        public void CreateConflict()
-        {
-            RunGit(Path, "checkout", "-b", "branch1");
-            File.WriteAllText(System.IO.Path.Combine(Path, "f.txt"), "branch1 line\n");
-            RunGit(Path, "commit", "-am", "branch1 commit", "--no-gpg-sign");
+        public void CreateConflict() => RepoTemplates.CreateMergeConflict(Path);
 
-            RunGit(Path, "checkout", "main");
-            File.WriteAllText(System.IO.Path.Combine(Path, "f.txt"), "main line\n");
-            RunGit(Path, "commit", "-am", "main commit", "--no-gpg-sign");
+        public void MarkResolved() => RepoTemplates.Git(Path, "add", "f.txt");
 
-            RunGit(Path, "merge", "branch1");
-        }
-
-        public void MarkResolved()
-        {
-            RunGit(Path, "add", "f.txt");
-        }
-
-        private static void RunGit(string dir, params string[] args)
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            psi.Environment["GIT_AUTHOR_NAME"] = "Test";
-            psi.Environment["GIT_AUTHOR_EMAIL"] = "test@example.com";
-            psi.Environment["GIT_COMMITTER_NAME"] = "Test";
-            psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            p.WaitForExit();
-        }
-
-        public void Dispose()
-        {
-            try
-            {
-                if (Directory.Exists(Path))
-                    Directory.Delete(Path, recursive: true);
-            }
-            catch { }
-        }
+        public void Dispose() => RepoTemplates.Delete(Path);
     }
 
     #endregion
@@ -2475,6 +2387,39 @@ public class ConflictResolverViewTests : IDisposable
     {
         var item = view.ResolveFileMenuItemsForTesting.Single(m => m.Header as string == header);
         item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+    }
+
+    /// <summary>Runs posted UI work until <paramref name="condition"/> holds, for at most 10 seconds.
+    /// Status changes reach the view through a 50 ms debounce and then its own reload, so a fixed
+    /// sleep can end before either has run on a busy machine.</summary>
+    private static async Task PumpUntilAsync(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (true)
+        {
+            Dispatcher.UIThread.RunJobs();
+            if (condition())
+                return;
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for {what}.");
+            await Task.Delay(20);
+        }
+    }
+
+    /// <summary>Refreshes the tab's status and runs posted UI work until <paramref name="condition"/>
+    /// holds, for at most 10 seconds. After a git command on the open repository, a refresh that
+    /// joins one its file watcher already started can return a snapshot taken before the command.</summary>
+    private async Task RefreshUntilAsync(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (true)
+        {
+            await _context.State.RefreshStatusAsync();
+            Dispatcher.UIThread.RunJobs();
+            if (condition())
+                return;
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for {what}.");
+            await Task.Delay(50);
+        }
     }
 
     private async Task<ConflictResolverView> LoadTwoConflictViewAsync()
@@ -2494,11 +2439,7 @@ public class ConflictResolverViewTests : IDisposable
 
         _dialogs.ConfirmDestructiveResult = false;
         ClickMenuItem(view, "Take ours (whole file)");
-        for (int i = 0; i < 10; i++)
-        {
-            Dispatcher.UIThread.RunJobs();
-            await Task.Delay(10);
-        }
+        await PumpUntilAsync(() => _dialogs.ConfirmDestructiveCalls.Count > 0, "the confirmation");
 
         var call = Assert.Single(_dialogs.ConfirmDestructiveCalls);
         Assert.Equal("Take ours", call.Title);
@@ -2556,11 +2497,7 @@ public class ConflictResolverViewTests : IDisposable
         _conflicts.Conflicts = [new ConflictFile { FilePath = "plain.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
         _conflicts.WorkingCopies["plain.txt"] = new ConflictWorkingCopy { Path = "plain.txt", Text = "no markers here\n", DiskHash = "hash-p" };
         _context.State.SetSelectedConflictPath("plain.txt");
-        for (int i = 0; i < 20 && view.CurrentFileForTesting?.FilePath != "plain.txt"; i++)
-        {
-            Dispatcher.UIThread.RunJobs();
-            await Task.Delay(10);
-        }
+        await PumpUntilAsync(() => view.CurrentFileForTesting?.FilePath == "plain.txt", "the switch to plain.txt");
 
         Assert.Equal("plain.txt", view.CurrentFileForTesting?.FilePath);
         Assert.Empty(view.NavigableRegions());
@@ -2580,11 +2517,7 @@ public class ConflictResolverViewTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         PressCtrlS(view);
-        for (int i = 0; i < 20 && _conflicts.SaveResolutionCalls.Count == 0; i++)
-        {
-            Dispatcher.UIThread.RunJobs();
-            await Task.Delay(10);
-        }
+        await PumpUntilAsync(() => _conflicts.SaveResolutionCalls.Count > 0, "the save");
 
         var call = Assert.Single(_conflicts.SaveResolutionCalls);
         Assert.False(call.Stage);
@@ -2961,11 +2894,7 @@ public class ConflictResolverViewTests : IDisposable
 
         _dialogs.ChooseResult = 1; // Discard
         _context.State.SetSelectedConflictPath("g.txt");
-        for (int i = 0; i < 20 && view.CurrentFileForTesting?.FilePath != "g.txt"; i++)
-        {
-            Dispatcher.UIThread.RunJobs();
-            await Task.Delay(10);
-        }
+        await PumpUntilAsync(() => view.CurrentFileForTesting?.FilePath == "g.txt", "the switch to g.txt");
 
         Assert.Equal("g.txt", view.CurrentFileForTesting?.FilePath);
         Assert.Equal(TwoOursLinesText, view.ResultEditorForTesting.Text);
@@ -3230,15 +3159,7 @@ public class ConflictResolverViewTests : IDisposable
             _fixture.ClearOperation();
         }
 
-        await _context.State.RefreshStatusAsync();
-        // A refresh already in flight can finish with the pre-conflict status.
-        for (int i = 0; i < 50 && !_context.State.IsConflictSessionActive; i++)
-        {
-            await Task.Delay(50);
-            await _context.State.RefreshStatusAsync();
-        }
-        Assert.True(_context.State.IsConflictSessionActive);
-        Dispatcher.UIThread.RunJobs();
+        await RefreshUntilAsync(() => _context.State.IsConflictSessionActive, "the conflict session to start");
     }
 
     [AvaloniaFact]
@@ -3287,10 +3208,8 @@ public class ConflictResolverViewTests : IDisposable
         // The merge ends outside Historia while the resolver still holds edits.
         _fixture.MarkResolved();
         _fixture.ClearOperation();
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await RefreshUntilAsync(() => !_context.State.IsConflictSessionActive, "the conflict session to end");
 
-        Assert.False(_context.State.IsConflictSessionActive);
         Assert.True(view.HasUnsavedWork);
         Assert.False(view.CloseButtonForTesting.IsVisible);
     }

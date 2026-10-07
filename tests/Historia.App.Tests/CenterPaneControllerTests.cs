@@ -11,7 +11,7 @@ public class CenterPaneControllerTests : IDisposable
     private readonly SyntaxThemeHost _syntaxHost;
     private readonly ConflictResolverHost _conflictHost;
     private readonly IWorkspaceService _workspace;
-    private readonly RepositoryContext _context;
+    private RepositoryContext _context;
     private readonly AiIntegrationsPanel _aiPanel = new();
 
     private sealed class StubThemeService : IThemeService
@@ -92,13 +92,46 @@ public class CenterPaneControllerTests : IDisposable
         _workspace.Focus(_context);
     }
 
-    [AvaloniaFact]
-    public async Task Conflicts_show_resolver_in_centre_not_detail_pane()
+    /// <summary>Refreshes the tab's status and runs the posted UI work until
+    /// <paramref name="condition"/> holds. A refresh that joins one the tab's file watcher already
+    /// had running can return a snapshot taken before the test's last git command; the next
+    /// refresh reads the repository again.</summary>
+    private async Task RefreshUntilAsync(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (true)
+        {
+            await _context.State.RefreshStatusAsync();
+            Dispatcher.UIThread.RunJobs();
+            if (condition())
+                return;
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for {what}.");
+            await Task.Delay(50);
+        }
+    }
+
+    /// <summary>Closes the tab, moves the fixture to a copy of the merge-conflict template and opens
+    /// that, so no watcher sees the conflict being made and no refresh it starts overlaps the
+    /// test's own. The merge stopped on the conflict, so the repository is also merging. Then
+    /// waits for the conflict session.</summary>
+    private async Task CreateConflictInFreshTabAsync()
     {
         _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
         _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "some text", DiskHash = "h1" };
-        _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
+
+        var old = _context;
+        await Task.Run(async () => await _workspace.CloseAsync(old));
+        _fixture.LoadMergeConflict();
+        _context = await Task.Run(() => _workspace.OpenAsync(_fixture.Path));
+        _workspace.Focus(_context);
+
+        await RefreshUntilAsync(() => _context.State.IsConflictSessionActive, "the conflict session to start");
+    }
+
+    [AvaloniaFact]
+    public async Task Conflicts_show_resolver_in_centre_not_detail_pane()
+    {
+        await CreateConflictInFreshTabAsync();
 
         var centerHost = new ContentControl();
         var graph = new Border();
@@ -113,10 +146,7 @@ public class CenterPaneControllerTests : IDisposable
     [AvaloniaFact]
     public async Task Open_diff_overlays_resolver_and_close_returns_to_same_instance_with_unsaved_edits()
     {
-        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
-        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "some text", DiskHash = "h1" };
-        _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
+        await CreateConflictInFreshTabAsync();
 
         var centerHost = new ContentControl();
         var graph = new Border();
@@ -146,11 +176,7 @@ public class CenterPaneControllerTests : IDisposable
     [AvaloniaFact]
     public async Task Session_end_releases_resolver_and_restores_graph()
     {
-        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
-        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "some text", DiskHash = "h1" };
-        _fixture.SetOperation(OperationState.Merging);
-        _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
+        await CreateConflictInFreshTabAsync();
 
         var centerHost = new ContentControl();
         var graph = new Border();
@@ -162,20 +188,15 @@ public class CenterPaneControllerTests : IDisposable
 
         _fixture.ClearOperation();
         _fixture.MarkResolved();
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await RefreshUntilAsync(() => !_context.State.IsConflictSessionActive, "the conflict session to end");
 
-        Assert.False(_context.State.IsConflictSessionActive);
         Assert.Null(_conflictHost.TryGet(_context));
         Assert.Same(graph, centerHost.Content);
     }
 
     private async Task<(ContentControl CenterHost, Border Graph, CenterPaneController Controller, ConflictResolverView Resolver)> ShowResolverAsync()
     {
-        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
-        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "some text", DiskHash = "h1" };
-        _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
+        await CreateConflictInFreshTabAsync();
 
         var centerHost = new ContentControl();
         var graph = new Border();
@@ -230,9 +251,7 @@ public class CenterPaneControllerTests : IDisposable
 
         _fixture.MarkResolved();
         _fixture.ClearOperation();
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
-        Assert.False(_context.State.IsConflictSessionActive);
+        await RefreshUntilAsync(() => !_context.State.IsConflictSessionActive, "the conflict session to end");
 
         _context.State.SetConflictResolverClosed(true);
         Dispatcher.UIThread.RunJobs();
@@ -255,10 +274,8 @@ public class CenterPaneControllerTests : IDisposable
 
         _context.State.SetConflictResolverClosed(true);
         _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
+        await RefreshUntilAsync(() => _context.State.IsConflictSessionActive, "the conflict session to start");
 
-        Assert.True(_context.State.IsConflictSessionActive);
         Assert.False(_context.State.IsConflictResolverClosed);
         Assert.IsType<ConflictResolverView>(centerHost.Content);
     }
@@ -287,23 +304,6 @@ public class CenterPaneControllerTests : IDisposable
 
         Assert.Null(diffView1.PresenterForTesting);
     }
-
-    [AvaloniaFact]
-    public async Task A_closed_context_never_gets_a_resolver()
-    {
-        await Task.Run(async () => await _workspace.CloseAsync(_context));
-
-        Assert.Null(_conflictHost.GetOrCreate(_context));
-        Assert.Null(_conflictHost.TryGet(_context));
-    }
-
-    [AvaloniaFact]
-    public async Task UpdateContent_for_a_closed_context_shows_the_graph()
-    {
-        _conflicts.Conflicts = [new ConflictFile { FilePath = "f.txt", Status = ConflictStatus.BothModified, IsBinary = false }];
-        _conflicts.WorkingCopies["f.txt"] = new ConflictWorkingCopy { Path = "f.txt", Text = "some text", DiskHash = "h1" };
-        _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
 
     [AvaloniaFact]
     public async Task A_repeated_focus_request_keeps_the_view_and_scrolls_back_to_the_line()
@@ -376,6 +376,20 @@ public class CenterPaneControllerTests : IDisposable
             await Task.Delay(20);
         }
     }
+
+    [AvaloniaFact]
+    public async Task A_closed_context_never_gets_a_resolver()
+    {
+        await Task.Run(async () => await _workspace.CloseAsync(_context));
+
+        Assert.Null(_conflictHost.GetOrCreate(_context));
+        Assert.Null(_conflictHost.TryGet(_context));
+    }
+
+    [AvaloniaFact]
+    public async Task UpdateContent_for_a_closed_context_shows_the_graph()
+    {
+        await CreateConflictInFreshTabAsync();
 
         var centerHost = new ContentControl();
         var graph = new Border();

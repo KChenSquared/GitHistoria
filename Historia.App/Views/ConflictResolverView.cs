@@ -229,6 +229,15 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     internal Border ChangedOnDiskBannerForTesting => _changedOnDiskBanner;
     internal ConflictParse? CurrentParseForTesting => _parse;
     internal ConflictParseSnapshot? SnapshotForTesting => _snapshot;
+
+    /// <summary>Raised on the UI thread each time a parse snapshot is installed.</summary>
+    internal event Action<ConflictParseSnapshot>? SnapshotInstalledForTesting;
+
+    private void InstallSnapshot(ConflictParseSnapshot snapshot)
+    {
+        _snapshot = snapshot;
+        SnapshotInstalledForTesting?.Invoke(snapshot);
+    }
     internal bool IsEditableForTesting => _isEditable;
     internal string? DiskHashForTesting => _diskHash;
     internal ConflictFile? CurrentFileForTesting => _currentFile;
@@ -1164,7 +1173,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
                 if (_resultEditor.Document.Version.CompareAge(versionSnapshot) == 0)
                 {
-                    _snapshot = snapshot;
+                    InstallSnapshot(snapshot);
                     _parse = parse;
                     _parseVersion = versionSnapshot;
 
@@ -1213,7 +1222,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
         }
 
         carriedAnalyses.AddRange(managedAnalyses);
-        _snapshot = new ConflictParseSnapshot(parse, oursLines, theirsLines, carriedAnalyses, version);
+        InstallSnapshot(new ConflictParseSnapshot(parse, oursLines, theirsLines, carriedAnalyses, version));
         _minimap.Parse = parse;
         _minimap.ResolvedRanges = ManagedRanges();
         UpdateConflictsCount();
@@ -1235,7 +1244,7 @@ public sealed class ConflictResolverView : UserControl, IDisposable
 
                 if (_resultEditor.Document.Version.CompareAge(version) == 0)
                 {
-                    _snapshot = new ConflictParseSnapshot(parse, oursLines, theirsLines, fullAnalyses, version);
+                    InstallSnapshot(new ConflictParseSnapshot(parse, oursLines, theirsLines, fullAnalyses, version));
                     _oursEditor.TextArea.TextView.Redraw();
                     _theirsEditor.TextArea.TextView.Redraw();
                     _resultEditor.TextArea.TextView.Redraw();
