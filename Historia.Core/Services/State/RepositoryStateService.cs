@@ -192,8 +192,9 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     {
         lock (_sync)
         {
-            // Idempotent: DiffRequest is a record, so an equal request raises nothing.
-            if (_openDiff == request)
+            // Idempotent: DiffRequest is a record, so an equal request raises nothing — unless it
+            // carries a focus line, which is raised again so the open viewer scrolls back to it.
+            if (_openDiff == request && request?.FocusLine is null)
                 return;
             _openDiff = request;
         }

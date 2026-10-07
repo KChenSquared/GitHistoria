@@ -140,6 +140,43 @@ public class DiffViewFocusLineTests : IDisposable
         }
     }
 
+    [AvaloniaTheory]
+    [InlineData(DiffViewMode.Unified)]
+    [InlineData(DiffViewMode.SideBySide)]
+    public async Task Refocusing_scrolls_back_to_the_line_after_the_user_scrolled_away(DiffViewMode mode)
+    {
+        var view = new DiffView(_context, Request(170), Settings(mode), _sp);
+        var (window, presenter) = await ShowAsync(view);
+        try
+        {
+            (int Start, int End)? Range() => presenter switch
+            {
+                CombinedDiffPresenter c => c.VisibleLineRange,
+                SideBySideDiffPresenter s => s.VisibleLineRange,
+                _ => null,
+            };
+            var expected = view.ModelForTesting!.FindDisplayLineForNewLine(170, mode == DiffViewMode.SideBySide)!.Value;
+            bool Showing(int line) => Range() is { } r && line >= r.Start && line <= r.End;
+
+            if (presenter is CombinedDiffPresenter combined)
+                combined.ScrollToLine(1);
+            else
+                ((SideBySideDiffPresenter)presenter).ScrollToLine(1);
+            Assert.True(await CenterPaneControllerTests.PumpUntilAsync(window, () => Range()?.Start == 1),
+                $"the view never scrolled to the top; visible {Range()}");
+
+            view.RefocusLine();
+
+            Assert.True(await CenterPaneControllerTests.PumpUntilAsync(window, () => Showing(expected)),
+                $"refocusing never scrolled back to {expected}; visible {Range()}");
+        }
+        finally
+        {
+            view.Dispose();
+            window.Close();
+        }
+    }
+
     [Fact]
     public void Requests_that_differ_only_by_focus_line_are_different()
     {

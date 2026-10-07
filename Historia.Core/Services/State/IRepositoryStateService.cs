@@ -92,7 +92,9 @@ public interface IRepositoryStateService
     /// the text or the user has dismissed it. Raises no event.</summary>
     void ClearPendingCommitMessage();
 
-    /// <summary>Opens or closes the center diff. Idempotent; safe to call from any thread.</summary>
+    /// <summary>Opens or closes the center diff. Idempotent, except that an equal request with a
+    /// <see cref="DiffRequest.FocusLine"/> is raised again so the viewer re-scrolls to that line.
+    /// Safe to call from any thread.</summary>
     void SetOpenDiff(DiffRequest? request);
     void SetActiveProfile(GitProfile? profile);
     Task RefreshStatusAsync(CancellationToken ct = default);

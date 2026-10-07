@@ -305,6 +305,78 @@ public class CenterPaneControllerTests : IDisposable
         _fixture.CreateConflict();
         await _context.State.RefreshStatusAsync();
 
+    [AvaloniaFact]
+    public async Task A_repeated_focus_request_keeps_the_view_and_scrolls_back_to_the_line()
+    {
+        var file = System.IO.Path.Combine(_fixture.Path, "big.txt");
+        var lines = Enumerable.Range(1, 200).Select(i => $"line {i}").ToArray();
+        File.WriteAllText(file, string.Join("\n", lines) + "\n");
+        using (var repo = new LibGit2Sharp.Repository(_fixture.Path))
+        {
+            LibGit2Sharp.Commands.Stage(repo, "big.txt");
+            var sig = new LibGit2Sharp.Signature("Test", "test@example.com", DateTimeOffset.Now);
+            repo.Commit("big", sig, sig, new LibGit2Sharp.CommitOptions());
+        }
+        lines[4] = "line 5 changed";
+        lines[169] = "line 170 changed";
+        File.WriteAllText(file, string.Join("\n", lines) + "\n");
+
+        var centerHost = new ContentControl();
+        var window = new Window { Width = 900, Height = 160, Content = centerHost };
+        window.Show();
+        using var controller = new CenterPaneController(centerHost, new Border(), _conflictHost, _workspace, _sp);
+        try
+        {
+            DiffRequest Request() => new() { Source = DiffSource.UnstagedChanges, Path = "big.txt", FocusLine = 170 };
+
+            _context.State.SetOpenDiff(Request());
+            Assert.True(await PumpUntilAsync(window, () => controller.ActiveDiffViewForTesting?.PresenterForTesting
+                is CombinedDiffPresenter or SideBySideDiffPresenter), "the diff never loaded");
+            var view = controller.ActiveDiffViewForTesting!;
+            var presenter = view.PresenterForTesting;
+            (int Start, int End)? Range() => presenter switch
+            {
+                CombinedDiffPresenter c => c.VisibleLineRange,
+                SideBySideDiffPresenter s => s.VisibleLineRange,
+                _ => null,
+            };
+            var expected = view.ModelForTesting!.FindDisplayLineForNewLine(170, presenter is SideBySideDiffPresenter)!.Value;
+            bool Showing(int line) => Range() is { } r && line >= r.Start && line <= r.End;
+            Assert.True(await PumpUntilAsync(window, () => Showing(expected)), $"the first open never scrolled to {expected}; visible {Range()}");
+
+            if (presenter is CombinedDiffPresenter combined)
+                combined.ScrollToLine(1);
+            else
+                ((SideBySideDiffPresenter)presenter!).ScrollToLine(1);
+            Assert.True(await PumpUntilAsync(window, () => Range()?.Start == 1), $"the view never scrolled to the top; visible {Range()}");
+
+            _context.State.SetOpenDiff(Request());
+            Assert.True(await PumpUntilAsync(window, () => Showing(expected)), $"the repeat never scrolled back to {expected}; visible {Range()}");
+            Assert.Same(view, controller.ActiveDiffViewForTesting);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    /// <summary>Runs posted UI work and layout until <paramref name="condition"/> holds, for at most
+    /// 10 seconds.</summary>
+    internal static async Task<bool> PumpUntilAsync(Window window, Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (true)
+        {
+            Dispatcher.UIThread.RunJobs();
+            window.UpdateLayout();
+            if (condition())
+                return true;
+            if (DateTime.UtcNow >= deadline)
+                return false;
+            await Task.Delay(20);
+        }
+    }
+
         var centerHost = new ContentControl();
         var graph = new Border();
         using var controller = new CenterPaneController(centerHost, graph, _conflictHost, _workspace, _sp);

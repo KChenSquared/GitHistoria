@@ -50,6 +50,21 @@ public class RepositoryStateServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public void SetOpenDiff_raises_again_for_an_equal_request_with_a_focus_line()
+    {
+        var state = NewState();
+        var focused = Req("a.txt") with { FocusLine = 12 };
+        state.SetOpenDiff(focused);
+
+        var seen = new List<DiffRequest?>();
+        state.OpenDiffChanged += (_, e) => seen.Add(e.Request);
+        state.SetOpenDiff(Req("a.txt") with { FocusLine = 12 });
+
+        Assert.Equal([focused], seen);
+        Assert.Equal(focused, state.OpenDiff);
+    }
+
+    [Fact]
     public void RequestRevealCommit_raises_RevealCommitRequested()
     {
         var state = NewState();

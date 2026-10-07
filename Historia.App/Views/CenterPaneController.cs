@@ -125,7 +125,14 @@ public sealed class CenterPaneController : IDisposable
             {
                 _aiPanel?.Close();
             }
+            var previous = _activeDiffView;
             UpdateContent();
+
+            // A repeated request for the open diff keeps its view; only the line focus is replayed.
+            if (previous != null && ReferenceEquals(previous, _activeDiffView) && e.Request?.FocusLine != null)
+            {
+                previous.RefocusLine();
+            }
         });
 
     private void OnSelectedConflictPathChanged(object? sender, SelectedConflictPathChangedEventArgs e)
