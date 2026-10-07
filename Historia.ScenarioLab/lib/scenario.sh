@@ -299,6 +299,7 @@ lab_count_markers() {
         count = 0
     }
     {
+        sub(/^\xef\xbb\xbf/, "")
         sub(/\r$/, "")
         if (substr($0, 1, n) == target) {
             c = substr($0, n + 1, 1)
