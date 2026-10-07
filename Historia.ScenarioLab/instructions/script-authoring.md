@@ -45,21 +45,25 @@ Every scenario script begins with a structured comment header parsed by the Scen
 # @short: <description in 72 characters or fewer>
 ```
 
-Optional long description:
+Structured long description with state and checklist:
 ```bash
 #!/usr/bin/env bash
-# @short: Local1 must merge Local2's pushed commit: conflicts in 3 files
+# @short: Local1 mid-merge (merge style); Local2 the same merge under zdiff3
 # @long:
-#  This scenario reproduces a multi-file merge conflict between Local1 and Local2.
+#  State:
+#  - Local1: mid-merge on feature/login-rework (conflictStyle=merge).
+#  - Local2: mid-merge on feature/login-rework (conflictStyle=zdiff3).
 #
-#  Local1 has fetched origin/main but has not yet merged it.
+#  Check:
+#  - Conflict resolver UI navigation, inline spans, and region resolution.
 ```
 
 Rules:
 1. **Line 1** must be `#!/usr/bin/env bash`.
 2. `# @short:` is **required** and must not exceed 72 characters.
 3. `# @long:` is **optional**. Each line of the body must start with `#  ` (hash followed by two spaces), and paragraph breaks are represented by a lone `#`.
-4. The header block terminates at the first line that does not match this structure. Any ordinary comments or script commands follow after.
+4. Header `@long` blocks should clearly specify `State:` (what Local1 and Local2 contain when opened) and `Check:` (what items to verify in Historia).
+5. The header block terminates at the first line that does not match this structure. Any ordinary comments or script commands follow after.
 
 ---
 
@@ -79,7 +83,11 @@ lab_done
 Rules:
 - `lab_begin` enables `set -euo pipefail`, verifies all environment variables, checks that `Local1`, `Local2`, and `Remotes` are completely empty, exports the deterministic git configuration, and starts the clock.
 - **Never touch paths outside the `SCENARIO_*` variables.**
-- **Never run interactive commands.**
+- **Never run interactive commands.** Standard input is redirected from `/dev/null`.
+- **Pinned configuration:** Always pin repository configuration using `lab_pin_config <dir>` on every local left for Historia. Historia reads the user's system and global configuration, so repository-level settings ensure reproducibility across machines.
+- **Mid-operation scripts:** Scenarios leaving a repository mid-operation (merge, rebase, cherry-pick, revert, etc.) must start from `lab_use_template _base` and cannot use custom templates.
+- **Do not commit after conflicts:** Never invoke `lab_commit` after triggering an expected conflict, as `lab_commit` executes `git add -A` which would mark all conflicts resolved.
+- **Byte properties and line endings:** Script files must strictly use LF line endings and contain no CR, BOM, or NUL bytes. Special file contents (BOM, CRLF, NUL, Latin-1, UTF-16) must be generated dynamically using `printf` escapes or `iconv`.
 
 ---
 
@@ -110,19 +118,8 @@ Load it at the beginning of a scenario:
 lab_use_template _base
 ```
 
-### Script-Specific Templates and Caching
-A script may snapshot its own state into `templates/<SCENARIO_NAME>/` via `lab_save_template`:
-
-```bash
-if lab_has_template; then
-    lab_use_template
-else
-    # Build scenario from scratch...
-    lab_save_template
-fi
-```
-
-**Staleness Caveat:** When using the cache pattern, subsequent runs reuse the cached snapshot. If you modify the script generation logic, delete the `templates/<script-name>/` directory so ScenarioLab rebuilds it.
+### Template Limitations for Mid-Operation States
+Per-script templates cannot snapshot working trees left in conflict (since `lab_save_template` archives `.git` only, and `lab_use_template` runs `git reset --hard`). Mid-operation scripts build directly from `_base` in a few seconds. Under headless execution (`SCENARIO_HEADLESS=1`), `lab_save_template` is safely treated as a no-op so tracked template directories are never modified during test runs.
 
 ---
 
@@ -144,26 +141,106 @@ To ensure identical commit SHAs across repeated runs, `scenario.sh` enforces:
 
 ---
 
-## 9. Self-Checks with `lab_assert`
+## 9. Helper Library Functions
 
-Use `lab_assert <description> <command...>` to verify that the scenario created the exact intended git state:
+`lib/scenario.sh` provides helpers for building, controlling, and asserting scenario state:
 
-```bash
-lab_assert "Local1 is 1 ahead and 1 behind origin" [ "$AHEAD_BEHIND" = "1	1" ]
-lab_assert "mainRemote has release tag v1.0.0" git -C "$SCENARIO_REMOTES/ui-kit" rev-parse --verify refs/tags/v1.0.0
-```
+### Repository Configuration & Requirements
+- **`lab_pin_config <dir> [key value]...`**: Pins `core.autocrlf false` and `merge.conflictStyle merge` in `<dir>`'s local config, followed by any additional key-value overrides.
+- **`lab_require <command> <reason>`**: Checks if `<command>` is runnable on the current system. If not, prints `[SKIP] <reason>` and exits with code 3.
 
-If a command fails, `lab_assert` outputs `[FAIL] <description>` and halts execution immediately.
+### Operation & Conflict Execution
+- **`lab_expect_conflict <dir> <desc> <git-command...>`**: Runs the specified git command in `<dir>` and verifies that `git ls-files -u` is non-empty, regardless of the process exit code (`checkout -m` exits 0 on conflict, whereas merge/rebase/pick exit 1). Fails if no unmerged files exist.
+- **`lab_gen_lines <file> <count> <prefix>`**: Deterministically generates `<count>` lines using `awk` with format `"<prefix> %06d <fixed filler>"` without randomness.
+
+### Assertions & State Checks
+- **`lab_assert <desc> <command...>`**: Evaluates `<command...>`; prints `[FAIL] <desc>` and exits 1 if the command returns non-zero.
+- **`lab_assert_status <dir> <path> <XY>`**: Verifies that `git status --porcelain=v1 -- <path>` starts with `${XY} ` (e.g. `UU`, `AA`, `UD`, `DU`, `AU`, `UA`, `DD`, `M `, ` M`, `MM`, `R `).
+- **`lab_count_markers <file> <char> [size] [encoding]`**: Returns the number of conflict marker lines starting with exactly `<size>` repeats (default 7) of `<char>` (`<`, `|`, `=`, `>`) followed by a space, `\r`, or end-of-line. When `<encoding>` is supplied, decodes through `iconv -f <enc> -t UTF-8` first.
+- **`lab_assert_op <dir> <none|merge|rebase|cherry-pick|revert|bisect>`**: Inspects git sequencer markers (`rebase-merge/`, `rebase-apply/`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `MERGE_HEAD`, `BISECT_LOG`) and asserts that the operation matches the expected state.
+- **`lab_done`**: Prints commit logs for Local 1, Local 2, and bare remotes, reports detected operation state and porcelain status for each local repository, and prints completion success banner.
 
 ---
 
-## 10. Shipped Scenario Examples
+## 9.1. Headless Runner and Linter
 
-1. **`scripts/merge/merge-conflict-3-files.sh`**:
-   Loads `_base`, creates conflicting edits in `config/app.ini`, `src/greeting.py`, and `docs/guide.md` between Local 1 and Local 2, pushes Local 2's changes, commits Local 1's changes, and fetches without merging. Confirms 3 / 2 / 3 conflicting hunks via `git merge-tree`.
+`lib/run-headless.sh` allows running and validating scenarios from the command line without opening the ScenarioLab GUI:
 
-2. **`scripts/clone/clone-remote-4-submodules.sh`**:
-   Constructs 4 bare submodule repositories (`core-lib`, `ui-kit`, `net-utils`, `theme-assets`) with multiple branches, tags, and commits, and links them via relative URLs into `mainRemote`. Verifies recursive submodule cloning and branch pointers.
+```bash
+bash Historia.ScenarioLab/lib/run-headless.sh [--twice] [--keep] [--lint-only] [path...]
+```
+
+Options:
+- `path...`: One or more script files or directories (default: `scripts/`).
+- `--lint-only`: Checks script formatting, headers, uniqueness, line endings, and safety rules without executing.
+- `--twice`: Runs each scenario twice in isolated sandboxes and compares cryptographic fingerprints (refs, HEAD, index stages, porcelain status, sequencer files, and file SHA1s) to ensure strict determinism across runs.
+- `--keep`: Preserves the temporary sandbox directories instead of removing them on exit.
+
+Exit codes:
+- `0`: All scripts PASSED or SKIPPED cleanly.
+- `1`: One or more scripts FAILED or lint errors occurred.
+- `3`: (Internal per-script exit code for SKIPPED requirements).
+
+---
+
+## 10. Shipped Scenario Catalogue
+
+### 10.1. Using a Scenario with Historia
+To use any scenario with the Historia desktop application:
+1. Open ScenarioLab and click **Execute** on the desired scenario (or run `lib/run-headless.sh <script>`).
+2. In Historia, open `Local 1` or `Local 2` as a repository tab to inspect, test, or resolve the prepared state.
+3. **Always close repository tabs in Historia before running another scenario Execute or Purge.** Historia holds file locks on `.git` files and indexes; attempting a purge or recreation while a repo is open will fail with access errors.
+4. **Do not push from `merge-lfs-pointer`'s Local 1**, as the local remote does not host an HTTP/HTTPS Git LFS endpoint.
+
+### 10.2. Scenario Index by Category
+
+#### `scripts/clone/`
+- **`clone-remote-4-submodules.sh`**: Local1 and Local2 clean; `Remotes/` populated with `mainRemote` linking four bare submodules (`sub-alpha`, `sub-beta`, `sub-gamma`, `sub-delta`). Ready for recursive cloning tests.
+
+#### `scripts/merge/`
+- **`merge-conflict-3-files.sh`**: Local1 and Local2 divergent on `main`; Local1 committed edits in `config/app.ini`, `src/greeting.py`, and `docs/guide.md`, Local2 pushed conflicting edits to `mainRemote`, and Local1 fetched without merging. Ready to start the merge in Historia.
+- **`merge-conflict-disk-banner.sh`**: Local1 fetched `origin/main` with 1-hunk conflicts in `config/app.ini`, `src/greeting.py`, and `docs/guide.md`; Local2 contains an untracked `external-edits/` folder mirroring the repo root for testing external disk changes and the "changed on disk" reload banner.
+
+#### `scripts/conflicts/`
+- **`merge-regions-styles.sh`**: Local1 mid-merge on `feature/login-rework` with `merge.conflictStyle=merge` (4 regions in `LoginService.cs`, 2 in `app.ts`, 1 in `notes.md`); Local2 in the same merge with `merge.conflictStyle=zdiff3` featuring `|||||||` base sections.
+- **`merge-marker-edge-cases.sh`**: Local1 mid-merge with 10-char markers (`guide.rst`), Markdown setext heading underline (`setext.md`), 8-char literal marker strings (`literal.txt`), CRLF marker endings (`crlf.cs`), lone CR byte (`lone-cr.txt`), minimally separated adjacent regions (`adjacent.txt`), and 30 regions (`many.txt`); Local2 same merge with damaged markers.
+- **`merge-large-file.sh`**: Local1 mid-merge at resolver budget scale: `Large.cs` with 45 000 lines and 200 conflicts (under 50k lines / 5 MB budget), `over-budget.log` exceeding 50k lines and 5 MB, and `vendor.min.js` with a single ~1 MB line in conflict.
+- **`merge-encodings.sh`**: Local1 mid-merge with `core.autocrlf=false` (UTF-8 BOM on line 1 and mid-file, UTF-16LE, Latin-1 byte `\xE9`, CRLF committed in index, mixed EOL, Unix LF); Local2 same merge with `core.autocrlf=true`.
+- **`merge-binary-files.sh`**: Local1 mid-merge on binary files (`logo.png` UU, `data.bin` UU, `removed.png` UD modified vs deleted, and text `readme.txt` UU for contrast); Local2 clean.
+- **`merge-submodule-pointer.sh`**: Local1 mid-merge with gitlink pointer conflict (`libs/widget` UU, stage mode 160000); Local2 mid-merge where one side deleted the submodule (`libs/widget` UD).
+- **`merge-add-delete-rename.sh`**: Local1 mid-merge with file lifecycle conflict states: both deleted (`DD`), added by us / untracked (`AU`), untracked / added by them (`UA`), deleted by us / modified by them (`DU`), modified by us / deleted by them (`UD`), and divergent renames (`rename-both.txt`); Local2 clean.
+- **`merge-lfs-pointer.sh`**: Local1 mid-merge on Git LFS text pointer files (`docs/manual.pdf` UU, `assets/banner.psd` UU) without requiring an LFS transfer endpoint; Local2 clean.
+
+#### `scripts/operations/`
+- **`rebase-two-stops.sh`**: Local1 mid-interactive-rebase stopped at commit 1 of 3 due to conflict (`REBASE_HEAD`, `UU`); Local2 stopped at commit 1 conflict with an `edit` instruction queued for commit 2 in `git-rebase-todo`.
+- **`cherry-pick-and-revert.sh`**: Local1 mid-cherry-pick stopped at commit 2 of a 3-commit range (`CHERRY_PICK_HEAD`, `UU`, 1 pick remaining in `sequencer/todo`); Local2 mid-revert stopped in conflict (`REVERT_HEAD`, `UU`).
+- **`stash-pop-and-checkout-m.sh`**: Local1 in non-operation conflict from `git stash pop` (`UU`, stash entry kept); Local2 in non-operation conflict from `git checkout -m` (`UU`, on branch `other`). Both have operation state `none`.
+- **`op-states-no-conflict.sh`**: Local1 at clean interactive rebase `edit` stop (`rebase`, 0 conflicts); Local2 in clean `merge --no-commit` (`merge`, 0 conflicts, staged changes).
+- **`bisect-in-progress.sh`**: Local1 mid-bisect with detached HEAD (`bisect` operation state, 0 conflicts, `BISECT_LOG` present); Local2 clean.
+
+#### `scripts/diff/`
+- **`diff-staging-playground.sh`**: Local1 with every staging shape: 12 unstaged hunks in `OrderService.cs`, partially staged `OrderValidator.cs` (`MM`), multi-language edits across 12 file types in `lang/`, tokenizer comment and quote edge cases, 300+ char prose line, staged rename with edit, staged new file, unstaged deletion, and untracked file; Local2 clean.
+- **`diff-line-endings.sh`**: Local1 with index CRLF preservation under `-text`, partially staged CRLF file (`MM`), mid-line lone CR byte, LF to CRLF line change, and whitespace-only edits (trailing spaces, tab to spaces); Local2 clean.
+- **`diff-eof-newline.sh`**: Local1 with EOF newline variants: append without newline (2 "No newline" markers), change last line without newline (2 markers), gain final newline (1 marker), lose final newline (1 marker), and staged append (`M `); Local2 clean.
+- **`diff-large-and-binary.sh`**: Local1 with budget and non-text cases: 45k-line staged file, tracked file rewritten over 50k lines / 5 MB (`IsTruncated`), 50k-line file with 40 scattered edits, 1 MB single line edit, binary image change, mode change (`100644 => 100755`), and 100% rename; Local2 clean.
+- **`diff-commit-history.sh`**: Local1 clean working tree with 8 commits: rename with edits, mode change, whitespace-only, 40 batch files, binary change, CJK/emoji non-ASCII inline edit, budget overrun, and two-parent merge commit modifying `merge-notes.txt`; Local2 clean.
+
+### 10.3. Test Check Mapping
+
+| Manual Check ID | Diff-Merge Plan Target Area | Supporting Scenario(s) |
+|---|---|---|
+| Check 1 | Resolver baseline: 2-way/3-way pane layout, region buttons, Result pane content | `merge-regions-styles.sh` |
+| Check 2 | Encodings & binaries: UTF-8 BOM, UTF-16LE, Latin-1, binary file handling, temp file naming | `merge-encodings.sh`, `merge-binary-files.sh` |
+| Check 3 | Operation banners: labels (rebase/cherry-pick/revert/merge), Skip, Abort, Continue | `merge-regions-styles.sh`, `cherry-pick-and-revert.sh`, `rebase-two-stops.sh` |
+| Check 4 | Marker parser edge cases: 10-char markers, setext heading underline, literal markers, damaged markers | `merge-marker-edge-cases.sh`, `merge-regions-styles.sh` |
+| Check 5 | Live reload & external disk changes: external editor resolution, reload prompt | `merge-conflict-disk-banner.sh`, `merge-regions-styles.sh` |
+| Check 6 | Unsaved work protection: tab switching, dirty mark-resolved prompts | `merge-regions-styles.sh` |
+| Check 7 | Re-create with base: 2-way to 3-way toggle, zdiff3 reconstruction | `merge-regions-styles.sh` |
+| Check 8 | DiffView navigation & display: side-by-side / unified, prev/next, minimap, inline word spans | `diff-staging-playground.sh` |
+| Check 9 | Line & hunk staging: partial staging, CRLF staging, EOF newlines, commit diffs | `diff-staging-playground.sh`, `diff-line-endings.sh`, `diff-eof-newline.sh`, `diff-large-and-binary.sh`, `diff-commit-history.sh` |
+| Check 10 | Sequencer op states & non-op conflicts: interactive rebase stops, stash-pop, checkout -m, bisect | `rebase-two-stops.sh`, `stash-pop-and-checkout-m.sh`, `op-states-no-conflict.sh`, `bisect-in-progress.sh` |
+| Check 11 | Scale & perf: file size and line budgets, truncation notices, long single lines | `merge-large-file.sh`, `diff-large-and-binary.sh` |
+| Check 12 | DiffView / Merge credits: static attribution dialog verification | *(Static UI check — no repo state required)* |
 
 ---
 

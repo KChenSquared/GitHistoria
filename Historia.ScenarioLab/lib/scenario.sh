@@ -159,6 +159,11 @@ _lab_clean_git_copy() {
 }
 
 lab_save_template() {
+    if [ "${SCENARIO_HEADLESS:-0}" = "1" ]; then
+        echo "[INFO] headless run: template not saved"
+        return 0
+    fi
+
     local name="${1:-$SCENARIO_NAME}"
     local out_dir="$SCENARIO_TEMPLATES/$name"
     mkdir -p "$out_dir"
@@ -235,6 +240,159 @@ lab_assert() {
     fi
 }
 
+lab_pin_config() {
+    local dir="$1"
+    shift
+    # Pin settings in the local repository configuration so scenarios are not
+    # affected by user-specific or system-wide git configuration.
+    git -C "$dir" config core.autocrlf false
+    git -C "$dir" config merge.conflictStyle merge
+    while [ "$#" -ge 2 ]; do
+        git -C "$dir" config "$1" "$2"
+        shift 2
+    done
+}
+
+lab_expect_conflict() {
+    local dir="$1"
+    local desc="$2"
+    shift 2
+    set +e
+    local out
+    out="$(git -C "$dir" "$@" 2>&1)"
+    local status=$?
+    set -e
+    printf '%s\n' "$out"
+    local unmerged
+    unmerged="$(git -C "$dir" ls-files -u 2>/dev/null || true)"
+    if [ -z "$unmerged" ]; then
+        echo "[FAIL] $desc: expected conflict, but ls-files -u was empty (exit code $status)" >&2
+        exit 1
+    fi
+}
+
+lab_assert_status() {
+    local dir="$1"
+    local path="$2"
+    local expected="$3"
+    local line
+    line="$(git -C "$dir" status --porcelain=v1 -- "$path" 2>/dev/null | head -n 1 || true)"
+    if [[ "$line" != "$expected "* ]]; then
+        echo "[FAIL] Path '$path' expected status '${expected} ', got: '$line'" >&2
+        exit 1
+    fi
+}
+
+lab_count_markers() {
+    local file="$1"
+    local char="$2"
+    local size="${3:-7}"
+    local enc="${4:-}"
+    local input_cmd="cat \"$file\""
+    if [ -n "$enc" ]; then
+        input_cmd="iconv -f \"$enc\" -t UTF-8 \"$file\""
+    fi
+    eval "$input_cmd" | awk -v ch="$char" -v n="$size" '
+    BEGIN {
+        target = ""
+        for (i = 0; i < n; i++) target = target ch
+        count = 0
+    }
+    {
+        sub(/^\xef\xbb\xbf/, "")
+        sub(/\r$/, "")
+        if (substr($0, 1, n) == target) {
+            c = substr($0, n + 1, 1)
+            if (c == "" || c == " " || c == "\r") {
+                count++
+            }
+        }
+    }
+    END { print count }
+    '
+}
+
+_lab_resolve_git_dir() {
+    local dir="$1"
+    local git_dir
+    git_dir="$(git -C "$dir" rev-parse --git-dir 2>/dev/null || true)"
+    if [ -n "$git_dir" ]; then
+        if [[ "$git_dir" != /* && "$git_dir" != [A-Za-z]:* ]]; then
+            git_dir="$dir/$git_dir"
+        fi
+    fi
+    echo "$git_dir"
+}
+
+_lab_detect_op() {
+    local dir="$1"
+    local git_dir
+    git_dir="$(_lab_resolve_git_dir "$dir")"
+    if [ -z "$git_dir" ] || [ ! -d "$git_dir" ]; then
+        echo "none"
+        return 0
+    fi
+
+    if [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ]; then
+        echo "rebase"
+    elif [ -f "$git_dir/CHERRY_PICK_HEAD" ]; then
+        echo "cherry-pick"
+    elif [ -f "$git_dir/REVERT_HEAD" ]; then
+        echo "revert"
+    elif [ -f "$git_dir/MERGE_HEAD" ]; then
+        echo "merge"
+    elif [ -f "$git_dir/BISECT_LOG" ]; then
+        echo "bisect"
+    else
+        echo "none"
+    fi
+}
+
+lab_assert_op() {
+    local dir="$1"
+    local expected="$2"
+    local actual
+    actual="$(_lab_detect_op "$dir")"
+    if [ "$actual" != "$expected" ]; then
+        echo "[FAIL] Expected operation state '$expected' in '$dir', but got '$actual'" >&2
+        exit 1
+    fi
+}
+
+lab_require() {
+    local cmd="$1"
+    local reason="$2"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "[SKIP] $reason"
+        exit 3
+    fi
+}
+
+lab_gen_lines() {
+    local file="$1"
+    local count="$2"
+    local prefix="$3"
+    mkdir -p "$(dirname "$file")"
+    awk -v n="$count" -v p="$prefix" 'BEGIN {
+        for (i = 1; i <= n; i++) {
+            printf "%s %06d fixed filler content to pad lines for scenario scale testing and reproducible diffs\n", p, i
+        }
+    }' > "$file"
+}
+
+_lab_report_local() {
+    local label="$1"
+    local dir="$2"
+    if [ -d "$dir/.git" ]; then
+        local op
+        op="$(_lab_detect_op "$dir")"
+        echo "[$label Operation State: $op]"
+        echo "[$label Status (first 40 lines)]"
+        git -C "$dir" status --short 2>/dev/null | head -n 40 || true
+        echo ""
+    fi
+}
+
 lab_done() {
     echo ""
     echo "── ScenarioLab Result Summary ──"
@@ -263,5 +421,9 @@ lab_done() {
         done
     fi
 
+    _lab_report_local "Local 1" "$SCENARIO_LOCAL1"
+    _lab_report_local "Local 2" "$SCENARIO_LOCAL2"
+
     echo "[SUCCESS] Scenario '$SCENARIO_NAME' complete."
 }
+
