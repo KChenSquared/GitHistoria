@@ -183,13 +183,64 @@ Exit codes:
 
 ---
 
-## 10. Shipped Scenario Examples
+## 10. Shipped Scenario Catalogue
 
-1. **`scripts/merge/merge-conflict-3-files.sh`**:
-   Loads `_base`, creates conflicting edits in `config/app.ini`, `src/greeting.py`, and `docs/guide.md` between Local 1 and Local 2, pushes Local 2's changes, commits Local 1's changes, and fetches without merging. Confirms 3 / 2 / 3 conflicting hunks via `git merge-tree`.
+### 10.1. Using a Scenario with Historia
+To use any scenario with the Historia desktop application:
+1. Open ScenarioLab and click **Execute** on the desired scenario (or run `lib/run-headless.sh <script>`).
+2. In Historia, open `Local 1` or `Local 2` as a repository tab to inspect, test, or resolve the prepared state.
+3. **Always close repository tabs in Historia before running another scenario Execute or Purge.** Historia holds file locks on `.git` files and indexes; attempting a purge or recreation while a repo is open will fail with access errors.
+4. **Do not push from `merge-lfs-pointer`'s Local 1**, as the local remote does not host an HTTP/HTTPS Git LFS endpoint.
 
-2. **`scripts/clone/clone-remote-4-submodules.sh`**:
-   Constructs 4 bare submodule repositories (`core-lib`, `ui-kit`, `net-utils`, `theme-assets`) with multiple branches, tags, and commits, and links them via relative URLs into `mainRemote`. Verifies recursive submodule cloning and branch pointers.
+### 10.2. Scenario Index by Category
+
+#### `scripts/clone/`
+- **`clone-remote-4-submodules.sh`**: Local1 and Local2 clean; `Remotes/` populated with `mainRemote` linking four bare submodules (`sub-alpha`, `sub-beta`, `sub-gamma`, `sub-delta`). Ready for recursive cloning tests.
+
+#### `scripts/merge/`
+- **`merge-conflict-3-files.sh`**: Local1 and Local2 divergent on `main`; Local1 committed edits in `config/app.ini`, `src/greeting.py`, and `docs/guide.md`, Local2 pushed conflicting edits to `mainRemote`, and Local1 fetched without merging. Ready to start the merge in Historia.
+- **`merge-conflict-disk-banner.sh`**: Local1 fetched `origin/main` with 1-hunk conflicts in `config/app.ini`, `src/greeting.py`, and `docs/guide.md`; Local2 contains an untracked `external-edits/` folder mirroring the repo root for testing external disk changes and the "changed on disk" reload banner.
+
+#### `scripts/conflicts/`
+- **`merge-regions-styles.sh`**: Local1 mid-merge on `feature/login-rework` with `merge.conflictStyle=merge` (4 regions in `LoginService.cs`, 2 in `app.ts`, 1 in `notes.md`); Local2 in the same merge with `merge.conflictStyle=zdiff3` featuring `|||||||` base sections.
+- **`merge-marker-edge-cases.sh`**: Local1 mid-merge with 10-char markers (`guide.rst`), Markdown setext heading underline (`setext.md`), 8-char literal marker strings (`literal.txt`), CRLF marker endings (`crlf.cs`), lone CR byte (`lone-cr.txt`), minimally separated adjacent regions (`adjacent.txt`), and 30 regions (`many.txt`); Local2 same merge with damaged markers.
+- **`merge-large-file.sh`**: Local1 mid-merge at resolver budget scale: `Large.cs` with 45 000 lines and 200 conflicts (under 50k lines / 5 MB budget), `over-budget.log` exceeding 50k lines and 5 MB, and `vendor.min.js` with a single ~1 MB line in conflict.
+- **`merge-encodings.sh`**: Local1 mid-merge with `core.autocrlf=false` (UTF-8 BOM on line 1 and mid-file, UTF-16LE, Latin-1 byte `\xE9`, CRLF committed in index, mixed EOL, Unix LF); Local2 same merge with `core.autocrlf=true`.
+- **`merge-binary-files.sh`**: Local1 mid-merge on binary files (`logo.png` UU, `data.bin` UU, `removed.png` UD modified vs deleted, and text `readme.txt` UU for contrast); Local2 clean.
+- **`merge-submodule-pointer.sh`**: Local1 mid-merge with gitlink pointer conflict (`libs/widget` UU, stage mode 160000); Local2 mid-merge where one side deleted the submodule (`libs/widget` UD).
+- **`merge-add-delete-rename.sh`**: Local1 mid-merge with file lifecycle conflict states: both deleted (`DD`), added by us / untracked (`AU`), untracked / added by them (`UA`), deleted by us / modified by them (`DU`), modified by us / deleted by them (`UD`), and divergent renames (`rename-both.txt`); Local2 clean.
+- **`merge-lfs-pointer.sh`**: Local1 mid-merge on Git LFS text pointer files (`docs/manual.pdf` UU, `assets/banner.psd` UU) without requiring an LFS transfer endpoint; Local2 clean.
+
+#### `scripts/operations/`
+- **`rebase-two-stops.sh`**: Local1 mid-interactive-rebase stopped at commit 1 of 3 due to conflict (`REBASE_HEAD`, `UU`); Local2 stopped at commit 1 conflict with an `edit` instruction queued for commit 2 in `git-rebase-todo`.
+- **`cherry-pick-and-revert.sh`**: Local1 mid-cherry-pick stopped at commit 2 of a 3-commit range (`CHERRY_PICK_HEAD`, `UU`, 1 pick remaining in `sequencer/todo`); Local2 mid-revert stopped in conflict (`REVERT_HEAD`, `UU`).
+- **`stash-pop-and-checkout-m.sh`**: Local1 in non-operation conflict from `git stash pop` (`UU`, stash entry kept); Local2 in non-operation conflict from `git checkout -m` (`UU`, on branch `other`). Both have operation state `none`.
+- **`op-states-no-conflict.sh`**: Local1 at clean interactive rebase `edit` stop (`rebase`, 0 conflicts); Local2 in clean `merge --no-commit` (`merge`, 0 conflicts, staged changes).
+- **`bisect-in-progress.sh`**: Local1 mid-bisect with detached HEAD (`bisect` operation state, 0 conflicts, `BISECT_LOG` present); Local2 clean.
+
+#### `scripts/diff/`
+- **`diff-staging-playground.sh`**: Local1 with every staging shape: 12 unstaged hunks in `OrderService.cs`, partially staged `OrderValidator.cs` (`MM`), multi-language edits across 12 file types in `lang/`, tokenizer comment and quote edge cases, 300+ char prose line, staged rename with edit, staged new file, unstaged deletion, and untracked file; Local2 clean.
+- **`diff-line-endings.sh`**: Local1 with index CRLF preservation under `-text`, partially staged CRLF file (`MM`), mid-line lone CR byte, LF to CRLF line change, and whitespace-only edits (trailing spaces, tab to spaces); Local2 clean.
+- **`diff-eof-newline.sh`**: Local1 with EOF newline variants: append without newline (2 "No newline" markers), change last line without newline (2 markers), gain final newline (1 marker), lose final newline (1 marker), and staged append (`M `); Local2 clean.
+- **`diff-large-and-binary.sh`**: Local1 with budget and non-text cases: 45k-line staged file, tracked file rewritten over 50k lines / 5 MB (`IsTruncated`), 50k-line file with 40 scattered edits, 1 MB single line edit, binary image change, mode change (`100644 => 100755`), and 100% rename; Local2 clean.
+- **`diff-commit-history.sh`**: Local1 clean working tree with 8 commits: rename with edits, mode change, whitespace-only, 40 batch files, binary change, CJK/emoji non-ASCII inline edit, budget overrun, and two-parent merge commit modifying `merge-notes.txt`; Local2 clean.
+
+### 10.3. Test Check Mapping
+
+| Manual Check ID | Diff-Merge Plan Target Area | Supporting Scenario(s) |
+|---|---|---|
+| Check 1 | Resolver baseline: 2-way/3-way pane layout, region buttons, Result pane content | `merge-regions-styles.sh` |
+| Check 2 | Encodings & binaries: UTF-8 BOM, UTF-16LE, Latin-1, binary file handling, temp file naming | `merge-encodings.sh`, `merge-binary-files.sh` |
+| Check 3 | Operation banners: labels (rebase/cherry-pick/revert/merge), Skip, Abort, Continue | `merge-regions-styles.sh`, `cherry-pick-and-revert.sh`, `rebase-two-stops.sh` |
+| Check 4 | Marker parser edge cases: 10-char markers, setext heading underline, literal markers, damaged markers | `merge-marker-edge-cases.sh`, `merge-regions-styles.sh` |
+| Check 5 | Live reload & external disk changes: external editor resolution, reload prompt | `merge-conflict-disk-banner.sh`, `merge-regions-styles.sh` |
+| Check 6 | Unsaved work protection: tab switching, dirty mark-resolved prompts | `merge-regions-styles.sh` |
+| Check 7 | Re-create with base: 2-way to 3-way toggle, zdiff3 reconstruction | `merge-regions-styles.sh` |
+| Check 8 | DiffView navigation & display: side-by-side / unified, prev/next, minimap, inline word spans | `diff-staging-playground.sh` |
+| Check 9 | Line & hunk staging: partial staging, CRLF staging, EOF newlines, commit diffs | `diff-staging-playground.sh`, `diff-line-endings.sh`, `diff-eof-newline.sh`, `diff-large-and-binary.sh`, `diff-commit-history.sh` |
+| Check 10 | Sequencer op states & non-op conflicts: interactive rebase stops, stash-pop, checkout -m, bisect | `rebase-two-stops.sh`, `stash-pop-and-checkout-m.sh`, `op-states-no-conflict.sh`, `bisect-in-progress.sh` |
+| Check 11 | Scale & perf: file size and line budgets, truncation notices, long single lines | `merge-large-file.sh`, `diff-large-and-binary.sh` |
+| Check 12 | DiffView / Merge credits: static attribution dialog verification | *(Static UI check — no repo state required)* |
 
 ---
 
