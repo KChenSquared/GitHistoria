@@ -33,7 +33,7 @@ public sealed record ControlRead(
 /// Framing for the per-user control pipe. A control client sends the header line
 /// <see cref="ProtocolHeader"/> and then one JSON request line; the server answers with one JSON
 /// line and closes. Any other first line is a second launch forwarding repository paths, one per
-/// line, and is read exactly as before. Server construction (the Windows ACL) stays in the App.
+/// line. Server construction (the Windows ACL) stays in the App.
 /// </summary>
 public static class ControlPipe
 {
