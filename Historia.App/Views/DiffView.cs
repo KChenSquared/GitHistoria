@@ -34,7 +34,8 @@ public sealed class DiffView : UserControl, IDisposable
     public FileDiff? DiffForTesting => _diff;
     internal DiffDisplayModel? ModelForTesting => _model;
     public Button ToggleButtonForTesting => _toggleButton;
-    internal Button CloseButtonForTesting => _closeButton;    public void ToggleModeForTesting() => OnToggleMode();
+    internal Button CloseButtonForTesting => _closeButton;
+    public void ToggleModeForTesting() => OnToggleMode();
     internal int LastModelCreationThreadId { get; private set; }
 
     public DiffView(RepositoryContext ctx, DiffRequest request, ISettingsService? settings, IServiceProvider? sp)
@@ -323,6 +324,11 @@ public sealed class DiffView : UserControl, IDisposable
             Dispatcher.UIThread.Post(ApplyFocusLine, DispatcherPriority.Loaded);
         }
     }
+
+    /// <summary>Opens at the top instead of the request's line: a view rebuilt for a request whose
+    /// line was already shown keeps the user where they scrolled. A later
+    /// <see cref="RefocusLine"/> still scrolls to it.</summary>
+    internal void SkipInitialFocusLine() => _focusLinePending = false;
 
     /// <summary>Scrolls to the request's line again, for a repeated request for this diff. Before the
     /// diff has loaded, the load applies it.</summary>

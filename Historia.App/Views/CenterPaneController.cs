@@ -22,6 +22,12 @@ public sealed class CenterPaneController : IDisposable
     private DiffView? _activeDiffView;
     private bool _disposed;
 
+    // Requests (by instance) whose focus line a view has already scrolled to. The state keeps the
+    // same instance while the diff stays open, so a view rebuilt after the AI window closes or the
+    // tab is revisited leaves the scroll alone; a new request for the same line is a new instance.
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<DiffRequest, object> _focusLineShown = new();
+    private static readonly object FocusLineShownMarker = new();
+
     internal DiffView? ActiveDiffViewForTesting => _activeDiffView;
     internal AiIntegrationsView? ActiveAiViewForTesting => _aiView;
     internal RepositoryContext? ActiveContextForTesting => _activeCtx;
@@ -131,6 +137,7 @@ public sealed class CenterPaneController : IDisposable
             // A repeated request for the open diff keeps its view; only the line focus is replayed.
             if (previous != null && ReferenceEquals(previous, _activeDiffView) && e.Request?.FocusLine != null)
             {
+                _focusLineShown.AddOrUpdate(e.Request, FocusLineShownMarker);
                 previous.RefocusLine();
             }
         });
@@ -191,6 +198,14 @@ public sealed class CenterPaneController : IDisposable
                 DisposeActiveDiffView();
                 _activeDiffRequest = openDiff;
                 _activeDiffView = new DiffView(_activeCtx, openDiff, _services.GetService<ISettingsService>(), _services);
+                if (openDiff.FocusLine != null && _focusLineShown.TryGetValue(openDiff, out _))
+                {
+                    _activeDiffView.SkipInitialFocusLine();
+                }
+                else if (openDiff.FocusLine != null)
+                {
+                    _focusLineShown.Add(openDiff, FocusLineShownMarker);
+                }
                 _centerHost.Content = _activeDiffView;
             }
             return;
