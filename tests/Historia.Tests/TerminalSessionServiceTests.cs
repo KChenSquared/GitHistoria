@@ -196,7 +196,7 @@ public class TerminalSessionServiceTests
         Assert.Equal("/bin/bash", info.ShellPath);
         Assert.Equal("/src/alpha", info.WorkingDirectory);
         Assert.Equal("xterm-256color", info.Environment["TERM"]);
-        Assert.False(info.Environment.ContainsKey("HISTORIA_PERF"));
+        Assert.False(info.Environment.ContainsKey("HISTORIA_LOG"));
     }
 
     [Fact]

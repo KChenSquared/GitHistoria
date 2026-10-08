@@ -74,6 +74,17 @@ public sealed class PerfLogWriterTests : IDisposable
     }
 
     [Fact]
+    public void Mark_line_starts_with_full_date()
+    {
+        PerfLog.OverrideEnabledForTesting(true);
+        PerfLog.Mark("date test");
+        Assert.True(PerfLog.Flush(TimeSpan.FromSeconds(10)));
+        var lines = File.ReadAllLines(PerfLog.LogPath);
+        var line = Assert.Single(lines, l => l.EndsWith("date test", StringComparison.Ordinal));
+        Assert.Matches(@"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}  \+", line);
+    }
+
+    [Fact]
     public void A_mark_never_waits_on_a_stalled_write()
     {
         PerfLog.OverrideEnabledForTesting(true);

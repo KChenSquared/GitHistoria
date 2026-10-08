@@ -22,7 +22,7 @@ public class TerminalEnvironmentTests
         Assert.Equal(
         [
             "HISTORIA_ASKPASS", "HISTORIA_ASKPASS_USERNAME", "HISTORIA_ASKPASS_PASSWORD", "HISTORIA_ASKPASS_HOST",
-            "HISTORIA_REBASE_DIR", "HISTORIA_REBASE_TOKEN", "HISTORIA_SSH_KEY", "HISTORIA_PERF",
+            "HISTORIA_REBASE_DIR", "HISTORIA_REBASE_TOKEN", "HISTORIA_SSH_KEY", "HISTORIA_LOG",
         ], TerminalEnvironment.AlwaysRemoved);
     }
 
@@ -51,11 +51,11 @@ public class TerminalEnvironmentTests
     }
 
     [Fact]
-    public void RemovesHistoriaSshKeyAndPerf()
+    public void RemovesHistoriaSshKeyAndLog()
     {
-        var e = Build(Env(("HISTORIA_SSH_KEY", @"C:\k"), ("HISTORIA_PERF", "1")));
+        var e = Build(Env(("HISTORIA_SSH_KEY", @"C:\k"), ("HISTORIA_LOG", "1")));
         Assert.False(e.ContainsKey("HISTORIA_SSH_KEY"));
-        Assert.False(e.ContainsKey("HISTORIA_PERF"));
+        Assert.False(e.ContainsKey("HISTORIA_LOG"));
     }
 
     [Fact]

@@ -28,7 +28,7 @@ public static class TerminalEnvironment
         "HISTORIA_REBASE_DIR",
         "HISTORIA_REBASE_TOKEN",
         "HISTORIA_SSH_KEY",
-        "HISTORIA_PERF",
+        "HISTORIA_LOG",
     ];
 
     /// <summary>

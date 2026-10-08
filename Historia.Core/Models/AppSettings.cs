@@ -35,6 +35,18 @@ public sealed record AppSettings
     /// their repository paths. Default on.</summary>
     public bool ExternalControlEnabled { get; init; } = true;
 
+    /// <summary>
+    /// When on (default), developer session logs and performance timing marks are recorded under
+    /// the logs directory. Applies live. Also on while <c>HISTORIA_LOG</c> is set.
+    /// </summary>
+    public bool LoggingEnabled { get; init; } = true;
+
+    /// <summary>
+    /// When on, adds a Developer entry to the app menu with testing and diagnostic tools.
+    /// Takes effect after restart. Default false.
+    /// </summary>
+    public bool DeveloperPanelEnabled { get; init; }
+
     // ── UI preferences ──
     /// <summary>The Light / Dark / System choice; <c>EffectiveTheme</c> is derived. New installs
     /// follow the OS. <see cref="UseCustomTheme"/> can override it.</summary>
