@@ -505,7 +505,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 if (_stashesFilterOpen && !string.IsNullOrWhiteSpace(_stashesFilterBox?.Text))
                 {
                     var query = FuzzyScorer.PrepareQuery(_stashesFilterBox.Text);
-                    var ranked = RefSearch.Rank(_stashList, s => $"stash@{{{s.Index}}}  {s.Message}", query);
+                    var ranked = RefSearch.Rank(_stashList, StashLabel, query);
                     if (ranked.Count == 0)
                     {
                         stashBody.Children.Add(Leaf("No matches.", 0, "ColorTextFaint", null, null));
@@ -515,8 +515,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                         foreach (var item in ranked)
                         {
                             var entry = item.Item;
-                            stashBody.Children.Add(Leaf($"stash@{{{entry.Index}}}  {entry.Message}", 0, "ColorText",
-                                select: () => Select(entry.CommitId), action: StashMenuButton(entry)));
+                            stashBody.Children.Add(Leaf(StashLabel(entry), 0, "ColorText",
+                                select: () => SelectOnly(entry.CommitId), action: StashMenuButton(entry)));
                         }
                     }
                     stashBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
@@ -525,8 +525,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 foreach (var s in _stashList)
                 {
                     var entry = s;
-                    stashBody.Children.Add(Leaf($"stash@{{{s.Index}}}  {s.Message}", 0, "ColorText",
-                        select: () => Select(entry.CommitId), action: StashMenuButton(entry)));
+                    stashBody.Children.Add(Leaf(StashLabel(entry), 0, "ColorText",
+                        select: () => SelectOnly(entry.CommitId), action: StashMenuButton(entry)));
                 }
             }
         }
@@ -611,6 +611,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             });
         }
     }
+
+    internal static string StashLabel(StashEntry s) => $"{s.Index + 1}. {s.Message}";
 
     private Button StashMenuButton(StashEntry entry)
     {
@@ -909,6 +911,13 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         if (id is null || _repo is null) return;
         _repo.State.SetSelectedCommit(id);
         _repo.State.RequestRevealCommit(id.Value);
+    }
+
+    // Stash commits are never in the graph, so asking the graph to reveal one would walk the whole history for nothing.
+    private void SelectOnly(GitObjectId? id)
+    {
+        if (id is null || _repo is null) return;
+        _repo.State.SetSelectedCommit(id);
     }
 
     private async Task CheckoutAsync(BranchInfo b, bool isRemote)
