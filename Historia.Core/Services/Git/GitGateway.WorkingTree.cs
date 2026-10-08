@@ -95,109 +95,175 @@ public sealed partial class GitGateway
 
         await context.WithWriteLockAsync(async innerCt =>
         {
-            var headCheck = await cli.RunAsync(new GitCliRequest
+            var normalizedPaths = paths.Select(p => p.Replace('\\', '/')).Distinct(StringComparer.Ordinal).ToList();
+            var chunks = ChunkPathsByCommandLineLength(normalizedPaths);
+
+            // 1. Probe the index: collect paths present in the index.
+            var inIndex = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var chunk in chunks)
             {
-                Arguments = ["rev-parse", "--verify", "-q", "HEAD"],
+                var lsFilesArgs = new List<string>(chunk.Count + 3) { "ls-files", "-z", "--" };
+                lsFilesArgs.AddRange(chunk);
+
+                var lsFilesResult = await cli.RunAsync(new GitCliRequest
+                {
+                    Arguments = lsFilesArgs,
+                    WorkingDirectory = context.RepositoryPath,
+                    ExtraEnvironment = LiteralPathspecEnv,
+                }, innerCt).ConfigureAwait(false);
+
+                if (!lsFilesResult.IsSuccess)
+                    throw HistoriaGitException.FromCli(lsFilesResult, "Discard");
+
+                if (!string.IsNullOrEmpty(lsFilesResult.StandardOutput))
+                {
+                    var entries = lsFilesResult.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var entry in entries)
+                        inIndex.Add(entry);
+                }
+            }
+
+            // 2. Probe intent-to-add: paths added with 'git add -N' appear as added in a worktree diff.
+            var intentToAdd = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var chunk in chunks)
+            {
+                var diffArgs = new List<string>(chunk.Count + 5) { "diff", "-z", "--name-only", "--diff-filter=A", "--" };
+                diffArgs.AddRange(chunk);
+
+                var diffResult = await cli.RunAsync(new GitCliRequest
+                {
+                    Arguments = diffArgs,
+                    WorkingDirectory = context.RepositoryPath,
+                    ExtraEnvironment = LiteralPathspecEnv,
+                }, innerCt).ConfigureAwait(false);
+
+                if (!diffResult.IsSuccess)
+                    throw HistoriaGitException.FromCli(diffResult, "Discard");
+
+                if (!string.IsNullOrEmpty(diffResult.StandardOutput))
+                {
+                    var entries = diffResult.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var entry in entries)
+                        intentToAdd.Add(entry);
+                }
+            }
+
+            // 3. Probe case sensitivity: core.ignorecase.
+            var configResult = await cli.RunAsync(new GitCliRequest
+            {
+                Arguments = ["config", "--type=bool", "--get", "core.ignorecase"],
                 WorkingDirectory = context.RepositoryPath,
             }, innerCt).ConfigureAwait(false);
 
-            // Every probe below must succeed before anything is deleted. A failed probe
-            // (cancelled, timed out) read as "unborn" or "not in HEAD" would send tracked files to
-            // the Recycle Bin instead of restoring them.
-            if (!headCheck.IsSuccess && !IsUnbornHeadProbe(headCheck))
-                throw HistoriaGitException.FromCli(headCheck, "Discard");
-
-            if (!headCheck.IsSuccess)
+            bool ignoreCase;
+            if (configResult.IsSuccess)
             {
-                var unbornRm = await cli.RunAsync(new GitCliRequest
-                {
-                    Arguments = ["rm", "--cached", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"],
-                    WorkingDirectory = context.RepositoryPath,
-                    StandardInput = string.Join('\0', paths.Select(p => p.Replace('\\', '/'))) + '\0',
-                    ExtraEnvironment = LiteralPathspecEnv,
-                    Timeout = TimeSpan.FromMinutes(5),
-                }, innerCt).ConfigureAwait(false);
-
-                if (!unbornRm.IsSuccess)
-                    throw HistoriaGitException.FromCli(unbornRm, "Discard");
-                innerCt.ThrowIfCancellationRequested();
-
-                foreach (var path in paths)
-                {
-                    RecycleBin.Delete(Path.Combine(context.RepositoryPath, path));
-                }
-                return;
+                ignoreCase = string.Equals(configResult.StandardOutput.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+            }
+            else if (configResult.ExitCode == 1 && configResult.ErrorKind is not (GitErrorKind.Cancelled or GitErrorKind.TimedOut))
+            {
+                ignoreCase = false;
+            }
+            else
+            {
+                throw HistoriaGitException.FromCli(configResult, "Discard");
             }
 
-            var inHeadSet = new HashSet<string>(StringComparer.Ordinal);
-            var chunks = ChunkPathsByCommandLineLength(paths);
-            foreach (var chunk in chunks)
+            // 4. Partition paths into restore (tracked in index, not intent-to-add) and remove (untracked / intent-to-add).
+            var toRestore = new List<string>();
+            var toRemove = new List<string>();
+            foreach (var path in normalizedPaths)
             {
-                var args = new List<string>(chunk.Count + 5) { "ls-tree", "-z", "--name-only", "--full-tree", "HEAD", "--" };
-                args.AddRange(chunk.Select(p => p.Replace('\\', '/')));
-
-                var treeResult = await cli.RunAsync(new GitCliRequest
-                {
-                    Arguments = args,
-                    WorkingDirectory = context.RepositoryPath,
-                }, innerCt).ConfigureAwait(false);
-
-                if (!treeResult.IsSuccess)
-                    throw HistoriaGitException.FromCli(treeResult, "Discard");
-
-                if (!string.IsNullOrEmpty(treeResult.StandardOutput))
-                {
-                    var names = treeResult.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-                    foreach (var name in names)
-                        inHeadSet.Add(name);
-                }
-            }
-
-            var inHead = new List<string>();
-            var notInHead = new List<string>();
-            foreach (var path in paths)
-            {
-                var normalized = path.Replace('\\', '/');
-                if (inHeadSet.Contains(normalized) || inHeadSet.Contains(path))
-                    inHead.Add(normalized);
+                if (inIndex.Contains(path) && !intentToAdd.Contains(path))
+                    toRestore.Add(path);
                 else
-                    notInHead.Add(normalized);
+                    toRemove.Add(path);
             }
 
-            if (inHead.Count > 0)
+            if (ignoreCase && toRemove.Count > 0)
             {
-                var restoreResult = await cli.RunAsync(new GitCliRequest
+                // Probe the index case-insensitively for paths in toRemove to guard against recycling
+                // files that resolve to tracked files on a case-insensitive file system.
+                var icaseChunks = ChunkPathsByCommandLineLength(toRemove);
+                foreach (var chunk in icaseChunks)
                 {
-                    Arguments = ["restore", "--source=HEAD", "--staged", "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"],
-                    WorkingDirectory = context.RepositoryPath,
-                    StandardInput = string.Join('\0', inHead) + '\0',
-                    ExtraEnvironment = LiteralPathspecEnv,
-                    Timeout = TimeSpan.FromMinutes(5),
-                }, innerCt).ConfigureAwait(false);
+                    var icaseArgs = new List<string>(chunk.Count + 3) { "ls-files", "-z", "--" };
+                    icaseArgs.AddRange(chunk.Select(p => $":(literal,icase){p}"));
 
-                if (!restoreResult.IsSuccess)
-                    throw HistoriaGitException.FromCli(restoreResult, "Discard");
+                    var icaseResult = await cli.RunAsync(new GitCliRequest
+                    {
+                        Arguments = icaseArgs,
+                        WorkingDirectory = context.RepositoryPath,
+                    }, innerCt).ConfigureAwait(false);
+
+                    if (!icaseResult.IsSuccess)
+                        throw HistoriaGitException.FromCli(icaseResult, "Discard");
+
+                    if (!string.IsNullOrEmpty(icaseResult.StandardOutput))
+                    {
+                        var entries = icaseResult.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                        foreach (var entry in entries)
+                            inIndex.Add(entry);
+                    }
+                }
+
+                var trackedIgnoreCase = new HashSet<string>(inIndex.Where(p => !intentToAdd.Contains(p)), StringComparer.OrdinalIgnoreCase);
+                var filteredToRemove = new List<string>(toRemove.Count);
+                foreach (var path in toRemove)
+                {
+                    if (trackedIgnoreCase.Contains(path))
+                    {
+                        // On a case-insensitive file system that name resolves to a tracked file on disk,
+                        // so deleting it would destroy the tracked file.
+                        AppLog.Write(AppLogLevel.Warn, "git", $"Discard: skipping untracked removal of '{path}' matching a tracked path under case-insensitive comparison.");
+                    }
+                    else
+                    {
+                        filteredToRemove.Add(path);
+                    }
+                }
+                toRemove = filteredToRemove;
             }
 
-            if (notInHead.Count > 0)
+            innerCt.ThrowIfCancellationRequested();
+
+            // 5. Remove untracked and intent-to-add paths first.
+            if (toRemove.Count > 0)
             {
                 var rmResult = await cli.RunAsync(new GitCliRequest
                 {
                     Arguments = ["rm", "--cached", "-q", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"],
                     WorkingDirectory = context.RepositoryPath,
-                    StandardInput = string.Join('\0', notInHead) + '\0',
+                    StandardInput = string.Join('\0', toRemove) + '\0',
                     ExtraEnvironment = LiteralPathspecEnv,
                     Timeout = TimeSpan.FromMinutes(5),
                 }, innerCt).ConfigureAwait(false);
 
                 if (!rmResult.IsSuccess)
                     throw HistoriaGitException.FromCli(rmResult, "Discard");
+
                 innerCt.ThrowIfCancellationRequested();
 
-                foreach (var path in notInHead)
+                foreach (var path in toRemove)
                 {
                     RecycleBin.Delete(Path.Combine(context.RepositoryPath, path));
                 }
+            }
+
+            // 6. Restore tracked paths from the index.
+            if (toRestore.Count > 0)
+            {
+                var restoreResult = await cli.RunAsync(new GitCliRequest
+                {
+                    Arguments = ["restore", "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                    WorkingDirectory = context.RepositoryPath,
+                    StandardInput = string.Join('\0', toRestore) + '\0',
+                    ExtraEnvironment = LiteralPathspecEnv,
+                    Timeout = TimeSpan.FromMinutes(5),
+                }, innerCt).ConfigureAwait(false);
+
+                if (!restoreResult.IsSuccess)
+                    throw HistoriaGitException.FromCli(restoreResult, "Discard");
             }
         }, ct).ConfigureAwait(false);
     }
