@@ -24,8 +24,29 @@ public sealed class GraphScrollbarDragTests
 
     private sealed record Hosted(Window Window, CommitGraphControl Graph, ScrollBar Bar, Thumb Thumb, Track Track);
 
+    private static void EnsureAppStylesLoaded()
+    {
+        if (Application.Current is { } app && !app.Resources.ContainsKey(typeof(ScrollBar)))
+        {
+            var appType = typeof(Historia.Theming.ScrollBarMetrics).Assembly.GetType("Historia.App")!;
+            var historiaApp = (Application)Activator.CreateInstance(appType)!;
+            historiaApp.Initialize();
+            foreach (var key in historiaApp.Resources.Keys)
+            {
+                app.Resources[key] = historiaApp.Resources[key];
+            }
+            var styles = historiaApp.Styles.ToList();
+            historiaApp.Styles.Clear();
+            foreach (var style in styles)
+            {
+                app.Styles.Add(style);
+            }
+        }
+    }
+
     private static Hosted Host(int rows)
     {
+        EnsureAppStylesLoaded();
         var graph = new CommitGraphControl { ContentRowCountOverrideForTesting = rows };
         var window = new Window { Width = 900, Height = 700, Content = graph };
         window.Show();
@@ -308,5 +329,31 @@ public sealed class GraphScrollbarDragTests
             .GetType("Avalonia.Headless.IHeadlessWindow")?.GetMethod(method);
         Assert.NotNull(m);
         m.Invoke(window.PlatformImpl, args);
+    }
+
+    [AvaloniaFact]
+    public void Graph_bars_use_the_shared_lane()
+    {
+        EnsureAppStylesLoaded();
+        var graph = new CommitGraphControl { ContentRowCountOverrideForTesting = 2000 };
+        var window = new Window { Width = 300, Height = 300, Content = graph };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            var vBar = graph.VerticalScrollBarForTesting;
+            var hBar = graph.GetVisualDescendants().OfType<ScrollBar>().Single(b => b.Orientation == Orientation.Horizontal);
+
+            Assert.True(vBar.IsVisible);
+            Assert.True(hBar.IsVisible);
+            Assert.Equal(ScrollBarMetrics.Lane, vBar.Bounds.Width);
+            Assert.Equal(ScrollBarMetrics.Lane, hBar.Bounds.Height);
+
+            Assert.True(vBar.Bounds.Bottom <= hBar.Bounds.Top + 0.5);
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 }

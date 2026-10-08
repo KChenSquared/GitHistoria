@@ -475,7 +475,7 @@ public sealed partial class CommitGraphControl : Control
         ToolTip.SetPlacement(this, PlacementMode.Custom);
         ToolTip.SetCustomPopupPlacementCallback(this, PlaceTip);
 
-        _scrollBar = new ScrollBar { Orientation = Orientation.Vertical, Width = 12, IsVisible = false, [Grid.ColumnProperty] = 0 };
+        _scrollBar = new ScrollBar { Orientation = Orientation.Vertical, Width = ScrollBarMetrics.Lane, IsVisible = false, [Grid.ColumnProperty] = 0 };
         // While the user is dragging the thumb, background row-loading keeps triggering
         // ArrangeOverride passes (more rows stream in). Those must not reassert Maximum/Value
         // from our own stale `_scrollOffset`, which fights the ScrollBar's internal Track drag
@@ -504,7 +504,7 @@ public sealed partial class CommitGraphControl : Control
         _scrollBar.AddHandler(PointerReleasedEvent, (_, _) => _scrollBarUserActive = false, RoutingStrategies.Tunnel);
         _scrollBar.PointerCaptureLost += (_, _) => _scrollBarUserActive = false;
         _scrollBar.AddHandler(PointerMovedEvent, (_, e) => { if (ScrollLogOn) _scrollBarPointer = e.GetPosition(_scrollBar); }, RoutingStrategies.Tunnel, handledEventsToo: true);
-        _hScrollBar = new ScrollBar { Orientation = Orientation.Horizontal, Height = 12, IsVisible = false };
+        _hScrollBar = new ScrollBar { Orientation = Orientation.Horizontal, Height = ScrollBarMetrics.Lane, IsVisible = false };
         _hScrollBar.Scroll += (_, _) => { _hScrollOffset = _hScrollBar.Value; InvalidateVisual(); };
 
         _searchBox = new TextBox { Width = 200, VerticalContentAlignment = VerticalAlignment.Center };
@@ -1081,7 +1081,7 @@ public sealed partial class CommitGraphControl : Control
         if (_layout is not { } l)
             return;
         var contentHeight = l.Layout.RowCount * _rowHeight;
-        var viewH = Math.Max(0, Bounds.Height - RowsTop - (_hScrollBar.IsVisible ? 12 : 0));
+        var viewH = Math.Max(0, Bounds.Height - RowsTop - (_hScrollBar.IsVisible ? ScrollBarMetrics.Lane : 0));
         var offset = GraphScroll.CenterOffset(row, _rowHeight, viewH, contentHeight);
         if (offset is null)
             return;
@@ -1705,13 +1705,13 @@ public sealed partial class CommitGraphControl : Control
         var showV = contentHeight > rowArea;
         _scrollBar.IsVisible = showV && !RevealBlanking;
 
-        var showH = _bandWidth > finalSize.Width - (showV ? 12 : 0) + 0.5;
+        var showH = _bandWidth > finalSize.Width - (showV ? ScrollBarMetrics.Lane : 0) + 0.5;
         _hScrollBar.IsVisible = showH && !RevealBlanking;
 
-        var viewport = Math.Max(0, rowArea - (showH ? 12 : 0));
+        var viewport = Math.Max(0, rowArea - (showH ? ScrollBarMetrics.Lane : 0));
         if (showV)
         {
-            _scrollBar.Arrange(new Rect(finalSize.Width - 12, RowsTop, 12, viewport));
+            _scrollBar.Arrange(new Rect(finalSize.Width - ScrollBarMetrics.Lane, RowsTop, ScrollBarMetrics.Lane, viewport));
             _scrollBar.Minimum = 0;
             var maximum = Math.Max(0, contentHeight - viewport);
             if (_scrollBarUserActive && maximum != _scrollBar.Maximum && ScrollLogOn)
@@ -1735,9 +1735,9 @@ public sealed partial class CommitGraphControl : Control
 
         if (_hScrollBar.IsVisible)
         {
-            _hScrollBar.Arrange(new Rect(0, finalSize.Height - 12, Math.Max(0, finalSize.Width - (showV ? 12 : 0)), 12));
+            _hScrollBar.Arrange(new Rect(0, finalSize.Height - ScrollBarMetrics.Lane, Math.Max(0, finalSize.Width - (showV ? ScrollBarMetrics.Lane : 0)), ScrollBarMetrics.Lane));
             _hScrollBar.Minimum = 0;
-            _hScrollBar.Maximum = Math.Max(0, _bandWidth - (finalSize.Width - (showV ? 12 : 0)));
+            _hScrollBar.Maximum = Math.Max(0, _bandWidth - (finalSize.Width - (showV ? ScrollBarMetrics.Lane : 0)));
             _hScrollBar.ViewportSize = finalSize.Width;
             _hScrollBar.LargeChange = finalSize.Width * 0.9;
             _hScrollBar.SmallChange = 40;

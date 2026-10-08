@@ -48,6 +48,8 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     // regardless of the persisted height; the user's drags then take over.
     private const double FirstOpenFraction = 0.35;
 
+    internal ScrollBar VerticalScrollBarForTesting => _vScroll;
+
     public TerminalDockControl()
     {
         _tabStrip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
