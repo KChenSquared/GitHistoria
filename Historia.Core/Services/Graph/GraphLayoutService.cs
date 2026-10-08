@@ -456,7 +456,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // Refs that can't be read right now are no evidence the painted rows are stale — keep the
         // cache; EnsureWalkedAsync records the failure if it needs refs to go further.
         if (TotalWalked(cache) > 0 && cache.Fingerprint != 0
-            && await TryGetRefStateWithCliAsync(context, query, background: false, ct, _cli).ConfigureAwait(false) is { } state
+            && await TryGetRefStateAsync(context, query, background: false, ct).ConfigureAwait(false) is { } state
             && state.Fingerprint != cache.Fingerprint)
             cache = GetOrResetCache(context, query, force: true);
         await EnsureWalkedAsync(context, query, cache, maxRows + WalkOverscan, ct).ConfigureAwait(false);
@@ -1091,7 +1091,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
         var spoolTask = Task.Run(async () =>
         {
-            if (await ProbeStoreAsync(context, query, ct, _cli).ConfigureAwait(false) is not { } probe)
+            if (await ProbeStoreAsync(context, query, ct).ConfigureAwait(false) is not { } probe)
                 return 0; // refs unreadable — nothing to walk
 
             var rowsProgress = progress is null
@@ -1113,12 +1113,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
         string[] Tips,
         (bool Ok, int RowCount, bool Exhausted) Current,
         (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) Existing)?> ProbeStoreAsync(
-        RepositoryContext context, GraphQuery query, CancellationToken ct, IGitCliService? cli = null)
+        RepositoryContext context, GraphQuery query, CancellationToken ct)
     {
         // The tips come from the ref snapshot, and the probes are header reads
         // of Historia's own files.
         var repoPath = context.RepositoryPath;
-        if (await TryGetRefStateWithCliAsync(context, query, background: true, ct, cli).ConfigureAwait(false) is not { } state)
+        if (await TryGetRefStateAsync(context, query, background: true, ct).ConfigureAwait(false) is not { } state)
             return null;
         var (_, _, tips, walkKey) = state;
         return (
@@ -1148,7 +1148,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // Step 1: tip resolution + walk key from the ref snapshot, and a
         // header-only probe both at the current key and at whatever key the store was last
         // written under, regardless of match.
-        if (await ProbeStoreAsync(context, query, ct, _cli).ConfigureAwait(false) is not { } probe)
+        if (await ProbeStoreAsync(context, query, ct).ConfigureAwait(false) is not { } probe)
             return; // refs unreadable — nothing to walk, nothing written
 
         if (probe.Current is { Ok: true, Exhausted: true })
@@ -1536,7 +1536,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         if (reason == InvalidationReason.RefsChanged && previous.Fingerprint != 0)
         {
             // Unreadable refs: keep what is painted; the next RefsChanged tries again.
-            if (await TryGetRefStateWithCliAsync(context, query, background: false, ct, _cli).ConfigureAwait(false) is not { } state
+            if (await TryGetRefStateAsync(context, query, background: false, ct).ConfigureAwait(false) is not { } state
                 || state.Fingerprint == previous.Fingerprint)
                 return previous;
         }
@@ -2524,7 +2524,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// are fed to it (measured), and the fingerprint already ignores ref enumeration order, so an
     /// unsorted list would let `git gc`/`pack-refs` silently reorder the walk under an unchanged
     /// fingerprint.</summary>
-    private static string[] ResolveTipShas(RefSnapshot snapshot, GraphQuery query, IReadOnlyList<string?>? stashShas = null)
+    private static string[] ResolveTipShas(RefSnapshot snapshot, GraphQuery query)
     {
         var shas = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -2592,12 +2592,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// snapshot is a token check or one separate process). Null when the refs can't be read — the
     /// <see cref="HistoriaGitException"/> has already logged why, and each caller decides what an
     /// unknown ref state means for it; none lets the failure escape the service.</summary>
-    private static Task<(RefSnapshot Snapshot, long Fingerprint, string[] Tips, long WalkKey)?> TryGetRefStateAsync(
+    private static async Task<(RefSnapshot Snapshot, long Fingerprint, string[] Tips, long WalkKey)?> TryGetRefStateAsync(
         RepositoryContext context, GraphQuery query, bool background, CancellationToken ct)
-        => TryGetRefStateWithCliAsync(context, query, background, ct, cli: null);
-
-    private static async Task<(RefSnapshot Snapshot, long Fingerprint, string[] Tips, long WalkKey)?> TryGetRefStateWithCliAsync(
-        RepositoryContext context, GraphQuery query, bool background, CancellationToken ct, IGitCliService? cli)
     {
         RefSnapshot snapshot;
         try { snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false); }

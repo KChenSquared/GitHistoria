@@ -9,6 +9,9 @@ public static class ScrollBarMetrics
     /// <summary>Cross-axis thickness of the rounded pill thumb.</summary>
     public const double Thumb = 6;
 
+    /// <summary>Corner radius that rounds the thumb's ends into a full pill.</summary>
+    public static readonly CornerRadius ThumbCornerRadius = new(Thumb / 2);
+
     /// <summary>Minimum main-axis length of the thumb so it remains draggable on large content.</summary>
     public const double ThumbMinLength = 24;
 
