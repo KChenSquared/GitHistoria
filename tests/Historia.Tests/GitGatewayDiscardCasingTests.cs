@@ -203,4 +203,69 @@ public sealed class GitGatewayDiscardCasingTests : IAsyncDisposable
         var rmRequests = spy.Requests.Where(r => r.Arguments.Contains("rm")).ToList();
         Assert.Empty(rmRequests);
     }
+
+    [Fact]
+    public async Task Discard_renamed_intent_to_add_recycles_instead_of_emptying()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("discard-ita-rename", r =>
+            r.WriteFile("old.txt", "same content here\n").Stage().Commit("init"));
+
+        File.Move(Path.Combine(repo.Path, "old.txt"), Path.Combine(repo.Path, "new.txt"));
+        await _host.Cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["add", "-N", "new.txt"],
+            WorkingDirectory = repo.Path,
+        });
+
+        var ctx = _host.Open(repo.Path);
+        var before = await ctx.Gateway.GetStatusAsync();
+        var row = Assert.Single(before.Unstaged);
+        Assert.Equal(FileChangeKind.Renamed, row.Kind);
+        Assert.Equal("old.txt", row.OldPath);
+
+        await ctx.Gateway.DiscardAsync([row.Path, row.OldPath!]);
+
+        Assert.False(File.Exists(Path.Combine(repo.Path, "new.txt")));
+        Assert.Equal("same content here", (await File.ReadAllTextAsync(Path.Combine(repo.Path, "old.txt"))).Trim());
+        var status = await ctx.Gateway.GetStatusAsync();
+        Assert.False(status.IsDirty);
+    }
+
+    [Fact]
+    public async Task Discard_case_guard_probe_stays_under_the_command_line_limit()
+    {
+        using var repo = TestRepositoryBuilder.FromTemplate("discard-case-guard-argv", r =>
+            r.WriteFile("tracked.txt", "tracked\n").Stage().Commit("init"));
+
+        await _host.Cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["config", "core.ignorecase", "true"],
+            WorkingDirectory = repo.Path,
+        });
+
+        var paths = new List<string>();
+        for (var i = 0; i < 3000; i++)
+        {
+            var name = $"f{i}.txt";
+            await File.WriteAllTextAsync(Path.Combine(repo.Path, name), "u\n");
+            paths.Add(name);
+        }
+
+        // Fail the rm so the run stops before thousands of files reach the Recycle Bin.
+        var spy = new InterceptingGitCliService(_host.Cli)
+        {
+            Intercept = req => req.Arguments.Contains("rm") ? InterceptingGitCliService.Failure() : null,
+        };
+        var ctx = _host.Open(repo.Path, spy);
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => ctx.Gateway.DiscardAsync(paths));
+
+        var icaseRequests = spy.Requests
+            .Where(r => r.Arguments.Any(a => a.StartsWith(":(literal,icase)", StringComparison.Ordinal)))
+            .ToList();
+        Assert.NotEmpty(icaseRequests);
+        Assert.All(icaseRequests, r => Assert.True(r.Arguments.Sum(a => a.Length + 1) < 32767));
+        Assert.Contains(spy.Requests, r => r.Arguments.Contains("rm"));
+        Assert.Equal(3000, Directory.EnumerateFiles(repo.Path, "f*.txt").Count());
+    }
 }

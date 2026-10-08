@@ -96,7 +96,7 @@ public sealed partial class GitGateway
         await context.WithWriteLockAsync(async innerCt =>
         {
             var normalizedPaths = paths.Select(p => p.Replace('\\', '/')).Distinct(StringComparer.Ordinal).ToList();
-            var chunks = ChunkPathsByCommandLineLength(normalizedPaths);
+            var chunks = ChunkPathsByCommandLineLength(normalizedPaths).ToList();
 
             // 1. Probe the index: collect paths present in the index.
             var inIndex = new HashSet<string>(StringComparer.Ordinal);
@@ -124,10 +124,12 @@ public sealed partial class GitGateway
             }
 
             // 2. Probe intent-to-add: paths added with 'git add -N' appear as added in a worktree diff.
+            // Rename detection is off: an intent-to-add path paired with a deleted tracked path would
+            // otherwise show as renamed, be missed by the filter, and be emptied by the restore.
             var intentToAdd = new HashSet<string>(StringComparer.Ordinal);
             foreach (var chunk in chunks)
             {
-                var diffArgs = new List<string>(chunk.Count + 5) { "diff", "-z", "--name-only", "--diff-filter=A", "--" };
+                var diffArgs = new List<string>(chunk.Count + 6) { "diff", "-z", "--no-renames", "--name-only", "--diff-filter=A", "--" };
                 diffArgs.AddRange(chunk);
 
                 var diffResult = await cli.RunAsync(new GitCliRequest
@@ -184,11 +186,12 @@ public sealed partial class GitGateway
             {
                 // Probe the index case-insensitively for paths in toRemove to guard against recycling
                 // files that resolve to tracked files on a case-insensitive file system.
-                var icaseChunks = ChunkPathsByCommandLineLength(toRemove);
+                // Chunk the prefixed pathspecs so the prefix counts toward the command-line limit.
+                var icaseChunks = ChunkPathsByCommandLineLength(toRemove.Select(p => $":(literal,icase){p}").ToList());
                 foreach (var chunk in icaseChunks)
                 {
                     var icaseArgs = new List<string>(chunk.Count + 3) { "ls-files", "-z", "--" };
-                    icaseArgs.AddRange(chunk.Select(p => $":(literal,icase){p}"));
+                    icaseArgs.AddRange(chunk);
 
                     var icaseResult = await cli.RunAsync(new GitCliRequest
                     {
