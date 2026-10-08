@@ -1,10 +1,114 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:theming="using:Historia.Theming"
              x:Class="Historia.App"
              RequestedThemeVariant="Dark">
     <!-- the palette (ColorBg, ColorBorder, …) is generated from HistoriaPalette at runtime
          by AvaloniaThemeApplier and merged into Application.Resources — not authored here, so
          the one source of truth stays HistoriaPalette.cs. -->
+    <Application.Resources>
+        <ControlTheme x:Key="ScrollBarPageButtonTheme" TargetType="RepeatButton">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="IsTabStop" Value="False" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="Transparent" />
+                </ControlTemplate>
+            </Setter>
+        </ControlTheme>
+
+        <ControlTheme x:Key="ScrollBarThumbTheme" TargetType="Thumb">
+            <Setter Property="Background" Value="{DynamicResource ScrollBarThumbBackgroundColor}" />
+            <Setter Property="CornerRadius" Value="3" />
+            <Setter Property="ClipToBounds" Value="False" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            CornerRadius="{TemplateBinding CornerRadius}" />
+                </ControlTemplate>
+            </Setter>
+            <Style Selector="^:pointerover">
+                <Setter Property="Background" Value="{DynamicResource ScrollBarThumbFillPointerOver}" />
+            </Style>
+            <Style Selector="^:pressed">
+                <Setter Property="Background" Value="{DynamicResource ScrollBarThumbFillPressed}" />
+            </Style>
+        </ControlTheme>
+
+        <ControlTheme x:Key="{x:Type ScrollBar}" TargetType="ScrollBar">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+
+            <Style Selector="^:vertical">
+                <Setter Property="MinWidth" Value="{x:Static theming:ScrollBarMetrics.Lane}" />
+                <Setter Property="Width" Value="{x:Static theming:ScrollBarMetrics.Lane}" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Background="Transparent" UseLayoutRounding="False">
+                            <Track Name="PART_Track"
+                                   Minimum="{TemplateBinding Minimum}"
+                                   Maximum="{TemplateBinding Maximum}"
+                                   Value="{TemplateBinding Value, Mode=TwoWay}"
+                                   ViewportSize="{TemplateBinding ViewportSize}"
+                                   Orientation="{TemplateBinding Orientation}"
+                                   IsDirectionReversed="True">
+                                <Track.DecreaseButton>
+                                    <RepeatButton Name="PART_PageUpButton"
+                                                  Theme="{StaticResource ScrollBarPageButtonTheme}" />
+                                </Track.DecreaseButton>
+                                <Track.Thumb>
+                                    <Thumb Width="{x:Static theming:ScrollBarMetrics.Thumb}"
+                                           MinHeight="{x:Static theming:ScrollBarMetrics.ThumbMinLength}"
+                                           HorizontalAlignment="Center"
+                                           Theme="{StaticResource ScrollBarThumbTheme}" />
+                                </Track.Thumb>
+                                <Track.IncreaseButton>
+                                    <RepeatButton Name="PART_PageDownButton"
+                                                  Theme="{StaticResource ScrollBarPageButtonTheme}" />
+                                </Track.IncreaseButton>
+                            </Track>
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+            </Style>
+
+            <Style Selector="^:horizontal">
+                <Setter Property="MinHeight" Value="{x:Static theming:ScrollBarMetrics.Lane}" />
+                <Setter Property="Height" Value="{x:Static theming:ScrollBarMetrics.Lane}" />
+                <Setter Property="Template">
+                    <ControlTemplate>
+                        <Border Background="Transparent" UseLayoutRounding="False">
+                            <Track Name="PART_Track"
+                                   Minimum="{TemplateBinding Minimum}"
+                                   Maximum="{TemplateBinding Maximum}"
+                                   Value="{TemplateBinding Value, Mode=TwoWay}"
+                                   ViewportSize="{TemplateBinding ViewportSize}"
+                                   Orientation="{TemplateBinding Orientation}"
+                                   IsDirectionReversed="False">
+                                <Track.DecreaseButton>
+                                    <RepeatButton Name="PART_PageUpButton"
+                                                  Theme="{StaticResource ScrollBarPageButtonTheme}" />
+                                </Track.DecreaseButton>
+                                <Track.Thumb>
+                                    <Thumb Height="{x:Static theming:ScrollBarMetrics.Thumb}"
+                                           MinWidth="{x:Static theming:ScrollBarMetrics.ThumbMinLength}"
+                                           VerticalAlignment="Center"
+                                           Theme="{StaticResource ScrollBarThumbTheme}" />
+                                </Track.Thumb>
+                                <Track.IncreaseButton>
+                                    <RepeatButton Name="PART_PageDownButton"
+                                                  Theme="{StaticResource ScrollBarPageButtonTheme}" />
+                                </Track.IncreaseButton>
+                            </Track>
+                        </Border>
+                    </ControlTemplate>
+                </Setter>
+            </Style>
+        </ControlTheme>
+    </Application.Resources>
+
     <Application.Styles>
         <FluentTheme />
         <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
@@ -196,7 +300,7 @@
         <Style Selector="Menu">
             <Setter Property="Background" Value="Transparent" />
         </Style>
-        <!-- MenuItem / ToolTip / ScrollBar colours (every state) come from the Fluent resource
+        <!-- MenuItem / ToolTip colours (every state) come from the Fluent resource
              keys AvaloniaThemeApplier overrides; only geometry the keys can't express is styled
              here, so no per-instance pseudo-class / template selectors are added. -->
         <Style Selector="MenuItem">
@@ -218,9 +322,9 @@
             <Setter Property="Padding" Value="8,4" />
         </Style>
 
-        <!-- ScrollBar theming (colours via the ScrollBar* resource keys) -->
-        <Style Selector="ScrollBar /template/ Thumb">
-            <Setter Property="CornerRadius" Value="4" />
+        <!-- The scrollbar always shows and owns its lane, so content is never laid out under it. -->
+        <Style Selector="ScrollViewer">
+            <Setter Property="AllowAutoHide" Value="False" />
         </Style>
     </Application.Styles>
 </Application>
