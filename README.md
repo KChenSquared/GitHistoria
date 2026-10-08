@@ -107,7 +107,7 @@ users on all repos. It is built around:
 - 🗂️ [**Plans**](Historia-DevDocs/AdHocPlans/) — Active implementation plans; finished ones move to
   `completed/`.
 - 🤖 [**AGENTS.md**](AGENTS.md) — The shared instructions for coding agents working on Historia.
-- 🔌 [**Agent integration**](docs/agent-integration/README.md) — `historia-cmdr` and sample skills
+- 🔌 [**Agent integration**](docs/Historia-commander-skills/README.md) — `historia-cmdr` and sample skills
   for Claude Code and GitHub Copilot.
 - 🤝 [**Contributing Guide**](docs/contributing.md) — Environment setup, coding standards,
   PR guidelines, and core tenets.
@@ -204,7 +204,7 @@ click **Commit**; if you already typed a message, it is offered, not swapped in.
 It navigates and proposes, nothing else — it can't stage, commit or change your repository or
 settings. It talks to Historia over a local, per-user pipe, never the network, and can be turned
 off in **Settings → Privacy & Network**. Sample skills for Claude Code and GitHub Copilot (VS Code)
-are in [`docs/agent-integration/`](docs/agent-integration/README.md).
+are in [`docs/Historia-commander-skills/`](docs/Historia-commander-skills/README.md).
 
 ---
 
