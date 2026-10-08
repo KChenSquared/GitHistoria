@@ -23,6 +23,30 @@ public static class PerfLog
     /// <summary>Full path of the log file, for surfacing in the Developer panel.</summary>
     public static string LogPath => Path.Combine(AppPaths.LogsDirectory, "perf.log");
 
+    /// <summary>
+    /// Trims the perf log file to entries newer than <paramref name="cutoff"/>.
+    /// Runs on the writer's dedicated thread if one is active, or inline if no handle is open.
+    /// </summary>
+    internal static Task TrimAsync(DateTime cutoff, string? path = null)
+    {
+        var targetPath = path ?? LogPath;
+        var writer = Volatile.Read(ref _writer);
+        if (writer is null)
+        {
+            try
+            {
+                LogRetention.TrimPerfFile(targetPath, cutoff);
+                return Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                return Task.FromException(ex);
+            }
+        }
+
+        return writer.RunOnWriterAsync(() => LogRetention.TrimPerfFile(targetPath, cutoff));
+    }
+
     private static readonly long Origin = Stopwatch.GetTimestamp();
     private static QueuedLineWriter? _writer;
 

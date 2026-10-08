@@ -132,17 +132,16 @@ public sealed class AppLogTests : IDisposable
     }
 
     [Fact]
-    public void Starting_a_session_prunes_all_but_the_ten_newest()
+    public void Does_not_prune_by_count()
     {
         Directory.CreateDirectory(AppPaths.LogsDirectory);
-        for (var i = 0; i < 14; i++)
-            File.WriteAllText(Path.Combine(AppPaths.LogsDirectory, $"dev-2020010{i:D2}-000000.log"), "old");
+        for (var i = 0; i < 12; i++)
+            File.WriteAllText(Path.Combine(AppPaths.LogsDirectory, $"dev-2099010{i:D2}-000000.log"), "fresh");
 
         AppLog.Enabled = true;
 
-        // 10 retained + the one just opened.
-        Assert.Equal(11, SessionFiles().Length);
-        Assert.False(File.Exists(Path.Combine(AppPaths.LogsDirectory, "dev-20200100-000000.log")));
+        // 12 fresh + the one just opened.
+        Assert.Equal(13, SessionFiles().Length);
     }
 
     [Fact]

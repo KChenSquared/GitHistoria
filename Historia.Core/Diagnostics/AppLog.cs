@@ -8,8 +8,8 @@ namespace Historia.Diagnostics;
 /// <para>
 /// Off unless turned on by the Enable logging setting in Settings → Advanced or the
 /// <c>HISTORIA_LOG</c> environment variable, at which point one file per session is written
-/// under <see cref="AppPaths.LogsDirectory"/> (<c>dev-&lt;timestamp&gt;.log</c>); the newest
-/// <see cref="RetainedSessions"/> are kept.
+/// under <see cref="AppPaths.LogsDirectory"/> (<c>dev-&lt;timestamp&gt;.log</c>); logs older than
+/// 48 hours are deleted each auto-fetch round.
 /// </para>
 /// <para>
 /// This is <b>not</b> <see cref="PerfLog"/> — that stays a separate, perf-timing-only tool. Do not
@@ -18,9 +18,6 @@ namespace Historia.Diagnostics;
 /// </summary>
 public static partial class AppLog
 {
-    /// <summary>How many past <c>dev-*.log</c> files to keep when a new session starts.</summary>
-    private const int RetainedSessions = 10;
-
     private static readonly object Gate = new();
     private static string? _sessionPath;
 
@@ -232,7 +229,6 @@ public static partial class AppLog
     {
         var dir = AppPaths.LogsDirectory;
         Directory.CreateDirectory(dir);
-        PruneLocked(dir);
 
         // In case a session is still open. Disposed here, not deferred: the new session file can
         // have the same name (same second), and the old handle must be gone before it reopens.
@@ -264,22 +260,6 @@ public static partial class AppLog
         var writer = _writer;
         _writer = null;
         return writer;
-    }
-
-    private static void PruneLocked(string dir)
-    {
-        try
-        {
-            var stale = Directory.GetFiles(dir, "dev-*.log")
-                .OrderByDescending(f => f, StringComparer.Ordinal)
-                .Skip(RetainedSessions)
-                .ToArray();
-            foreach (var f in stale)
-            {
-                try { File.Delete(f); } catch { /* held open / gone — ignore */ }
-            }
-        }
-        catch { /* enumeration failure is not worth surfacing */ }
     }
 
     private static void WriteLineLocked(string line)
