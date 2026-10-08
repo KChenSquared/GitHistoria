@@ -2,7 +2,7 @@ namespace Historia.Views;
 
 /// <summary>
 /// Shared frame and drag-resize machinery for section panels (Changes/Staged in staging,
-/// Files in commit detail).
+/// Files in commit detail, and the staging commit-message box).
 /// </summary>
 internal static class SectionFrame
 {
@@ -14,6 +14,7 @@ internal static class SectionFrame
     public const double HandleHeight = 7;
     public const double TopMinHeight = 150;
     public const double BottomMinHeight = 150;
+    public const double SplitAreaMinHeight = TopMinHeight + HandleHeight + BottomMinHeight;
     public const double DefaultTopHeight = 260;
 
     // UI-thread only.
@@ -41,12 +42,16 @@ internal static class SectionFrame
         return Math.Clamp(proposed, topMin, Math.Max(topMin, available - HandleHeight - bottomMin));
     }
 
-    public static void AttachRowResize(Control handle, Grid grid, RowDefinition topRow, Action<double> committed)
+    public static double ClampGrowHeight(double proposed, double min, double current, double donorHeight, double donorMin)
+    {
+        return Math.Clamp(proposed, min, Math.Max(min, current + donorHeight - donorMin));
+    }
+
+    private static void AttachVerticalDrag(Control handle, Visual relativeTo, Action begin, Action<double> moved, Action ended)
     {
         handle.Cursor = new Cursor(StandardCursorType.SizeNorthSouth);
 
         double startY = 0;
-        double startHeight = 0;
         bool isDragging = false;
 
         handle.PointerPressed += (_, e) =>
@@ -55,9 +60,9 @@ internal static class SectionFrame
                 return;
 
             e.Pointer.Capture(handle);
-            startY = e.GetPosition(grid).Y;
-            startHeight = topRow.Height.IsAbsolute ? topRow.Height.Value : DefaultTopHeight;
+            startY = e.GetPosition(relativeTo).Y;
             isDragging = true;
+            begin();
             e.Handled = true;
         };
 
@@ -66,10 +71,9 @@ internal static class SectionFrame
             if (!isDragging)
                 return;
 
-            var currentY = e.GetPosition(grid).Y;
-            var proposed = startHeight + (currentY - startY);
-            var clamped = ClampTopHeight(proposed, grid.Bounds.Height, TopMinHeight, BottomMinHeight);
-            topRow.Height = new GridLength(clamped, GridUnitType.Pixel);
+            var currentY = e.GetPosition(relativeTo).Y;
+            var delta = currentY - startY;
+            moved(delta);
             e.Handled = true;
         };
 
@@ -80,7 +84,7 @@ internal static class SectionFrame
 
             isDragging = false;
             e.Pointer.Capture(null);
-            committed(topRow.Height.Value);
+            ended();
             e.Handled = true;
         };
 
@@ -90,9 +94,58 @@ internal static class SectionFrame
                 return;
 
             isDragging = false;
-            committed(topRow.Height.Value);
+            ended();
             e.Handled = true;
         };
+    }
+
+    public static void AttachRowResize(Control handle, Grid grid, RowDefinition topRow, Action<double> committed)
+    {
+        double startHeight = 0;
+
+        AttachVerticalDrag(
+            handle,
+            grid,
+            begin: () =>
+            {
+                startHeight = topRow.Height.IsAbsolute ? topRow.Height.Value : DefaultTopHeight;
+            },
+            moved: delta =>
+            {
+                var proposed = startHeight + delta;
+                var clamped = ClampTopHeight(proposed, grid.Bounds.Height, TopMinHeight, BottomMinHeight);
+                topRow.Height = new GridLength(clamped, GridUnitType.Pixel);
+            },
+            ended: () => committed(topRow.Height.Value));
+    }
+
+    public static void AttachBottomResize(
+        Control handle,
+        Visual relativeTo,
+        Func<(double Start, double Min, double Max)> begin,
+        Action<double> apply,
+        Action<double> committed)
+    {
+        double start = 0;
+        double min = 0;
+        double max = 0;
+        double lastApplied = 0;
+
+        AttachVerticalDrag(
+            handle,
+            relativeTo,
+            begin: () =>
+            {
+                (start, min, max) = begin();
+                lastApplied = start;
+            },
+            moved: delta =>
+            {
+                var proposed = start - delta;
+                lastApplied = Math.Clamp(proposed, min, max);
+                apply(lastApplied);
+            },
+            ended: () => committed(lastApplied));
     }
 
     public static Border Build(Control left, Control? center, Control? right, Control body,
