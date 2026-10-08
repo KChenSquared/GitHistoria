@@ -106,4 +106,58 @@ public sealed class HomeViewLayoutTests
 
         window.Close();
     }
+
+    private static void EnsureAppStylesLoaded()
+    {
+        if (Application.Current is { } app && !app.Resources.ContainsKey(typeof(ScrollBar)))
+        {
+            var appType = typeof(Historia.Theming.ScrollBarMetrics).Assembly.GetType("Historia.App")!;
+            var historiaApp = (Application)Activator.CreateInstance(appType)!;
+            historiaApp.Initialize();
+            foreach (var key in historiaApp.Resources.Keys)
+            {
+                app.Resources[key] = historiaApp.Resources[key];
+            }
+            var styles = historiaApp.Styles.ToList();
+            historiaApp.Styles.Clear();
+            foreach (var style in styles)
+            {
+                app.Styles.Add(style);
+            }
+        }
+    }
+
+    [AvaloniaFact]
+    public void RecentScroller_bar_is_lane_wide()
+    {
+        EnsureAppStylesLoaded();
+        var contentPanel = new StackPanel { Spacing = 4 };
+        for (var i = 0; i < 20; i++)
+        {
+            contentPanel.Children.Add(new Border
+            {
+                Height = 40,
+                Child = new TextBlock { Text = $"Recent repo row {i}" }
+            });
+        }
+
+        var scroller = HomeView.BuildRecentScroller(contentPanel);
+
+        var window = new Window { Width = 400, Height = 300, Content = scroller };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            var scrollBar = scroller.GetVisualDescendants()
+                .OfType<ScrollBar>()
+                .Single(s => s.Orientation == Orientation.Vertical);
+
+            Assert.True(scrollBar.IsVisible);
+            Assert.Equal(ScrollBarMetrics.Lane, scrollBar.Bounds.Width);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }
