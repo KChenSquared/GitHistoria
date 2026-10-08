@@ -10,8 +10,6 @@ Avalonia). This file is the single source; `CLAUDE.md` and `.github/copilot-inst
   do not route around it.
 - [Comprehensive Design Documentation](Historia-DevDocs/ComprehensiveDesign/README.md) — the living
   spec. Read the relevant section before changing architecture.
-- Active plans: [`Historia-DevDocs/AdHocPlans/`](Historia-DevDocs/AdHocPlans/). Finished plans move
-  to `completed/`.
 - [Contributing Guide](docs/contributing.md) — setup, coding standards, PR guidelines.
 
 ## Build and test
@@ -54,4 +52,4 @@ After a change, offer to open it in Historia: `historia-cmdr show HEAD` for a co
 `historia-cmdr changes <file>` for an uncommitted change. When the maintainer wants to commit it
 themselves, stage only the files you changed with explicit paths and run
 `historia-cmdr propose-commit -F -` with the message on standard input instead of committing. See
-[`docs/agent-integration/`](docs/agent-integration/README.md).
+[`docs/Historia-commander-skills/`](docs/Historia-commander-skills/README.md).

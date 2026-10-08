@@ -100,7 +100,7 @@ Historia/
 ├── assets/                    # Application logos, splash art, and icons
 ├── dev/                       # Automation scripts and development tools
 └── docs/                      # Project documentation and guidelines
-    └── agent-integration/     # Sample skills for Claude Code and GitHub Copilot
+    └── Historia-commander-skills/ # Sample skills for Claude Code and GitHub Copilot
 ```
 
 ---
@@ -141,7 +141,7 @@ Work that touches several files follows a phased plan:
 - A verification phase follows the implementation, and design documents are updated last.
 
 ### Reviewing agent output
-Review it in Historia. With `historia-cmdr` an agent can open Historia on the exact commit, file diff, comparison or uncommitted change it produced; see [`docs/agent-integration/README.md`](agent-integration/README.md) for the sample skills. An agent can also stage its own files and propose the commit message, so you review the staged files and click Commit yourself. Read the diff, not the agent's summary or its message.
+Review it in Historia. With `historia-cmdr` an agent can open Historia on the exact commit, file diff, comparison or uncommitted change it produced; see [`docs/Historia-commander-skills/README.md`](Historia-commander-skills/README.md) for the sample skills. An agent can also stage its own files and propose the commit message, so you review the staged files and click Commit yourself. Read the diff, not the agent's summary or its message.
 
 ### Policy
 - The contributor is responsible for every line, agent-written or not.
