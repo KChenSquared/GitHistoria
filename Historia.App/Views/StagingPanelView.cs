@@ -16,7 +16,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private readonly INotificationService _notifications;
     private readonly IDialogService _dialogs;
     private readonly ISettingsService _settings;
-    private readonly IProfileService _profiles;
     private readonly IKeyboardCommandRouter _keyboard;
     private readonly Historia.Services.UI.IExternalLauncher _launcher;
     private readonly Historia.Services.PowerTools.IStashService _stash;
@@ -109,7 +108,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _notifications = sp.GetRequiredService<INotificationService>();
         _dialogs = sp.GetRequiredService<IDialogService>();
         _settings = sp.GetRequiredService<ISettingsService>();
-        _profiles = sp.GetRequiredService<IProfileService>();
         _keyboard = sp.GetRequiredService<IKeyboardCommandRouter>();
         _launcher = sp.GetRequiredService<Historia.Services.UI.IExternalLauncher>();
         _stash = sp.GetRequiredService<Historia.Services.PowerTools.IStashService>();
@@ -170,30 +168,8 @@ public sealed class StagingPanelView : UserControl, IDisposable
             messageCell.Children.Add(BuildAiButtons());
         BuildAgentProposalViews();
 
-        // Co-authored-by trailers from every other profile.
-        var activeEmail = ctx.State.ActiveProfile?.GitUserEmail;
-        var others = _profiles.GetAllProfiles()
-            .Where(p => !string.Equals(p.GitUserEmail, activeEmail, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
         var guideRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         guideRow.Children.Add(_amend);
-        if (others.Count > 0)
-        {
-            var coBtn = new Button { Content = "+ Co-authored-by", Background = Brushes.Transparent, BorderThickness = default, Padding = new Thickness(0) };
-            var coMenu = new MenuFlyout();
-            var coItems = new List<Control>();
-            foreach (var p in others)
-            {
-                var pp = p;
-                var mi = new MenuItem { Header = $"{p.GitUserName} <{p.GitUserEmail}>" };
-                mi.Click += (_, _) => AddCoAuthor(pp.GitUserName, pp.GitUserEmail);
-                coItems.Add(mi);
-            }
-            coMenu.ItemsSource = coItems;
-            coBtn.Flyout = coMenu;
-            guideRow.Children.Add(coBtn);
-        }
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         actions.Children.Add(_commit);
@@ -1172,18 +1148,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
         _counter.Text = $"{len} / {secondPart}";
         _counter.Dyn(TextBlock.ForegroundProperty, colorKey);
-    }
-
-    private void AddCoAuthor(string name, string email)
-    {
-        var trailer = $"Co-authored-by: {name} <{email}>";
-        var msg = _message.Text ?? "";
-        if (msg.Contains(trailer, StringComparison.OrdinalIgnoreCase))
-            return;
-        var sep = msg.Length == 0 || msg.EndsWith('\n') ? "" : "\n";
-        if (!msg.Contains("Co-authored-by:", StringComparison.OrdinalIgnoreCase) && msg.Length > 0)
-            sep += "\n";
-        _message.Text = msg + sep + trailer + "\n";
     }
 
     private static bool TryParseAuthor(string text, out string name, out string email)
