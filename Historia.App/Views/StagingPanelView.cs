@@ -474,9 +474,10 @@ public sealed class StagingPanelView : UserControl, IDisposable
             $"Replace your commit message draft ({draftLength} characters) with {replacement}? Your draft is discarded.",
             "Replace");
 
-    // The Amend label and both AI glyphs share one size so the icons match the text.
+    // The AI glyphs sit 2 px above the Amend label's size so they read at the same optical height.
     private const double CommitOptionsFontSize = 14;
-    private const double AiButtonSize = CommitOptionsFontSize + 6;
+    private const double AiGlyphSize = CommitOptionsFontSize + 2;
+    private const double AiButtonSize = AiGlyphSize + 6;
     private const string WandTip = "Generate Commit Message";
 
     /// <summary>The wand (generate) and settings buttons at the left of the Amend row.
@@ -507,7 +508,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             BorderThickness = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Content = IconGlyphPath("settings", CommitOptionsFontSize, "ColorText"),
+            Content = IconGlyphPath("settings", AiGlyphSize, "ColorText"),
             Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
         };
         ToolTip.SetTip(_aiSettings, "Setup AI Integration");
@@ -535,7 +536,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         var enabled = _aiProfiles.ActiveProfile is not null;
         var generating = _generateCts is not null;
         _wand.IsEnabled = enabled || generating;
-        _wand.Content = IconGlyphPath("wand_stars", CommitOptionsFontSize, enabled ? "ColorSuccess" : "ColorTextFaint");
+        _wand.Content = IconGlyphPath("wand_stars", AiGlyphSize, enabled ? "ColorSuccess" : "ColorTextFaint");
         _wand.Dyn(Button.BorderBrushProperty, enabled ? "ColorSuccess" : "ColorBorder");
         ToolTip.SetTip(_wand, generating ? "Generating… click to cancel" : WandTip);
     }

@@ -188,23 +188,23 @@ public class StagingPanelAiButtonsTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task The_icons_match_the_amend_text_size()
+    public async Task The_icons_are_two_px_above_the_amend_text_size()
     {
         var panel = NewPanel();
-        var fontSize = panel.AmendForTesting.FontSize;
+        var glyphSize = panel.AmendForTesting.FontSize + 2;
 
         var wandPath = Assert.IsType<Avalonia.Controls.Shapes.Path>(panel.WandForTesting!.Content);
         var gearPath = Assert.IsType<Avalonia.Controls.Shapes.Path>(panel.AiSettingsForTesting!.Content);
-        Assert.Equal(fontSize, wandPath.Width);
-        Assert.Equal(fontSize, wandPath.Height);
-        Assert.Equal(fontSize, gearPath.Width);
-        Assert.Equal(fontSize, gearPath.Height);
+        Assert.Equal(glyphSize, wandPath.Width);
+        Assert.Equal(glyphSize, wandPath.Height);
+        Assert.Equal(glyphSize, gearPath.Width);
+        Assert.Equal(glyphSize, gearPath.Height);
 
         await ActivateAsync();
 
         var activeWandPath = Assert.IsType<Avalonia.Controls.Shapes.Path>(panel.WandForTesting.Content);
-        Assert.Equal(fontSize, activeWandPath.Width);
-        Assert.Equal(fontSize, activeWandPath.Height);
+        Assert.Equal(glyphSize, activeWandPath.Width);
+        Assert.Equal(glyphSize, activeWandPath.Height);
     }
 
     [AvaloniaFact]
