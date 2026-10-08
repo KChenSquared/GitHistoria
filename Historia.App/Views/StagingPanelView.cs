@@ -16,7 +16,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private readonly INotificationService _notifications;
     private readonly IDialogService _dialogs;
     private readonly ISettingsService _settings;
-    private readonly IProfileService _profiles;
     private readonly IKeyboardCommandRouter _keyboard;
     private readonly Historia.Services.UI.IExternalLauncher _launcher;
     private readonly Historia.Services.PowerTools.IStashService _stash;
@@ -46,10 +45,16 @@ public sealed class StagingPanelView : UserControl, IDisposable
         Height = 96,
         Watermark = "Commit message (subject; blank line; body)",
         TextWrapping = TextWrapping.Wrap,
-        Padding = new Thickness(6, 6, 6, 30), // reserve space for the in-box counter and the AI buttons
+        Padding = new Thickness(6, 6, 6, 20), // reserve space for the in-box counter
     };
     private readonly TextBox _author = new() { Watermark = "Author override (Name <email>)" };
-    private readonly CheckBox _amend = new() { Content = "Amend last commit" };
+    private readonly CheckBox _amend = new()
+    {
+        Content = "Amend",
+        FontSize = CommitOptionsFontSize,
+        HorizontalAlignment = HorizontalAlignment.Right,
+        VerticalAlignment = VerticalAlignment.Center,
+    };
     private readonly TextBlock _counter = Text("", "ColorTextMuted", 11);
     private readonly Button _commit;
     private readonly Button _stashStaged;
@@ -76,6 +81,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
     internal Button? WandForTesting => _wand;
     internal Button? AiSettingsForTesting => _aiSettings;
     internal Panel? MessageCellForTesting { get; private set; }
+    internal Grid? CommitOptionsRowForTesting { get; private set; }
     internal bool IsGeneratingForTesting => _generateCts is not null;
     internal Border? OfferBarForTesting => _offerBar;
     internal Button? OfferUseForTesting => _offerUse;
@@ -109,7 +115,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _notifications = sp.GetRequiredService<INotificationService>();
         _dialogs = sp.GetRequiredService<IDialogService>();
         _settings = sp.GetRequiredService<ISettingsService>();
-        _profiles = sp.GetRequiredService<IProfileService>();
         _keyboard = sp.GetRequiredService<IKeyboardCommandRouter>();
         _launcher = sp.GetRequiredService<Historia.Services.UI.IExternalLauncher>();
         _stash = sp.GetRequiredService<Historia.Services.PowerTools.IStashService>();
@@ -166,34 +171,21 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _counter.IsHitTestVisible = false;
         messageCell.Children.Add(_counter);
         MessageCellForTesting = messageCell;
-        if (_aiProfiles is not null && _aiPanel is not null && _aiGenerator is not null)
-            messageCell.Children.Add(BuildAiButtons());
         BuildAgentProposalViews();
 
-        // Co-authored-by trailers from every other profile.
-        var activeEmail = ctx.State.ActiveProfile?.GitUserEmail;
-        var others = _profiles.GetAllProfiles()
-            .Where(p => !string.Equals(p.GitUserEmail, activeEmail, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        var guideRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        guideRow.Children.Add(_amend);
-        if (others.Count > 0)
+        var optionsRow = new Grid
         {
-            var coBtn = new Button { Content = "+ Co-authored-by", Background = Brushes.Transparent, BorderThickness = default, Padding = new Thickness(0) };
-            var coMenu = new MenuFlyout();
-            var coItems = new List<Control>();
-            foreach (var p in others)
-            {
-                var pp = p;
-                var mi = new MenuItem { Header = $"{p.GitUserName} <{p.GitUserEmail}>" };
-                mi.Click += (_, _) => AddCoAuthor(pp.GitUserName, pp.GitUserEmail);
-                coItems.Add(mi);
-            }
-            coMenu.ItemsSource = coItems;
-            coBtn.Flyout = coMenu;
-            guideRow.Children.Add(coBtn);
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+        };
+        if (_aiProfiles is not null && _aiPanel is not null && _aiGenerator is not null)
+        {
+            var aiStrip = BuildAiButtons();
+            Grid.SetColumn(aiStrip, 0);
+            optionsRow.Children.Add(aiStrip);
         }
+        Grid.SetColumn(_amend, 2);
+        optionsRow.Children.Add(_amend);
+        CommitOptionsRowForTesting = optionsRow;
 
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         actions.Children.Add(_commit);
@@ -204,7 +196,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         messageBox.Children.Add(_offerBar!);
         messageBox.Children.Add(messageCell);
         messageBox.Children.Add(_agentNote!);
-        messageBox.Children.Add(guideRow);
+        messageBox.Children.Add(optionsRow);
         messageBox.Children.Add(_author);
         messageBox.Children.Add(actions);
         var messageSection = new Border
@@ -482,10 +474,12 @@ public sealed class StagingPanelView : UserControl, IDisposable
             $"Replace your commit message draft ({draftLength} characters) with {replacement}? Your draft is discarded.",
             "Replace");
 
-    private const double AiButtonSize = 22;
+    // The Amend label and both AI glyphs share one size so the icons match the text.
+    private const double CommitOptionsFontSize = 14;
+    private const double AiButtonSize = CommitOptionsFontSize + 6;
     private const string WandTip = "Generate Commit Message";
 
-    /// <summary>The wand (generate) and settings buttons in the message box's bottom-left corner.
+    /// <summary>The wand (generate) and settings buttons at the left of the Amend row.
     /// The wand is green while an AI integration is active and grey, with its tooltip still
     /// shown, when none is.</summary>
     private Control BuildAiButtons()
@@ -513,7 +507,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             BorderThickness = new Thickness(0),
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
-            Content = IconGlyphPath("settings", 16, "ColorText"),
+            Content = IconGlyphPath("settings", CommitOptionsFontSize, "ColorText"),
             Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
         };
         ToolTip.SetTip(_aiSettings, "Setup AI Integration");
@@ -528,8 +522,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             Orientation = Orientation.Horizontal,
             Spacing = 4,
             HorizontalAlignment = HorizontalAlignment.Left,
-            VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(6, 0, 0, 4),
+            VerticalAlignment = VerticalAlignment.Center,
             Children = { _wand, _aiSettings },
         };
     }
@@ -542,7 +535,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         var enabled = _aiProfiles.ActiveProfile is not null;
         var generating = _generateCts is not null;
         _wand.IsEnabled = enabled || generating;
-        _wand.Content = IconGlyphPath("wand_stars", 16, enabled ? "ColorSuccess" : "ColorTextFaint");
+        _wand.Content = IconGlyphPath("wand_stars", CommitOptionsFontSize, enabled ? "ColorSuccess" : "ColorTextFaint");
         _wand.Dyn(Button.BorderBrushProperty, enabled ? "ColorSuccess" : "ColorBorder");
         ToolTip.SetTip(_wand, generating ? "Generating… click to cancel" : WandTip);
     }
@@ -1172,18 +1165,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
         _counter.Text = $"{len} / {secondPart}";
         _counter.Dyn(TextBlock.ForegroundProperty, colorKey);
-    }
-
-    private void AddCoAuthor(string name, string email)
-    {
-        var trailer = $"Co-authored-by: {name} <{email}>";
-        var msg = _message.Text ?? "";
-        if (msg.Contains(trailer, StringComparison.OrdinalIgnoreCase))
-            return;
-        var sep = msg.Length == 0 || msg.EndsWith('\n') ? "" : "\n";
-        if (!msg.Contains("Co-authored-by:", StringComparison.OrdinalIgnoreCase) && msg.Length > 0)
-            sep += "\n";
-        _message.Text = msg + sep + trailer + "\n";
     }
 
     private static bool TryParseAuthor(string text, out string name, out string email)
