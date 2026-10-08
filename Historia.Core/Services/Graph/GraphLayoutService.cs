@@ -1714,13 +1714,12 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     /// <summary>True when two queries walk the same history — every knob that changes the tip
-    /// set or the rows (scope, remotes, stashes, path filter, selected refs). <see cref="GraphQuery"/>'s
+    /// set or the rows (scope, remotes, path filter, selected refs). <see cref="GraphQuery"/>'s
     /// own record equality can't be used: it compares <see cref="GraphQuery.SelectedRefs"/> by
     /// reference, and includes <see cref="GraphQuery.MaxLanes"/>, which only affects layout.</summary>
     private static bool SameWalkShape(GraphQuery a, GraphQuery b) =>
         a.RefScope == b.RefScope
         && a.IncludeRemoteBranches == b.IncludeRemoteBranches
-        && a.IncludeStashes == b.IncludeStashes
         && string.Equals(a.PathFilter ?? "", b.PathFilter ?? "", StringComparison.Ordinal)
         && (a.SelectedRefs ?? []).SequenceEqual(b.SelectedRefs ?? [], StringComparer.Ordinal);
 
@@ -1971,12 +1970,9 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // The disk cache, live-walk resume, and .gz identity all key on the sorted
         // TIP SET the walk actually reads (`walkKey`) instead of every ref + HEAD (`fp`,
         // used below for badges/decorations and by the caller for RecomputeAsync's short-circuit).
-        // A checkout, a stash push/pop, a branch rename, or a ref outside this set changes `fp`
+        // A checkout, a branch rename, or a ref outside this set changes `fp`
         // but leaves `walkKey` — and so the on-disk cache — untouched.
-        var stashShas = query.IncludeStashes
-            ? await ReadStashShasAsync(cli, repoPath, snapshot, ct).ConfigureAwait(false)
-            : [];
-        var (fp, tips, walkKey) = DeriveRefState(snapshot, query, stashShas, repoPath);
+        var (fp, tips, walkKey) = DeriveRefState(snapshot, query, repoPath);
 
         // This cache already walked (or adopted from disk) rows of another tip set. A walk over
         // the new tips doesn't match those rows one for one — new commits land anywhere in its
@@ -1994,7 +1990,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
             var remotes = await remoteConfig.GetRemotesAsync(ct).ConfigureAwait(false);
             var remoteNames = remotes.Select(r => r.Name).OrderByDescending(n => n.Length).ToArray();
-            return ResolveDecorations(query, snapshot, decoCache, fp, remoteNames, stashShas);
+            return ResolveDecorations(query, snapshot, decoCache, fp, remoteNames);
         }
 
         // Fresh cache, nothing primed: try the on-disk walk before spawning anything. Only the
@@ -2516,8 +2512,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     }
 
     /// <summary>Resolves the walk's tips from <paramref name="snapshot"/> — local / remote / tag
-    /// refs filtered by <see cref="GraphQuery.RefScope"/>, plus each stash's work-tree commit
-    /// (<paramref name="stashShas"/>) when <see cref="GraphQuery.IncludeStashes"/> is set — as
+    /// refs filtered by <see cref="GraphQuery.RefScope"/> — as
     /// commit SHAs for <c>git log --stdin</c>.
     /// <para>An annotated tag reaches the walk through its peeled commit (a release tagged on a
     /// branch later deleted is only reachable that way); a ref that reaches a tree or blob, such
@@ -2529,7 +2524,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// are fed to it (measured), and the fingerprint already ignores ref enumeration order, so an
     /// unsorted list would let `git gc`/`pack-refs` silently reorder the walk under an unchanged
     /// fingerprint.</summary>
-    private static string[] ResolveTipShas(RefSnapshot snapshot, GraphQuery query, IReadOnlyList<string?> stashShas)
+    private static string[] ResolveTipShas(RefSnapshot snapshot, GraphQuery query, IReadOnlyList<string?>? stashShas = null)
     {
         var shas = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -2563,11 +2558,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
                 break;
         }
 
-        // stashes are reachable roots only when the flag is set.
-        if (query.IncludeStashes)
-            foreach (var sha in stashShas)
-                Add(sha);
-
         shas.Sort(StringComparer.Ordinal);
         return [.. shas];
     }
@@ -2587,52 +2577,19 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // derives none.
         bool CarriesRefState = true);
 
-    /// <summary>Each stash's work-tree commit, newest first — the one ref-derived input the
-    /// snapshot can't supply (older stashes live only in the stash reflog). Only read when
-    /// the query includes stashes.</summary>
-    /// <summary>
-    /// Reads stash work-tree commits via Git CLI, newest first.
-    /// Only spawns a process if refs/stash is present in <paramref name="snapshot"/>.
-    /// </summary>
-    internal static async Task<IReadOnlyList<string?>> ReadStashShasAsync(
-        IGitCliService cli, string repoPath, RefSnapshot snapshot, CancellationToken ct)
-    {
-        if (snapshot.Find("refs/stash") is null)
-            return [];
-
-        var result = await cli.RunAsync(new GitCliRequest
-        {
-            Arguments = ["log", "-g", "--format=%H", "refs/stash"],
-            WorkingDirectory = repoPath,
-        }, ct).ConfigureAwait(false);
-
-        if (!result.IsSuccess)
-            return [];
-
-        var lines = result.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var shas = new List<string?>(lines.Length);
-        foreach (var line in lines)
-        {
-            if (line.Length >= 40)
-                shas.Add(line);
-        }
-        return shas;
-    }
-
     /// <summary>The fingerprint, sorted tip set and walk key for one query over one snapshot —
     /// pure computation, milliseconds even at chromium's 39k refs.</summary>
     private static (long Fingerprint, string[] Tips, long WalkKey) DeriveRefState(
-        RefSnapshot snapshot, GraphQuery query, IReadOnlyList<string?> stashShas, string repositoryPath)
+        RefSnapshot snapshot, GraphQuery query, string repositoryPath)
     {
         CountRefScan(repositoryPath);
-        var fp = ComputeFingerprint(snapshot, query, stashShas);
-        var tips = ResolveTipShas(snapshot, query, stashShas);
+        var fp = ComputeFingerprint(snapshot, query);
+        var tips = ResolveTipShas(snapshot, query);
         return (fp, tips, ComputeWalkKey(tips, query));
     }
 
     /// <summary>The current ref state for <paramref name="query"/> (the
-    /// snapshot is a token check or one separate process); only a query that includes stashes
-    /// reads the stash log. Null when the refs can't be read — the
+    /// snapshot is a token check or one separate process). Null when the refs can't be read — the
     /// <see cref="HistoriaGitException"/> has already logged why, and each caller decides what an
     /// unknown ref state means for it; none lets the failure escape the service.</summary>
     private static Task<(RefSnapshot Snapshot, long Fingerprint, string[] Tips, long WalkKey)?> TryGetRefStateAsync(
@@ -2649,31 +2606,20 @@ public sealed class GraphLayoutService : IGraphLayoutService
             Diagnostics.PerfLog.Mark($"ref state unreadable: {ex.Message}");
             return null;
         }
-        IReadOnlyList<string?> stashShas = [];
-        if (query.IncludeStashes)
-        {
-            if (cli is null)
-            {
-                var loc = new GitExecutableLocator();
-                await loc.ResolveAsync(null, ct).ConfigureAwait(false);
-                cli = new GitCliService(loc);
-            }
-            stashShas = await ReadStashShasAsync(cli, context.RepositoryPath, snapshot, ct).ConfigureAwait(false);
-        }
-        var (fp, tips, walkKey) = DeriveRefState(snapshot, query, stashShas, context.RepositoryPath);
+        var (fp, tips, walkKey) = DeriveRefState(snapshot, query, context.RepositoryPath);
         return (snapshot, fp, tips, walkKey);
     }
 
     /// <summary>
     /// Stable (cross-process) fingerprint of everything that changes the walk output or its
     /// badges: every ref's name + target (a symbolic ref's target ref name), where HEAD points
-    /// and what it resolves to, and the query knobs (scope, remote-branch and stash inclusion,
-    /// path filter, selected refs, and — only when stashes are in scope — the stash list).
+    /// and what it resolves to, and the query knobs (scope, remote-branch inclusion,
+    /// path filter, and selected refs).
     /// FNV-1a over ordinally sorted input, so it does not depend on ref enumeration order or
     /// per-process <see cref="string.GetHashCode()"/> randomisation. In-memory only — the disk
     /// stores key on <see cref="ComputeWalkKey"/>.
     /// </summary>
-    private static long ComputeFingerprint(RefSnapshot snapshot, GraphQuery query, IReadOnlyList<string?> stashShas)
+    private static long ComputeFingerprint(RefSnapshot snapshot, GraphQuery query)
     {
         var h = StableHash.Fnv64OffsetBasis;
         void Feed(string s) => h = StableHash.Fnv1a64Step(h, s);
@@ -2691,18 +2637,10 @@ public sealed class GraphLayoutService : IGraphLayoutService
         Feed("query");
         Feed(query.RefScope.ToString());
         Feed(query.IncludeRemoteBranches ? "R1" : "R0");
-        Feed(query.IncludeStashes ? "S1" : "S0");
         Feed(query.PathFilter ?? "");
         if (query.RefScope == GraphRefScope.Selected && query.SelectedRefs is { } sel)
             foreach (var s in sel.OrderBy(x => x, StringComparer.Ordinal))
                 Feed(s);
-
-        if (query.IncludeStashes)
-        {
-            foreach (var sha in stashShas)
-                Feed(sha ?? "");
-            Feed("n" + stashShas.Count);
-        }
 
         return unchecked((long)h);
     }
@@ -2711,18 +2649,18 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// otherwise rebuilds it with <see cref="BuildDecorations"/>.</summary>
     private static (Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> Decorations, bool Fresh) ResolveDecorations(
         GraphQuery query, RefSnapshot snapshot, DecoCache? decoCache, long fingerprint,
-        IReadOnlyList<string> remoteNames, IReadOnlyList<string?> stashShas)
+        IReadOnlyList<string> remoteNames)
     {
         if (decoCache is not null && fingerprint != 0 && decoCache.Fingerprint == fingerprint)
             return (decoCache.Decos, false);
 
         Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> decorations;
         using (Diagnostics.PerfLog.Scope("BuildDecorations"))
-            decorations = BuildDecorations(query, snapshot, remoteNames, stashShas);
+            decorations = BuildDecorations(query, snapshot, remoteNames);
         return (decorations, true);
     }
 
-    private enum Family { Branch, Tag, Stash }
+    private enum Family { Branch, Tag }
 
     private sealed class BadgeBuilder
     {
@@ -2731,20 +2669,20 @@ public sealed class GraphLayoutService : IGraphLayoutService
         public bool IsLocal;
         public bool IsHead;
         public readonly List<string> Remotes = [];
-        public int Order; // 0 local, 1 remote-only, 2 tag, 3 stash
+        public int Order; // 0 local, 1 remote-only, 2 tag
     }
 
     /// <summary>
     /// Builds the per-commit decoration list, folding a branch that exists both locally and on
     /// one or more remotes into a single badge. Works straight off
     /// <paramref name="snapshot"/> — branch tips are the ref's resolved target, tags their
-    /// peeled commit, with no object load; only the remote names and the stash list come from
+    /// peeled commit, with no object load; only the remote names come from
     /// CLI readers. The remote prefix is stripped by matching the
     /// configured remote names (longest first), falling back to the first path segment only for
     /// an orphan remote-tracking ref whose remote no longer exists.
     /// </summary>
     internal static Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>> BuildDecorations(
-        GraphQuery query, RefSnapshot snapshot, IReadOnlyList<string> remoteNames, IReadOnlyList<string?> stashShas)
+        GraphQuery query, RefSnapshot snapshot, IReadOnlyList<string> remoteNames)
     {
         // commit id → ((family, shortName) → builder)
         var map = new Dictionary<GitObjectId, Dictionary<(Family, string), BadgeBuilder>>();
@@ -2806,17 +2744,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
             }
         }
 
-        if (query.IncludeStashes)
-        {
-            var i = 0;
-            foreach (var sha in stashShas)
-            {
-                if (sha is not null && GitObjectId.TryParse(sha, out var tip))
-                    Get(tip, Family.Stash, $"stash@{{{i}}}");
-                i++;
-            }
-        }
-
         // HEAD folds into its branch badge; a standalone HEAD badge only when detached.
         if (snapshot.HeadTarget is { } headTip)
         {
@@ -2870,8 +2797,8 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// as soon as a commit carries at least one branch, that branch's badge stands in for
     /// every ref on the commit — any further branches (default‑first, then alphabetical) and
     /// then any tags ride along in <c>Siblings</c>, shown in the badge's interactive hover list
-    /// and folded into its <c>+N</c> counter. Stashes and a detached HEAD keep their own badges;
-    /// a commit with no branch at all leaves tags/stashes as their own badges.
+    /// and folded into its <c>+N</c> counter. A detached HEAD keeps its own badge;
+    /// a commit with no branch at all leaves tags as their own badges.
     /// </summary>
     private static bool IsDetachedHead(BadgeBuilder b) =>
         b.Family == Family.Branch && b.IsHead && !b.IsLocal && b.Remotes.Count == 0;
@@ -2882,14 +2809,13 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // A standalone detached-HEAD badge is never part of a collapsible branch group.
         var branches = all.Where(b => b.Family == Family.Branch && !IsDetachedHead(b)).ToList();
 
-        // No branch to fold into → tags / stashes keep their own badges.
+        // No branch to fold into → tags keep their own badges.
         if (branches.Count == 0)
             return Order(all).Select(b => ToInput(b)).ToList();
 
-        // Stashes and a detached HEAD are still drawn as their own badges.
-        var separate = all.Where(b => b.Family == Family.Stash || IsDetachedHead(b))
-            .OrderBy(b => IsDetachedHead(b) ? 0 : 1)
-            .ThenBy(b => b.Label, StringComparer.Ordinal)
+        // A detached HEAD is still drawn as its own badge.
+        var separate = all.Where(IsDetachedHead)
+            .OrderBy(b => b.Label, StringComparer.Ordinal)
             .Select(b => ToInput(b));
 
         branches.Sort((x, y) =>
@@ -2915,7 +2841,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
             b.Order = b.Family switch
             {
                 Family.Tag => 2,
-                Family.Stash => 3,
                 _ => b.IsLocal ? 0 : 1,
             };
         return badges.OrderBy(b => b.Order).ThenBy(b => b.Label, StringComparer.Ordinal);
@@ -2926,7 +2851,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
         var type = b.Family switch
         {
             Family.Tag => DecorationType.Tag,
-            Family.Stash => DecorationType.Stash,
             _ when b.IsHead && !b.IsLocal && b.Remotes.Count == 0 => DecorationType.Head, // detached HEAD
             _ => b.IsLocal ? DecorationType.LocalBranch : DecorationType.RemoteBranch,
         };

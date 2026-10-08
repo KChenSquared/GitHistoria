@@ -435,7 +435,6 @@ public sealed partial class CommitGraphControl : Control
     private readonly TextBox _searchBox;
     private readonly TextBox _pathBox;
     private readonly ComboBox _scopeBox;
-    private readonly CheckBox _stashCheck;
     private readonly TextBlock _matchLabel;
     private readonly GraphMatchCursor _matches = new();
 
@@ -526,9 +525,6 @@ public sealed partial class CommitGraphControl : Control
         _scopeBox.SelectedIndex = 0;
         _scopeBox.SelectionChanged += (_, _) => ApplyQueryFromBar();
 
-        _stashCheck = new CheckBox { Content = "Stashes", VerticalAlignment = VerticalAlignment.Center };
-        _stashCheck.IsCheckedChanged += (_, _) => ApplyQueryFromBar();
-
         var prev = new Button { Content = "◂", Width = 22 };
         ToolTip.SetTip(prev, "Previous match (Shift+Enter / Shift+F3)");
         prev.Click += (_, _) => StepMatch(-1);
@@ -546,7 +542,6 @@ public sealed partial class CommitGraphControl : Control
             new TextBlock { Text = "Path", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0,0,6,0) },
             _pathBox,
             new Border { Width = 12 }, _scopeBox,
-            new Border { Width = 8 }, _stashCheck,
         })
         {
             bar.Children.Add(el);
@@ -2207,7 +2202,6 @@ public sealed partial class CommitGraphControl : Control
         {
             RefScope = scope,
             PathFilter = path,
-            IncludeStashes = _stashCheck.IsChecked == true,
         };
         if (next == _query)
             return;

@@ -37,7 +37,7 @@ public sealed class GraphDecorationsCliTests : IAsyncDisposable
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeRemoteBranches = true };
         var remoteNames = new[] { "team/fork", "origin" };
 
-        var decos = GraphLayoutService.BuildDecorations(query, snapshot, remoteNames, stashShas: []);
+        var decos = GraphLayoutService.BuildDecorations(query, snapshot, remoteNames);
 
         Assert.True(decos.TryGetValue(commitId, out var badges));
         var badge = Assert.Single(badges);
@@ -62,7 +62,7 @@ public sealed class GraphDecorationsCliTests : IAsyncDisposable
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeRemoteBranches = true };
         var remoteNames = new[] { "origin" };
 
-        var decos = GraphLayoutService.BuildDecorations(query, snapshot, remoteNames, stashShas: []);
+        var decos = GraphLayoutService.BuildDecorations(query, snapshot, remoteNames);
 
         Assert.True(decos.TryGetValue(commitId, out var badges));
         var badge = Assert.Single(badges);
@@ -74,7 +74,7 @@ public sealed class GraphDecorationsCliTests : IAsyncDisposable
     }
 
     [Fact]
-    public void Stash_badges_with_stashes_on_vs_off()
+    public void Stash_badges_are_never_created()
     {
         var commitId = new GitObjectId("3333333333333333333333333333333333333333");
         var refs = new List<RefEntry>
@@ -83,83 +83,11 @@ public sealed class GraphDecorationsCliTests : IAsyncDisposable
         };
         var snapshot = new RefSnapshot(refs, token: 1, headSymref: "refs/heads/main", headTarget: commitId);
 
-        var stashSha = "3333333333333333333333333333333333333333";
+        var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
+        var decos = GraphLayoutService.BuildDecorations(query, snapshot, []);
 
-        var queryWithStash = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeStashes = true };
-        var decosOn = GraphLayoutService.BuildDecorations(queryWithStash, snapshot, [], stashShas: [stashSha]);
-
-        Assert.True(decosOn.TryGetValue(commitId, out var badgesOn));
-        Assert.Contains(badgesOn, b => b.Type == DecorationType.Stash && b.Label == "stash@{0}");
-
-        var queryWithoutStash = new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeStashes = false };
-        var decosOff = GraphLayoutService.BuildDecorations(queryWithoutStash, snapshot, [], stashShas: [stashSha]);
-
-        Assert.True(decosOff.TryGetValue(commitId, out var badgesOff));
-        Assert.DoesNotContain(badgesOff, b => b.Type == DecorationType.Stash);
-    }
-
-    [Fact]
-    public async Task ReadStashShas_does_not_spawn_cli_if_refs_stash_is_missing()
-    {
-        var commitId = new GitObjectId("4444444444444444444444444444444444444444");
-        var refs = new List<RefEntry>
-        {
-            new("refs/heads/main", commitId, "commit", null, null, null, null, null, null),
-        };
-        var snapshot = new RefSnapshot(refs, token: 1, headSymref: "refs/heads/main", headTarget: commitId);
-
-        var cli = new RecordingGitCliService();
-        var shas = await GraphLayoutService.ReadStashShasAsync(cli, "dummyPath", snapshot, CancellationToken.None);
-
-        Assert.Empty(shas);
-        Assert.Empty(cli.Requests);
-    }
-
-    [Fact]
-    public async Task ReadStashShas_spawns_cli_when_refs_stash_is_present()
-    {
-        var commit1 = "5555555555555555555555555555555555555555";
-        var commit2 = "6666666666666666666666666666666666666666";
-        var stashTarget = new GitObjectId(commit1);
-        var refs = new List<RefEntry>
-        {
-            new("refs/stash", stashTarget, "commit", null, null, null, null, null, null),
-        };
-        var snapshot = new RefSnapshot(refs, token: 1, headSymref: null, headTarget: null);
-
-        var cli = new CustomOutputCli($"{commit1}\n{commit2}\n");
-        var shas = await GraphLayoutService.ReadStashShasAsync(cli, "dummyPath", snapshot, CancellationToken.None);
-
-        Assert.Equal(2, shas.Count);
-        Assert.Equal(commit1, shas[0]);
-        Assert.Equal(commit2, shas[1]);
-
-        var req = Assert.Single(cli.Requests);
-        Assert.Equal(["log", "-g", "--format=%H", "refs/stash"], req.Arguments);
-    }
-
-    [Fact]
-    public async Task ReadStashShas_real_repo_with_two_stashes_matches_libgit2()
-    {
-        using var builder = TestRepositoryBuilder.FromTemplate("stash-real-two", b =>
-        {
-            b.WriteFile("f.txt", "1\n").Stage().Commit("c1");
-            b.WriteFile("f.txt", "stash 1\n");
-            b.Git("stash", "push", "-m", "stash 1");
-            b.WriteFile("f.txt", "stash 2\n");
-            b.Git("stash", "push", "-m", "stash 2");
-        });
-
-        await using var ctx = _host.Open(builder.Path);
-        var snapshot = await ctx.RefSnapshots.GetAsync();
-        var cli = _host.Provider.GetRequiredService<IGitCliService>();
-
-        var shas = await GraphLayoutService.ReadStashShasAsync(cli, builder.Path, snapshot, CancellationToken.None);
-
-        using var repo = new Repository(builder.Path);
-        var expected = repo.Stashes.Select(s => s.WorkTree.Id.Sha).ToList();
-
-        Assert.Equal(2, expected.Count);
-        Assert.Equal(expected, shas);
+        Assert.True(decos.TryGetValue(commitId, out var badges));
+        Assert.DoesNotContain(badges, b => b.Label.StartsWith("stash@", StringComparison.Ordinal));
     }
 }
+

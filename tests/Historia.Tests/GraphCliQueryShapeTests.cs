@@ -89,7 +89,7 @@ public sealed class GraphCliQueryShapeTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Stashes_on_adds_the_stash_commits_and_their_badge()
+    public async Task Stash_commits_are_never_in_the_graph()
     {
         if (GitMissing)
             return;
@@ -102,14 +102,10 @@ public sealed class GraphCliQueryShapeTests : IAsyncDisposable
         await using var ctx = Open(repo);
         var svc = new GraphLayoutService(_host.Settings, _host.Locator);
 
-        var with = await svc.ComputeLayoutAsync(ctx, new GraphQuery { IncludeStashes = true });
-        var row = Ids(with).IndexOf(stash);
-        Assert.True(row >= 0, "the stash work-tree commit should be a row");
-        Assert.Contains(with.Layout.Decorations,
-            d => d.RowIndex == row && d.Type == DecorationType.Stash && d.Label == "stash@{0}");
-
-        var without = await svc.ComputeLayoutAsync(ctx, new GraphQuery { IncludeStashes = false });
-        Assert.DoesNotContain(stash, Ids(without));
+        var result = await svc.ComputeLayoutAsync(ctx, new GraphQuery());
+        Assert.False(result.Layout.TryGetRow(stash, out _));
+        Assert.DoesNotContain(stash, Ids(result));
+        Assert.DoesNotContain(result.Layout.Decorations, d => d.Label.StartsWith("stash@", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -213,7 +209,7 @@ public sealed class GraphCliQueryShapeTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Extend_keeps_the_stashes()
+    public async Task Extend_ignores_stashes()
     {
         if (GitMissing)
             return;
@@ -222,12 +218,12 @@ public sealed class GraphCliQueryShapeTests : IAsyncDisposable
         repo.Git("stash", "push", "-m", "wip");
         var stash = Id(repo.Git("rev-parse", "stash@{0}"));
 
-        var query = new GraphQuery { IncludeStashes = true };
+        var query = new GraphQuery();
         await AssertExtendMatchesOneFullLayout(repo, query);
 
         await using var ctx = Open(repo);
         var full = await new GraphLayoutService(_host.Settings, _host.Locator).ComputeLayoutAsync(ctx, query, maxRows: 10_000);
-        Assert.Contains(stash, Ids(full));
+        Assert.DoesNotContain(stash, Ids(full));
     }
 
     [Fact]
