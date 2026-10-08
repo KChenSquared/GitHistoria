@@ -38,18 +38,18 @@ public sealed class GitGatewayWorkingTreeTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task DiscardWorkingTree_handles_unstaged_untracked_and_staged()
+    public async Task DiscardWorkingTree_keeps_staged_changes()
     {
-        using var repo = TestRepositoryBuilder.FromTemplate("gw-discard-seed", r =>
+        using var repo = TestRepositoryBuilder.FromTemplate("gw-discard-keeps-staged", r =>
         {
             r.WriteFile("tracked.txt", "original\n").Stage().Commit("init");
             r.WriteFile("tracked.txt", "modified\n");
             r.WriteFile("sub/nested.txt", "orig nested\n").Stage("sub/nested.txt").Commit("nested");
             r.WriteFile("sub/nested.txt", "mod nested\n");
+            r.WriteFile("rename_me.txt", "rename me\n").Stage("rename_me.txt").Commit("rename init");
             r.WriteFile("untracked.txt", "untracked\n");
             r.WriteFile("sub/untracked2.txt", "untracked2\n");
             r.WriteFile("staged_new.txt", "staged new\n").Stage("staged_new.txt");
-            r.WriteFile("rename_me.txt", "rename me\n").Stage("rename_me.txt").Commit("rename init");
         });
         File.Move(Path.Combine(repo.Path, "rename_me.txt"), Path.Combine(repo.Path, "renamed.txt"));
 
@@ -65,7 +65,12 @@ public sealed class GitGatewayWorkingTreeTests : IAsyncDisposable
         ]);
 
         var status = await ctx.Gateway.GetStatusAsync();
-        Assert.False(status.IsDirty);
+        Assert.Single(status.Staged);
+        Assert.Equal("staged_new.txt", status.Staged[0].Path);
+        Assert.Empty(status.Unstaged);
+        Assert.Empty(status.Untracked);
+        Assert.True(File.Exists(Path.Combine(repo.Path, "staged_new.txt")));
+        Assert.Equal("staged new\n", await File.ReadAllTextAsync(Path.Combine(repo.Path, "staged_new.txt")));
         Assert.False(File.Exists(Path.Combine(repo.Path, "sub/untracked2.txt")));
         Assert.False(File.Exists(Path.Combine(repo.Path, "renamed.txt")));
         Assert.True(File.Exists(Path.Combine(repo.Path, "rename_me.txt")));
@@ -117,7 +122,7 @@ public sealed class GitGatewayWorkingTreeTests : IAsyncDisposable
             File.WriteAllText(Path.Combine(repo.Path, paths[i]), "modified\n");
         }
 
-        // 4. Discard every path (exercises git ls-tree chunking over argv limit and restore from HEAD)
+        // 4. Discard every path (exercises ls-files / diff chunking over argv limit and restore from index)
         await ctx.Gateway.DiscardAsync(paths);
         var statusAfter = await ctx.Gateway.GetStatusAsync();
         Assert.False(statusAfter.IsDirty);
@@ -251,19 +256,19 @@ public sealed class GitGatewayWorkingTreeTests : IAsyncDisposable
     }
 
     [Theory]
-    [InlineData("ls-tree", GitErrorKind.TimedOut, -1)]
-    [InlineData("ls-tree", GitErrorKind.Unknown, 128)]
-    [InlineData("rev-parse", GitErrorKind.TimedOut, -1)]
-    [InlineData("rev-parse", GitErrorKind.Cancelled, -1)]
+    [InlineData("ls-files", GitErrorKind.TimedOut, -1)]
+    [InlineData("ls-files", GitErrorKind.Unknown, 128)]
+    [InlineData("diff", GitErrorKind.TimedOut, -1)]
+    [InlineData("config", GitErrorKind.Cancelled, -1)]
+    [InlineData("config", GitErrorKind.Unknown, 128)]
     public async Task Discard_stops_without_deleting_when_a_probe_fails(string failingCommand, GitErrorKind kind, int exitCode)
     {
-        // Rule 00: a failed probe read as "unborn" or "not in HEAD" would recycle tracked files.
         using var repo = TestRepositoryBuilder.FromTemplate("gw-discard-probe-seed", r =>
             r.WriteFile("tracked.txt", "original\n").Stage().Commit("init"));
         var trackedPath = Path.Combine(repo.Path, "tracked.txt");
         await File.WriteAllTextAsync(trackedPath, "modified\n");
 
-        var armed = false; // discovery runs rev-parse too; fail only the discard's own probes
+        var armed = false;
         var spy = new InterceptingGitCliService(_host.Cli)
         {
             Intercept = req => armed && req.Arguments.Contains(failingCommand)

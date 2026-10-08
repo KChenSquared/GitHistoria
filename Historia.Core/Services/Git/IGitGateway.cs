@@ -47,6 +47,11 @@ public interface IGitGateway
     // ── Working tree mutations ──
     Task StageAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
     Task UnstageAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
+    /// <summary>
+    /// Reverts only unstaged changes for the specified paths. Tracked paths are restored from
+    /// the index via <c>git restore --worktree</c>, untracked and intent-to-add paths are sent
+    /// to the Recycle Bin, and staged changes are left untouched.
+    /// </summary>
     Task DiscardAsync(IReadOnlyList<string> paths, CancellationToken ct = default);
     Task<GitObjectId> CommitAsync(CommitRequest request, CancellationToken ct = default);
 

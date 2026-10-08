@@ -69,6 +69,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private readonly Dictionary<string, Border> _conflictedRowCache = new(StringComparer.Ordinal);
 
     internal StackPanel ChangesRowsForTesting => _changesRows;
+    internal StackPanel StagedRowsForTesting => _stagedRows;
+    internal Button DiscardAllChangesForTesting => _discardAllChanges;
+    internal Task DiscardAllChangesForTestingAsync() => DiscardAllChangesAsync();
     internal TextBlock ChangesHeaderForTesting => _changesHeader;
     internal IReadOnlyDictionary<string, Border> ConflictedRowCacheForTesting => _conflictedRowCache;
     internal TextBox MessageForTesting => _message;
@@ -862,8 +865,15 @@ public sealed class StagingPanelView : UserControl, IDisposable
             var b = new Border { Child = row, Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand), Background = Brushes.Transparent };
             if (!_ctx.IsBare)
             {
-                b.WithRevealMenu(_launcher, () => System.IO.Path.Combine(_ctx.RepositoryPath, file.Path),
-                    extraItems: [MenuLeaf("Discard changes", () => _ = DiscardAsync(file))]);
+                if (!staged)
+                {
+                    b.WithRevealMenu(_launcher, () => System.IO.Path.Combine(_ctx.RepositoryPath, file.Path),
+                        extraItems: [MenuLeaf("Discard changes", () => _ = DiscardAsync(file))]);
+                }
+                else
+                {
+                    b.WithRevealMenu(_launcher, () => System.IO.Path.Combine(_ctx.RepositoryPath, file.Path));
+                }
             }
             b.PointerPressed += (_, e) =>
             {
@@ -962,7 +972,10 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private async Task DiscardAsync(FileStatusEntry f)
     {
-        if (!await _dialogs.ConfirmDestructiveAsync("Discard changes", $"Discard all changes to '{f.Path}'? This cannot be undone.", "Discard"))
+        if (!await _dialogs.ConfirmDestructiveAsync(
+            "Discard changes",
+            $"Discard unstaged changes to '{f.Path}'? Staged changes are kept. This cannot be undone.",
+            "Discard"))
             return;
         _checkedChanges.Remove(f.Path);
         _checkedStaged.Remove(f.Path);
@@ -981,7 +994,17 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     private async Task DiscardAllChangesAsync()
     {
-        var paths = _status.Unstaged.Concat(_status.Untracked).Select(f => f.Path).ToList();
+        var files = _status.Unstaged.Concat(_status.Untracked);
+        var paths = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var f in files)
+        {
+            if (seen.Add(f.Path))
+                paths.Add(f.Path);
+            if (f.OldPath is not null && seen.Add(f.OldPath))
+                paths.Add(f.OldPath);
+        }
+
         if (paths.Count == 0) return;
         if (!await _dialogs.ConfirmDestructiveAsync(
             "Discard all changes",
@@ -991,7 +1014,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             return;
         _checkedChanges.Clear();
         RefreshSelectionState();
-        if (_ctx.State.OpenDiff is { } diff && (diff.Source == DiffSource.UnstagedChanges || (diff.Path is not null && paths.Contains(diff.Path))))
+        if (_ctx.State.OpenDiff is { } diff && (diff.Source == DiffSource.UnstagedChanges || (diff.Path is not null && seen.Contains(diff.Path))))
             _ctx.State.SetOpenDiff(null);
         await Run(() => _ctx.Gateway.DiscardAsync(paths, _ctx.Lifetime));
     }
