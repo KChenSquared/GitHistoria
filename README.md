@@ -210,15 +210,9 @@ are in [`docs/Historia-commander-skills/`](docs/Historia-commander-skills/README
 
 ## 📄 License
 
-Historia is free software: you can redistribute it and/or modify it under the terms of
-the [GNU General Public License v3.0](LICENSE) as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later version.
+Historia is released under the [MIT License](LICENSE).
 
-It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
-even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
-the [GNU General Public License](LICENSE) for more details.
-
-Copyright (C) 2026 The Historia Contributors.
+Copyright (c) 2026-2027 Kevin Chen.
 
 Bundled third-party material is credited in
 [`docs/third-party-licenses.md`](docs/third-party-licenses.md): the

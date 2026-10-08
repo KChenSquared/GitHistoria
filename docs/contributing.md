@@ -193,7 +193,9 @@ I adhere to [Conventional Commits](https://www.conventionalcommits.org/):
 
 ## 9. License
 
-By contributing to Historia, you agree that your contributions will be licensed under the project's existing open-source license, the [GNU General Public License v3.0](../LICENSE).
+Historia is released under the [MIT License](../LICENSE).
+
+**Contributor terms.** You keep the copyright to your contributions. By submitting a contribution, you grant Kevin Chen and any successor maintainer of Historia a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to use, copy, modify, distribute, sublicense and relicense your contribution under any terms, and a matching patent license for any of your patents your contribution needs. You confirm the contribution is your own work, or that you have the right to submit it under these terms, including any permission your employer requires. Your contribution is also available to everyone under the project's MIT License.
 
 Bundled third-party material is tracked in [`docs/third-party-licenses.md`](third-party-licenses.md).
 The utility icon set is Material Symbols (Apache-2.0), vendored as SVGs under `assets/material-symbols/`
