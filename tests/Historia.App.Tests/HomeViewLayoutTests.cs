@@ -34,8 +34,9 @@ public sealed class HomeViewLayoutTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(openBtn.Bounds.Y, cloneBtn.Bounds.Y);
-        Assert.Equal(openBtn.Bounds.Y, newBtn.Bounds.Y);
+        // Primary and secondary buttons differ in height, so a shared line means a shared centre.
+        Assert.Equal(openBtn.Bounds.Center.Y, cloneBtn.Bounds.Center.Y);
+        Assert.Equal(openBtn.Bounds.Center.Y, newBtn.Bounds.Center.Y);
 
         window.Close();
     }
@@ -57,8 +58,9 @@ public sealed class HomeViewLayoutTests
         window.Width = 640;
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(openBtn.Bounds.Y, cloneBtn.Bounds.Y);
-        Assert.Equal(openBtn.Bounds.Y, newBtn.Bounds.Y);
+        // Primary and secondary buttons differ in height, so a shared line means a shared centre.
+        Assert.Equal(openBtn.Bounds.Center.Y, cloneBtn.Bounds.Center.Y);
+        Assert.Equal(openBtn.Bounds.Center.Y, newBtn.Bounds.Center.Y);
 
         window.Close();
     }
@@ -107,30 +109,9 @@ public sealed class HomeViewLayoutTests
         window.Close();
     }
 
-    private static void EnsureAppStylesLoaded()
-    {
-        if (Application.Current is { } app && !app.Resources.ContainsKey(typeof(ScrollBar)))
-        {
-            var appType = typeof(Historia.Theming.ScrollBarMetrics).Assembly.GetType("Historia.App")!;
-            var historiaApp = (Application)Activator.CreateInstance(appType)!;
-            historiaApp.Initialize();
-            foreach (var key in historiaApp.Resources.Keys)
-            {
-                app.Resources[key] = historiaApp.Resources[key];
-            }
-            var styles = historiaApp.Styles.ToList();
-            historiaApp.Styles.Clear();
-            foreach (var style in styles)
-            {
-                app.Styles.Add(style);
-            }
-        }
-    }
-
     [AvaloniaFact]
     public void RecentScroller_bar_is_lane_wide()
     {
-        EnsureAppStylesLoaded();
         var contentPanel = new StackPanel { Spacing = 4 };
         for (var i = 0; i < 20; i++)
         {

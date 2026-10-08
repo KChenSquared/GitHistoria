@@ -141,30 +141,9 @@ public sealed class RefNavigatorLayoutTests
         return sc.BuildServiceProvider();
     }
 
-    private static void EnsureAppStylesLoaded()
-    {
-        if (Application.Current is { } app && !app.Resources.ContainsKey(typeof(ScrollBar)))
-        {
-            var appType = typeof(Historia.Theming.ScrollBarMetrics).Assembly.GetType("Historia.App")!;
-            var historiaApp = (Application)Activator.CreateInstance(appType)!;
-            historiaApp.Initialize();
-            foreach (var key in historiaApp.Resources.Keys)
-            {
-                app.Resources[key] = historiaApp.Resources[key];
-            }
-            var styles = historiaApp.Styles.ToList();
-            historiaApp.Styles.Clear();
-            foreach (var style in styles)
-            {
-                app.Styles.Add(style);
-            }
-        }
-    }
-
     private static (RefNavigatorView View, ServiceProvider Sp, TestRepoFixture Fixture, RepositoryContext Context, Window Window) CreateView(
         double windowWidth = 300, IEnumerable<string>? extraBranchNames = null, double windowHeight = 800)
     {
-        EnsureAppStylesLoaded();
         var fixture = new TestRepoFixture(extraBranchNames);
         var sp = CreateServices();
         var ws = sp.GetRequiredService<IWorkspaceService>();

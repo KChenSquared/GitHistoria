@@ -23,30 +23,9 @@ public sealed class ScrollBarThemeTests
         public Task SetHighContrastAsync(bool enabled, CancellationToken ct = default) => Task.CompletedTask;
     }
 
-    private static void EnsureAppStylesLoaded()
-    {
-        if (Application.Current is { } app && !app.Resources.ContainsKey(typeof(ScrollBar)))
-        {
-            var appType = typeof(Historia.Theming.ScrollBarMetrics).Assembly.GetType("Historia.App")!;
-            var historiaApp = (Application)Activator.CreateInstance(appType)!;
-            historiaApp.Initialize();
-            foreach (var key in historiaApp.Resources.Keys)
-            {
-                app.Resources[key] = historiaApp.Resources[key];
-            }
-            var styles = historiaApp.Styles.ToList();
-            historiaApp.Styles.Clear();
-            foreach (var style in styles)
-            {
-                app.Styles.Add(style);
-            }
-        }
-    }
-
     [AvaloniaFact]
     public void Vertical_bar_is_a_lane_with_a_pill_thumb()
     {
-        EnsureAppStylesLoaded();
         var theme = new StubThemeService { Effective = EffectiveTheme.Dark };
         using var applier = new AvaloniaThemeApplier(theme);
         applier.Apply(EffectiveTheme.Dark);
@@ -84,7 +63,6 @@ public sealed class ScrollBarThemeTests
     [AvaloniaFact]
     public void Horizontal_bar_matches()
     {
-        EnsureAppStylesLoaded();
         var theme = new StubThemeService { Effective = EffectiveTheme.Dark };
         using var applier = new AvaloniaThemeApplier(theme);
         applier.Apply(EffectiveTheme.Dark);
@@ -123,7 +101,6 @@ public sealed class ScrollBarThemeTests
     [AvaloniaFact]
     public void ScrollViewers_reserve_their_lane()
     {
-        EnsureAppStylesLoaded();
         var theme = new StubThemeService { Effective = EffectiveTheme.Dark };
         using var applier = new AvaloniaThemeApplier(theme);
         applier.Apply(EffectiveTheme.Dark);
@@ -156,7 +133,6 @@ public sealed class ScrollBarThemeTests
     [AvaloniaFact]
     public void Thumb_recolours_on_theme_switch()
     {
-        EnsureAppStylesLoaded();
         var theme = new StubThemeService { Effective = EffectiveTheme.Dark };
         using var applier = new AvaloniaThemeApplier(theme);
         applier.Apply(EffectiveTheme.Dark);
