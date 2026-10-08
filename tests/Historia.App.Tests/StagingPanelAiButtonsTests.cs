@@ -162,28 +162,57 @@ public class StagingPanelAiButtonsTests : IDisposable
     // ── Buttons ──
 
     [AvaloniaFact]
-    public void The_buttons_sit_bottom_left_in_the_message_cell_wand_first()
+    public void The_buttons_sit_left_in_the_amend_row_wand_first()
     {
         var panel = NewPanel();
 
-        var strip = panel.MessageCellForTesting!.Children.OfType<StackPanel>().Single();
+        var strip = Assert.IsType<StackPanel>(panel.CommitOptionsRowForTesting!.Children.OfType<StackPanel>().Single());
 
+        Assert.Equal(0, Grid.GetColumn(strip));
         Assert.Equal(HorizontalAlignment.Left, strip.HorizontalAlignment);
-        Assert.Equal(VerticalAlignment.Bottom, strip.VerticalAlignment);
         Assert.Same(panel.WandForTesting, strip.Children[0]);
         Assert.Same(panel.AiSettingsForTesting, strip.Children[1]);
-        Assert.Equal(22, panel.WandForTesting!.Width);
-        Assert.Equal(22, panel.AiSettingsForTesting!.Height);
-        Assert.Equal("Setup AI Integration", ToolTip.GetTip(panel.AiSettingsForTesting));
-        Assert.Equal("Generate Commit Message", ToolTip.GetTip(panel.WandForTesting));
+        Assert.Empty(panel.MessageCellForTesting!.Children.OfType<StackPanel>());
+        Assert.Equal("Setup AI Integration", ToolTip.GetTip(panel.AiSettingsForTesting!));
+        Assert.Equal("Generate Commit Message", ToolTip.GetTip(panel.WandForTesting!));
     }
 
     [AvaloniaFact]
-    public void The_message_box_clears_the_buttons_with_extra_bottom_padding()
+    public void The_amend_checkbox_reads_Amend_and_sits_right()
     {
         var panel = NewPanel();
 
-        Assert.True(panel.MessageForTesting.Padding.Bottom >= 26);
+        Assert.Equal("Amend", panel.AmendForTesting.Content);
+        Assert.Equal(2, Grid.GetColumn(panel.AmendForTesting));
+        Assert.Equal(HorizontalAlignment.Right, panel.AmendForTesting.HorizontalAlignment);
+    }
+
+    [AvaloniaFact]
+    public async Task The_icons_match_the_amend_text_size()
+    {
+        var panel = NewPanel();
+        var fontSize = panel.AmendForTesting.FontSize;
+
+        var wandPath = Assert.IsType<Avalonia.Controls.Shapes.Path>(panel.WandForTesting!.Content);
+        var gearPath = Assert.IsType<Avalonia.Controls.Shapes.Path>(panel.AiSettingsForTesting!.Content);
+        Assert.Equal(fontSize, wandPath.Width);
+        Assert.Equal(fontSize, wandPath.Height);
+        Assert.Equal(fontSize, gearPath.Width);
+        Assert.Equal(fontSize, gearPath.Height);
+
+        await ActivateAsync();
+
+        var activeWandPath = Assert.IsType<Avalonia.Controls.Shapes.Path>(panel.WandForTesting.Content);
+        Assert.Equal(fontSize, activeWandPath.Width);
+        Assert.Equal(fontSize, activeWandPath.Height);
+    }
+
+    [AvaloniaFact]
+    public void The_message_box_reserves_bottom_padding_for_the_counter()
+    {
+        var panel = NewPanel();
+
+        Assert.True(panel.MessageForTesting.Padding.Bottom >= 16);
     }
 
     [AvaloniaFact]

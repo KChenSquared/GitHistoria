@@ -353,4 +353,17 @@ public class StagingPanelProposalTests : IDisposable
         Assert.Equal(Proposal, _context.State.PendingCommitMessage);
         Assert.Equal("", panel.MessageForTesting.Text);
     }
+
+    [AvaloniaFact]
+    public void Without_ai_services_the_amend_row_holds_only_the_checkbox()
+    {
+        var panel = NewPanel();
+
+        Assert.Null(panel.WandForTesting);
+        Assert.Null(panel.AiSettingsForTesting);
+        var row = Assert.IsType<Grid>(panel.CommitOptionsRowForTesting);
+        var child = Assert.Single(row.Children);
+        Assert.Same(panel.AmendForTesting, child);
+        Assert.Equal(HorizontalAlignment.Right, panel.AmendForTesting.HorizontalAlignment);
+    }
 }
