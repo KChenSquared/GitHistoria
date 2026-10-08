@@ -166,7 +166,7 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         var panel = NewPanel();
 
-        var strip = Assert.IsType<StackPanel>(panel.CommitOptionsRowForTesting!.Children.OfType<StackPanel>().Single());
+        var strip = panel.CommitOptionsRowForTesting!.Children.OfType<StackPanel>().Single();
 
         Assert.Equal(0, Grid.GetColumn(strip));
         Assert.Equal(HorizontalAlignment.Left, strip.HorizontalAlignment);
