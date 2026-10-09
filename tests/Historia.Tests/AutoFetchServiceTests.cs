@@ -44,7 +44,25 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
     // ── positional cursor ──
 
     [Fact(Timeout = 60000)]
-    public async Task Loop_fetches_the_repo_at_each_slot_after_an_initial_fetch_on_the_focused_repo()
+    public async Task No_fetch_runs_when_restored_repos_finish_loading()
+    {
+        var ws = NewWorkspace();
+        await ws.OpenAsync(Repo("a.txt").Path);
+        await ws.OpenAsync(Repo("b.txt").Path);
+
+        var host = new FakeHost();
+        var delay = new ManualDelayer();
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
+        _svc.Start();
+
+        await delay.WaitForPending("initial idle");
+        Assert.Empty(host.Snapshot());
+        Assert.Single(delay.Requested);
+        Assert.Equal(AutoFetchService.InitialIdle, delay.Requested[0]);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task Loop_fetches_the_repo_at_each_slot()
     {
         var ws = NewWorkspace();
         var r1 = await ws.OpenAsync(Repo("a.txt").Path);
@@ -56,27 +74,23 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
         _svc.Start();
 
-        // [InitialFetch] on the focused repo, before any delay.
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
-        Assert.Same(r3, host.Snapshot()[0]);
-
         // Cycle: 5-min idle, then slot 0, 1 min, slot 1, 1 min, slot 2.
         await delay.WaitForPending("initial idle");
         Assert.Equal(AutoFetchService.InitialIdle, delay.Requested[^1]);
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == 2, "slot 0 fetch");
-        Assert.Same(r1, host.Snapshot()[1]);
+        await WaitUntil(() => host.Snapshot().Count == 1, "slot 0 fetch");
+        Assert.Same(r1, host.Snapshot()[0]);
 
         await delay.WaitForPending("step to slot 1");
         Assert.Equal(AutoFetchService.PerRepoStep, delay.Requested[^1]);
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == 3, "slot 1 fetch");
-        Assert.Same(r2, host.Snapshot()[2]);
+        await WaitUntil(() => host.Snapshot().Count == 2, "slot 1 fetch");
+        Assert.Same(r2, host.Snapshot()[1]);
 
         await delay.WaitForPending("step to slot 2");
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == 4, "slot 2 fetch");
-        Assert.Same(r3, host.Snapshot()[3]);
+        await WaitUntil(() => host.Snapshot().Count == 3, "slot 2 fetch");
+        Assert.Same(r3, host.Snapshot()[2]);
     }
 
     [Fact(Timeout = 60000)]
@@ -91,17 +105,15 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         var delay = new ManualDelayer();
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
         _svc.Start();
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
-        var afterInitial = host.Snapshot().Count;
 
         await delay.WaitForPending("initial idle");
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == afterInitial + 1, "slot 0");
+        await WaitUntil(() => host.Snapshot().Count == 1, "slot 0");
         Assert.Same(r1, host.Snapshot()[^1]); // slot 0 = r1
 
         await delay.WaitForPending("step to slot 1");
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == afterInitial + 2, "slot 1");
+        await WaitUntil(() => host.Snapshot().Count == 2, "slot 1");
         Assert.Same(r2, host.Snapshot()[^1]); // slot 1 = r2
 
         // The user drags the just-fetched r2 into the last slot: order is now r1, r3, r2.
@@ -109,10 +121,10 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         ws.Move(r2, 2);
         await delay.WaitForPending("step to slot 2");
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == afterInitial + 3, "slot 2");
+        await WaitUntil(() => host.Snapshot().Count == 3, "slot 2");
         Assert.Same(r2, host.Snapshot()[^1]); // r2 fetched again
 
-        var thisCycle = host.Snapshot().Skip(afterInitial).ToArray();
+        var thisCycle = host.Snapshot().ToArray();
         Assert.Equal(new[] { r1, r2, r2 }, thisCycle);
         Assert.DoesNotContain(r3, thisCycle); // r3 slid into slot 1, already passed
     }
@@ -130,11 +142,10 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         var delay = new ManualDelayer();
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
         _svc.Start();
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
 
         await delay.WaitForPending("initial idle");
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == 2, "slot 0");
+        await WaitUntil(() => host.Snapshot().Count == 1, "slot 0");
         await delay.WaitForPending("step to slot 1");
         Assert.Equal(1, delay.CountOf(AutoFetchService.InitialIdle));
 
@@ -155,11 +166,10 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         var delay = new ManualDelayer();
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
         _svc.Start();
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
 
         await delay.WaitForPending("initial idle");
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == 2, "slot 0");
+        await WaitUntil(() => host.Snapshot().Count == 1, "slot 0");
         await delay.WaitForPending("step");
         Assert.Equal(1, delay.CountOf(AutoFetchService.InitialIdle));
 
@@ -178,7 +188,6 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         var delay = new ManualDelayer();
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
         _svc.Start();
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
 
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         host.BlockNext = release;
@@ -193,7 +202,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         Assert.Equal(1, delay.CountOf(AutoFetchService.InitialIdle));
 
         release.SetResult();
-        await WaitUntil(() => host.Snapshot().Count == 2, "the interrupted fetch completes");
+        await WaitUntil(() => host.Snapshot().Count == 1, "the interrupted fetch completes");
         Assert.Same(r1, host.Snapshot()[^1]);
         await WaitUntil(() => delay.CountOf(AutoFetchService.InitialIdle) == 2, "then the cycle restarts");
     }
@@ -208,6 +217,8 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         var delay = new ManualDelayer();
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
         _svc.Start();
+        await delay.WaitForPending("initial idle");
+        delay.Fire();
         await host.BlockedFetchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         _svc.Stop();
@@ -225,7 +236,6 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         var delay = new ManualDelayer();
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
         _svc.Start();
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
 
         Assert.True(r1.TryBeginNetworkOperation(new NetworkOperationInfo(NetworkOperationOwner.User, "Pull"), out var userOp));
         await delay.WaitForPending("initial idle");
@@ -233,19 +243,19 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
 
         // Slot 0 (r1) is skipped: nothing fetched, the loop moves on to the next step.
         await delay.WaitForPending("step to slot 1");
-        Assert.Single(host.Snapshot());
+        Assert.Empty(host.Snapshot());
         Assert.Equal(AutoFetchTabState.PendingThisCycle, _svc.GetTabState(r1));
 
         userOp.Dispose();
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == 2, "slot 1");
+        await WaitUntil(() => host.Snapshot().Count == 1, "slot 1");
         Assert.Same(r2, host.Snapshot()[^1]);
 
         await delay.WaitForPending("trailing step");
         delay.Fire();
         await delay.WaitForPending("next idle");
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == 3, "r1 fetched next cycle");
+        await WaitUntil(() => host.Snapshot().Count == 2, "r1 fetched next cycle");
         Assert.Same(r1, host.Snapshot()[^1]);
     }
 
@@ -254,17 +264,16 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
     {
         var ws = NewWorkspace();
         var r1 = await ws.OpenAsync(Repo("a.txt").Path);
-        await ws.OpenAsync(Repo("b.txt").Path);
+        var r2 = await ws.OpenAsync(Repo("b.txt").Path);
 
         var host = new FakeHost();
         var delay = new ManualDelayer();
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
         _svc.Start();
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
 
         await delay.WaitForPending("initial idle");
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == 2, "slot 0");
+        await WaitUntil(() => host.Snapshot().Count == 1, "slot 0");
         await delay.WaitForPending("step to slot 1");
 
         ws.Move(r1, 1); // same count
@@ -286,7 +295,10 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, graph);
         _svc.Start();
 
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
+        await delay.WaitForPending("initial idle");
+        delay.Fire();
+
+        await WaitUntil(() => host.Snapshot().Count == 1, "slot 0 fetch");
         await WaitUntil(() => graph.Snapshot().Count == 1, "commit-graph refresh after the fetch");
         Assert.Same(r1, graph.Snapshot()[0]);
 
@@ -307,7 +319,8 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, graph);
         _svc.Start();
 
-        await delay.WaitForPending("loop idle after the failed initial fetch");
+        await delay.WaitForPending("loop idle");
+        Assert.Empty(host.Snapshot());
         delay.Fire(); // step to slot 0 (r1, inactive)
         await delay.WaitForPending("step to slot 1 after failed slot 0 fetch");
         Assert.Empty(graph.Snapshot());
@@ -326,11 +339,6 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         var delay = new ManualDelayer();
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, graph);
         _svc.Start();
-
-        // [InitialFetch] on r2 (focused): nothing queued
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
-        Assert.Same(r2, host.Snapshot()[0]);
-        Assert.Empty(graph.EnqueuedSnapshot());
 
         // Cycle: initial idle -> slot 0 (r1, inactive)
         await delay.WaitForPending("initial idle");
@@ -355,15 +363,14 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, graph);
         _svc.Start();
 
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
         await delay.WaitForPending("initial idle");
         delay.Fire(); // slot 0 (r1)
 
         await delay.WaitForPending("step to slot 1");
         delay.Fire(); // slot 1 (r2, focused)
 
-        await WaitUntil(() => host.Snapshot().Count == 3, "slot 1 fetch on r2");
-        Assert.Same(r2, host.Snapshot()[2]);
+        await WaitUntil(() => host.Snapshot().Count == 2, "slot 1 fetch on r2");
+        Assert.Same(r2, host.Snapshot()[1]);
 
         // r1 was queued, but r2 (focused) is never queued
         var enqueued = graph.EnqueuedSnapshot();
@@ -383,20 +390,18 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, graph);
         _svc.Start();
 
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch on r2");
-
         await delay.WaitForPending("initial idle");
         delay.Fire(); // slot 0 (r1, throws on enqueue)
 
         // Commit graph refresh for r1 still recorded
-        await WaitUntil(() => graph.Snapshot().Count >= 2, "commit-graph refresh for r1");
-        Assert.Same(r1, graph.Snapshot()[1]);
+        await WaitUntil(() => graph.Snapshot().Count >= 1, "commit-graph refresh for r1");
+        Assert.Same(r1, graph.Snapshot()[0]);
 
         // Loop still reaches slot 1 (r2)
         await delay.WaitForPending("step to slot 1");
         delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == 3, "slot 1 fetch on r2");
-        Assert.Same(r2, host.Snapshot()[2]);
+        await WaitUntil(() => host.Snapshot().Count == 2, "slot 1 fetch on r2");
+        Assert.Same(r2, host.Snapshot()[1]);
     }
 
     // ── gating ──
@@ -413,7 +418,6 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         var settings = Settings(true);
         _svc = new AutoFetchService(ws, host, settings, delay.Delay);
         _svc.Start();
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
         await delay.WaitForPending("initial idle");
 
         await settings.UpdateAsync(s => s with { AutoFetchEnabled = false });
@@ -428,7 +432,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
     // ── start conditions with no open repo ──
 
     [Fact(Timeout = 60000)]
-    public async Task Cold_start_then_open_runs_an_initial_fetch()
+    public async Task Cold_start_then_open_waits_the_idle_before_the_first_fetch()
     {
         var ws = NewWorkspace();
         var host = new FakeHost();
@@ -439,10 +443,13 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
 
         var r1 = await ws.OpenAsync(Repo("a.txt").Path);
 
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch on the opened repo");
-        Assert.Same(r1, host.Snapshot()[0]);
-        await delay.WaitForPending("loop idle after initial fetch");
+        await delay.WaitForPending("loop idle");
         Assert.Equal(AutoFetchService.InitialIdle, delay.Requested[^1]);
+        Assert.Empty(host.Snapshot());
+
+        delay.Fire();
+        await WaitUntil(() => host.Snapshot().Count == 1, "slot 0 fetch");
+        Assert.Same(r1, host.Snapshot()[0]);
     }
 
     [Fact(Timeout = 60000)]
@@ -484,8 +491,8 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         Assert.Equal(0, delay.PendingCount);
 
         host.LoadGate!.SetResult();
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch once all loaded");
         await delay.WaitForPending("loop idle");
+        Assert.Empty(host.Snapshot());
     }
 
     // ── dev visuals: per-tab state ──
@@ -504,7 +511,6 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         Assert.Equal(AutoFetchTabState.NotStarted, _svc.GetTabState(r1)); // loop not started
 
         _svc.Start();
-        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
         await delay.WaitForPending("initial idle"); // loop has entered its first cycle
         await WaitUntil(() => _svc.GetTabState(r1) == AutoFetchTabState.PendingThisCycle, "r1 pending");
         Assert.Equal(AutoFetchTabState.PendingThisCycle, _svc.GetTabState(r2));

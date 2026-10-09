@@ -360,7 +360,7 @@ public sealed class App : Application
         catch { /* a missing or unreadable ~/.gitconfig just leaves the global profile blank */ }
 
         // start auto-fetch after restore has populated the tab strip, so the "open repos
-        // present" branch sees them and waits for all to fully load before [InitialFetch].
+        // present" branch sees them and waits for all to fully load before the loop's first idle.
         try { Services.GetRequiredService<Historia.Services.AutoFetch.IAutoFetchService>().Start(); }
         catch { /* auto-fetch is best-effort and must never block startup */ }
     }

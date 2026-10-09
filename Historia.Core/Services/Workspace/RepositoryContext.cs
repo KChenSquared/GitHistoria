@@ -62,8 +62,8 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     // signalled once this tab is "fully loaded" -- identity resolved and the first full
     // state refresh (branches, graph, changes) has completed. IAutoFetchService waits on this
-    // before its [InitialFetch] / [AutoFetch] loop touches the repo. Like FirstGraphPaint it
-    // never faults; a headless open completes it as soon as InitializeContextAsync runs.
+    // before its [AutoFetch] loop touches the repo. Like FirstGraphPaint it never faults; a
+    // headless open completes it as soon as InitializeContextAsync runs.
     private readonly TaskCompletionSource _firstFullLoad =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 

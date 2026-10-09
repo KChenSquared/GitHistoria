@@ -21,11 +21,10 @@ public sealed record AppSettings
     public Guid? DefaultProfileId { get; init; }
 
     // ── Network &amp; Privacy ──
-    /// <summary>drives <c>IAutoFetchService</c>'s <c>[InitialFetch]</c> + <c>[AutoFetch]</c>
-    /// loop, which periodically <c>git fetch</c>es every open repository. It is not gated to a
-    /// token-bearing profile — it fetches SSH and <i>Local config</i> repos too — so this toggle
-    /// is the single opt-out that lets a user guarantee no unsolicited network traffic. Default
-    /// on.</summary>
+    /// <summary>drives <c>IAutoFetchService</c>'s <c>[AutoFetch]</c> loop, which periodically
+    /// <c>git fetch</c>es every open repository. It is not gated to a token-bearing profile —
+    /// it fetches SSH and <i>Local config</i> repos too — so this toggle is the single opt-out
+    /// that lets a user guarantee no unsolicited network traffic. Default on.</summary>
     public bool AutoFetchEnabled { get; init; } = true;
 
     /// <summary>lets local tools (<c>historia-cmdr</c>, and the coding agents that call it) ask

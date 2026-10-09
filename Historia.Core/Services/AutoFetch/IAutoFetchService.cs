@@ -1,8 +1,7 @@
 namespace Historia.Services.AutoFetch;
 
 /// <summary>How a repository came to be open, for the "app start with no open repo" branch of
-/// <see cref="IAutoFetchService"/>'s start conditions. A freshly cloned / initialized
-/// repo is already current, so it gets no <c>[InitialFetch]</c>; an opened one does.</summary>
+/// <see cref="IAutoFetchService"/>'s start conditions.</summary>
 public enum RepoEntrySource
 {
     Opened,
@@ -14,7 +13,7 @@ public enum RepoEntrySource
 public enum AutoFetchTabState
 {
     /// <summary>The <c>[AutoFetch]</c> loop has not started yet (start-condition wait,
-    /// <c>[InitialFetch]</c>, or the feature is disabled). Red.</summary>
+    /// or the feature is disabled). Red.</summary>
     NotStarted,
 
     /// <summary>The loop is running but this repo has not been fetched in the current cycle.
@@ -45,10 +44,10 @@ public interface IAutoFetchHost
 
 /// <summary>
 /// keeps every open repository's remote-tracking refs warm without a manual Fetch. An
-/// app-lifetime singleton. Once the app has fully loaded its repo(s) it runs an optional
-/// one-shot <c>[InitialFetch]</c> and then an infinite <c>[AutoFetch]</c> loop (5&#160;min idle,
-/// then one fetch per open repo 1&#160;min apart, then restart). A successful fetch also refreshes
-/// that repo's commit-graph and, for an inactive tab, queues its headless disk cache. Gated by
+/// app-lifetime singleton. Once the app has fully loaded its repo(s) it runs an infinite
+/// <c>[AutoFetch]</c> loop (5&#160;min idle, then one fetch per open repo 1&#160;min apart, then
+/// restart). A successful fetch also refreshes that repo's commit-graph and, for an inactive tab,
+/// queues its headless disk cache. Gated by
 /// <see cref="Historia.Models.AppSettings.AutoFetchEnabled"/> — turning it off stops the loop at
 /// once; turning it back on re-enters at the "app start with open repos" path.
 /// </summary>
@@ -61,12 +60,11 @@ public interface IAutoFetchService : IAsyncDisposable
     /// disabled or already running.</summary>
     void Start();
 
-    /// <summary>Cancels the loop and any pending <c>[InitialFetch]</c>.</summary>
+    /// <summary>Cancels the loop.</summary>
     void Stop();
 
     /// <summary>The App calls this immediately before opening / cloning / initializing a
-    /// repository from a cold start (no tabs), so the "no open repo" branch knows whether to run
-    /// an <c>[InitialFetch]</c>.</summary>
+    /// repository from a cold start (no tabs).</summary>
     void NotifyRepoEntering(RepoEntrySource source);
 
     /// <summary>This repo's state in the current <c>[AutoFetch]</c> cycle — for the developer-only
