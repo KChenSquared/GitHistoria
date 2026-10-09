@@ -3,9 +3,7 @@ namespace Historia.Tests;
 
 public class AtomicFileWriterTests : IDisposable
 {
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "Historia-aw-" + Guid.NewGuid().ToString("N"));
-
-    public AtomicFileWriterTests() => Directory.CreateDirectory(_dir);
+    private readonly string _dir = TestScratch.NewDirectory("Historia-aw-");
 
     [Fact]
     public async Task WriteNowAsync_persists_content_and_leaves_no_temp_file()
@@ -106,8 +104,5 @@ public class AtomicFileWriterTests : IDisposable
         Assert.Equal("second", await File.ReadAllTextAsync(path));
     }
 
-    public void Dispose()
-    {
-        try { Directory.Delete(_dir, true); } catch { /* ignore */ }
-    }
+    public void Dispose() => TestScratch.Delete(_dir);
 }

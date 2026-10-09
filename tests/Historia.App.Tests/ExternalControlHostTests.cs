@@ -41,15 +41,7 @@ public sealed class ExternalControlHostTests : IAsyncLifetime
         try { await _sp.DisposeAsync(); } catch { }
         try { await _settings.DisposeAsync(); } catch { }
         foreach (var d in _dirs)
-        {
-            try
-            {
-                foreach (var f in Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories))
-                    File.SetAttributes(f, FileAttributes.Normal);
-                Directory.Delete(d, true);
-            }
-            catch { }
-        }
+            TestScratch.Delete(d);
     }
 
     private ExternalControlHost NewHost(Action? activate = null) => new(
@@ -67,8 +59,7 @@ public sealed class ExternalControlHostTests : IAsyncLifetime
 
     private Fixture NewRepo()
     {
-        var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-ctl-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        var dir = TestScratch.NewDirectory("historia-ctl-");
         _dirs.Add(dir);
         LibGit2Sharp.Repository.Init(dir);
 
@@ -277,8 +268,7 @@ public sealed class ExternalControlHostTests : IAsyncLifetime
     [Fact]
     public async Task A_folder_that_is_not_a_repository_is_repo_not_found()
     {
-        var plain = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-ctl-plain-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(plain);
+        var plain = TestScratch.NewDirectory("historia-ctl-plain-");
         _dirs.Add(plain);
 
         var response = await _host.HandleAsync(new ControlRequest { Verb = ControlVerb.Open, Repo = plain, Cwd = plain }, default);

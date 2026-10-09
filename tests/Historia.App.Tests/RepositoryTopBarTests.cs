@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public class RepositoryTopBarTests : IDisposable
@@ -258,8 +258,7 @@ public class RepositoryTopBarTests : IDisposable
 
         public TestRepoFixture()
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-topbar-tests-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path);
+            Path = TestScratch.NewDirectory("historia-topbar-tests-");
             RunGit(Path, "init", "-b", "main");
             RunGit(Path, "config", "user.name", "Test");
             RunGit(Path, "config", "user.email", "test@example.com");
@@ -314,23 +313,7 @@ public class RepositoryTopBarTests : IDisposable
             return stdout.Trim();
         }
 
-        public void Dispose()
-        {
-            try
-            {
-                if (Directory.Exists(Path))
-                {
-                    foreach (var f in Directory.EnumerateFiles(Path, "*", SearchOption.AllDirectories))
-                    {
-                        var attr = File.GetAttributes(f);
-                        if ((attr & FileAttributes.ReadOnly) != 0)
-                            File.SetAttributes(f, attr & ~FileAttributes.ReadOnly);
-                    }
-                    Directory.Delete(Path, true);
-                }
-            }
-            catch { }
-        }
+        public void Dispose() => TestScratch.Delete(Path);
     }
 
     private static ServiceProvider CreateServices()

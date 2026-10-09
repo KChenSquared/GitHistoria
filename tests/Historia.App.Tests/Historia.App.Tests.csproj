@@ -34,4 +34,15 @@
     <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Historia.Tests\TestScratch.cs" Link="TestScratch.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TestScratchRoot</_Parameter1>
+      <_Parameter2>$(BaseOutputPath)scratch</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

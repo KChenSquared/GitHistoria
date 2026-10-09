@@ -80,14 +80,13 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
             try { v.Dispose(); } catch { }
         try { _sp.Dispose(); } catch { }
         foreach (var dir in _tempDirs)
-            try { Directory.Delete(dir, true); } catch { }
+            TestScratch.Delete(dir);
     }
 
     private (RepositoryContext Context, StagingPanelView View, Window Window) CreateView(double width = 400, double height = 900)
     {
-        var repoDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-staging-resize-" + Guid.NewGuid().ToString("N"));
+        var repoDir = TestScratch.NewDirectory("historia-staging-resize-");
         _tempDirs.Add(repoDir);
-        Directory.CreateDirectory(repoDir);
         LibGit2Sharp.Repository.Init(repoDir);
         File.WriteAllText(System.IO.Path.Combine(repoDir, "a.txt"), "one\n");
         using (var repo = new LibGit2Sharp.Repository(repoDir))

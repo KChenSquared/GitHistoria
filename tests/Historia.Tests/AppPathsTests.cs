@@ -6,11 +6,10 @@ namespace Historia.Tests;
 [Collection("serial")]
 public sealed class AppPathsTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "historia-apppaths-" + Guid.NewGuid().ToString("N"));
+    private readonly string _root = TestScratch.NewDirectory("historia-apppaths-");
 
     public AppPathsTests()
     {
-        Directory.CreateDirectory(_root);
         AppPaths.OverrideForTesting(null); // ensure a clean, non-overridden state
         AppPaths.OverrideProcessForTesting(null);
     }
@@ -196,6 +195,6 @@ public sealed class AppPathsTests : IDisposable
         // Hand the rest of the run back its isolated state directory.
         AppPaths.OverrideProcessForTesting(TestStateIsolation.StateDirectory);
         AppPaths.OverrideForTesting(null);
-        try { Directory.Delete(_root, recursive: true); } catch { /* ignore */ }
+        TestScratch.Delete(_root);
     }
 }

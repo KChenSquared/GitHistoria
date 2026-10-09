@@ -16,20 +16,16 @@ public sealed class SshFactAttribute : FactAttribute
 [Trait("tier", "git")]
 public sealed class SshHostResolverTests : IDisposable
 {
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "historia-ssh-g-" + Guid.NewGuid().ToString("N"));
+    private readonly string _dir = TestScratch.NewDirectory("historia-ssh-g-");
     private readonly string _config;
 
     public SshHostResolverTests()
     {
-        Directory.CreateDirectory(_dir);
         _config = Path.Combine(_dir, "config");
         File.WriteAllText(_config, "Host alias-x\n    HostName example.invalid\n    User git\n");
     }
 
-    public void Dispose()
-    {
-        try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
-    }
+    public void Dispose() => TestScratch.Delete(_dir);
 
     [SshFact]
     public async Task An_alias_resolves_to_its_host_name()

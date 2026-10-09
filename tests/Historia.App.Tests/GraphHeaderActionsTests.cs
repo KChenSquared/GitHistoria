@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 /// <summary>The Graph column header's two right-aligned action icons — the cog (slot 0,
 /// navigates to repo-settings) and the reset (slot 1, returns the graph to the left-most
@@ -28,8 +28,7 @@ public sealed class GraphHeaderActionsTests
 
         public TestRepoFixture()
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-graphheader-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path);
+            Path = TestScratch.NewDirectory("historia-graphheader-");
             RunGit(Path, "init");
             RunGit(Path, "config", "user.name", "Test");
             RunGit(Path, "config", "user.email", "test@example.com");
@@ -60,23 +59,7 @@ public sealed class GraphHeaderActionsTests
             p.WaitForExit();
         }
 
-        public void Dispose()
-        {
-            try
-            {
-                if (Directory.Exists(Path))
-                {
-                    foreach (var f in Directory.EnumerateFiles(Path, "*", SearchOption.AllDirectories))
-                    {
-                        var attr = File.GetAttributes(f);
-                        if ((attr & FileAttributes.ReadOnly) != 0)
-                            File.SetAttributes(f, attr & ~FileAttributes.ReadOnly);
-                    }
-                    Directory.Delete(Path, true);
-                }
-            }
-            catch { }
-        }
+        public void Dispose() => TestScratch.Delete(Path);
     }
 
     private static ServiceProvider CreateServices()

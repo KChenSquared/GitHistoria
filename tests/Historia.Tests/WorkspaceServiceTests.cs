@@ -110,7 +110,7 @@ public class WorkspaceServiceTests : WorkspaceServiceTestBase
     public async Task CloneAsync_rejects_urls_that_are_not_a_repository_address(string maliciousUrl)
     {
         var ws = NewWorkspace();
-        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-test-{Guid.NewGuid():N}");
+        var target = TestScratch.NewPath("historia-clone-test-");
 
         var ex = await Assert.ThrowsAsync<HistoriaGitException>(
             () => ws.CloneAsync(maliciousUrl, target, new Historia.Services.Workspace.CloneOptions(), progress: null));
@@ -127,7 +127,7 @@ public class WorkspaceServiceTests : WorkspaceServiceTestBase
     public async Task CloneAsync_rejects_a_url_with_no_repository_shape()
     {
         var ws = NewWorkspace();
-        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-test-{Guid.NewGuid():N}");
+        var target = TestScratch.NewPath("historia-clone-test-");
 
         var ex = await Assert.ThrowsAsync<HistoriaGitException>(
             () => ws.CloneAsync("just some plain text", target, new Historia.Services.Workspace.CloneOptions(), progress: null));
@@ -142,7 +142,7 @@ public class WorkspaceServiceTests : WorkspaceServiceTestBase
     {
         var ws = NewWorkspace();
         using var source = Repo("a.txt");
-        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-test-{Guid.NewGuid():N}");
+        var target = TestScratch.NewPath("historia-clone-test-");
 
         try
         {
@@ -154,7 +154,7 @@ public class WorkspaceServiceTests : WorkspaceServiceTestBase
         finally
         {
             await ws.DisposeAsync();
-            try { if (Directory.Exists(target)) Directory.Delete(target, recursive: true); } catch { /* best effort */ }
+            TestScratch.Delete(target);
         }
     }
 
@@ -163,7 +163,7 @@ public class WorkspaceServiceTests : WorkspaceServiceTestBase
     {
         var ws = NewWorkspace();
         using var source = Repo("a.txt");
-        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-dedup-{Guid.NewGuid():N}");
+        var target = TestScratch.NewPath("historia-clone-dedup-");
 
         try
         {
@@ -171,9 +171,7 @@ public class WorkspaceServiceTests : WorkspaceServiceTestBase
             Assert.Single(ws.OpenRepositories);
             Assert.Same(first, ws.Focused);
 
-            foreach (var f in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories))
-                File.SetAttributes(f, FileAttributes.Normal);
-            Directory.Delete(target, recursive: true);
+            TestScratch.Delete(target);
 
             var second = await ws.CloneAsync(source.Path, target, new Historia.Services.Workspace.CloneOptions(), progress: null);
             Assert.Same(first, second);
@@ -183,16 +181,7 @@ public class WorkspaceServiceTests : WorkspaceServiceTestBase
         finally
         {
             await ws.DisposeAsync();
-            try
-            {
-                if (Directory.Exists(target))
-                {
-                    foreach (var f in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories))
-                        File.SetAttributes(f, FileAttributes.Normal);
-                    Directory.Delete(target, recursive: true);
-                }
-            }
-            catch { /* best effort */ }
+            TestScratch.Delete(target);
         }
     }
 
@@ -753,7 +742,7 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
         var ws = new WorkspaceService(provider, cli, recents, profiles, identity);
 
         using var source = Repo("a.txt");
-        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-precache-{Guid.NewGuid():N}");
+        var target = TestScratch.NewPath("historia-clone-precache-");
 
         try
         {
@@ -768,7 +757,7 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
         finally
         {
             await ws.DisposeAsync();
-            try { if (Directory.Exists(target)) Directory.Delete(target, recursive: true); } catch { /* best effort */ }
+            TestScratch.Delete(target);
         }
     }
 
@@ -793,7 +782,7 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
         var ws = new WorkspaceService(provider, cli, recents, profiles, identity);
 
         using var source = Repo("a.txt");
-        var target = Path.Combine(Path.GetTempPath(), $"historia-clone-cancel-precache-{Guid.NewGuid():N}");
+        var target = TestScratch.NewPath("historia-clone-cancel-precache-");
 
         try
         {
@@ -805,7 +794,7 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
         finally
         {
             await ws.DisposeAsync();
-            try { if (Directory.Exists(target)) Directory.Delete(target, recursive: true); } catch { /* best effort */ }
+            TestScratch.Delete(target);
         }
     }
 }

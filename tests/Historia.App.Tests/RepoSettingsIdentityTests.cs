@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 [Trait("tier", "ui")]
 
 public class RepoSettingsIdentityTests : IDisposable
@@ -12,8 +12,7 @@ public class RepoSettingsIdentityTests : IDisposable
 
     public RepoSettingsIdentityTests()
     {
-        _repoDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-repo-settings-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_repoDir);
+        _repoDir = TestScratch.NewDirectory("historia-repo-settings-");
         LibGit2Sharp.Repository.Init(_repoDir);
 
         var sc = new ServiceCollection();
@@ -36,7 +35,7 @@ public class RepoSettingsIdentityTests : IDisposable
     {
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
-        try { Directory.Delete(_repoDir, true); } catch { }
+        TestScratch.Delete(_repoDir);
     }
 
     [AvaloniaFact]

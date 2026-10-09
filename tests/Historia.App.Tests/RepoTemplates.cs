@@ -68,21 +68,7 @@ internal static class RepoTemplates
     }
 
     /// <summary>Deletes <paramref name="dir"/>, including the read-only objects git writes. Best effort.</summary>
-    public static void Delete(string dir)
-    {
-        try
-        {
-            if (!Directory.Exists(dir))
-                return;
-            foreach (var file in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
-                File.SetAttributes(file, FileAttributes.Normal);
-            Directory.Delete(dir, recursive: true);
-        }
-        catch
-        {
-            // A file still held open only leaves a temp folder behind.
-        }
-    }
+    public static void Delete(string dir) => TestScratch.Delete(dir);
 
     /// <summary>Runs git in <paramref name="dir"/> as the test identity and waits for it.</summary>
     public static void Git(string dir, params string[] args)

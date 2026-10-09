@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 /// <summary>
 /// Verify BranchMenu.RunWithStashRecovery integration when a checkout conflict occurs —
@@ -59,8 +59,7 @@ public sealed class CheckoutStashRecoveryTests
 
         public TestRepoFixture()
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-stashrecovery-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path);
+            Path = TestScratch.NewDirectory("historia-stashrecovery-");
             RunGit(Path, "init", "-b", "main");
             RunGit(Path, "config", "user.name", "Test");
             RunGit(Path, "config", "user.email", "test@example.com");
@@ -107,23 +106,7 @@ public sealed class CheckoutStashRecoveryTests
             return stdout;
         }
 
-        public void Dispose()
-        {
-            try
-            {
-                if (Directory.Exists(Path))
-                {
-                    foreach (var f in Directory.EnumerateFiles(Path, "*", SearchOption.AllDirectories))
-                    {
-                        var attr = File.GetAttributes(f);
-                        if ((attr & FileAttributes.ReadOnly) != 0)
-                            File.SetAttributes(f, attr & ~FileAttributes.ReadOnly);
-                    }
-                    Directory.Delete(Path, true);
-                }
-            }
-            catch { }
-        }
+        public void Dispose() => TestScratch.Delete(Path);
     }
 
     private static ServiceProvider CreateServices(CapturingNotificationService notify)

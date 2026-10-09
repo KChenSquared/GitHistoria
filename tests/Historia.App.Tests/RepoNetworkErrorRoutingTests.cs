@@ -93,7 +93,7 @@ public sealed class RepoNetworkErrorRoutingTests
     /// <see cref="DeclineEverything"/> installs a pre-receive hook that refuses every push.</summary>
     private sealed class PushFixture : IDisposable
     {
-        private readonly string _root = Path.Combine(Path.GetTempPath(), "historia-neterr-" + Guid.NewGuid().ToString("N"));
+        private readonly string _root = TestScratch.NewDirectory("historia-neterr-");
 
         public string RemotePath { get; }
         public string LocalPath { get; }
@@ -247,21 +247,7 @@ public sealed class RepoNetworkErrorRoutingTests
             p.WaitForExit();
         }
 
-        public void Dispose()
-        {
-            try
-            {
-                if (!Directory.Exists(_root)) return;
-                foreach (var f in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-                {
-                    var attr = File.GetAttributes(f);
-                    if ((attr & FileAttributes.ReadOnly) != 0)
-                        File.SetAttributes(f, attr & ~FileAttributes.ReadOnly);
-                }
-                Directory.Delete(_root, true);
-            }
-            catch { }
-        }
+        public void Dispose() => TestScratch.Delete(_root);
     }
 
     private static ServiceProvider CreateServices(INotificationService notify, IDialogService dialogs)

@@ -32,8 +32,7 @@ public sealed class GraphRemoteBadgeTests
 
         public RepoFixture(params string[] remotes)
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-remotebadge-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path);
+            Path = TestScratch.NewDirectory("historia-remotebadge-");
             RunGit("init", "-q", "-b", "main");
             RunGit("config", "user.name", "Test");
             RunGit("config", "user.email", "test@example.com");
@@ -73,23 +72,7 @@ public sealed class GraphRemoteBadgeTests
                 throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {err.Result}");
         }
 
-        public void Dispose()
-        {
-            try
-            {
-                if (Directory.Exists(Path))
-                {
-                    foreach (var f in Directory.EnumerateFiles(Path, "*", SearchOption.AllDirectories))
-                    {
-                        var attr = File.GetAttributes(f);
-                        if ((attr & FileAttributes.ReadOnly) != 0)
-                            File.SetAttributes(f, attr & ~FileAttributes.ReadOnly);
-                    }
-                    Directory.Delete(Path, true);
-                }
-            }
-            catch { }
-        }
+        public void Dispose() => TestScratch.Delete(Path);
     }
 
     private static ServiceProvider CreateServices()

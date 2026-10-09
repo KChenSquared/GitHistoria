@@ -544,9 +544,9 @@ public class ConflictServiceTests
 
         await using var ctx = host.Open(repoDir.Path);
 
-        var script = Path.Combine(Path.GetTempPath(), $"historia-ext-tool-{Guid.NewGuid():N}.ps1");
-        var marker = Path.Combine(Path.GetTempPath(), $"historia-ext-marker-{Guid.NewGuid():N}.txt");
-        var copiedLocal = Path.Combine(Path.GetTempPath(), $"historia-ext-local-{Guid.NewGuid():N}.cs");
+        var script = TestScratch.NewPath("historia-ext-tool-", ".ps1");
+        var marker = TestScratch.NewPath("historia-ext-marker-", ".txt");
+        var copiedLocal = TestScratch.NewPath("historia-ext-local-", ".cs");
 
         await File.WriteAllTextAsync(script,
             "param([string]$Local, [string]$Merged)\n" +
@@ -578,9 +578,9 @@ public class ConflictServiceTests
         }
         finally
         {
-            try { File.Delete(script); } catch { }
-            try { File.Delete(marker); } catch { }
-            try { File.Delete(copiedLocal); } catch { }
+            TestScratch.Delete(script);
+            TestScratch.Delete(marker);
+            TestScratch.Delete(copiedLocal);
         }
     }
 
@@ -659,8 +659,8 @@ public class ConflictServiceTests
         await using var ctx = host.Open(repoDir.Path);
 
         // A "merge tool" that records the argv it actually received, one line per argument.
-        var script = Path.Combine(Path.GetTempPath(), $"historia-mergetool-test-{Guid.NewGuid():N}.ps1");
-        var marker = Path.Combine(Path.GetTempPath(), $"historia-mergetool-test-{Guid.NewGuid():N}.txt");
+        var script = TestScratch.NewPath("historia-mergetool-test-", ".ps1");
+        var marker = TestScratch.NewPath("historia-mergetool-test-", ".txt");
         await File.WriteAllTextAsync(script,
             "param([string]$Merged)\n" +
             "Set-Content -LiteralPath '" + marker.Replace("'", "''") + "' -Value $Merged -Encoding utf8\n");
@@ -683,8 +683,8 @@ public class ConflictServiceTests
         }
         finally
         {
-            try { File.Delete(script); } catch { /* best effort */ }
-            try { File.Delete(marker); } catch { /* best effort */ }
+            TestScratch.Delete(script);
+            TestScratch.Delete(marker);
         }
     }
 

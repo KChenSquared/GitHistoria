@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 /// <summary>
 /// Offer submodule init for the repo that was actually cloned, matching
@@ -71,8 +71,7 @@ public sealed class CloneSubmoduleOfferTests
 
     private static string CreateTestRepo(string name)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"historia-clonetest-{name}-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(path);
+        var path = TestScratch.NewDirectory($"historia-clonetest-{name}-");
         var psi = new System.Diagnostics.ProcessStartInfo("git")
         {
             WorkingDirectory = path,
@@ -193,7 +192,7 @@ public sealed class CloneSubmoduleOfferTests
             var found = HomeView.FindClonedRepository(ws.OpenRepositories, repoPath2);
             Assert.Same(ctx2, found);
 
-            var notFound = HomeView.FindClonedRepository(ws.OpenRepositories, Path.Combine(Path.GetTempPath(), "nonexistent-target"));
+            var notFound = HomeView.FindClonedRepository(ws.OpenRepositories, TestScratch.NewPath("nonexistent-target-"));
             Assert.Null(notFound);
 
             await ws.CloseAsync(ctx1);
@@ -201,8 +200,8 @@ public sealed class CloneSubmoduleOfferTests
         }
         finally
         {
-            try { if (Directory.Exists(repoPath1)) Directory.Delete(repoPath1, true); } catch { }
-            try { if (Directory.Exists(repoPath2)) Directory.Delete(repoPath2, true); } catch { }
+            TestScratch.Delete(repoPath1);
+            TestScratch.Delete(repoPath2);
         }
     }
 }

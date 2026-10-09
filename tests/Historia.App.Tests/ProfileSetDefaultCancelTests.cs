@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 /// <summary>
 /// Cancelling the "Set as default" chooser must leave the default profile
@@ -81,18 +81,17 @@ public sealed class ProfileSetDefaultCancelTests
     /// built.</summary>
     private sealed class IsolatedProfilesDir : IDisposable
     {
-        public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-profile-default-" + Guid.NewGuid().ToString("N"));
+        public string Path { get; } = TestScratch.NewDirectory("historia-profile-default-");
 
         public IsolatedProfilesDir()
         {
-            Directory.CreateDirectory(Path);
             AppPaths.OverrideForTesting(Path);
         }
 
         public void Dispose()
         {
             AppPaths.OverrideForTesting(null);
-            try { Directory.Delete(Path, true); } catch { }
+            TestScratch.Delete(Path);
         }
     }
 

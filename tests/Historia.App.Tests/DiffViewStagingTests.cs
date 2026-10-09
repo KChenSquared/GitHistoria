@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public class DiffViewStagingTests : IDisposable
@@ -152,8 +152,7 @@ public class DiffViewStagingTests : IDisposable
 
     public DiffViewStagingTests()
     {
-        _repoDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-diff-staging-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_repoDir);
+        _repoDir = TestScratch.NewDirectory("historia-diff-staging-");
         LibGit2Sharp.Repository.Init(_repoDir);
 
         File.WriteAllText(System.IO.Path.Combine(_repoDir, "test.txt"), "line 1\nline 2\nline 3\n");
@@ -194,7 +193,7 @@ public class DiffViewStagingTests : IDisposable
         try { _syntaxHost.Dispose(); } catch { }
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
-        try { Directory.Delete(_repoDir, true); } catch { }
+        TestScratch.Delete(_repoDir);
     }
 
     [AvaloniaFact]

@@ -175,7 +175,7 @@ public class StagingPanelDiscardTests : IDisposable
         }
 
         private static string NewPath() =>
-            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-staging-discard-tests-" + Guid.NewGuid().ToString("N"));
+            TestScratch.NewPath("historia-staging-discard-tests-");
 
         public void Dispose() => RepoTemplates.Delete(Path);
     }

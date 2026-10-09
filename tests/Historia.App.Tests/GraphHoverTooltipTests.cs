@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public sealed class GraphHoverTooltipTests
@@ -25,8 +25,7 @@ public sealed class GraphHoverTooltipTests
 
         public TestRepoFixture(int commitCount = 1)
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-hover-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path);
+            Path = TestScratch.NewDirectory("historia-hover-");
             RunGit(Path, "init");
             RunGit(Path, "config", "user.name", "Test");
             RunGit(Path, "config", "user.email", "test@example.com");
@@ -46,7 +45,7 @@ public sealed class GraphHoverTooltipTests
         {
             File.AppendAllText(System.IO.Path.Combine(Path, "f.txt"), "raw\n");
             RunGit(Path, "add", ".");
-            var msgFile = System.IO.Path.GetTempFileName();
+            var msgFile = TestScratch.NewPath("historia-hover-msg-", ".txt");
             try
             {
                 File.WriteAllText(msgFile, message);
@@ -54,7 +53,7 @@ public sealed class GraphHoverTooltipTests
             }
             finally
             {
-                File.Delete(msgFile);
+                TestScratch.Delete(msgFile);
             }
         }
 
@@ -78,23 +77,7 @@ public sealed class GraphHoverTooltipTests
             p.WaitForExit();
         }
 
-        public void Dispose()
-        {
-            try
-            {
-                if (Directory.Exists(Path))
-                {
-                    foreach (var f in Directory.EnumerateFiles(Path, "*", SearchOption.AllDirectories))
-                    {
-                        var attr = File.GetAttributes(f);
-                        if ((attr & FileAttributes.ReadOnly) != 0)
-                            File.SetAttributes(f, attr & ~FileAttributes.ReadOnly);
-                    }
-                    Directory.Delete(Path, true);
-                }
-            }
-            catch { }
-        }
+        public void Dispose() => TestScratch.Delete(Path);
     }
 
     private static ServiceProvider CreateServices()
