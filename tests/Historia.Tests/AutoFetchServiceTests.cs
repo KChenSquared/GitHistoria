@@ -264,7 +264,7 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
     {
         var ws = NewWorkspace();
         var r1 = await ws.OpenAsync(Repo("a.txt").Path);
-        var r2 = await ws.OpenAsync(Repo("b.txt").Path);
+        await ws.OpenAsync(Repo("b.txt").Path);
 
         var host = new FakeHost();
         var delay = new ManualDelayer();

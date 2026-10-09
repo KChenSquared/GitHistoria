@@ -1,6 +1,5 @@
 namespace Historia.Services.AutoFetch;
 
-
 /// <summary>Per-tab position in the current <c>[AutoFetch]</c> cycle, for the developer-only
 /// tab colour bars. Red / yellow / green.</summary>
 public enum AutoFetchTabState
@@ -55,7 +54,6 @@ public interface IAutoFetchService : IAsyncDisposable
 
     /// <summary>Cancels the loop.</summary>
     void Stop();
-
 
     /// <summary>This repo's state in the current <c>[AutoFetch]</c> cycle — for the developer-only
     /// tab colour bars. Cheap; safe to call from the UI thread.</summary>

@@ -256,7 +256,6 @@ public class CloneServiceTests : IAsyncDisposable
         Assert.DoesNotContain("Clone failed: Clone failed", note.Message);
     }
 
-
     private sealed class ScriptedWorkspaceService : IWorkspaceService
     {
         public TaskCompletionSource<RepositoryContext> CloneTcs { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

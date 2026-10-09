@@ -49,7 +49,6 @@ public sealed class AutoFetchService : IAutoFetchService
 
     public bool IsEnabled => _settings.Current.AutoFetchEnabled;
 
-
     public AutoFetchTabState GetTabState(RepositoryContext context)
     {
         if (!_loopRunning)

@@ -82,7 +82,6 @@ public sealed class CloneService(
 
         try
         {
-
             var progress = new SynchronousProgress<GitProgress>(p =>
             {
                 lock (_sync)
