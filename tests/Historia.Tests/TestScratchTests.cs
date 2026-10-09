@@ -27,20 +27,20 @@ public sealed class TestScratchTests
     public void Root_honours_the_environment_variable()
     {
         var original = Environment.GetEnvironmentVariable("HISTORIA_TEST_TMP");
+        var custom = TestScratch.NewPath("custom-scratch-");
         try
         {
-            var custom = Path.Combine(Path.GetTempPath(), "custom-scratch-" + Guid.NewGuid().ToString("N"));
             Environment.SetEnvironmentVariable("HISTORIA_TEST_TMP", custom);
             Assert.Equal(custom, TestScratch.Root);
 
             var dir = TestScratch.NewDirectory("unit-test-");
             Assert.StartsWith(custom, dir, StringComparison.OrdinalIgnoreCase);
             Assert.True(Directory.Exists(dir));
-            TestScratch.Delete(custom);
         }
         finally
         {
             Environment.SetEnvironmentVariable("HISTORIA_TEST_TMP", original);
+            TestScratch.Delete(custom);
         }
     }
 
@@ -62,60 +62,53 @@ public sealed class TestScratchTests
     }
 
     [Fact]
-    public void PruneStale_removes_only_entries_older_than_twelve_hours()
+    public void PruneStale_removes_only_finished_run_folders_older_than_thirty_minutes()
     {
         var original = Environment.GetEnvironmentVariable("HISTORIA_TEST_TMP");
-        var custom = Path.Combine(Path.GetTempPath(), "custom-prune-" + Guid.NewGuid().ToString("N"));
+        var custom = TestScratch.NewPath("custom-prune-");
         try
         {
             Environment.SetEnvironmentVariable("HISTORIA_TEST_TMP", custom);
             Directory.CreateDirectory(custom);
 
-            var oldDir = Path.Combine(custom, "old-" + Guid.NewGuid().ToString("N"));
-            var freshDir = Path.Combine(custom, "fresh-" + Guid.NewGuid().ToString("N"));
+            var deadPid = FindUnusedPid();
+            var deadOld = BackDated(Path.Combine(custom, $"historia-run-{deadPid}-{Hex()}"), minutes: 31);
+            var deadFresh = BackDated(Path.Combine(custom, $"historia-run-{deadPid}-{Hex()}"), minutes: 29);
+            var liveOld = BackDated(Path.Combine(custom, $"historia-run-{Environment.ProcessId}-{Hex()}"), minutes: 31);
+            var otherOld = BackDated(Path.Combine(custom, $"old-{Hex()}"), minutes: 31);
 
-            Directory.CreateDirectory(oldDir);
-            Directory.CreateDirectory(freshDir);
-
-            Directory.SetLastWriteTimeUtc(oldDir, DateTime.UtcNow.AddHours(-13));
-            Directory.SetLastWriteTimeUtc(freshDir, DateTime.UtcNow.AddHours(-11));
-
-            var liveRunDir = Path.Combine(custom, $"historia-run-{Environment.ProcessId}-{Guid.NewGuid():N}"[..30]);
-            Directory.CreateDirectory(liveRunDir);
-            Directory.SetLastWriteTimeUtc(liveRunDir, DateTime.UtcNow.AddHours(-13));
-
-            var deadPid = 999999;
-            while (true)
-            {
-                try
-                {
-                    using var p = Process.GetProcessById(deadPid);
-                    deadPid--;
-                }
-                catch (ArgumentException)
-                {
-                    break;
-                }
-            }
-            var deadRunDir = Path.Combine(custom, $"historia-run-{deadPid}-{Guid.NewGuid():N}"[..30]);
-            Directory.CreateDirectory(deadRunDir);
-            Directory.SetLastWriteTimeUtc(deadRunDir, DateTime.UtcNow.AddHours(-13));
+            var otherFile = Path.Combine(custom, "notes.txt");
+            File.WriteAllText(otherFile, "keep");
+            File.SetLastWriteTimeUtc(otherFile, DateTime.UtcNow.AddMinutes(-31));
 
             TestScratch.PruneStale();
 
-            Assert.False(Directory.Exists(oldDir));
-            Assert.True(Directory.Exists(freshDir));
-            Assert.True(Directory.Exists(liveRunDir));
-            Assert.False(Directory.Exists(deadRunDir));
-
-            TestScratch.Delete(freshDir);
-            TestScratch.Delete(liveRunDir);
+            Assert.False(Directory.Exists(deadOld));
+            Assert.True(Directory.Exists(deadFresh));
+            Assert.True(Directory.Exists(liveOld));
+            Assert.True(Directory.Exists(otherOld));
+            Assert.True(File.Exists(otherFile));
         }
         finally
         {
             Environment.SetEnvironmentVariable("HISTORIA_TEST_TMP", original);
-            if (Directory.Exists(custom))
-                TestScratch.Delete(custom);
+            TestScratch.Delete(custom);
+        }
+    }
+
+    [Fact]
+    public void PruneStale_never_runs_in_the_system_temp_folder()
+    {
+        var original = Environment.GetEnvironmentVariable("HISTORIA_TEST_TMP");
+        try
+        {
+            Environment.SetEnvironmentVariable("HISTORIA_TEST_TMP", null);
+            Assert.False(TestScratch.CanPrune(Path.GetTempPath()));
+            Assert.True(TestScratch.CanPrune(TestScratch.Root));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("HISTORIA_TEST_TMP", original);
         }
     }
 
@@ -125,72 +118,16 @@ public sealed class TestScratchTests
         var dir = TestScratch.NewDirectory("readonly-test-");
         try
         {
-            var psi = new ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            psi.ArgumentList.Add("init");
-            using (var p = Process.Start(psi)!) p.WaitForExit();
-
+            Assert.Equal(0, Git(dir, "init"));
+            Assert.Equal(0, Git(dir, "config", "user.name", "Test"));
+            Assert.Equal(0, Git(dir, "config", "user.email", "test@example.com"));
             File.WriteAllText(Path.Combine(dir, "f.txt"), "hello");
+            Assert.Equal(0, Git(dir, "add", "."));
+            Assert.Equal(0, Git(dir, "commit", "-m", "initial", "--no-gpg-sign"));
 
-            var psiUser = new ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            psiUser.ArgumentList.Add("config");
-            psiUser.ArgumentList.Add("user.name");
-            psiUser.ArgumentList.Add("Test");
-            using (var p = Process.Start(psiUser)!) p.WaitForExit();
-
-            var psiEmail = new ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            psiEmail.ArgumentList.Add("config");
-            psiEmail.ArgumentList.Add("user.email");
-            psiEmail.ArgumentList.Add("test@example.com");
-            using (var p = Process.Start(psiEmail)!) p.WaitForExit();
-
-            var psiAdd = new ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            psiAdd.ArgumentList.Add("add");
-            psiAdd.ArgumentList.Add(".");
-            using (var p = Process.Start(psiAdd)!) p.WaitForExit();
-
-            var psiCommit = new ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            psiCommit.ArgumentList.Add("commit");
-            psiCommit.ArgumentList.Add("-m");
-            psiCommit.ArgumentList.Add("initial");
-            psiCommit.ArgumentList.Add("--no-gpg-sign");
-            using (var p = Process.Start(psiCommit)!) p.WaitForExit();
-
-            Assert.True(Directory.Exists(Path.Combine(dir, ".git", "objects")));
+            Assert.Contains(
+                Directory.EnumerateFiles(Path.Combine(dir, ".git", "objects"), "*", SearchOption.AllDirectories),
+                f => (File.GetAttributes(f) & FileAttributes.ReadOnly) != 0);
 
             TestScratch.Delete(dir);
 
@@ -198,8 +135,48 @@ public sealed class TestScratchTests
         }
         finally
         {
-            if (Directory.Exists(dir))
-                TestScratch.Delete(dir);
+            TestScratch.Delete(dir);
+        }
+    }
+
+    [Fact]
+    public void Delete_removes_a_junction_without_touching_its_target()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var target = TestScratch.NewDirectory("junction-target-");
+        var owner = TestScratch.NewDirectory("junction-owner-");
+        var kept = Path.Combine(target, "kept.txt");
+        try
+        {
+            File.WriteAllText(kept, "keep");
+            File.SetAttributes(kept, FileAttributes.ReadOnly);
+
+            var link = Path.Combine(owner, "link");
+            var psi = new ProcessStartInfo("cmd")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            foreach (var arg in new[] { "/c", "mklink", "/J", link, target })
+                psi.ArgumentList.Add(arg);
+            using (var p = Process.Start(psi)!)
+                p.WaitForExit();
+            Assert.True((new DirectoryInfo(link).Attributes & FileAttributes.ReparsePoint) != 0);
+
+            TestScratch.Delete(owner);
+
+            Assert.False(Directory.Exists(owner));
+            Assert.True(File.Exists(kept));
+            Assert.True((File.GetAttributes(kept) & FileAttributes.ReadOnly) != 0);
+        }
+        finally
+        {
+            TestScratch.Delete(owner);
+            TestScratch.Delete(target);
         }
     }
 
@@ -238,23 +215,57 @@ public sealed class TestScratchTests
         var dir = TestScratch.NewDirectory("git-ceiling-");
         try
         {
-            var psi = new ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            psi.ArgumentList.Add("rev-parse");
-            psi.ArgumentList.Add("--show-toplevel");
-            using var process = Process.Start(psi)!;
-            process.WaitForExit();
-            Assert.NotEqual(0, process.ExitCode);
+            Assert.NotEqual(0, Git(dir, "rev-parse", "--show-toplevel"));
         }
         finally
         {
             TestScratch.Delete(dir);
         }
+    }
+
+    private static int Git(string dir, params string[] args)
+    {
+        var psi = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = dir,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+
+        using var process = Process.Start(psi)!;
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+        Task.WaitAll(stdout, stderr);
+        return process.ExitCode;
+    }
+
+    private static string BackDated(string dir, int minutes)
+    {
+        Directory.CreateDirectory(dir);
+        Directory.SetLastWriteTimeUtc(dir, DateTime.UtcNow.AddMinutes(-minutes));
+        return dir;
+    }
+
+    private static string Hex() => Guid.NewGuid().ToString("N")[..8];
+
+    private static int FindUnusedPid()
+    {
+        for (var pid = 999_999; pid > 0; pid--)
+        {
+            try
+            {
+                using var p = Process.GetProcessById(pid);
+            }
+            catch (ArgumentException)
+            {
+                return pid;
+            }
+        }
+        throw new InvalidOperationException("No unused process id found.");
     }
 }

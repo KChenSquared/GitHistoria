@@ -3,12 +3,14 @@ namespace Historia.Tests;
 /// <summary>
 /// Scratch root for test runs. Fixtures live under a scratch root inside each test project's
 /// build output directory, isolating them from the operating system's temporary directory.
-/// Each test process creates a per-run folder deleted on exit, and direct children older than
-/// 12 hours are purged on first use.
+/// Each test process creates a per-run folder deleted on exit, and run folders of finished
+/// processes older than 30 minutes are purged on first use.
 /// </summary>
 public static class TestScratch
 {
     private const string RunPrefix = "historia-run-";
+
+    private static readonly TimeSpan StaleAge = TimeSpan.FromMinutes(30);
 
     public static string Root => GetRoot(typeof(TestScratch).Assembly);
 
@@ -49,15 +51,47 @@ public static class TestScratch
 
     private static readonly Lazy<Task> PruneOnce = new(() => Task.Run(PruneStale));
 
+    // The test host is killed moments after exit begins, too soon to delete a large run folder
+    // in-process, so on Windows a separate rd process removes it and outlives the host.
     private static readonly Lazy<bool> ExitHook = new(() =>
     {
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             foreach (var runRoot in RunRoots.Values)
-                Delete(runRoot);
+            {
+                if (!TryDeleteDetached(runRoot))
+                    Delete(runRoot);
+            }
         };
         return true;
     });
+
+    /// <summary>
+    /// Starts <c>rd /s /q</c> on a run folder. It deletes read-only files and removes junctions
+    /// without following them. Returns false when the folder cannot be handed off safely.
+    /// </summary>
+    private static bool TryDeleteDetached(string runRoot)
+    {
+        if (!OperatingSystem.IsWindows()
+            || !Path.GetFileName(runRoot).StartsWith(RunPrefix, StringComparison.Ordinal)
+            || runRoot.IndexOfAny(['"', '%']) >= 0)
+            return false;
+
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo("cmd")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                Arguments = $"/d /c \"rd /s /q \"{runRoot}\" >nul 2>&1\"",
+            });
+            return process is not null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public static string NewDirectory(string prefix = "historia-test-")
     {
@@ -135,7 +169,8 @@ public static class TestScratch
 
     /// <summary>
     /// Deletes a file or directory tree, clearing read-only attributes and continuing past
-    /// individual file errors. Never throws.
+    /// individual file errors. Junctions and symbolic links are removed without touching their
+    /// targets. Never throws.
     /// </summary>
     public static void Delete(string? path)
     {
@@ -148,7 +183,8 @@ public static class TestScratch
             {
                 try
                 {
-                    File.SetAttributes(path, FileAttributes.Normal);
+                    if (!IsLink(new FileInfo(path)))
+                        File.SetAttributes(path, FileAttributes.Normal);
                     File.Delete(path);
                 }
                 catch
@@ -161,6 +197,12 @@ public static class TestScratch
             if (Directory.Exists(path))
             {
                 var dir = new DirectoryInfo(path);
+                if (IsLink(dir))
+                {
+                    try { dir.Delete(); } catch { }
+                    return;
+                }
+
                 try
                 {
                     ClearReadOnly(dir);
@@ -196,7 +238,7 @@ public static class TestScratch
             {
                 try
                 {
-                    if ((file.Attributes & FileAttributes.ReadOnly) != 0)
+                    if (!IsLink(file) && (file.Attributes & FileAttributes.ReadOnly) != 0)
                         file.Attributes &= ~FileAttributes.ReadOnly;
                 }
                 catch { }
@@ -208,7 +250,8 @@ public static class TestScratch
         {
             foreach (var sub in dir.EnumerateDirectories())
             {
-                ClearReadOnly(sub);
+                if (!IsLink(sub))
+                    ClearReadOnly(sub);
             }
         }
         catch { }
@@ -229,7 +272,14 @@ public static class TestScratch
         {
             foreach (var sub in dir.EnumerateDirectories())
             {
-                DeleteBestEffort(sub);
+                if (IsLink(sub))
+                {
+                    try { sub.Delete(); } catch { }
+                }
+                else
+                {
+                    DeleteBestEffort(sub);
+                }
             }
         }
         catch { }
@@ -242,35 +292,31 @@ public static class TestScratch
     }
 
     /// <summary>
-    /// Deletes direct children of the scratch root older than 12 hours, preserving the current
-    /// run's directory and any run folder belonging to an active process.
+    /// Deletes the <c>historia-run-*</c> folders of finished test processes that are older than
+    /// 30 minutes. Nothing else under the scratch root is touched, and nothing is pruned when the
+    /// root is the system temporary directory.
     /// </summary>
     public static void PruneStale()
     {
         try
         {
             var root = Root;
-            if (!Directory.Exists(root))
+            if (!CanPrune(root))
                 return;
 
-            var cutoff = DateTime.UtcNow.AddHours(-12);
-            foreach (var entry in Directory.EnumerateFileSystemEntries(root))
+            var cutoff = DateTime.UtcNow - StaleAge;
+            foreach (var dir in Directory.EnumerateDirectories(root, RunPrefix + "*"))
             {
                 try
                 {
-                    if (RunRoots.Values.Contains(entry, StringComparer.OrdinalIgnoreCase))
+                    if (RunRoots.Values.Contains(dir, StringComparer.OrdinalIgnoreCase))
                         continue;
 
-                    var name = Path.GetFileName(entry);
-                    if (IsRunAlive(name))
+                    if (IsRunAlive(Path.GetFileName(dir)))
                         continue;
 
-                    var writeTime = Directory.Exists(entry)
-                        ? new DirectoryInfo(entry).LastWriteTimeUtc
-                        : new FileInfo(entry).LastWriteTimeUtc;
-
-                    if (writeTime < cutoff)
-                        Delete(entry);
+                    if (new DirectoryInfo(dir).LastWriteTimeUtc < cutoff)
+                        Delete(dir);
                 }
                 catch
                 {
@@ -283,6 +329,19 @@ public static class TestScratch
             // Best effort.
         }
     }
+
+    internal static bool CanPrune(string root)
+    {
+        if (!Directory.Exists(root))
+            return false;
+
+        var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return !string.Equals(normalizedRoot, temp, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLink(FileSystemInfo info) =>
+        (info.Attributes & FileAttributes.ReparsePoint) != 0;
 
     private static bool IsRunAlive(string folderName)
     {
