@@ -82,12 +82,12 @@ public sealed class DagLayoutEngine
                 rawLane = known == int.MaxValue ? AllocLane(s) : known;
                 RemoveReservationsFor(s, commit.Id, incoming);
             }
-            else if (s.TipTargetLane.TryGetValue(commit.Id, out var pinnedLane))
+            else if (s.TrunkTip is { } trunk && trunk.Equals(commit.Id))
             {
-                // this branch tip was pinned by the older-tip-wins pre-pass. The lane is
-                // below LaneCeiling and was never handed to FreeLanes, so it is ours to take
-                // directly; ReleaseLane recycles it normally once the branch ends or merges.
-                rawLane = pinnedLane;
+                // The trunk tip is placed on raw lane 0 by the pre-pass reservation. Lane 0 is
+                // below LaneCeiling and was never put in FreeLanes, so it is ours to take
+                // directly; ReleaseLane recycles it normally once the trunk ends or merges.
+                rawLane = 0;
             }
             else
             {
@@ -561,8 +561,10 @@ public sealed class DagLayoutEngine
     /// <summary>
     /// "newest tip wins the trunk, with a checked-out-branch exception". When the walk
     /// window holds two or more branch tips that are leaves (nothing in the window builds on
-    /// them), rank them and pin each to a raw lane in that order; lane 0 is the trunk. Row order
-    /// is untouched — the newest commit is still row 0, a tip just moves to a higher lane.
+    /// them), rank them to choose the trunk. Lane 0 is reserved for the trunk tip only; every
+    /// other lineage takes the lowest free lane when the walk reaches it, so lanes open
+    /// left-to-right in row order. Row order is untouched — the newest commit is still row 0,
+    /// a non-trunk tip just takes a higher lane when reached.
     ///
     /// Base order: <b>newest tip first</b>, by committer date (SHA breaks an exact-timestamp tie
     /// so the order is stable per run).
@@ -574,9 +576,9 @@ public sealed class DagLayoutEngine
     /// <list type="bullet">
     ///   <item>ancestor of the newest tip → order is unchanged.</item>
     ///   <item>ancestor of a later (non-newest) tip <c>T</c> → <c>T</c> takes the trunk and every
-    ///     tip ahead of it shifts one lane right.</item>
+    ///     tip ahead of it shifts one rank right.</item>
     ///   <item>ancestor of none of the newer tips → <c>H</c> takes the trunk and every other tip
-    ///     shifts one lane right.</item>
+    ///     shifts one rank right.</item>
     /// </list>
     /// The exception is skipped when no ancestry oracle is supplied (the optimistic stale first
     /// paint); the verified recompute that follows applies it.
@@ -584,24 +586,16 @@ public sealed class DagLayoutEngine
     /// It ranks only tips within the first <see cref="TipPriorityScanHorizon"/> commits of the
     /// list the engine is handed, and is a pure function of that prefix (plus the oracle) — never
     /// of <c>maxRows</c>. So a partial <see cref="Compute"/> + <see cref="Extend"/> seeds the same
-    /// pins as a full compute over the same list and criterion 4 still holds. A
-    /// checked-out branch whose tip is beyond the horizon is not a candidate, so the exception
+    /// trunk as a full compute over the same list and incremental extension equivalence still holds.
+    /// A checked-out branch whose tip is beyond the horizon is not a candidate, so the exception
     /// does not fire for it.
     ///
-    /// Only the trunk tip and tips whose commit sits in the first <see cref="PinLaneHorizon"/>
-    /// rows are actually <b>pinned</b> to a reserved lane. A tip hundreds of rows down does not
-    /// need an empty column held for it from row 0 — it gets its lane from the normal allocator
-    /// when the walk reaches it. This keeps the near-HEAD region only as wide as the branches
-    /// that truly live there (a repo with dozens of branch tips otherwise renders that many empty
-    /// lanes across the top, pushing every early merge-in far to the right).
+    /// <para><b>Trap:</b> reserving lanes for non-trunk tips (first every tip in the 200-commit scan,
+    /// then tips in the first 16 rows) held a column empty from row 0 down to each tip, so any
+    /// lineage opening above them — a merged pull request's own commit — was pushed right of all
+    /// of them.</para>
     /// </summary>
     private const int TipPriorityScanHorizon = 200;
-
-    /// <summary>A ranked tip gets a reserved lane only when its commit sits in the first this-many
-    /// rows (see <see cref="SeedTipPriority"/>); the trunk tip is pinned regardless of row. Tips
-    /// deeper than this take a lane from the normal allocator when the walk reaches them —
-    /// still deterministic (the walk is time-ordered), just not a column held empty from row 0.</summary>
-    private const int PinLaneHorizon = 16;
 
     private static void SeedTipPriority(
         GraphLayoutState s,
@@ -620,7 +614,6 @@ public sealed class DagLayoutEngine
                 hasChild.Add(p);
 
         var tips = new List<RawCommit>();
-        var tipRow = new Dictionary<GitObjectId, int>();
         for (var i = 0; i < limit; i++)
         {
             var c = commits[i];
@@ -630,7 +623,6 @@ public sealed class DagLayoutEngine
                 && d.Any(x => x.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch))
             {
                 tips.Add(c);
-                tipRow[c.Id] = i;
             }
         }
         if (tips.Count < 2)
@@ -688,7 +680,7 @@ public sealed class DagLayoutEngine
 
             if (promote > 0)
             {
-                // That tip takes the trunk; the tips ahead of it shift one lane right.
+                // That tip takes the trunk; the tips ahead of it shift one rank right.
                 var t = tips[promote];
                 tips.RemoveAt(promote);
                 tips.Insert(0, t);
@@ -709,24 +701,15 @@ public sealed class DagLayoutEngine
             // promote == 0 → HEAD is an ancestor of the current newest tip: order is unchanged.
         }
 
-        // Pin the trunk tip (rank 0) to lane 0 always; pin the other ranked tips only when their
-        // commit is near HEAD (row < PinLaneHorizon). Far-down tips fall back to the normal
-        // allocator when the walk reaches them, so the near-HEAD region stays only as wide as the
-        // branches truly live there. Compacted lanes are handed out by a running counter so the
-        // pinned set stays contiguous 0..lane-1; the compaction map is pre-seeded to match so the
-        // trunk renders in the leftmost column even when the walk emits a different tip on row 0.
-        var cap = Math.Max(0, s.MaxLanes - 1);
-        var lane = 0;
-        for (var rank = 0; rank < tips.Count && lane < cap; rank++)
+        // Reserve lane 0 for the trunk tip (rank 0). Compacted lane 0 is mapped so the trunk
+        // renders in the leftmost column even when the walk emits a different tip on row 0.
+        if (s.MaxLanes - 1 > 0)
         {
-            if (rank != 0 && tipRow.GetValueOrDefault(tips[rank].Id, int.MaxValue) >= PinLaneHorizon)
-                continue;
-            s.TipTargetLane[tips[rank].Id] = lane;
-            s.CompactionMap[lane] = lane;
-            lane++;
+            s.TrunkTip = tips[0].Id;
+            s.CompactionMap[0] = 0;
+            s.NextCompactedLane = Math.Max(s.NextCompactedLane, 1);
+            s.LaneCeiling = Math.Max(s.LaneCeiling, 1);
         }
-        s.NextCompactedLane = Math.Max(s.NextCompactedLane, lane);
-        s.LaneCeiling = Math.Max(s.LaneCeiling, lane);
     }
 
     /// <summary>

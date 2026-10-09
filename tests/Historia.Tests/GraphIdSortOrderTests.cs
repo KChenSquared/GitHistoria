@@ -90,9 +90,10 @@ public class GraphIdSortOrderTests
         };
 
         // When commitA and commitB are tips with identical timestamps, id tie-breaking (idA < idB)
-        // ensures commitA gets lane 0 (trunk priority).
-        var layout = engine.Compute([commitA, commitB], decorations, maxRows: 100);
+        // ensures commitA is chosen as the trunk tip (lane 0) even when commitB is emitted first in row order.
+        var layout = engine.Compute([commitB, commitA], decorations, maxRows: 100);
 
+        Assert.Equal(idA, layout.State.TrunkTip);
         Assert.Equal(2, layout.Layout.RowCount);
         var rowA = Enumerable.Range(0, layout.Layout.RowCount).First(i => layout.Layout.Commits[i].Id == idA);
         var rowB = Enumerable.Range(0, layout.Layout.RowCount).First(i => layout.Layout.Commits[i].Id == idB);

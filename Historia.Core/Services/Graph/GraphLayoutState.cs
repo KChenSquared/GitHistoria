@@ -41,12 +41,11 @@ public sealed class GraphLayoutState
     internal readonly Dictionary<int, int> CompactionMap = [];
     internal int NextCompactedLane;
 
-    /// <summary>("older tip wins"): branch-tip commit id → the raw lane the pre-pass pinned
-    /// it to, so the oldest divergent branch stays collinear with the shared mainline instead of
-    /// whichever tip the time-ordered walk emitted onto row 0. Populated once by
-    /// <see cref="DagLayoutEngine.Compute"/> (empty for a single-tip window) and carried forward
-    /// unchanged by <see cref="DagLayoutEngine.Extend"/>.</summary>
-    internal readonly Dictionary<GitObjectId, int> TipTargetLane = [];
+    /// <summary>The trunk tip the pre-pass chose, placed on raw lane 0. Set once by
+    /// <see cref="DagLayoutEngine.Compute"/>, carried unchanged by
+    /// <see cref="DagLayoutEngine.Extend"/>, and null when the window has fewer than two
+    /// leaf branch tips.</summary>
+    internal GitObjectId? TrunkTip;
 
     /// <summary>compacted lane → color index, seeded once from the lane's topmost commit.</summary>
     internal readonly Dictionary<int, int> LaneColor = [];
