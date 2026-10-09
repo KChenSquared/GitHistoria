@@ -50,8 +50,7 @@ public class StagingPanelAiButtonsTests : IDisposable
 
     public StagingPanelAiButtonsTests()
     {
-        _repoDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-staging-ai-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_repoDir);
+        _repoDir = TestScratch.NewDirectory("historia-staging-ai-");
         LibGit2Sharp.Repository.Init(_repoDir);
         File.WriteAllText(System.IO.Path.Combine(_repoDir, "a.txt"), "one\n");
         using (var repo = new LibGit2Sharp.Repository(_repoDir))
@@ -121,7 +120,7 @@ public class StagingPanelAiButtonsTests : IDisposable
             try { view.Dispose(); } catch { }
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
-        try { Directory.Delete(_repoDir, true); } catch { }
+        TestScratch.Delete(_repoDir);
     }
 
     private async Task StageChangeAsync()

@@ -2328,7 +2328,7 @@ public class ConflictResolverViewTests : IDisposable
         }
 
         private static string NewPath() =>
-            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-conflict-tests-" + Guid.NewGuid().ToString("N"));
+            TestScratch.NewPath("historia-conflict-tests-");
 
         /// <summary>Moves the fixture to a fresh copy of the merge-conflict template: the state
         /// <see cref="CreateConflict"/> produces, without running git. The copy is not atomic, so

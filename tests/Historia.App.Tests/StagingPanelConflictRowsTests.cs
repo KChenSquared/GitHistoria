@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public class StagingPanelConflictRowsTests : IDisposable
@@ -320,7 +320,7 @@ public class StagingPanelConflictRowsTests : IDisposable
         }
 
         private static string NewPath() =>
-            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-staging-conflict-tests-" + Guid.NewGuid().ToString("N"));
+            TestScratch.NewPath("historia-staging-conflict-tests-");
 
         /// <summary>Moves the fixture to a copy of the merge-conflict template (a conflict in
         /// <c>f.txt</c>). The copy is not atomic, so only call this while no tab has the repository

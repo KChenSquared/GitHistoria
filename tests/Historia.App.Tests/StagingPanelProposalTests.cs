@@ -31,8 +31,7 @@ public class StagingPanelProposalTests : IDisposable
 
     public StagingPanelProposalTests()
     {
-        _repoDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-staging-proposal-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_repoDir);
+        _repoDir = TestScratch.NewDirectory("historia-staging-proposal-");
         LibGit2Sharp.Repository.Init(_repoDir);
         File.WriteAllText(System.IO.Path.Combine(_repoDir, "a.txt"), "one\n");
         using (var repo = new LibGit2Sharp.Repository(_repoDir))
@@ -100,7 +99,7 @@ public class StagingPanelProposalTests : IDisposable
             try { view.Dispose(); } catch { }
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
-        try { Directory.Delete(_repoDir, true); } catch { }
+        TestScratch.Delete(_repoDir);
     }
 
     private StagingPanelView NewPanel()
