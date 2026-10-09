@@ -36,8 +36,7 @@ public sealed class DagLayoutEngine
     /// <summary>
     /// Resumes the walk from where <paramref name="previous"/> left off, appending up to
     /// <paramref name="additionalRows"/> more rows. Lane indices already assigned are never
-    /// renumbered — extension is byte-identical to a full recomputation over the same range
-    /// (criterion 4).
+    /// renumbered — extension is byte-identical to a full recomputation over the same range.
     /// </summary>
     public GraphLayoutResult Extend(
         GraphLayoutResult previous,
@@ -558,6 +557,10 @@ public sealed class DagLayoutEngine
 
     // ── Lane allocation ──
 
+    /// <summary>How many commits from the top of the list <see cref="SeedTipPriority"/> scans for
+    /// candidate branch tips.</summary>
+    private const int TipPriorityScanHorizon = 200;
+
     /// <summary>
     /// "newest tip wins the trunk, with a checked-out-branch exception". When the walk
     /// window holds two or more branch tips that are leaves (nothing in the window builds on
@@ -595,8 +598,6 @@ public sealed class DagLayoutEngine
     /// lineage opening above them — a merged pull request's own commit — was pushed right of all
     /// of them.</para>
     /// </summary>
-    private const int TipPriorityScanHorizon = 200;
-
     private static void SeedTipPriority(
         GraphLayoutState s,
         IReadOnlyList<RawCommit> commits,
