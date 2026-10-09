@@ -194,4 +194,148 @@ public class SectionFrameTests
 
         window.Close();
     }
+
+    [Fact]
+    public void ClampGrowHeight_below_min_returns_min()
+    {
+        var clamped = SectionFrame.ClampGrowHeight(50, 96, 96, 400, SectionFrame.SplitAreaMinHeight);
+        Assert.Equal(96, clamped);
+    }
+
+    [Fact]
+    public void ClampGrowHeight_limited_by_donor_room()
+    {
+        var clamped = SectionFrame.ClampGrowHeight(300, 96, 96, 400, SectionFrame.SplitAreaMinHeight);
+        Assert.Equal(189, clamped);
+    }
+
+    [Fact]
+    public void ClampGrowHeight_within_room_returns_proposed()
+    {
+        var clamped = SectionFrame.ClampGrowHeight(150, 96, 96, 400, SectionFrame.SplitAreaMinHeight);
+        Assert.Equal(150, clamped);
+    }
+
+    [Fact]
+    public void ClampGrowHeight_when_donor_below_min_returns_min()
+    {
+        var clamped = SectionFrame.ClampGrowHeight(200, 96, 96, 250, SectionFrame.SplitAreaMinHeight);
+        Assert.Equal(96, clamped);
+    }
+
+    [Fact]
+    public void ClampGrowHeight_shrinks_current_when_donor_below_min()
+    {
+        var clamped = SectionFrame.ClampGrowHeight(180, 96, 180, 250, SectionFrame.SplitAreaMinHeight);
+        Assert.Equal(123, clamped);
+    }
+
+    [AvaloniaFact]
+    public void AttachBottomResize_drag_up_grows_within_bounds()
+    {
+        var handle = new Border
+        {
+            Height = SectionFrame.HandleHeight,
+            Background = Brushes.Transparent
+        };
+        var root = new Panel { Width = 400, Height = 400 };
+        root.Children.Add(handle);
+
+        var applied = new List<double>();
+        double committedValue = 0;
+        int committedCount = 0;
+        SectionFrame.AttachBottomResize(
+            handle,
+            root,
+            begin: () => (96, 96, 150),
+            apply: v => applied.Add(v),
+            committed: v =>
+            {
+                committedValue = v;
+                committedCount++;
+            });
+
+        var window = new Window { Width = 400, Height = 400, Content = root };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var handleCenter = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+
+        // Press
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, handleCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        // Drag up 30 -> 126
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y - 30));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(126, applied.Last());
+
+        // Drag up 200 -> 150 (clamped to max)
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y - 200));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(150, applied.Last());
+
+        // Drag down 50 from start -> 96 (clamped to min)
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y + 50));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(96, applied.Last());
+
+        // Release
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(handleCenter.X, handleCenter.Y + 50), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(96, committedValue);
+        Assert.Equal(1, committedCount);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void AttachBottomResize_capture_lost_commits()
+    {
+        var handle = new Border
+        {
+            Height = SectionFrame.HandleHeight,
+            Background = Brushes.Transparent
+        };
+        var root = new Panel { Width = 400, Height = 400 };
+        root.Children.Add(handle);
+
+        double committedValue = 0;
+        int committedCount = 0;
+        SectionFrame.AttachBottomResize(
+            handle,
+            root,
+            begin: () => (96, 96, 150),
+            apply: _ => { },
+            committed: v =>
+            {
+                committedValue = v;
+                committedCount++;
+            });
+
+        IPointer? pointer = null;
+        handle.AddHandler(InputElement.PointerPressedEvent, (_, e) => pointer = e.Pointer, RoutingStrategies.Tunnel | RoutingStrategies.Bubble, handledEventsToo: true);
+
+        var window = new Window { Width = 400, Height = 400, Content = root };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var handleCenter = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, handleCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y - 30));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(pointer);
+        pointer.Capture(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(126, committedValue);
+        Assert.Equal(1, committedCount);
+
+        window.Close();
+    }
 }

@@ -5,12 +5,15 @@ namespace Historia.Views;
 /// resizable sections, with a checkbox column on each and a green ⬇ Stage / red ⬆ Unstage
 /// arrow pair in the Staged header acting on the checked rows; both the Staged section's
 /// top border and the rule under the Staged header resize the split. The commit-message strip
-/// is fixed size and pinned to the bottom, below both — it doesn't trade space with either list.
+/// docks to the bottom; its top edge resizes the message box only, bounded by the box
+/// minimum and the two lists' minimums.
 /// </summary>
 public sealed class StagingPanelView : UserControl, IDisposable
 {
     // Per-repo commit-message draft, kept for the session.
     private static readonly Dictionary<string, string> DraftByRepo = new(StringComparer.Ordinal);
+    // UI-thread only.
+    private static readonly Dictionary<string, double> MessageHeightByRepo = new(StringComparer.Ordinal);
 
     private readonly RepositoryContext _ctx;
     private readonly INotificationService _notifications;
@@ -39,10 +42,12 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private TextBlock? _agentNote;
     private string? _agentNoteText;
 
+    private const double MessageMinHeight = 96;
+
     private readonly TextBox _message = new()
     {
         AcceptsReturn = true,
-        Height = 96,
+        Height = MessageMinHeight,
         Watermark = "Commit message (subject; blank line; body)",
         TextWrapping = TextWrapping.Wrap,
         Padding = new Thickness(6, 6, 6, 20), // reserve space for the in-box counter
@@ -85,6 +90,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
     internal Button? AiSettingsForTesting => _aiSettings;
     internal Panel? MessageCellForTesting { get; private set; }
     internal Grid? CommitOptionsRowForTesting { get; private set; }
+    internal Control? MessageResizeHandleForTesting { get; private set; }
+    internal Grid? SplitAreaForTesting { get; private set; }
+    internal Border? MessageSectionForTesting { get; private set; }
     internal bool IsGeneratingForTesting => _generateCts is not null;
     internal Border? OfferBarForTesting => _offerBar;
     internal Button? OfferUseForTesting => _offerUse;
@@ -107,11 +115,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private bool _stashing;
     private bool _suppressSelectAll;
 
-    // Matches RefNavigatorView.SectionMaxHeight — the commit-message section caps its
-    // content at the same height as the left-hand ref navigator's sections, so a long message
-    // scrolls internally instead of growing the message strip without bound.
-    private const double SectionMaxHeight = 240;
-
     public StagingPanelView(IServiceProvider sp, RepositoryContext ctx)
     {
         _ctx = ctx;
@@ -132,6 +135,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         ToolTip.SetTip(_stashStaged, "Stash only the staged changes, leaving unstaged edits in the working tree");
 
         _message.Text = DraftByRepo.GetValueOrDefault(ctx.Id, "");
+        _message.Height = MessageHeightByRepo.GetValueOrDefault(ctx.Id, MessageMinHeight);
         ScrollViewer.SetVerticalScrollBarVisibility(_message, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
         _message.TextChanged += (_, _) =>
         {
@@ -202,28 +206,43 @@ public sealed class StagingPanelView : UserControl, IDisposable
         messageBox.Children.Add(optionsRow);
         messageBox.Children.Add(_author);
         messageBox.Children.Add(actions);
+        var messageScroll = new ScrollViewer
+        {
+            Content = messageBox,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+        };
+        var messageHandle = new Border
+        {
+            Height = SectionFrame.HandleHeight,
+            Background = Brushes.Transparent,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, -(SectionFrame.HandleHeight / 2) - 1, 0, 0),
+        };
+        MessageResizeHandleForTesting = messageHandle;
+
+        var messageSectionGrid = new Grid();
+        messageSectionGrid.Children.Add(messageScroll);
+        messageSectionGrid.Children.Add(messageHandle);
+
         var messageSection = new Border
         {
-            Child = new ScrollViewer
-            {
-                Content = messageBox,
-                MaxHeight = SectionMaxHeight,
-                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            },
+            Child = messageSectionGrid,
             MinHeight = 64,
             BorderThickness = new Thickness(1),
+            ZIndex = 1,
         }.Dyn(Border.BorderBrushProperty, "ColorBorder");
+        MessageSectionForTesting = messageSection;
 
         // ── layout ──────────────────────────────────────────────────────────────────────────
-        // A DockPanel keeps each piece in its own lane so a drag can never push one off-screen:
-        //   • the commit-message strip docks to the bottom at its own (capped) content height —
-        //     always pinned there, never trading space with the lists,
+        // A DockPanel keeps each piece in its own lane:
+        //   • the commit-message strip docks to the bottom; its top edge resizes the message box
+        //     only, bounded by the box minimum and the two lists' minimums,
         //   • the Changes / Staged split fills whatever is left.
         // Inside that fill area a 3-row grid (Auto / Auto / *) holds Changes in a fixed-pixel
         // row that the splitter resizes, a thin splitter row, then Staged in the Star row that
-        // simply absorbs the remainder. Changes is therefore pinned to the top and is the only
-        // section the drag grows or shrinks; Staged only ever gets "the rest" (floored at
-        // StagedMinHeight by the row's MinHeight), so it can't be driven off the bottom either.
+        // absorbs the remainder. Changes is pinned to the top and is the section the splitter drag
+        // grows or shrinks; Staged gets the rest (floored at its row MinHeight).
         // The stage/unstage arrows sit in the Staged header's empty middle column so they line up
         // with the "Staged" label.
         var arrowStrip = new StackPanel
@@ -326,6 +345,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
                 new RowDefinition(new GridLength(1, GridUnitType.Star)) { MinHeight = SectionFrame.BottomMinHeight },
             },
         };
+        SplitAreaForTesting = splitArea;
         Grid.SetRow(changesSection, 0);
         Grid.SetRow(stagedSection, 2);
         splitArea.Children.Add(changesSection);
@@ -345,14 +365,44 @@ public sealed class StagingPanelView : UserControl, IDisposable
         SectionFrame.AttachRowResize(splitHandle, splitArea, changesRow, h => SectionFrame.SetSplitHeight(_ctx.Id, h));
         SectionFrame.AttachRowResize(stagedDividerHandle, splitArea, changesRow, h => SectionFrame.SetSplitHeight(_ctx.Id, h));
 
-        AttachedToVisualTree += (_, _) => SectionFrame.ApplySplitHeight(splitArea, changesRow, _ctx.Id);
-        splitArea.SizeChanged += (_, _) => SectionFrame.ApplySplitHeight(splitArea, changesRow, _ctx.Id);
-
         var root = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(messageSection, Dock.Bottom);
         root.Children.Add(messageSection);
         root.Children.Add(splitArea);
         Content = root;
+
+        Action<double> applyMessageHeight = h =>
+        {
+            _message.Height = h;
+            MessageHeightByRepo[_ctx.Id] = h;
+        };
+        SectionFrame.AttachBottomResize(
+            messageHandle,
+            root,
+            begin: () => (
+                _message.Height,
+                MessageMinHeight,
+                SectionFrame.ClampGrowHeight(double.MaxValue, MessageMinHeight, _message.Height, splitArea.Bounds.Height, SectionFrame.SplitAreaMinHeight)
+            ),
+            apply: applyMessageHeight,
+            committed: applyMessageHeight);
+
+        AttachedToVisualTree += (_, _) =>
+        {
+            SectionFrame.ApplySplitHeight(splitArea, changesRow, _ctx.Id);
+            ApplyMessageHeight(root, splitArea);
+        };
+        splitArea.SizeChanged += (_, _) =>
+        {
+            SectionFrame.ApplySplitHeight(splitArea, changesRow, _ctx.Id);
+            ApplyMessageHeight(root, splitArea);
+        };
+        // A split area that is laid out at zero height raises no SizeChanged of its own.
+        root.SizeChanged += (_, _) =>
+        {
+            if (splitArea.Bounds.Height <= 0)
+                ApplyMessageHeight(root, splitArea);
+        };
 
         _status = ctx.State.Status;
         ctx.State.StatusChanged += OnStatusChanged;
@@ -362,6 +412,30 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
         if (ctx.State.PendingCommitMessage is { } pending)
             ApplyProposal(pending);
+    }
+
+    private void ApplyMessageHeight(Control root, Grid splitArea)
+    {
+        if (root.Bounds.Height <= 0)
+            return;
+
+        // The split area gets zero height when the commit strip fills the whole panel; the room
+        // it lost is unknown, so the box drops to its minimum and the next split-area resize
+        // grows it back to what fits.
+        var stored = MessageHeightByRepo.GetValueOrDefault(_ctx.Id, MessageMinHeight);
+        var clamped = splitArea.Bounds.Height <= 0
+            ? MessageMinHeight
+            : SectionFrame.ClampGrowHeight(
+                stored,
+                MessageMinHeight,
+                _message.Height,
+                splitArea.Bounds.Height,
+                SectionFrame.SplitAreaMinHeight);
+
+        if (Math.Abs(_message.Height - clamped) > 0.5)
+        {
+            _message.Height = clamped;
+        }
     }
 
     // ── Commit messages proposed by an external tool ──────────────────────────────────────────
