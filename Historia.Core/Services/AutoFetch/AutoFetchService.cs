@@ -229,13 +229,15 @@ public sealed class AutoFetchService : IAutoFetchService
             }
             RaiseTabStates();
 
-            await TrimLogsAsync(ct).ConfigureAwait(false);
-
             var cct = cycle.Token;
             try
             {
                 await _delay(InitialIdle, cct).ConfigureAwait(false);
 
+                await TrimLogsAsync(ct).ConfigureAwait(false);
+                cct.ThrowIfCancellationRequested();
+
+                // Order: idle, trim, fetch per repo.
                 // Positional, not per-tab: the repo at slot `pos` when this step fires is the one
                 // fetched — reordering tabs is deliberately not re-targeted. The count
                 // is read once per cycle; a net add/close cancels `cct` and restarts.
@@ -276,13 +278,13 @@ public sealed class AutoFetchService : IAutoFetchService
         {
             await _logTrimmer.TrimAsync(ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
         catch
         {
-            // Trimming failures are handled inside the trimmer (setting is disabled). The loop continues.
+            // Trimming failures are handled inside the trimmer. The loop continues.
         }
     }
 

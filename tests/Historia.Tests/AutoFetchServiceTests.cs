@@ -542,54 +542,125 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
     }
 
     [Fact(Timeout = 60000)]
-    public async Task Trimmer_is_called_at_the_start_of_cycle_before_idle_delay()
+    public async Task Trimmer_runs_after_the_idle_and_before_the_first_fetch()
     {
         var ws = NewWorkspace();
         var r1 = await ws.OpenAsync(Repo("a.txt").Path);
 
         var host = new FakeHost();
         var delay = new ManualDelayer();
-        var trimmer = new FakeTrimmer();
+        var trimmer = new FakeTrimmer(host);
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, logTrimmer: trimmer);
         _svc.Start();
 
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
         await delay.WaitForPending("initial idle");
+        Assert.Equal(0, trimmer.CallCount);
+
+        delay.Fire();
+        await WaitUntil(() => host.Snapshot().Count == 2, "slot 0 fetch");
         Assert.Equal(1, trimmer.CallCount);
+        Assert.Equal(1, trimmer.HostFetchCounts[0]);
     }
 
     [Fact(Timeout = 60000)]
-    public async Task Trimmer_is_called_on_restarted_cycle_and_next_cycle_after_full_pass()
+    public async Task Restart_before_the_idle_never_trims_and_each_full_cycle_trims_once()
     {
         var ws = NewWorkspace();
         var r1 = await ws.OpenAsync(Repo("a.txt").Path);
 
         var host = new FakeHost();
         var delay = new ManualDelayer();
-        var trimmer = new FakeTrimmer();
+        var trimmer = new FakeTrimmer(host);
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, logTrimmer: trimmer);
         _svc.Start();
 
-        // First cycle start
-        await delay.WaitForPending("initial idle");
-        Assert.Equal(1, trimmer.CallCount);
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
 
-        // Opening a new repo restarts the cycle
+        // First cycle initial idle is pending; no trim yet
+        await delay.WaitForPending("initial idle");
+        Assert.Equal(0, trimmer.CallCount);
+
+        // Opening a second repo before the idle fires restarts the cycle; still no trim
         var r2 = await ws.OpenAsync(Repo("b.txt").Path);
         await delay.WaitForPending("initial idle after restart");
-        Assert.Equal(2, trimmer.CallCount);
+        Assert.Equal(0, trimmer.CallCount);
 
-        // Run through full pass: initial idle -> slot 0 fetch -> step -> slot 1 fetch -> trailing step
+        // Fire idle: trim runs (count 1), then slot 0 fetch
         delay.Fire();
         await WaitUntil(() => host.Snapshot().Count >= 2, "slot 0 fetch");
+        Assert.Equal(1, trimmer.CallCount);
+
+        // Advance slot 1 fetch
         await delay.WaitForPending("step to slot 1");
         delay.Fire();
         await WaitUntil(() => host.Snapshot().Count >= 3, "slot 1 fetch");
+
+        // Trailing step
         await delay.WaitForPending("trailing step");
         delay.Fire();
 
-        // Next cycle begins
+        // Next cycle begins: initial idle is pending; count is still 1
         await delay.WaitForPending("next cycle initial idle");
-        Assert.Equal(3, trimmer.CallCount);
+        Assert.Equal(1, trimmer.CallCount);
+
+        // Fire next cycle idle: second trim runs
+        delay.Fire();
+        await WaitUntil(() => trimmer.CallCount == 2, "next cycle trim");
+        Assert.Equal(2, trimmer.CallCount);
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task Restart_during_the_trim_returns_to_the_idle()
+    {
+        var ws = NewWorkspace();
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+
+        var host = new FakeHost();
+        var delay = new ManualDelayer();
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var trimmer = new FakeTrimmer(host) { Gate = gate };
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, logTrimmer: trimmer);
+        _svc.Start();
+
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
+
+        await delay.WaitForPending("initial idle");
+        delay.Fire();
+
+        // Wait until trimmer is called and blocked on gate
+        await WaitUntil(() => trimmer.CallCount == 1, "trimmer entered");
+
+        // Open a repo while trim is blocked: cancels cycle token
+        var r2 = await ws.OpenAsync(Repo("b.txt").Path);
+
+        // Release trimmer gate
+        gate.SetResult();
+
+        // No per-repo fetch should happen; returns to initial idle
+        await delay.WaitForPending("restarted initial idle");
+        Assert.Single(host.Snapshot());
+    }
+
+    [Fact(Timeout = 60000)]
+    public async Task Trimmer_cancellation_unrelated_to_the_run_does_not_stop_the_loop()
+    {
+        var ws = NewWorkspace();
+        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
+
+        var host = new FakeHost();
+        var delay = new ManualDelayer();
+        var trimmer = new FakeTrimmer(host) { ThrowCanceled = true };
+        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, logTrimmer: trimmer);
+        _svc.Start();
+
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
+
+        await delay.WaitForPending("initial idle");
+        delay.Fire();
+
+        await WaitUntil(() => host.Snapshot().Count >= 2, "slot 0 fetch after canceled trimmer", 10000);
+        Assert.Contains(r1, host.Snapshot());
     }
 
     [Fact(Timeout = 60000)]
@@ -600,15 +671,18 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
 
         var host = new FakeHost();
         var delay = new ManualDelayer();
-        var trimmer = new FakeTrimmer { ShouldThrow = true };
+        var trimmer = new FakeTrimmer(host) { ShouldThrow = true };
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay, logTrimmer: trimmer);
         _svc.Start();
 
+        await WaitUntil(() => host.Snapshot().Count == 1, "initial fetch");
+
         await delay.WaitForPending("initial idle");
-        Assert.Equal(1, trimmer.CallCount);
+        Assert.Equal(0, trimmer.CallCount);
 
         delay.Fire();
         await WaitUntil(() => host.Snapshot().Count >= 2, "slot 0 fetch after throwing trimmer");
+        Assert.Equal(1, trimmer.CallCount);
         Assert.Contains(r1, host.Snapshot());
     }
 
@@ -665,16 +739,35 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
     private sealed class FakeTrimmer : ILogTrimmer
     {
         private readonly object _g = new();
-        private readonly List<DateTime> _calls = [];
+        private readonly List<(DateTime Time, int HostFetchCount)> _calls = [];
+        private readonly FakeHost? _host;
         public int CallCount { get { lock (_g) return _calls.Count; } }
         public bool ShouldThrow { get; set; }
+        public bool ThrowCanceled { get; set; }
+        public TaskCompletionSource? Gate { get; set; }
 
-        public Task TrimAsync(CancellationToken ct = default)
+        public FakeTrimmer(FakeHost? host = null)
         {
-            lock (_g) _calls.Add(DateTime.UtcNow);
+            _host = host;
+        }
+
+        public IReadOnlyList<int> HostFetchCounts
+        {
+            get { lock (_g) return _calls.Select(c => c.HostFetchCount).ToList(); }
+        }
+
+        public async Task TrimAsync(CancellationToken ct = default)
+        {
+            lock (_g) _calls.Add((DateTime.UtcNow, _host?.Snapshot().Count ?? 0));
+
+            if (Gate is not null)
+                await Gate.Task;
+
+            if (ThrowCanceled)
+                throw new OperationCanceledException();
+
             if (ShouldThrow)
                 throw new InvalidOperationException("simulated trimmer failure");
-            return Task.CompletedTask;
         }
     }
 

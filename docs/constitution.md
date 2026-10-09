@@ -333,7 +333,7 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
     in Settings → Advanced (default on, shared by the developer log and `PerfLog`) or the
     `HISTORIA_LOG` environment variable forcing it on, at which point one `dev-<timestamp>.log`
     per session is written under `AppPaths.LogsDirectory` and logs older than 48 hours are
-    deleted at the start of each auto-fetch cycle. Every call is a no-op when disabled and never throws.
+    deleted each auto-fetch cycle, after its idle wait and before its first fetch. Every call is a no-op when disabled and never throws.
     Automatically covered — do not hand-log these again: unhandled exceptions (the three handlers
     in `App`), every `Warning`/`Error` notification (`NotificationService.Publish`), every
     classified git failure (`HistoriaGitException`'s constructor), every `IGitGateway` call
