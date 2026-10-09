@@ -438,33 +438,10 @@ public sealed class AutoFetchServiceTests : IAsyncDisposable
         var host = new FakeHost();
         var delay = new ManualDelayer();
         _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
-        _svc.NotifyRepoEntering(RepoEntrySource.Opened);
         _svc.Start();
 
         var r1 = await ws.OpenAsync(Repo("a.txt").Path);
 
-        await delay.WaitForPending("loop idle");
-        Assert.Equal(AutoFetchService.InitialIdle, delay.Requested[^1]);
-        Assert.Empty(host.Snapshot());
-
-        delay.Fire();
-        await WaitUntil(() => host.Snapshot().Count == 1, "slot 0 fetch");
-        Assert.Same(r1, host.Snapshot()[0]);
-    }
-
-    [Fact(Timeout = 60000)]
-    public async Task Cold_start_then_clone_or_init_skips_the_initial_fetch()
-    {
-        var ws = NewWorkspace();
-        var host = new FakeHost();
-        var delay = new ManualDelayer();
-        _svc = new AutoFetchService(ws, host, Settings(true), delay.Delay);
-        _svc.NotifyRepoEntering(RepoEntrySource.ClonedOrInitialized);
-        _svc.Start();
-
-        var r1 = await ws.OpenAsync(Repo("a.txt").Path);
-
-        // No [InitialFetch] — the loop goes straight to its 5-min idle.
         await delay.WaitForPending("loop idle");
         Assert.Equal(AutoFetchService.InitialIdle, delay.Requested[^1]);
         Assert.Empty(host.Snapshot());

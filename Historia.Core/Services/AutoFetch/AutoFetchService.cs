@@ -21,7 +21,6 @@ public sealed class AutoFetchService : IAutoFetchService
     private CancellationTokenSource? _cycleCts;
     private Task? _loop;
     private TaskCompletionSource? _firstRepo;
-    private RepoEntrySource? _pendingEntry;
     private int _lastCount;
     private bool _started;
 
@@ -50,11 +49,6 @@ public sealed class AutoFetchService : IAutoFetchService
 
     public bool IsEnabled => _settings.Current.AutoFetchEnabled;
 
-    public void NotifyRepoEntering(RepoEntrySource source)
-    {
-        lock (_sync)
-            _pendingEntry = source;
-    }
 
     public AutoFetchTabState GetTabState(RepositoryContext context)
     {
@@ -163,9 +157,6 @@ public sealed class AutoFetchService : IAutoFetchService
         {
             var first = await WaitForFirstRepoAsync(ct).ConfigureAwait(false);
             await _host.WhenFullyLoadedAsync(first, ct).ConfigureAwait(false);
-
-            lock (_sync)
-                _pendingEntry = null;
         }
         else
         {

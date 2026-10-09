@@ -36,8 +36,7 @@ public sealed class CloneService(
     IProfileService profiles,
     IRepoIdentityService identity,
     INotificationService notifications,
-    INavigationBus nav,
-    Historia.Services.AutoFetch.IAutoFetchService autoFetch) : ICloneService
+    INavigationBus nav) : ICloneService
 {
     private readonly object _sync = new();
     private CloneStatus? _current;
@@ -83,8 +82,6 @@ public sealed class CloneService(
 
         try
         {
-            // a fresh clone is already current — start the loop with no [InitialFetch].
-            autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.ClonedOrInitialized);
 
             var progress = new SynchronousProgress<GitProgress>(p =>
             {

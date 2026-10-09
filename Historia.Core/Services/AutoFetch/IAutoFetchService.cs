@@ -1,12 +1,5 @@
 namespace Historia.Services.AutoFetch;
 
-/// <summary>How a repository came to be open, for the "app start with no open repo" branch of
-/// <see cref="IAutoFetchService"/>'s start conditions.</summary>
-public enum RepoEntrySource
-{
-    Opened,
-    ClonedOrInitialized,
-}
 
 /// <summary>Per-tab position in the current <c>[AutoFetch]</c> cycle, for the developer-only
 /// tab colour bars. Red / yellow / green.</summary>
@@ -63,9 +56,6 @@ public interface IAutoFetchService : IAsyncDisposable
     /// <summary>Cancels the loop.</summary>
     void Stop();
 
-    /// <summary>The App calls this immediately before opening / cloning / initializing a
-    /// repository from a cold start (no tabs).</summary>
-    void NotifyRepoEntering(RepoEntrySource source);
 
     /// <summary>This repo's state in the current <c>[AutoFetch]</c> cycle — for the developer-only
     /// tab colour bars. Cheap; safe to call from the UI thread.</summary>

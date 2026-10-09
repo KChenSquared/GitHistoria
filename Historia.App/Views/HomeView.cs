@@ -12,7 +12,6 @@ public sealed class HomeView : UserControl, IDisposable
     private readonly IExternalLauncher _launcher;
     private readonly IProfileService _profiles;
     private readonly IRepoLayoutService _repoLayout;
-    private readonly Historia.Services.AutoFetch.IAutoFetchService _autoFetch;
     private readonly ISubmoduleService _submodules;
 
     // Breathing gap keeping content clear of the reserved scrollbar lane.
@@ -40,7 +39,6 @@ public sealed class HomeView : UserControl, IDisposable
         _launcher = sp.GetRequiredService<IExternalLauncher>();
         _profiles = sp.GetRequiredService<IProfileService>();
         _repoLayout = sp.GetRequiredService<IRepoLayoutService>();
-        _autoFetch = sp.GetRequiredService<Historia.Services.AutoFetch.IAutoFetchService>();
         _submodules = sp.GetRequiredService<ISubmoduleService>();
 
         var root = new StackPanel { Spacing = 16, Margin = new Thickness(32), MaxWidth = 640 };
@@ -195,8 +193,6 @@ public sealed class HomeView : UserControl, IDisposable
         _busy = true;
         try
         {
-            // on a cold start this tells the auto-fetch loop to run an [InitialFetch].
-            _autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.Opened);
             await _workspace.OpenAsync(path);
             _nav.RequestNavigate("repo");
         }
@@ -217,8 +213,6 @@ public sealed class HomeView : UserControl, IDisposable
         _busy = true;
         try
         {
-            // a fresh init is already current — start the loop with no [InitialFetch].
-            _autoFetch.NotifyRepoEntering(Historia.Services.AutoFetch.RepoEntrySource.ClonedOrInitialized);
             await _workspace.InitAsync(path, string.IsNullOrWhiteSpace(branch) ? "main" : branch.Trim());
             _nav.RequestNavigate("repo");
         }

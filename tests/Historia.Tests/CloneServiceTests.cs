@@ -44,14 +44,13 @@ public class CloneServiceTests : IAsyncDisposable
     public async Task Current_reflects_the_latest_phase_to_a_late_subscriber()
     {
         var fakeWs = new ScriptedWorkspaceService();
-        var autoFetch = new FakeAutoFetchService();
         var nav = new NavigationBus();
         var notifications = new NotificationService();
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
         var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
         var identity = new RepoIdentityService(cli);
 
-        var service = new CloneService(fakeWs, profiles, identity, notifications, nav, autoFetch);
+        var service = new CloneService(fakeWs, profiles, identity, notifications, nav);
 
         var request = new CloneRequest("https://example.com/repo.git", "C:/repo", new Historia.Services.Workspace.CloneOptions(), null);
         var startTask = service.StartAsync(request);
@@ -80,14 +79,13 @@ public class CloneServiceTests : IAsyncDisposable
     public async Task Cancel_before_completion_publishes_nothing()
     {
         var fakeWs = new ScriptedWorkspaceService();
-        var autoFetch = new FakeAutoFetchService();
         var nav = new NavigationBus();
         var notifications = new NotificationService();
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
         var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
         var identity = new RepoIdentityService(cli);
 
-        var service = new CloneService(fakeWs, profiles, identity, notifications, nav, autoFetch);
+        var service = new CloneService(fakeWs, profiles, identity, notifications, nav);
 
         var request = new CloneRequest("https://example.com/repo.git", "C:/repo", new Historia.Services.Workspace.CloneOptions(), null);
         var startTask = service.StartAsync(request);
@@ -111,14 +109,13 @@ public class CloneServiceTests : IAsyncDisposable
         using var session = AppLog.StartSessionForTesting(dir.Path);
 
         var fakeWs = new ScriptedWorkspaceService();
-        var autoFetch = new FakeAutoFetchService();
         var nav = new NavigationBus();
         var notifications = new NotificationService();
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
         var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
         var identity = new RepoIdentityService(cli);
 
-        var service = new CloneService(fakeWs, profiles, identity, notifications, nav, autoFetch);
+        var service = new CloneService(fakeWs, profiles, identity, notifications, nav);
 
         var request = new CloneRequest("https://example.com/repo.git", "C:/repo", new Historia.Services.Workspace.CloneOptions(), null);
         var startTask = service.StartAsync(request);
@@ -138,14 +135,13 @@ public class CloneServiceTests : IAsyncDisposable
     public async Task Cancel_during_caching_keeps_the_clone_and_reports_it()
     {
         var fakeWs = new ScriptedWorkspaceService { ThrowOnCancelled = false };
-        var autoFetch = new FakeAutoFetchService();
         var nav = new NavigationBus();
         var notifications = new NotificationService();
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
         var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
         var identity = new RepoIdentityService(cli);
 
-        var service = new CloneService(fakeWs, profiles, identity, notifications, nav, autoFetch);
+        var service = new CloneService(fakeWs, profiles, identity, notifications, nav);
 
         var request = new CloneRequest("https://example.com/repo.git", "C:/repo", new Historia.Services.Workspace.CloneOptions(), null);
         var startTask = service.StartAsync(request);
@@ -173,14 +169,13 @@ public class CloneServiceTests : IAsyncDisposable
     public async Task Second_start_while_running_is_rejected()
     {
         var fakeWs = new ScriptedWorkspaceService();
-        var autoFetch = new FakeAutoFetchService();
         var nav = new NavigationBus();
         var notifications = new NotificationService();
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
         var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
         var identity = new RepoIdentityService(cli);
 
-        var service = new CloneService(fakeWs, profiles, identity, notifications, nav, autoFetch);
+        var service = new CloneService(fakeWs, profiles, identity, notifications, nav);
 
         var request1 = new CloneRequest("https://example.com/repo1.git", "C:/repo1", new Historia.Services.Workspace.CloneOptions(), null);
         var request2 = new CloneRequest("https://example.com/repo2.git", "C:/repo2", new Historia.Services.Workspace.CloneOptions(), null);
@@ -205,7 +200,6 @@ public class CloneServiceTests : IAsyncDisposable
     public async Task Success_navigates_to_repo_only_from_home(string initialRoute, bool shouldNavigate)
     {
         var fakeWs = new ScriptedWorkspaceService();
-        var autoFetch = new FakeAutoFetchService();
         var nav = new NavigationBus();
         var notifications = new NotificationService();
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
@@ -217,7 +211,7 @@ public class CloneServiceTests : IAsyncDisposable
         var requestedNavigations = new List<string>();
         nav.NavigationRequested += dest => requestedNavigations.Add(dest);
 
-        var service = new CloneService(fakeWs, profiles, identity, notifications, nav, autoFetch);
+        var service = new CloneService(fakeWs, profiles, identity, notifications, nav);
 
         var request = new CloneRequest("https://example.com/repo.git", "C:/repo", new Historia.Services.Workspace.CloneOptions(), null);
         var startTask = service.StartAsync(request);
@@ -241,14 +235,13 @@ public class CloneServiceTests : IAsyncDisposable
     public async Task An_unclassified_clone_failure_is_reported_once_not_doubled()
     {
         var fakeWs = new ScriptedWorkspaceService();
-        var autoFetch = new FakeAutoFetchService();
         var nav = new NavigationBus();
         var notifications = new NotificationService();
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
         var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
         var identity = new RepoIdentityService(cli);
 
-        var service = new CloneService(fakeWs, profiles, identity, notifications, nav, autoFetch);
+        var service = new CloneService(fakeWs, profiles, identity, notifications, nav);
 
         var request = new CloneRequest("https://example.com/repo.git", "C:/repo", new Historia.Services.Workspace.CloneOptions(), null);
         var startTask = service.StartAsync(request);
@@ -263,17 +256,6 @@ public class CloneServiceTests : IAsyncDisposable
         Assert.DoesNotContain("Clone failed: Clone failed", note.Message);
     }
 
-    private sealed class FakeAutoFetchService : IAutoFetchService
-    {
-        public RepoEntrySource? LastEntrySource { get; private set; }
-        public bool IsEnabled => true;
-        public void Start() { }
-        public void Stop() { }
-        public void NotifyRepoEntering(RepoEntrySource source) => LastEntrySource = source;
-        public AutoFetchTabState GetTabState(RepositoryContext context) => AutoFetchTabState.NotStarted;
-        public event EventHandler? TabStatesChanged { add { } remove { } }
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
 
     private sealed class ScriptedWorkspaceService : IWorkspaceService
     {
