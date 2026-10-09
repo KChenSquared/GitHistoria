@@ -14,6 +14,7 @@ Features planned for upcoming releases. Items are not listed in priority order.
 - **OAuth** — sign in to hosting providers through the browser instead of managing
   credentials by hand.
 - **LFS support** — work with Git Large File Storage repositories.
+- **Spotlight** — Select which branches to display, hide the rest
 
 ---
 
@@ -21,6 +22,7 @@ Features planned for upcoming releases. Items are not listed in priority order.
 
 - **Review tours** — ordered stops through a branch inside Historia, each with a note and
   Prev / Next.
-- **Agent annotations** — ephemeral notes from a coding agent on diff hunks.
-- **Ask an agent about this** — hand a selected commit or hunk to an agent as a structured reference.
+- **Code reference** — get the path(s) and/or line number(s) of files you are reviewing in historia.
 - **MCP server** — an MCP wrapper around `historia-cmdr`.
+- **Reachy Mini integration** — have Reachy let you know when your agents want you to look
+  at something in the repo.
