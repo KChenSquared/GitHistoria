@@ -31,7 +31,6 @@ public sealed class RepositoryView : UserControl, IDisposable
     private readonly ContentControl _bannerHost = new();
     private readonly TextBlock _opBanner = Text("", "ColorText", 12);
     private readonly Border _opBox;
-    private readonly Button _opOpenResolverBtn;
     private readonly Button _opContinueBtn;
     private readonly Button _opAbortBtn;
     private readonly StackPanel _opActions;
@@ -50,7 +49,6 @@ public sealed class RepositoryView : UserControl, IDisposable
     internal TextBlock WorkingCopyTextBlockForTesting => _workingCopyText;
     internal Border OpBoxForTesting => _opBox;
     internal Button OpContinueButtonForTesting => _opContinueBtn;
-    internal Button OpOpenResolverButtonForTesting => _opOpenResolverBtn;
     internal TextBlock OpBannerTextBlockForTesting => _opBanner;
     internal Button OpAbortButtonForTesting => _opAbortBtn;
 
@@ -104,12 +102,9 @@ public sealed class RepositoryView : UserControl, IDisposable
         _networkRunner.ProgressChanged += OnNetworkProgressChanged;
 
         _opBanner.TextWrapping = TextWrapping.Wrap;
-        _opOpenResolverBtn = TextButton("Open resolver", () => _repo?.State.SetConflictResolverClosed(false));
-        _opOpenResolverBtn.IsVisible = false;
         _opContinueBtn = TextButton("Continue", () => _ = OnOpBannerContinueAsync(), primary: true);
         _opAbortBtn = TextButton("Abort", () => _ = OnOpBannerAbortAsync());
         _opActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        _opActions.Children.Add(_opOpenResolverBtn);
         _opActions.Children.Add(_opContinueBtn);
         _opActions.Children.Add(_opAbortBtn);
 
@@ -233,16 +228,13 @@ public sealed class RepositoryView : UserControl, IDisposable
 
         var op = _repo.State.PendingOperation;
         bool sessionActive = _repo.State.IsConflictSessionActive;
-        bool resolverClosed = sessionActive && _repo.State.IsConflictResolverClosed;
-        if (op != OperationState.None && (!sessionActive || resolverClosed))
+        bool conflictsRemain = st.Conflicted.Count > 0;
+        if (op != OperationState.None && !conflictsRemain && (!sessionActive || _repo.State.IsConflictResolverClosed))
         {
-            _opBanner.Text = resolverClosed
-                ? $"{op} in progress — the conflict resolver is closed."
-                : $"Repository is in {op} state with no conflicts.";
-            _opOpenResolverBtn.IsVisible = resolverClosed;
+            _opBanner.Text = $"Repository is in {op} state with no conflicts.";
             bool canContinue = op is OperationState.Merging or OperationState.Rebasing or OperationState.CherryPicking or OperationState.Reverting;
             _opContinueBtn.IsVisible = _opAbortBtn.IsVisible = canContinue;
-            _opActions.IsVisible = canContinue || resolverClosed;
+            _opActions.IsVisible = canContinue;
             _opBox.IsVisible = true;
         }
         else
