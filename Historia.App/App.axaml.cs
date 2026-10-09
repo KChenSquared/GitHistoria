@@ -8,6 +8,7 @@ public sealed class App : Application
     private ServiceProvider? _provider;
     private SettingsService? _settings;
     private AvaloniaThemeApplier? _themeApplier;
+    private LoggingSettingBinding? _loggingBinding;
     private CancellationTokenSource? _singleInstanceCts;
     private SplashWindow? _splash;
     private MainWindow? _mainWindow;
@@ -41,11 +42,7 @@ public sealed class App : Application
         Historia.Diagnostics.PerfLog.Mark("App.OnFrameworkInitializationCompleted start");
         AppLog.Write(AppLogLevel.Info, "app", $"start — pid {Environment.ProcessId}, {Environment.OSVersion}");
 
-        _settings.Changed += (_, e) =>
-        {
-            if (e.OldSettings.LoggingEnabled != e.NewSettings.LoggingEnabled)
-                LoggingSwitch.Set(e.NewSettings.LoggingEnabled);
-        };
+        _loggingBinding = LoggingSettingBinding.Attach(_settings);
 
         // Without developer mode, developer-only options are switched off before any theme is resolved.
         if (!Historia.Platform.DevMode.Enabled && _settings.Current.UseCustomTheme)
@@ -79,6 +76,8 @@ public sealed class App : Application
                 Historia.Diagnostics.PerfLog.Mark("desktop.Exit singleInstanceCts cancelled");
                 _singleInstanceCts?.Dispose();
                 Historia.Diagnostics.PerfLog.Mark("desktop.Exit singleInstanceCts disposed");
+                _loggingBinding?.Dispose();
+                Historia.Diagnostics.PerfLog.Mark("desktop.Exit loggingBinding disposed");
                 _themeApplier?.Dispose();
                 Historia.Diagnostics.PerfLog.Mark("desktop.Exit themeApplier disposed");
                 // The container's synchronous Dispose() refuses outright (throws

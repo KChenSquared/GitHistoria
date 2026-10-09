@@ -43,7 +43,7 @@ public sealed class SettingsHelpHintTests
         ["Enhanced keyboard (Kitty protocol)"] = "Lets editors such as Neovim and Helix tell apart keys like Ctrl+Enter and Shift+Enter. Applies to new terminals.",
         ["Allow programs to copy to the clipboard (OSC 52)"] = "Lets copy in Vim or tmux reach the system clipboard, including over SSH. Programs can never read the clipboard.",
         ["Show splash screen"] = "A custom theme uses its own splash instead.",
-        ["Enable logging"] = "Records errors, every Git command and its result, repository open/close and startup timings, to the logs folder; terminal input/output isn't logged; logs older than 48 hours are deleted each auto-fetch round, and if they can't be, logging turns itself off; also on while HISTORIA_LOG is set.",
+        ["Enable logging"] = "Records errors, every Git command and its result, repository open/close and startup timings, to the logs folder; terminal input/output isn't logged; logs older than 48 hours are deleted each auto-fetch round, and if that fails three rounds in a row, this setting turns itself off; HISTORIA_LOG keeps logging on regardless.",
         ["Auto hide notices"] = "Closes notices in the bottom-right corner after 10 seconds. Turn off to keep them until you close them.",
         ["Keep commit details on disk"] = "Reads commit messages, authors and dates from a disk cache to save memory on large repositories. Takes effect after restart.",
         ["Fast graph updates (experimental)"] = "On large repositories, adds new commits to the saved graph instead of rebuilding it. Takes effect after restart.",

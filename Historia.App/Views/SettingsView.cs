@@ -283,7 +283,7 @@ public sealed class SettingsView : UserControl, IDisposable
 
         advBody.Children.Add(WithHint(Check("Enable logging", c.LoggingEnabled,
             v => _ = _cfg.UpdateAsync(s => s with { LoggingEnabled = v })),
-            "Records errors, every Git command and its result, repository open/close and startup timings, to the logs folder; terminal input/output isn't logged; logs older than 48 hours are deleted each auto-fetch round, and if they can't be, logging turns itself off; also on while HISTORIA_LOG is set."));
+            "Records errors, every Git command and its result, repository open/close and startup timings, to the logs folder; terminal input/output isn't logged; logs older than 48 hours are deleted each auto-fetch round, and if that fails three rounds in a row, this setting turns itself off; HISTORIA_LOG keeps logging on regardless."));
 
         advBody.Children.Add(WithHint(Check("Auto hide notices", c.AutoHideNotices,
             v => _ = _cfg.UpdateAsync(s => s with { AutoHideNotices = v })),

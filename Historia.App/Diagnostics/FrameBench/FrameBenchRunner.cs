@@ -64,7 +64,6 @@ internal static class FrameBenchRunner
             Directory.CreateDirectory(options.DataDirectory);
 
             AppPaths.OverrideProcessForTesting(options.DataDirectory);
-            AppLog.Enabled = false;
 
             WriteSettings(options);
             foreach (var stale in new[] { AppPaths.WindowPlacementFile, AppPaths.SessionFile })
@@ -96,10 +95,11 @@ internal static class FrameBenchRunner
     /// host or restores other tabs, no splash, a fixed theme and diff layout, and — for the
     /// terminal workload — a fixed shell.
     /// </summary>
-    private static void WriteSettings(FrameBenchOptions options)
+    internal static AppSettings BuildSettings(FrameBenchMode mode)
     {
         var settings = new AppSettings
         {
+            LoggingEnabled = false,
             AutoFetchEnabled = false,
             RestoreSessionTabs = false,
             ShowSplashScreen = false,
@@ -109,11 +109,17 @@ internal static class FrameBenchRunner
             DiffWordWrap = false,
             EnableGraphSplice = false,
         };
-        if (options.Mode == FrameBenchMode.Terminal)
+        if (mode == FrameBenchMode.Terminal)
         {
             var (shell, shellArgs) = TerminalWorkload.Shell();
             settings = settings with { TerminalShellPath = shell, TerminalShellArgs = shellArgs };
         }
+        return settings;
+    }
+
+    private static void WriteSettings(FrameBenchOptions options)
+    {
+        var settings = BuildSettings(options.Mode);
         File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(settings, HistoriaJson.Options));
     }
 
