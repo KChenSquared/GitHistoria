@@ -52,20 +52,30 @@ public class StagingPanelConflictAbortTests : IDisposable
         try { _fixture.Dispose(); } catch { }
     }
 
-    private async Task<(StagingPanelView Panel, Window Window)> ShowPanelAsync(Action? prepare = null)
+    /// <summary>Refreshes the tab's status and runs posted UI work until <paramref name="condition"/>
+    /// holds, for at most 10 seconds. After a git command on the open repository, a refresh that
+    /// joins one its file watcher already started can return a snapshot taken before the command.</summary>
+    private async Task RefreshUntilAsync(Func<bool> condition, string what)
     {
-        _fixture.CreateConflict();
-        prepare?.Invoke();
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        do
+        while (true)
         {
             await _context.State.RefreshStatusAsync();
-            if (_context.State.Status.Conflicted.Count > 0)
-                break;
+            Dispatcher.UIThread.RunJobs();
+            if (condition())
+                return;
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for {what}.");
             await Task.Delay(50);
         }
-        while (DateTime.UtcNow < deadline);
-        Assert.NotEmpty(_context.State.Status.Conflicted);
+    }
+
+    private async Task<(StagingPanelView Panel, Window Window)> ShowPanelAsync(OperationState operation = OperationState.Merging)
+    {
+        _fixture.CreateConflict();
+        if (operation != OperationState.Merging)
+            _fixture.SetOperation(operation);
+        await RefreshUntilAsync(() => _context.State.Status.Conflicted.Count > 0
+            && _context.State.PendingOperation == operation, $"a conflict during {operation}");
 
         var panel = new StagingPanelView(_sp, _context);
         var window = new Window { Width = 800, Height = 600, Content = panel };
@@ -129,7 +139,7 @@ public class StagingPanelConflictAbortTests : IDisposable
     [AvaloniaFact]
     public async Task Abort_hidden_for_conflicts_without_an_abortable_operation()
     {
-        var (panel, window) = await ShowPanelAsync(() => _fixture.SetOperation(OperationState.Bisecting));
+        var (panel, window) = await ShowPanelAsync(OperationState.Bisecting);
         try
         {
             Assert.Equal(OperationState.Bisecting, _context.State.PendingOperation);

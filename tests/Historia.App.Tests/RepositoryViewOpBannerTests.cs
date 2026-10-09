@@ -52,10 +52,27 @@ public class RepositoryViewOpBannerTests : IDisposable
         try { _fixture.Dispose(); } catch { }
     }
 
+    /// <summary>Refreshes the tab's status and runs posted UI work until <paramref name="condition"/>
+    /// holds, for at most 10 seconds. After a git command on the open repository, a refresh that
+    /// joins one its file watcher already started can return a snapshot taken before the command.</summary>
+    private async Task RefreshUntilAsync(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (true)
+        {
+            await _context.State.RefreshStatusAsync();
+            Dispatcher.UIThread.RunJobs();
+            if (condition())
+                return;
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for {what}.");
+            await Task.Delay(50);
+        }
+    }
+
     private async Task<(RepositoryView View, Window Window)> ShowRepositoryViewDuringSessionAsync()
     {
         _fixture.SetOperation(OperationState.Merging);
-        await _context.State.RefreshStatusAsync();
+        await RefreshUntilAsync(() => _context.State.PendingOperation == OperationState.Merging, "the merge");
         _context.State.SetKeepConflictResolverOpen(true);
         Assert.True(_context.State.IsConflictSessionActive);
 
@@ -105,7 +122,7 @@ public class RepositoryViewOpBannerTests : IDisposable
     public async Task Banner_hidden_when_resolver_closed_with_conflicts_remaining()
     {
         _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
+        await RefreshUntilAsync(() => _context.State.Status.Conflicted.Count > 0 && _context.State.IsConflictSessionActive, "the conflict");
         Assert.True(_context.State.IsConflictSessionActive);
 
         var repoView = new RepositoryView(_sp);
@@ -131,7 +148,7 @@ public class RepositoryViewOpBannerTests : IDisposable
     public async Task Banner_appears_when_last_conflict_resolved_while_closed()
     {
         _fixture.CreateConflict();
-        await _context.State.RefreshStatusAsync();
+        await RefreshUntilAsync(() => _context.State.Status.Conflicted.Count > 0 && _context.State.IsConflictSessionActive, "the conflict");
         Assert.True(_context.State.IsConflictSessionActive);
 
         var repoView = new RepositoryView(_sp);
@@ -145,7 +162,7 @@ public class RepositoryViewOpBannerTests : IDisposable
             Assert.False(repoView.OpBoxForTesting.IsVisible);
 
             _fixture.MarkResolved();
-            await _context.State.RefreshStatusAsync();
+            await RefreshUntilAsync(() => _context.State.Status.Conflicted.Count == 0, "the resolved status");
             Assert.Empty(_context.State.Status.Conflicted);
             Assert.Equal(OperationState.Merging, _context.State.PendingOperation);
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
@@ -171,7 +188,8 @@ public class RepositoryViewOpBannerTests : IDisposable
     {
         _fixture.CreateConflict();
         _fixture.SetOperation(OperationState.Bisecting);
-        await _context.State.RefreshStatusAsync();
+        await RefreshUntilAsync(() => _context.State.PendingOperation == OperationState.Bisecting
+            && _context.State.Status.Conflicted.Count > 0, "the bisect conflict");
         Assert.True(_context.State.IsConflictSessionActive);
 
         var repoView = new RepositoryView(_sp);
@@ -243,7 +261,7 @@ public class RepositoryViewOpBannerTests : IDisposable
     public async Task Continue_while_running_is_ignored_and_buttons_disabled()
     {
         _fixture.SetOperation(OperationState.Merging);
-        await _context.State.RefreshStatusAsync();
+        await RefreshUntilAsync(() => _context.State.PendingOperation == OperationState.Merging, "the merge");
         Dispatcher.UIThread.RunJobs();
 
         var repoView = new RepositoryView(_sp);
@@ -292,7 +310,7 @@ public class RepositoryViewOpBannerTests : IDisposable
     public async Task Abort_confirms_before_calling_service()
     {
         _fixture.SetOperation(OperationState.Merging);
-        await _context.State.RefreshStatusAsync();
+        await RefreshUntilAsync(() => _context.State.PendingOperation == OperationState.Merging, "the merge");
         Dispatcher.UIThread.RunJobs();
 
         var repoView = new RepositoryView(_sp);

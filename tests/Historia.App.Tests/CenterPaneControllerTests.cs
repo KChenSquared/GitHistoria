@@ -330,8 +330,11 @@ public class CenterPaneControllerTests : IDisposable
             DiffRequest Request() => new() { Source = DiffSource.UnstagedChanges, Path = "big.txt", FocusLine = 170 };
 
             _context.State.SetOpenDiff(Request());
+            // The first load waits on git behind the tab's opening work, which can take a while on a busy machine.
             Assert.True(await PumpUntilAsync(window, () => controller.ActiveDiffViewForTesting?.PresenterForTesting
-                is CombinedDiffPresenter or SideBySideDiffPresenter), "the diff never loaded");
+                is CombinedDiffPresenter or SideBySideDiffPresenter, TimeSpan.FromSeconds(30)),
+                $"the diff never loaded; showing {(controller.ActiveDiffViewForTesting?.PresenterForTesting as TextBlock)?.Text
+                    ?? controller.ActiveDiffViewForTesting?.PresenterForTesting?.GetType().Name ?? "nothing"}");
             var view = controller.ActiveDiffViewForTesting!;
             var presenter = view.PresenterForTesting;
             (int Start, int End)? Range() => presenter switch
@@ -361,10 +364,10 @@ public class CenterPaneControllerTests : IDisposable
     }
 
     /// <summary>Runs posted UI work and layout until <paramref name="condition"/> holds, for at most
-    /// 10 seconds.</summary>
-    internal static async Task<bool> PumpUntilAsync(Window window, Func<bool> condition)
+    /// <paramref name="timeout"/> (10 seconds by default).</summary>
+    internal static async Task<bool> PumpUntilAsync(Window window, Func<bool> condition, TimeSpan? timeout = null)
     {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
         while (true)
         {
             Dispatcher.UIThread.RunJobs();
