@@ -56,7 +56,15 @@ public class StagingPanelConflictAbortTests : IDisposable
     {
         _fixture.CreateConflict();
         prepare?.Invoke();
-        await _context.State.RefreshStatusAsync();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        do
+        {
+            await _context.State.RefreshStatusAsync();
+            if (_context.State.Status.Conflicted.Count > 0)
+                break;
+            await Task.Delay(50);
+        }
+        while (DateTime.UtcNow < deadline);
         Assert.NotEmpty(_context.State.Status.Conflicted);
 
         var panel = new StagingPanelView(_sp, _context);
