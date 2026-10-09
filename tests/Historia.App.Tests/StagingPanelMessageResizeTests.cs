@@ -273,6 +273,60 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Window_shrink_below_strip_height_drops_box_to_minimum_and_regrow_restores()
+    {
+        var (_, view, window) = CreateView(width: 400, height: 900);
+        var handle = view.MessageResizeHandleForTesting!;
+        var handleCenter = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, handleCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y - 304));
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(handleCenter.X, handleCenter.Y - 304), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(400, view.MessageForTesting.Height);
+
+        // Shorter than the strip itself, so the lists are laid out at zero height.
+        window.Height = 250;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(96, view.MessageForTesting.Height);
+
+        window.Height = 900;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(400, view.MessageForTesting.Height);
+    }
+
+    [AvaloniaFact]
+    public void Stored_height_taller_than_a_short_window_starts_at_minimum()
+    {
+        var (context, view, window) = CreateView(width: 400, height: 900);
+        var handle = view.MessageResizeHandleForTesting!;
+        var handleCenter = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, handleCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y - 304));
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(handleCenter.X, handleCenter.Y - 304), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(400, view.MessageForTesting.Height);
+
+        var shortView = new StagingPanelView(_sp, context);
+        _views.Add(shortView);
+        var shortWindow = new Window { Width = 400, Height = 250, Content = shortView };
+        _windows.Add(shortWindow);
+        shortWindow.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(96, shortView.MessageForTesting.Height);
+    }
+
+    [AvaloniaFact]
     public void Height_is_remembered_per_repo_for_the_session()
     {
         var (context, view, window) = CreateView();

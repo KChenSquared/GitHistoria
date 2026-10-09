@@ -112,7 +112,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private bool _stashing;
     private bool _suppressSelectAll;
 
-
     public StagingPanelView(IServiceProvider sp, RepositoryContext ctx)
     {
         _ctx = ctx;
@@ -388,12 +387,18 @@ public sealed class StagingPanelView : UserControl, IDisposable
         AttachedToVisualTree += (_, _) =>
         {
             SectionFrame.ApplySplitHeight(splitArea, changesRow, _ctx.Id);
-            ApplyMessageHeight(splitArea);
+            ApplyMessageHeight(root, splitArea);
         };
         splitArea.SizeChanged += (_, _) =>
         {
             SectionFrame.ApplySplitHeight(splitArea, changesRow, _ctx.Id);
-            ApplyMessageHeight(splitArea);
+            ApplyMessageHeight(root, splitArea);
+        };
+        // A split area that is laid out at zero height raises no SizeChanged of its own.
+        root.SizeChanged += (_, _) =>
+        {
+            if (splitArea.Bounds.Height <= 0)
+                ApplyMessageHeight(root, splitArea);
         };
 
         _status = ctx.State.Status;
@@ -406,18 +411,23 @@ public sealed class StagingPanelView : UserControl, IDisposable
             ApplyProposal(pending);
     }
 
-    private void ApplyMessageHeight(Grid splitArea)
+    private void ApplyMessageHeight(Control root, Grid splitArea)
     {
-        if (splitArea.Bounds.Height <= 0)
+        if (root.Bounds.Height <= 0)
             return;
 
+        // The split area gets zero height when the commit strip fills the whole panel; the room
+        // it lost is unknown, so the box drops to its minimum and the next split-area resize
+        // grows it back to what fits.
         var stored = MessageHeightByRepo.GetValueOrDefault(_ctx.Id, MessageMinHeight);
-        var clamped = SectionFrame.ClampGrowHeight(
-            stored,
-            MessageMinHeight,
-            _message.Height,
-            splitArea.Bounds.Height,
-            SectionFrame.SplitAreaMinHeight);
+        var clamped = splitArea.Bounds.Height <= 0
+            ? MessageMinHeight
+            : SectionFrame.ClampGrowHeight(
+                stored,
+                MessageMinHeight,
+                _message.Height,
+                splitArea.Bounds.Height,
+                SectionFrame.SplitAreaMinHeight);
 
         if (Math.Abs(_message.Height - clamped) > 0.5)
         {
