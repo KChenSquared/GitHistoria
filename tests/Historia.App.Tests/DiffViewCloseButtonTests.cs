@@ -9,8 +9,7 @@ public class DiffViewCloseButtonTests : IDisposable
 
     public DiffViewCloseButtonTests()
     {
-        _repoDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-diff-close-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_repoDir);
+        _repoDir = TestScratch.NewDirectory("historia-diff-close-");
         LibGit2Sharp.Repository.Init(_repoDir);
 
         File.WriteAllText(System.IO.Path.Combine(_repoDir, "test.txt"), "line 1\n");
@@ -39,7 +38,7 @@ public class DiffViewCloseButtonTests : IDisposable
     {
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
-        try { Directory.Delete(_repoDir, true); } catch { }
+        TestScratch.Delete(_repoDir);
     }
 
     [AvaloniaFact]

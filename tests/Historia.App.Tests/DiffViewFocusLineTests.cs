@@ -10,8 +10,7 @@ public class DiffViewFocusLineTests : IDisposable
 
     public DiffViewFocusLineTests()
     {
-        _repoDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-diff-focus-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_repoDir);
+        _repoDir = TestScratch.NewDirectory("historia-diff-focus-");
         LibGit2Sharp.Repository.Init(_repoDir);
 
         var file = System.IO.Path.Combine(_repoDir, "big.txt");
@@ -49,7 +48,7 @@ public class DiffViewFocusLineTests : IDisposable
     {
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
-        try { Directory.Delete(_repoDir, true); } catch { }
+        TestScratch.Delete(_repoDir);
     }
 
     private DiffRequest Request(int? focusLine) => new()

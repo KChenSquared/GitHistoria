@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 
@@ -10,8 +10,7 @@ public sealed class GraphCrawlGuardTests : IDisposable
 
     public GraphCrawlGuardTests()
     {
-        _repoDir = Path.Combine(Path.GetTempPath(), "historia-test-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_repoDir);
+        _repoDir = TestScratch.NewDirectory("historia-test-");
         LibGit2Sharp.Repository.Init(_repoDir);
 
         var sc = new ServiceCollection();
@@ -31,7 +30,7 @@ public sealed class GraphCrawlGuardTests : IDisposable
     {
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
-        try { Directory.Delete(_repoDir, true); } catch { }
+        TestScratch.Delete(_repoDir);
     }
 
     [AvaloniaFact]

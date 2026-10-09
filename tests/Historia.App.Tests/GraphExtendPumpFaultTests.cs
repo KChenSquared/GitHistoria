@@ -70,8 +70,7 @@ public sealed class GraphExtendPumpFaultTests
 
         public LinearRepo(int commits)
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-extendfault-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path);
+            Path = TestScratch.NewDirectory("historia-extendfault-");
             RunGit(Path, null, "init", "-q");
             var sb = new System.Text.StringBuilder();
             var when = 1_700_000_000L;
@@ -116,16 +115,7 @@ public sealed class GraphExtendPumpFaultTests
                 throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {err.Result}");
         }
 
-        public void Dispose()
-        {
-            try
-            {
-                foreach (var f in Directory.EnumerateFiles(Path, "*", SearchOption.AllDirectories))
-                    File.SetAttributes(f, FileAttributes.Normal);
-                Directory.Delete(Path, true);
-            }
-            catch { }
-        }
+        public void Dispose() => TestScratch.Delete(Path);
     }
 
     private static ServiceProvider CreateServices()

@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 /// <summary>The Graph column draws each lane's vertical pieces as merged runs, one line per
 /// run rather than one per row per lane. Drawing per row again produces no error, only
@@ -36,8 +36,7 @@ public sealed class GraphLaneRunDrawTests
 
         public ParallelBranchesRepo()
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-laneruns-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(Path);
+            Path = TestScratch.NewDirectory("historia-laneruns-");
             RunGit(Path, null, "init", "-q");
 
             var sb = new System.Text.StringBuilder();
@@ -97,23 +96,7 @@ public sealed class GraphLaneRunDrawTests
                 throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {err.Result}");
         }
 
-        public void Dispose()
-        {
-            try
-            {
-                if (Directory.Exists(Path))
-                {
-                    foreach (var f in Directory.EnumerateFiles(Path, "*", SearchOption.AllDirectories))
-                    {
-                        var attr = File.GetAttributes(f);
-                        if ((attr & FileAttributes.ReadOnly) != 0)
-                            File.SetAttributes(f, attr & ~FileAttributes.ReadOnly);
-                    }
-                    Directory.Delete(Path, true);
-                }
-            }
-            catch { }
-        }
+        public void Dispose() => TestScratch.Delete(Path);
     }
 
     private static ServiceProvider CreateServices()

@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public class DiffViewSettingsTests : IDisposable
@@ -9,8 +9,7 @@ public class DiffViewSettingsTests : IDisposable
 
     public DiffViewSettingsTests()
     {
-        _repoDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "historia-diff-settings-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(_repoDir);
+        _repoDir = TestScratch.NewDirectory("historia-diff-settings-");
         LibGit2Sharp.Repository.Init(_repoDir);
 
         File.WriteAllText(System.IO.Path.Combine(_repoDir, "test.txt"), "line 1\nline 2\n");
@@ -41,7 +40,7 @@ public class DiffViewSettingsTests : IDisposable
     {
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
-        try { Directory.Delete(_repoDir, true); } catch { }
+        TestScratch.Delete(_repoDir);
     }
 
     [AvaloniaFact]
