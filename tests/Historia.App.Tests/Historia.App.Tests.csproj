@@ -12,7 +12,7 @@
     <!-- Unlike Historia.Tests (Core-only, builds while the app runs), this project references
          the Avalonia exe: `dotnet test` on it can hit the locked-apphost copy failure if
          Historia is open. It is the headless regression suite, not the iterate-while-running
-         one — close the app first if a build fails to copy GitEpoch/Historia.exe. -->
+         one — close the app first if a build fails to copy Historia.exe. -->
   </PropertyGroup>
 
   <ItemGroup>

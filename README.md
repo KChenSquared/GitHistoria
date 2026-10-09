@@ -146,11 +146,11 @@ Everything under [Requirements](#-requirements), plus the
 ### Build & Run
 
 ```powershell
-# Restore and build
-dotnet build
-
-# Launch the application
+# Build and launch Historia (builds only the app and historia-cmdr)
 dotnet run
+
+# Build everything, tests and ScenarioLab included
+dotnet build Historia.slnx
 
 # Launch ScenarioLab (test scenario generator & runner)
 dotnet run --project Historia.ScenarioLab
@@ -168,7 +168,7 @@ machine** only — it is not distributable and won't pass notarization.
 #    (use osx-x64 on Intel Macs)
 dotnet publish Historia.App/Historia.App.csproj -c Release -r osx-arm64 --self-contained false
 
-PUB=Historia.App/bin/Release/net10.0/osx-arm64/publish
+PUB=bin/Historia.App/Release/net10.0/osx-arm64/publish
 
 # 2. Ad-hoc sign the main executable and every native dylib it ships
 codesign --force --deep --sign - --timestamp=none "$PUB/Historia"
@@ -222,7 +222,7 @@ are in [`docs/Historia-commander-skills/`](docs/Historia-commander-skills/README
 
 Historia is released under the [MIT License](LICENSE).
 
-Copyright (c) 2026-2027 Kevin Chen.
+Copyright (c) 2026 Kevin Chen.
 
 Bundled third-party material is credited in
 [`docs/third-party-licenses.md`](docs/third-party-licenses.md): the

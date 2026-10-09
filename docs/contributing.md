@@ -41,20 +41,21 @@ When contributing to Historia, keep these core tenets in mind:
 
 ### Clone the Repository
 ```bash
-git clone https://github.com/KChenSquared/Historia.git
-cd Historia
+git clone https://github.com/KChenSquared/GitHistoria.git
+cd GitHistoria
 ```
 
 ### Restore Dependencies & Build
 ```powershell
-dotnet restore
-dotnet build
+dotnet build Historia.slnx
 ```
 
 ### Run the Application
 ```powershell
 dotnet run
 ```
+Run from the repository root, this builds only the app and `historia-cmdr` (see `Historia.proj`),
+then launches Historia.
 
 ### Run Tests
 ```powershell
@@ -176,7 +177,7 @@ I adhere to [Conventional Commits](https://www.conventionalcommits.org/):
 - `perf(diff): cache lexer tokens during side-by-side render`
 
 ### 3. Pull Request Guidelines
-1. Ensure your changes build cleanly without warnings (`dotnet build`).
+1. Ensure your changes build cleanly without warnings (`dotnet build Historia.slnx`).
 2. Run unit and integration tests (`dev/test.ps1 -Tier fast` during development, `dev/test.ps1 -Tier all` before pushing).
 3. For performance-sensitive code, include benchmark results or profiling notes in the PR description.
 4. Keep PRs focused on a single logical change for ease of review.

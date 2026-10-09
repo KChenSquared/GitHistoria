@@ -1,0 +1,49 @@
+<Project DefaultTargets="Build">
+
+  <!--
+    Lets `dotnet run` work from the repository root. It builds Historia.App and Historia.Cmdr
+    and launches Historia; nothing else in the solution is built. Build everything, tests
+    included, with `dotnet build Historia.slnx`.
+
+    No SDK on purpose: an SDK project here would glob every .cs file in the repository.
+  -->
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+    <!-- `dotnet run` refuses a project without an Exe OutputType and a TargetFramework before it
+         asks for RunCommand. Neither changes what is built. -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <_HistoriaAppExeSuffix Condition="'$(OS)' == 'Windows_NT'">.exe</_HistoriaAppExeSuffix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="Historia.App\Historia.App.csproj" />
+    <ProjectReference Include="Historia.Cmdr\Historia.Cmdr.csproj" />
+  </ItemGroup>
+
+  <Target Name="Restore">
+    <MSBuild Projects="@(ProjectReference)" Targets="Restore" Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <Target Name="Build">
+    <MSBuild Projects="@(ProjectReference)" Targets="Build" Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <Target Name="Clean">
+    <MSBuild Projects="@(ProjectReference)" Targets="Clean" Properties="Configuration=$(Configuration)" />
+  </Target>
+
+  <Target Name="Rebuild" DependsOnTargets="Clean;Build" />
+
+  <!-- `dotnet run` calls this after building, then starts RunCommand. -->
+  <Target Name="ComputeRunArguments">
+    <MSBuild Projects="Historia.App\Historia.App.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_HistoriaAppTarget" />
+    </MSBuild>
+    <PropertyGroup>
+      <RunCommand>@(_HistoriaAppTarget->'%(RootDir)%(Directory)%(Filename)$(_HistoriaAppExeSuffix)')</RunCommand>
+      <RunWorkingDirectory>$(MSBuildThisFileDirectory)</RunWorkingDirectory>
+    </PropertyGroup>
+  </Target>
+
+</Project>
