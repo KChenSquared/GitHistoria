@@ -67,7 +67,7 @@ public class RepositoryViewOpBannerTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task Banner_offers_open_resolver_when_closed_during_an_operation()
+    public async Task Banner_offers_continue_when_closed_with_all_conflicts_resolved()
     {
         var (repoView, window) = await ShowRepositoryViewDuringSessionAsync();
         try
@@ -76,8 +76,7 @@ public class RepositoryViewOpBannerTests : IDisposable
             Dispatcher.UIThread.RunJobs();
 
             Assert.True(repoView.OpBoxForTesting.IsVisible);
-            Assert.True(repoView.OpOpenResolverButtonForTesting.IsVisible);
-            Assert.Equal("Merging in progress — the conflict resolver is closed.", repoView.OpBannerTextBlockForTesting.Text);
+            Assert.Equal("Repository is in Merging state with no conflicts.", repoView.OpBannerTextBlockForTesting.Text);
             Assert.True(repoView.OpContinueButtonForTesting.IsVisible);
             Assert.True(repoView.OpAbortButtonForTesting.IsVisible);
         }
@@ -103,19 +102,23 @@ public class RepositoryViewOpBannerTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task Open_resolver_button_clears_closed_flag()
+    public async Task Banner_hidden_when_resolver_closed_with_conflicts_remaining()
     {
-        var (repoView, window) = await ShowRepositoryViewDuringSessionAsync();
+        _fixture.CreateConflict();
+        await _context.State.RefreshStatusAsync();
+        Assert.True(_context.State.IsConflictSessionActive);
+
+        var repoView = new RepositoryView(_sp);
+        var window = new Window { Width = 800, Height = 600, Content = repoView };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
         try
         {
+            Assert.False(repoView.OpBoxForTesting.IsVisible);
+
             _context.State.SetConflictResolverClosed(true);
             Dispatcher.UIThread.RunJobs();
-            Assert.True(repoView.OpOpenResolverButtonForTesting.IsVisible);
 
-            repoView.OpOpenResolverButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-            Dispatcher.UIThread.RunJobs();
-
-            Assert.False(_context.State.IsConflictResolverClosed);
             Assert.False(repoView.OpBoxForTesting.IsVisible);
         }
         finally
@@ -125,7 +128,46 @@ public class RepositoryViewOpBannerTests : IDisposable
     }
 
     [AvaloniaFact]
-    public async Task Open_resolver_offered_for_an_operation_without_continue()
+    public async Task Banner_appears_when_last_conflict_resolved_while_closed()
+    {
+        _fixture.CreateConflict();
+        await _context.State.RefreshStatusAsync();
+        Assert.True(_context.State.IsConflictSessionActive);
+
+        var repoView = new RepositoryView(_sp);
+        var window = new Window { Width = 800, Height = 600, Content = repoView };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            _context.State.SetConflictResolverClosed(true);
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(repoView.OpBoxForTesting.IsVisible);
+
+            _fixture.MarkResolved();
+            await _context.State.RefreshStatusAsync();
+            Assert.Empty(_context.State.Status.Conflicted);
+            Assert.Equal(OperationState.Merging, _context.State.PendingOperation);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (!repoView.OpBoxForTesting.IsVisible && DateTime.UtcNow < deadline)
+            {
+                Dispatcher.UIThread.RunJobs();
+                await Task.Delay(50);
+            }
+
+            Assert.True(repoView.OpBoxForTesting.IsVisible);
+            Assert.True(repoView.OpContinueButtonForTesting.IsVisible);
+            Assert.True(repoView.OpAbortButtonForTesting.IsVisible);
+            Assert.True(_context.State.IsConflictResolverClosed);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Banner_hidden_for_bisect_conflict_while_resolver_closed()
     {
         _fixture.CreateConflict();
         _fixture.SetOperation(OperationState.Bisecting);
@@ -141,10 +183,7 @@ public class RepositoryViewOpBannerTests : IDisposable
             _context.State.SetConflictResolverClosed(true);
             Dispatcher.UIThread.RunJobs();
 
-            Assert.True(repoView.OpBoxForTesting.IsVisible);
-            Assert.True(repoView.OpOpenResolverButtonForTesting.IsEffectivelyVisible);
-            Assert.False(repoView.OpContinueButtonForTesting.IsVisible);
-            Assert.False(repoView.OpAbortButtonForTesting.IsVisible);
+            Assert.False(repoView.OpBoxForTesting.IsVisible);
         }
         finally
         {
