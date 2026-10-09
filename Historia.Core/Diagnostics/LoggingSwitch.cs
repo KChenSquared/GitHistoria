@@ -61,23 +61,18 @@ public static class LoggingSwitch
     private static void SetInternal(bool settingValue)
     {
         var target = settingValue || IsEnvForced();
-        bool flipped;
         lock (Gate)
         {
             if (_enabled == target)
                 return;
             _enabled = target;
-            flipped = true;
         }
 
-        if (flipped)
+        try
         {
-            try
-            {
-                Changed?.Invoke(target);
-            }
-            catch { /* diagnostics events must never throw */ }
+            Changed?.Invoke(target);
         }
+        catch { /* diagnostics events must never throw */ }
     }
 
     private static bool IsEnvForced() =>
