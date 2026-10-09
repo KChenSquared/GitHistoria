@@ -1139,7 +1139,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
         catch (Exception ex) { _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.NotificationDetails()); }
     }
 
-    // Stash only the staged set; unstaged working-tree edits are left in place.
     private async Task AbortOperationFromHeaderAsync()
     {
         if (_conflictAbortBusy)
@@ -1181,6 +1180,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         }
     }
 
+    // Stash only the staged set; unstaged working-tree edits are left in place.
     private async Task StashStagedAsync()
     {
         if (_stashing || _status.Staged.Count == 0)
