@@ -179,7 +179,7 @@ public sealed class ControlInputValidationTests
     [Fact]
     public void Existing_segments_take_their_on_disk_case_and_missing_ones_are_kept()
     {
-        var root = Path.Combine(Path.GetTempPath(), "ctl-case-" + Guid.NewGuid().ToString("N"));
+        var root = TestScratch.NewDirectory("ctl-case-");
         Directory.CreateDirectory(Path.Combine(root, "Src", "Views"));
         File.WriteAllText(Path.Combine(root, "Src", "Views", "Foo.cs"), "");
         try
@@ -200,7 +200,7 @@ public sealed class ControlInputValidationTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TestScratch.Delete(root);
         }
     }
 }

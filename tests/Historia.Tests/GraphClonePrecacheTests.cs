@@ -141,7 +141,7 @@ public sealed class GraphClonePrecacheTests : IAsyncDisposable
     public async Task Precache_on_a_shallow_clone_succeeds_without_a_commit_graph()
     {
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
-        var shallowDir = Path.Combine(Path.GetTempPath(), $"historia-shallow-{Guid.NewGuid():N}");
+        var shallowDir = TestScratch.NewPath("historia-shallow-");
         try
         {
             var cloneRes = await cli.RunAsync(new GitCliRequest
@@ -161,7 +161,7 @@ public sealed class GraphClonePrecacheTests : IAsyncDisposable
         }
         finally
         {
-            try { if (Directory.Exists(shallowDir)) Directory.Delete(shallowDir, recursive: true); } catch { }
+            TestScratch.Delete(shallowDir);
         }
     }
 

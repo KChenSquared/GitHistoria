@@ -160,7 +160,19 @@ public static class TestScratch
 
             if (Directory.Exists(path))
             {
-                DeleteDirectoryRecursive(new DirectoryInfo(path));
+                var dir = new DirectoryInfo(path);
+                try
+                {
+                    ClearReadOnly(dir);
+                    dir.Delete(recursive: true);
+                    return;
+                }
+                catch
+                {
+                    // Fall back to best-effort descent if bulk delete failed.
+                }
+
+                DeleteBestEffort(dir);
             }
         }
         catch
@@ -169,16 +181,14 @@ public static class TestScratch
         }
     }
 
-    private static void DeleteDirectoryRecursive(DirectoryInfo dir)
+    private static void ClearReadOnly(DirectoryInfo dir)
     {
         try
         {
-            dir.Attributes = FileAttributes.Normal;
+            if ((dir.Attributes & FileAttributes.ReadOnly) != 0)
+                dir.Attributes &= ~FileAttributes.ReadOnly;
         }
-        catch
-        {
-            // Best effort.
-        }
+        catch { }
 
         try
         {
@@ -186,40 +196,49 @@ public static class TestScratch
             {
                 try
                 {
-                    File.SetAttributes(file.FullName, FileAttributes.Normal);
-                    file.Delete();
+                    if ((file.Attributes & FileAttributes.ReadOnly) != 0)
+                        file.Attributes &= ~FileAttributes.ReadOnly;
                 }
-                catch
-                {
-                    // Best effort.
-                }
+                catch { }
             }
         }
-        catch
-        {
-            // Best effort.
-        }
+        catch { }
 
         try
         {
             foreach (var sub in dir.EnumerateDirectories())
             {
-                DeleteDirectoryRecursive(sub);
+                ClearReadOnly(sub);
             }
         }
-        catch
+        catch { }
+    }
+
+    private static void DeleteBestEffort(DirectoryInfo dir)
+    {
+        try
         {
-            // Best effort.
+            foreach (var file in dir.EnumerateFiles())
+            {
+                try { file.Delete(); } catch { }
+            }
         }
+        catch { }
+
+        try
+        {
+            foreach (var sub in dir.EnumerateDirectories())
+            {
+                DeleteBestEffort(sub);
+            }
+        }
+        catch { }
 
         try
         {
             dir.Delete(recursive: true);
         }
-        catch
-        {
-            // Best effort.
-        }
+        catch { }
     }
 
     /// <summary>
