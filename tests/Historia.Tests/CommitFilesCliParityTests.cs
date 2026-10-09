@@ -280,6 +280,7 @@ public sealed class CommitFilesCliParityTests : IAsyncDisposable
         await using var provider = sc.BuildServiceProvider();
 
         await using var ctx = RepositoryContext.Open(repo.Path, provider);
+        await ctx.Watcher.DisposeAsync();
         var commitId = new GitObjectId(repo.HeadSha);
         var runsBefore = recordingCli.RunCount;
 
