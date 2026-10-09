@@ -77,8 +77,11 @@ public class StagingPanelConflictRowsTests : IDisposable
         var rows = panel.ChangesRowsForTesting.Children;
         Assert.NotEmpty(rows);
 
-        var header = Assert.IsType<TextBlock>(rows[0]);
+        var headerGrid = Assert.IsType<Grid>(rows[0]);
+        Assert.Same(panel.ConflictHeaderForTesting, headerGrid);
+        var header = headerGrid.Children.OfType<TextBlock>().Single();
         Assert.Equal("Conflicted — resolve these before committing", header.Text);
+        Assert.Contains(panel.ConflictAbortButtonForTesting, headerGrid.Children);
 
         var border = Assert.IsType<Border>(rows[1]);
         var grid = Assert.IsType<Grid>(border.Child);

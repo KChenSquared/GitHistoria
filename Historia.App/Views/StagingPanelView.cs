@@ -23,6 +23,11 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private readonly Historia.Services.UI.IExternalLauncher _launcher;
     private readonly Historia.Services.PowerTools.IStashService _stash;
     private readonly IRepoActionBus _actionBus;
+    private readonly IConflictService _conflicts;
+    private readonly IUnsavedWorkRegistry? _unsavedWork;
+    private readonly Grid _conflictHeader;
+    private readonly Button _conflictAbort;
+    private bool _conflictAbortBusy;
     private readonly IAiProfileService? _aiProfiles;
     private readonly IAiIntegrationsPanel? _aiPanel;
     private readonly ICommitMessageGenerator? _aiGenerator;
@@ -83,6 +88,8 @@ public sealed class StagingPanelView : UserControl, IDisposable
     internal Button DiscardAllChangesForTesting => _discardAllChanges;
     internal Task DiscardAllChangesForTestingAsync() => DiscardAllChangesAsync();
     internal TextBlock ChangesHeaderForTesting => _changesHeader;
+    internal Grid ConflictHeaderForTesting => _conflictHeader;
+    internal Button ConflictAbortButtonForTesting => _conflictAbort;
     internal IReadOnlyDictionary<string, Border> ConflictedRowCacheForTesting => _conflictedRowCache;
     internal TextBox MessageForTesting => _message;
     internal CheckBox AmendForTesting => _amend;
@@ -128,6 +135,28 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _aiProfiles = sp.GetService<IAiProfileService>();
         _aiPanel = sp.GetService<IAiIntegrationsPanel>();
         _aiGenerator = sp.GetService<ICommitMessageGenerator>();
+
+        _conflicts = sp.GetRequiredService<IConflictService>();
+        _unsavedWork = sp.GetService<IUnsavedWorkRegistry>();
+
+        _conflictAbort = new Button
+        {
+            Content = "Abort",
+            FontSize = 12,
+            FontWeight = FontWeight.SemiBold,
+            Padding = new Thickness(6, 0),
+            MinHeight = 0,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+        };
+        _conflictAbort.Classes.Add("danger");
+        _conflictAbort.Click += (_, _) => _ = AbortOperationFromHeaderAsync();
+        var conflictTitle = Text("Conflicted — resolve these before committing", "ColorDanger", 12, FontWeight.SemiBold);
+        conflictTitle.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(_conflictAbort, 1);
+        _conflictHeader = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(4, 1, 0, 1) };
+        _conflictHeader.Children.Add(conflictTitle);
+        _conflictHeader.Children.Add(_conflictAbort);
 
         _commit = TextButton("Commit", () => _ = CommitAsync(false), primary: true);
         var commitPush = TextButton("Commit & Push", () => _ = CommitAsync(true));
@@ -789,9 +818,17 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
         if (conflicted.Count > 0)
         {
-            var header = Text("Conflicted — resolve these before committing", "ColorDanger", 12, FontWeight.SemiBold);
-            header.Margin = new Thickness(4, 2, 0, 2);
-            changesChildren.Add(header);
+            var pending = _ctx.State.PendingOperation;
+            _conflictAbort.IsVisible = pending is OperationState.Merging or OperationState.Rebasing
+                or OperationState.CherryPicking or OperationState.Reverting;
+            ToolTip.SetTip(_conflictAbort, $"Abort the in-progress {pending switch
+            {
+                OperationState.Rebasing => "rebase",
+                OperationState.CherryPicking => "cherry-pick",
+                OperationState.Reverting => "revert",
+                _ => "merge",
+            }}");
+            changesChildren.Add(_conflictHeader);
 
             foreach (var f in conflicted)
             {
@@ -1103,6 +1140,47 @@ public sealed class StagingPanelView : UserControl, IDisposable
     }
 
     // Stash only the staged set; unstaged working-tree edits are left in place.
+    private async Task AbortOperationFromHeaderAsync()
+    {
+        if (_conflictAbortBusy)
+            return;
+
+        try
+        {
+            if (!await _dialogs.ConfirmDestructiveAsync(
+                    "Abort operation",
+                    "Abort the in-progress merge / rebase / cherry-pick? Conflict resolutions and unsaved edits made so far will be discarded.",
+                    "Abort"))
+            {
+                return;
+            }
+
+            if (_conflictAbortBusy)
+                return;
+
+            _conflictAbortBusy = true;
+            _conflictAbort.IsEnabled = false;
+            try
+            {
+                await _conflicts.AbortOperationAsync(_ctx, _ctx.Lifetime);
+                foreach (var w in _unsavedWork?.For(_ctx).ToList() ?? [])
+                    w.Discard();
+                if (_ctx.State.PendingOperation == OperationState.None)
+                    _ctx.State.SetKeepConflictResolverOpen(false);
+            }
+            finally
+            {
+                _conflictAbortBusy = false;
+                _conflictAbort.IsEnabled = true;
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Abort"), ex.NotificationDetails());
+        }
+    }
+
     private async Task StashStagedAsync()
     {
         if (_stashing || _status.Staged.Count == 0)
