@@ -15,6 +15,7 @@ public sealed class AutoFetchService : IAutoFetchService
     private readonly ISettingsService _settings;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly IGraphLayoutService? _graphLayoutService;
+    private readonly ILogTrimmer? _logTrimmer;
 
     private readonly object _sync = new();
     private CancellationTokenSource? _runCts;
@@ -36,13 +37,15 @@ public sealed class AutoFetchService : IAutoFetchService
         IAutoFetchHost host,
         ISettingsService settings,
         Func<TimeSpan, CancellationToken, Task>? delay = null,
-        IGraphLayoutService? graphLayoutService = null)
+        IGraphLayoutService? graphLayoutService = null,
+        ILogTrimmer? logTrimmer = null)
     {
         _workspace = workspace;
         _host = host;
         _settings = settings;
         _delay = delay ?? ((span, ct) => Task.Delay(span, ct));
         _graphLayoutService = graphLayoutService;
+        _logTrimmer = logTrimmer;
 
         _settings.Changed += OnSettingsChanged;
         _workspace.OpenRepositoriesChanged += OnOpenRepositoriesChanged;
@@ -226,6 +229,8 @@ public sealed class AutoFetchService : IAutoFetchService
             }
             RaiseTabStates();
 
+            await TrimLogsAsync(ct).ConfigureAwait(false);
+
             var cct = cycle.Token;
             try
             {
@@ -259,6 +264,25 @@ public sealed class AutoFetchService : IAutoFetchService
             {
                 // Add/close restart — rebuild the cycle from the top.
             }
+        }
+    }
+
+    private async Task TrimLogsAsync(CancellationToken ct)
+    {
+        if (_logTrimmer is null)
+            return;
+
+        try
+        {
+            await _logTrimmer.TrimAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Trimming failures are handled inside the trimmer (setting is disabled). The loop continues.
         }
     }
 

@@ -31,13 +31,22 @@ public sealed class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        Historia.Diagnostics.PerfLog.Mark("App.OnFrameworkInitializationCompleted start");
-
         // Settings are loaded synchronously so the correct theme is applied on first paint
         // with no flash — the one permitted blocking read.
         AppPaths.EnsureCreated();
-        AppLog.Write(AppLogLevel.Info, "app", $"start — pid {Environment.ProcessId}, {Environment.OSVersion}");
         _settings = SettingsService.Load();
+        LoggingSwitch.Initialize(_settings.Current.LoggingEnabled);
+        Historia.Platform.DevMode.Initialize(_settings.Current);
+
+        Historia.Diagnostics.PerfLog.Mark("App.OnFrameworkInitializationCompleted start");
+        AppLog.Write(AppLogLevel.Info, "app", $"start — pid {Environment.ProcessId}, {Environment.OSVersion}");
+
+        _settings.Changed += (_, e) =>
+        {
+            if (e.OldSettings.LoggingEnabled != e.NewSettings.LoggingEnabled)
+                LoggingSwitch.Set(e.NewSettings.LoggingEnabled);
+        };
+
         // Without developer mode, developer-only options are switched off before any theme is resolved.
         if (!Historia.Platform.DevMode.Enabled && _settings.Current.UseCustomTheme)
             _settings.UpdateAsync(s => s.WithoutDevOnlyOptions()).GetAwaiter().GetResult();
@@ -217,6 +226,7 @@ public sealed class App : Application
         services.AddSingleton<IScrollDirectionProbe, Historia.Platform.ScrollDirectionProbe>();
         services.AddSingleton<IRepoActionBus, RepoActionBus>();
         services.AddSingleton<IRepoNetworkActionRunner, RepoNetworkActionRunner>();
+        services.AddSingleton<ILogTrimmer, LogTrimmer>();
         services.AddSingleton<Historia.Services.AutoFetch.IAutoFetchHost, AutoFetchHost>();
         services.AddSingleton<Historia.Services.AutoFetch.IAutoFetchService, Historia.Services.AutoFetch.AutoFetchService>();
 
