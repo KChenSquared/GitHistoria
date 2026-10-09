@@ -63,10 +63,7 @@ internal static class FrameBenchRunner
             Directory.CreateDirectory(options.OutDirectory);
             Directory.CreateDirectory(options.DataDirectory);
 
-            // Must precede the first touch of AppLog or PerfLog: their opt-in flag files resolve
-            // under the data directory once, when first used.
             AppPaths.OverrideProcessForTesting(options.DataDirectory);
-            PerfLog.Enabled = false;
             AppLog.Enabled = false;
 
             WriteSettings(options);
