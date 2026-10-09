@@ -84,6 +84,31 @@ public sealed class PerfLogWriterTests : IDisposable
         Assert.Matches(@"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}  \+", line);
     }
 
+    [Theory]
+    [InlineData("fi-FI")]
+    [InlineData("th-TH")]
+    public async Task Mark_lines_survive_a_trim_under_any_culture(string culture)
+    {
+        var saved = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo(culture);
+            PerfLog.OverrideEnabledForTesting(true);
+            PerfLog.Mark("culture test");
+            Assert.True(PerfLog.Flush(TimeSpan.FromSeconds(10)));
+
+            await PerfLog.TrimAsync(DateTime.Now.AddHours(-48));
+
+            var line = Assert.Single(File.ReadAllLines(PerfLog.LogPath), l => l.EndsWith("culture test", StringComparison.Ordinal));
+            Assert.StartsWith(DateTime.Now.ToString("yyyy-", System.Globalization.CultureInfo.InvariantCulture), line);
+            Assert.Matches(@"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}  \+ *\d+\.\dms", line);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = saved;
+        }
+    }
+
     [Fact]
     public void A_mark_never_waits_on_a_stalled_write()
     {

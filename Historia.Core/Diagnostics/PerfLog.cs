@@ -75,7 +75,9 @@ public static class PerfLog
             return;
 
         var ms = Stopwatch.GetElapsedTime(Origin).TotalMilliseconds;
-        var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  +{ms,10:F1}ms  {message}";
+        // Invariant: the trim parses the leading date back, and some cultures change the time
+        // separator or the calendar year.
+        var line = string.Create(CultureInfo.InvariantCulture, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  +{ms,10:F1}ms  {message}");
         try { Writer.Enqueue(LogPath, line); }
         catch { /* diagnostics must never throw */ }
     }
