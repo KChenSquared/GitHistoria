@@ -596,7 +596,6 @@ public sealed record GraphQuery
 {
     public GraphRefScope RefScope { get; init; } = GraphRefScope.AllRefs;
     public IReadOnlyList<string>? SelectedRefs { get; init; }
-    public bool IncludeStashes { get; init; }
     public bool IncludeRemoteBranches { get; init; } = true;
     public string? PathFilter { get; init; }
     /// <summary>lanes are uncapped — every lineage gets its own track. A lane cap would

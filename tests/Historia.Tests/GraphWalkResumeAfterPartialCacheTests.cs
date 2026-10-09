@@ -118,7 +118,7 @@ public sealed class GraphWalkResumeAfterPartialCacheTests : IAsyncDisposable
         var query = new GraphQuery { RefScope = GraphRefScope.AllRefs };
 
         var snapshot = await ctx.RefSnapshots.GetAsync();
-        var tips = (string[])method.Invoke(null, [snapshot, query, Array.Empty<string?>()])!;
+        var tips = (string[])method.Invoke(null, [snapshot, query])!;
 
         Assert.NotEmpty(tips);
         var sorted = tips.OrderBy(s => s, StringComparer.Ordinal).ToArray();

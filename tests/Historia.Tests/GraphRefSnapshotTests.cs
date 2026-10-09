@@ -61,23 +61,18 @@ public sealed class GraphRefSnapshotTests : IAsyncDisposable
                 }
                 break;
         }
-        if (query.IncludeStashes)
-            foreach (var st in repo.Stashes)
-                if (st.WorkTree is { } w)
-                    shas.Add(w.Sha);
         return [.. shas];
     }
 
     public static TheoryData<string> Queries() =>
     [
-        "all", "all-no-remotes", "all-stashes", "current", "selected",
+        "all", "all-no-remotes", "current", "selected",
     ];
 
     private static GraphQuery QueryFor(string name) => name switch
     {
         "all" => new GraphQuery { RefScope = GraphRefScope.AllRefs },
         "all-no-remotes" => new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeRemoteBranches = false },
-        "all-stashes" => new GraphQuery { RefScope = GraphRefScope.AllRefs, IncludeStashes = true },
         "current" => new GraphQuery { RefScope = GraphRefScope.CurrentBranch },
         "selected" => new GraphQuery
         {

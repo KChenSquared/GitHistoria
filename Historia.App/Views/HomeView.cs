@@ -15,10 +15,8 @@ public sealed class HomeView : UserControl, IDisposable
     private readonly Historia.Services.AutoFetch.IAutoFetchService _autoFetch;
     private readonly ISubmoduleService _submodules;
 
-    // Avalonia 11.3.20 Fluent vertical ScrollBar expanded width is 16 px (Avalonia.Themes.Fluent Controls/ScrollBar.xaml).
-    // Inset content by 16 px + 4 px margin so the scrollbar sits fully clear of the rows and remove buttons.
-    private const double ScrollBarExpandedWidth = 16;
-    private const double RecentScrollerRightPadding = ScrollBarExpandedWidth + 4;
+    // Breathing gap keeping content clear of the reserved scrollbar lane.
+    private const double RecentScrollerRightPadding = 4;
 
     private readonly UniformWidthStackPanel _recentList = new() { Spacing = 4 };
     private readonly TextBlock _cloneStatus = Text("", "ColorSuccess", 12);
@@ -348,11 +346,6 @@ public sealed class HomeView : UserControl, IDisposable
             MaxHeight = 380,
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
             Padding = new Thickness(0, 0, RecentScrollerRightPadding, 0),
-            // Fluent's default overlay scrollbar floats above the content column and ignores
-            // Padding, so it still covers the row/remove-button area. Disabling auto-hide makes
-            // Avalonia reserve a dedicated track column instead, which the Padding above then
-            // keeps clear of the rows.
-            AllowAutoHide = false,
         };
 
     private sealed class UniformWidthStackPanel : StackPanel

@@ -100,19 +100,6 @@ public sealed class AvaloniaThemeApplier : IDisposable
         dict["ScrollBarTrackFillPointerOver"] = Brushes.Transparent;
         dict["ScrollBarTrackStrokePointerOver"] = Brushes.Transparent;
 
-        dict["ScrollBarButtonBackground"] = Brushes.Transparent;
-        dict["ScrollBarButtonBorderBrush"] = Brushes.Transparent;
-        dict["ScrollBarButtonArrowForeground"] = textMutedBrush;
-        dict["ScrollBarButtonArrowForegroundPointerOver"] = textBrush;
-        dict["ScrollBarButtonBackgroundPointerOver"] = hoverBrush;
-        dict["ScrollBarButtonBorderBrushPointerOver"] = Brushes.Transparent;
-        dict["ScrollBarButtonArrowForegroundPressed"] = textBrush;
-        dict["ScrollBarButtonBackgroundPressed"] = surface2Brush;
-        dict["ScrollBarButtonBorderBrushPressed"] = Brushes.Transparent;
-        dict["ScrollBarButtonArrowForegroundDisabled"] = borderBrush;
-        dict["ScrollBarButtonBackgroundDisabled"] = Brushes.Transparent;
-        dict["ScrollBarButtonBorderBrushDisabled"] = Brushes.Transparent;
-
         return dict;
     }
 

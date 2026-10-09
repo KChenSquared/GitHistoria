@@ -187,7 +187,6 @@ public enum DecorationType
     RemoteBranch,
     Tag,
     Head,
-    Stash,
 }
 
 /// <summary>Which refs a history/graph query includes.</summary>

@@ -34,8 +34,9 @@ public sealed class HomeViewLayoutTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(openBtn.Bounds.Y, cloneBtn.Bounds.Y);
-        Assert.Equal(openBtn.Bounds.Y, newBtn.Bounds.Y);
+        // Primary and secondary buttons differ in height, so a shared line means a shared centre.
+        Assert.Equal(openBtn.Bounds.Center.Y, cloneBtn.Bounds.Center.Y);
+        Assert.Equal(openBtn.Bounds.Center.Y, newBtn.Bounds.Center.Y);
 
         window.Close();
     }
@@ -57,8 +58,9 @@ public sealed class HomeViewLayoutTests
         window.Width = 640;
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(openBtn.Bounds.Y, cloneBtn.Bounds.Y);
-        Assert.Equal(openBtn.Bounds.Y, newBtn.Bounds.Y);
+        // Primary and secondary buttons differ in height, so a shared line means a shared centre.
+        Assert.Equal(openBtn.Bounds.Center.Y, cloneBtn.Bounds.Center.Y);
+        Assert.Equal(openBtn.Bounds.Center.Y, newBtn.Bounds.Center.Y);
 
         window.Close();
     }
@@ -105,5 +107,38 @@ public sealed class HomeViewLayoutTests
         }
 
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void RecentScroller_bar_is_lane_wide()
+    {
+        var contentPanel = new StackPanel { Spacing = 4 };
+        for (var i = 0; i < 20; i++)
+        {
+            contentPanel.Children.Add(new Border
+            {
+                Height = 40,
+                Child = new TextBlock { Text = $"Recent repo row {i}" }
+            });
+        }
+
+        var scroller = HomeView.BuildRecentScroller(contentPanel);
+
+        var window = new Window { Width = 400, Height = 300, Content = scroller };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            var scrollBar = scroller.GetVisualDescendants()
+                .OfType<ScrollBar>()
+                .Single(s => s.Orientation == Orientation.Vertical);
+
+            Assert.True(scrollBar.IsVisible);
+            Assert.Equal(ScrollBarMetrics.Lane, scrollBar.Bounds.Width);
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 }

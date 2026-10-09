@@ -142,7 +142,7 @@ public sealed class RefNavigatorLayoutTests
     }
 
     private static (RefNavigatorView View, ServiceProvider Sp, TestRepoFixture Fixture, RepositoryContext Context, Window Window) CreateView(
-        double windowWidth = 300, IEnumerable<string>? extraBranchNames = null)
+        double windowWidth = 300, IEnumerable<string>? extraBranchNames = null, double windowHeight = 800)
     {
         var fixture = new TestRepoFixture(extraBranchNames);
         var sp = CreateServices();
@@ -152,7 +152,7 @@ public sealed class RefNavigatorLayoutTests
         ctx.State.RefreshRefsAsync().GetAwaiter().GetResult();
         ws.Focus(ctx);
         var view = new RefNavigatorView(sp);
-        var window = new Window { Width = windowWidth, Height = 800, Content = view };
+        var window = new Window { Width = windowWidth, Height = windowHeight, Content = view };
         window.Show();
         Dispatcher.UIThread.RunJobs();
         return (view, sp, fixture, ctx, window);
@@ -368,6 +368,127 @@ public sealed class RefNavigatorLayoutTests
             var leafRow = body.Children.OfType<Border>()
                 .FirstOrDefault(b => ToolTip.GetTip(b)?.ToString() == "origin/feature/auth");
             Assert.NotNull(leafRow);
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Section_bar_sits_left_of_sidebar_bar_with_gap()
+    {
+        var branches = Enumerable.Range(1, 25).Select(i => $"branch-{i:D2}").ToList();
+        var setup = CreateView(extraBranchNames: branches, windowHeight: 280);
+        try
+        {
+            void Click(Border row) => row.RaiseEvent(new PointerPressedEventArgs(row,
+                new Pointer(1, PointerType.Mouse, true), row, new Point(5, 5), 0,
+                new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonPressed), KeyModifiers.None));
+
+            var headers = GetSectionHeaders(setup.View);
+            var stashesHeader = headers.FirstOrDefault(h => h.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text?.StartsWith("STASHES", StringComparison.OrdinalIgnoreCase) == true));
+            if (stashesHeader is not null)
+                Click(stashesHeader);
+            Dispatcher.UIThread.RunJobs();
+
+            var rootBars = setup.View._root.GetVisualDescendants().OfType<ScrollBar>().ToHashSet();
+            var outerBar = setup.View._outerScroller.GetVisualDescendants()
+                .OfType<ScrollBar>().Single(b => b.Orientation == Orientation.Vertical && !rootBars.Contains(b));
+            Assert.True(outerBar.IsVisible);
+
+            var sectionBars = rootBars
+                .Where(b => b.Orientation == Orientation.Vertical && b.IsVisible)
+                .ToList();
+            Assert.NotEmpty(sectionBars);
+
+            var outerLeft = outerBar.TranslatePoint(default, setup.View)!.Value.X;
+            foreach (var sBar in sectionBars)
+            {
+                var sRight = RightEdgeInView(setup.View, sBar);
+                Assert.True(sRight + ScrollBarMetrics.NestedGap <= outerLeft + 0.5,
+                    $"Section bar right {sRight} + gap {ScrollBarMetrics.NestedGap} should be <= outer bar left {outerLeft}");
+
+                var sBoundsInView = new Rect(sBar.TranslatePoint(default, setup.View)!.Value, sBar.Bounds.Size);
+                var outerBoundsInView = new Rect(outerBar.TranslatePoint(default, setup.View)!.Value, outerBar.Bounds.Size);
+                Assert.False(sBoundsInView.Intersects(outerBoundsInView), "Bars should not intersect");
+            }
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void No_gap_without_sidebar_bar()
+    {
+        var branches = Enumerable.Range(1, 25).Select(i => $"branch-{i:D2}").ToList();
+        var setup = CreateView(extraBranchNames: branches, windowHeight: 1200);
+        try
+        {
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(default, setup.View._root.Margin);
+
+            var sBar = setup.View._root.GetVisualDescendants()
+                .OfType<ScrollBar>()
+                .First(b => b.Orientation == Orientation.Vertical && b.IsVisible);
+            var sRight = RightEdgeInView(setup.View, sBar);
+            Assert.True(setup.View.Bounds.Width - sRight <= ScrollBarMetrics.Lane + RefNavigatorView.RowRightGutter + 0.5);
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Gap_follows_window_resize()
+    {
+        var branches = Enumerable.Range(1, 25).Select(i => $"branch-{i:D2}").ToList();
+        var setup = CreateView(extraBranchNames: branches, windowHeight: 1200);
+        try
+        {
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(default, setup.View._root.Margin);
+
+            setup.Window.Height = 250;
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(new Thickness(0, 0, ScrollBarMetrics.NestedGap, 0), setup.View._root.Margin);
+
+            setup.Window.Height = 1200;
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(default, setup.View._root.Margin);
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Pressing_a_bar_does_not_navigate()
+    {
+        var branches = Enumerable.Range(1, 25).Select(i => $"branch-{i:D2}").ToList();
+        var setup = CreateView(extraBranchNames: branches, windowHeight: 300);
+        try
+        {
+            var nav = setup.Sp.GetRequiredService<INavigationBus>();
+            string? navigated = null;
+            nav.NavigationRequested += target => navigated = target;
+
+            var sBar = setup.View._root.GetVisualDescendants()
+                .OfType<ScrollBar>()
+                .First(b => b.Orientation == Orientation.Vertical && b.IsVisible);
+            var thumb = sBar.GetVisualDescendants().OfType<Thumb>().First();
+
+            var thumbCentre = thumb.TranslatePoint(new Point(thumb.Bounds.Width / 2, thumb.Bounds.Height / 2), setup.Window)!.Value;
+            Avalonia.Headless.HeadlessWindowExtensions.MouseDown(setup.Window, thumbCentre, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+            Avalonia.Headless.HeadlessWindowExtensions.MouseUp(setup.Window, thumbCentre, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Null(navigated);
         }
         finally
         {

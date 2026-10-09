@@ -309,4 +309,29 @@ public sealed class GraphScrollbarDragTests
         Assert.NotNull(m);
         m.Invoke(window.PlatformImpl, args);
     }
+
+    [AvaloniaFact]
+    public void Graph_bars_use_the_shared_lane()
+    {
+        var graph = new CommitGraphControl { ContentRowCountOverrideForTesting = 2000 };
+        var window = new Window { Width = 300, Height = 300, Content = graph };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        try
+        {
+            var vBar = graph.VerticalScrollBarForTesting;
+            var hBar = graph.GetVisualDescendants().OfType<ScrollBar>().Single(b => b.Orientation == Orientation.Horizontal);
+
+            Assert.True(vBar.IsVisible);
+            Assert.True(hBar.IsVisible);
+            Assert.Equal(ScrollBarMetrics.Lane, vBar.Bounds.Width);
+            Assert.Equal(ScrollBarMetrics.Lane, hBar.Bounds.Height);
+
+            Assert.True(vBar.Bounds.Bottom <= hBar.Bounds.Top + 0.5);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }

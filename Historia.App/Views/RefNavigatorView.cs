@@ -19,6 +19,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private readonly IExternalLauncher _launcher;
 
     internal readonly StackPanel _root = new();
+    internal readonly ScrollViewer _outerScroller;
     private RepositoryContext? _repo;
 
     // Indentation: leaves and folder labels share this left edge (past the section-header
@@ -27,12 +28,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     private const double IndentStep = 14;
     private const double SectionMaxHeight = 240;
 
-    // Reserves space at the right of every row for the Fluent scroll bar's overlay hit area
-    // (ScrollBarSize = 16 DIU, verified in Avalonia 11.3.20's FluentControlResources.xaml —
-    // it's the ScrollBar control's own MinWidth/MinHeight, constant whether or not the bar is
-    // expanded; only the visual thumb scales via a RenderTransform) plus 2 DIU of breathing room,
-    // so trimmed text and row actions never sit under it.
-    internal const double RowRightGutter = 18;
+    // Breathing gap at the right of rows so text and actions do not touch the section scrollbar lane.
+    internal const double RowRightGutter = 4;
 
     // Section defaults: Local Branches / Remotes start expanded; Tags / Stashes / Submodules /
     // Worktrees start collapsed. Session-only, like _expanded below — the state survives section
@@ -128,7 +125,14 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         _tagsFilterBox = CreateFilterBox(() => _tagsFilterOpen = false);
         _stashesFilterBox = CreateFilterBox(() => _stashesFilterOpen = false);
 
-        Content = new ScrollViewer { Content = _root, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        _outerScroller = new ScrollViewer { Content = _root, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        _outerScroller.ScrollChanged += (_, _) => UpdateNestedMargin();
+        _outerScroller.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == ScrollViewer.ExtentProperty || e.Property == ScrollViewer.ViewportProperty)
+                UpdateNestedMargin();
+        };
+        Content = _outerScroller;
         this.Dyn(BackgroundProperty, "ColorChrome");
 
         _workspace.FocusedRepositoryChanged += OnFocusChanged;
@@ -138,9 +142,19 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         // that do something set e.Handled, so this only fires for background clicks.
         AddHandler(PointerReleasedEvent, (_, e) =>
         {
+            if (e.Source is Visual v && v.FindAncestorOfType<ScrollBar>(includeSelf: true) is not null)
+                return;
             if (!e.Handled && _repo is not null)
                 _nav.RequestNavigate("repo");
         });
+    }
+
+    private void UpdateNestedMargin()
+    {
+        var needsGap = _outerScroller.Viewport.Height > 0 && _outerScroller.Extent.Height > _outerScroller.Viewport.Height;
+        var target = needsGap ? new Thickness(0, 0, ScrollBarMetrics.NestedGap, 0) : default;
+        if (_root.Margin != target)
+            _root.Margin = target;
     }
 
     private TextBox CreateFilterBox(Action onClose)
@@ -505,7 +519,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 if (_stashesFilterOpen && !string.IsNullOrWhiteSpace(_stashesFilterBox?.Text))
                 {
                     var query = FuzzyScorer.PrepareQuery(_stashesFilterBox.Text);
-                    var ranked = RefSearch.Rank(_stashList, s => $"stash@{{{s.Index}}}  {s.Message}", query);
+                    var ranked = RefSearch.Rank(_stashList, StashLabel, query);
                     if (ranked.Count == 0)
                     {
                         stashBody.Children.Add(Leaf("No matches.", 0, "ColorTextFaint", null, null));
@@ -515,8 +529,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                         foreach (var item in ranked)
                         {
                             var entry = item.Item;
-                            stashBody.Children.Add(Leaf($"stash@{{{entry.Index}}}  {entry.Message}", 0, "ColorText",
-                                select: () => Select(entry.CommitId), action: StashMenuButton(entry)));
+                            stashBody.Children.Add(Leaf(StashLabel(entry), 0, "ColorText",
+                                select: () => SelectOnly(entry.CommitId), action: StashMenuButton(entry)));
                         }
                     }
                     stashBody.Children.Add(new Border { Height = 1, Margin = new Thickness(0, 2) }.Dyn(Border.BackgroundProperty, "ColorBorder"));
@@ -525,8 +539,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                 foreach (var s in _stashList)
                 {
                     var entry = s;
-                    stashBody.Children.Add(Leaf($"stash@{{{s.Index}}}  {s.Message}", 0, "ColorText",
-                        select: () => Select(entry.CommitId), action: StashMenuButton(entry)));
+                    stashBody.Children.Add(Leaf(StashLabel(entry), 0, "ColorText",
+                        select: () => SelectOnly(entry.CommitId), action: StashMenuButton(entry)));
                 }
             }
         }
@@ -611,6 +625,8 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             });
         }
     }
+
+    internal static string StashLabel(StashEntry s) => $"{s.Index + 1}. {s.Message}";
 
     private Button StashMenuButton(StashEntry entry)
     {
@@ -909,6 +925,13 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         if (id is null || _repo is null) return;
         _repo.State.SetSelectedCommit(id);
         _repo.State.RequestRevealCommit(id.Value);
+    }
+
+    // Stash commits are never in the graph, so asking the graph to reveal one would walk the whole history for nothing.
+    private void SelectOnly(GitObjectId? id)
+    {
+        if (id is null || _repo is null) return;
+        _repo.State.SetSelectedCommit(id);
     }
 
     private async Task CheckoutAsync(BranchInfo b, bool isRemote)

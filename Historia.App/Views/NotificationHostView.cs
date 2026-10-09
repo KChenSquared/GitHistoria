@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>Toast stack for <see cref="INotificationService"/>. With
 /// <see cref="AppSettings.AutoHideNotices"/> on, every notice closes itself
@@ -141,8 +141,7 @@ public sealed class NotificationHostView : UserControl, IDisposable
                     CornerRadius = new CornerRadius(4),
                     Child = new ScrollViewer
                     {
-                        Padding = new Thickness(8, 8, 20, 8),
-                        AllowAutoHide = false,
+                        Padding = new Thickness(8),
                         HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
                         VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
                         Content = new SelectableTextBlock

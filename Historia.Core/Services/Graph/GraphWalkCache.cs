@@ -56,8 +56,7 @@ internal sealed class GraphWalkCache
 
     public static bool Supports(GraphQuery query) =>
         query.RefScope == GraphRefScope.AllRefs
-        && string.IsNullOrEmpty(query.PathFilter)
-        && !query.IncludeStashes;
+        && string.IsNullOrEmpty(query.PathFilter);
 
     /// <param name="metadataOnDisk">when true the per-commit strings are served from the
     /// paged <c>DiskCommitStore</c>, so a warm load only needs id + parent count here — skip

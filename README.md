@@ -14,29 +14,25 @@ GitKraken has been my go-to Git client for both work and personal projects for y
 mainly because its commit graph is so great for staying updated and sometimes to remind me
 what I was doing. Unfortunately, as the repos I worked on grew in size, GitKraken became
 more sluggish. Once they hit that 100k+ commit mark, switching between repos and basic git
-functions was a total headache. To top it off, my subscription renews next month and the
-cost is doubling from last year — plus it's going to jump again the year after.
+functions was a total headache. I was an early adopter of GitKraken, so I'd been
+grandfathered into their earlier pricing for a few years. But this year that price was going
+to double, and next year double again to $120/year, which felt like robbery when my
+experience with it was deteriorating.
 
-On top of that, I started my agentic coding journey this year, and it quickly became
+Earlier this year, I'd started my agentic coding journey, and it quickly became
 apparent that keeping track of all the work happening in parallel would be crucial in the
 age of rapid prototyping with AI.
 
-So I decided to put my Claude and Gemini subscriptions to use and build a free,
-fast alternative to the commit graph I've come to rely on. Historia's graph keeps the
-same easy-to-read orthogonal edge routing, but it can render repos with hundreds of
-thousands of commits and scroll through them quickly and smoothly. Beyond the graph,
-Historia is built with agentic workflows in mind: agents can point you to what needs your
-review, and hand you the change they just made to commit. It was built with Claude and
+So I decided to put my Claude and Gemini subscriptions to use and build a faster
+alternative to the commit graph I've come to rely on, with features built for agentic
+coding. By the renewal date, Historia was far enough along that I decided not to renew.
+Historia's graph keeps the same easy-to-read orthogonal edge routing, but it can render
+repos with hundreds of thousands of commits and scroll through them quickly and smoothly.
+Beyond the graph, agents can point you to what needs your review, and hand you the change
+they just made to commit. It was built with Claude and
 Gemini, and it is set up so coding agents can keep working on it safely: the
 [constitution](docs/constitution.md) is written to be followed mechanically, and the rules
 that matter are enforced by tests rather than convention.
-
-**Trade-offs.** Historia loads your entire commit history instead of capping it at the
-most recent few thousand commits. That means memory grows with the size of the repo:
-about 200 MB for a 350k-commit repo, and about 2 GB for Chromium's ~1.8 million commits.
-In return, the whole history is in one graph, and scrolling through it stays smooth. A
-lightweight mode that caps the graph at 30k commits for lower memory use is available in
-settings.
 
 ---
 
@@ -60,6 +56,10 @@ users on all repos. It is built around:
    submodules, worktrees, terminal, error diagnostics) disclose on demand through context
    menus, collapsible drawers, and dedicated inspection panels without overwhelming the
    user.
+5. **Designed with Agentic Coding in Mind** — when agents work in parallel, Historia keeps
+   you on top of what they did: they can point you to the exact commit, file or change that
+   needs your review and hand you their staged work to commit, while every commit stays
+   yours to make.
 
 ---
 
@@ -71,7 +71,7 @@ users on all repos. It is built around:
   (red warning icon, exact effect named) whose **Cancel** button is the highlighted default.
 - **Performance-First Architecture:** Powered by native .NET and Avalonia UI; non-blocking
   Git operations, fast cold starts, and memory that scales with history size (see
-  [Trade-offs](#-why-historia)).
+  [Trade-offs](#-trade-offs)).
 - **Progressive Disclosure UI:** A layered interface philosophy ensuring zero visual
   clutter. Common daily operations take center stage with high ergonomic polish; advanced
   Git machinery and deep technical metadata remain readily accessible but stay tucked
@@ -94,6 +94,16 @@ users on all repos. It is built around:
   operation over SSH with no HTTPS fallback.
 
 <sub>\* On the [roadmap](docs/roadmap.md).</sub>
+
+---
+
+## 🧠 Trade-offs
+
+Historia loads your entire commit history instead of capping it at the most recent few
+thousand commits. That means memory grows with the size of the repo: about 200 MB for a
+350k-commit repo, and about 2 GB for Chromium's ~1.8 million commits. In return, the whole
+history is in one graph, and scrolling through it stays smooth. A lightweight mode that caps
+the graph at 30k commits for lower memory use is available in settings.
 
 ---
 
