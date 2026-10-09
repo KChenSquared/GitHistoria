@@ -150,6 +150,7 @@ public static class AppPaths
     public static string CacheDirectory => Path.Combine(MachineDirectory, "cache");
     public static string WindowPlacementFile => Path.Combine(MachineDirectory, "window.json");
     public static string SessionFile => Path.Combine(MachineDirectory, "session.json");
+    public static string LogTrimStateFile => Path.Combine(MachineDirectory, "log-trim.json");
 
     /// <summary>The portable files, for the one-time copy migration.</summary>
     internal static readonly string[] PortableFileNames =
