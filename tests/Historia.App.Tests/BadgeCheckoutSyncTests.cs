@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 /// <summary>
 /// Double-clicking a remote badge switches to the local branch, then syncs only
@@ -61,7 +61,7 @@ public sealed class BadgeCheckoutSyncTests
 
         public RemoteAndClonesFixture(bool dirtyLocalEdit = true)
         {
-            var baseDir = Path.Combine(Path.GetTempPath(), "historia-badgecheckout-" + Guid.NewGuid().ToString("N"));
+            var baseDir = TestScratch.NewDirectory("historia-badgecheckout-");
             RemotePath = Path.Combine(baseDir, "remote.git");
             LocalPath = Path.Combine(baseDir, "local");
             var clone2 = Path.Combine(baseDir, "clone2");
@@ -136,20 +136,8 @@ public sealed class BadgeCheckoutSyncTests
         public void Dispose()
         {
             var root = Path.GetDirectoryName(RemotePath);
-            try
-            {
-                if (root is not null && Directory.Exists(root))
-                {
-                    foreach (var f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-                    {
-                        var attr = File.GetAttributes(f);
-                        if ((attr & FileAttributes.ReadOnly) != 0)
-                            File.SetAttributes(f, attr & ~FileAttributes.ReadOnly);
-                    }
-                    Directory.Delete(root, true);
-                }
-            }
-            catch { }
+            if (root is not null)
+                TestScratch.Delete(root);
         }
     }
 

@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 [Trait("tier", "ui")]
 
 /// <summary>UI half: a submodule-linked tab renders shorter and without its own leading
@@ -10,13 +10,12 @@ public sealed class AppBandLinkedTabsTests : IAsyncDisposable
 {
     private const double RowHeight = 31;
 
-    private readonly string _ownerDir = Path.Combine(Path.GetTempPath(), "historia-test-owner-" + Guid.NewGuid().ToString("N"));
+    private readonly string _ownerDir = TestScratch.NewDirectory("historia-test-owner-");
     private readonly string _childDir;
     private ServiceProvider? _sp;
 
     public AppBandLinkedTabsTests()
     {
-        Directory.CreateDirectory(_ownerDir);
         LibGit2Sharp.Repository.Init(_ownerDir);
 
         _childDir = Path.Combine(_ownerDir, "vendor", "lib");
@@ -140,6 +139,6 @@ public sealed class AppBandLinkedTabsTests : IAsyncDisposable
                 await workspace.DisposeAsync();
             _sp.Dispose();
         }
-        try { Directory.Delete(_ownerDir, recursive: true); } catch { }
+        TestScratch.Delete(_ownerDir);
     }
 }

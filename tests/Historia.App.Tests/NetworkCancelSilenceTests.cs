@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 /// <summary>
 /// Declining the push-rejection modal, dismissing it a second time, and
@@ -88,7 +88,7 @@ public sealed class NetworkCancelSilenceTests
 
         public RejectedPushFixture()
         {
-            var baseDir = Path.Combine(Path.GetTempPath(), "historia-netcancel-" + Guid.NewGuid().ToString("N"));
+            var baseDir = TestScratch.NewDirectory("historia-netcancel-");
             RemotePath = Path.Combine(baseDir, "remote.git");
             LocalPath = Path.Combine(baseDir, "local");
             var other = Path.Combine(baseDir, "other");
@@ -149,20 +149,8 @@ public sealed class NetworkCancelSilenceTests
         public void Dispose()
         {
             var root = Path.GetDirectoryName(RemotePath);
-            try
-            {
-                if (root is not null && Directory.Exists(root))
-                {
-                    foreach (var f in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-                    {
-                        var attr = File.GetAttributes(f);
-                        if ((attr & FileAttributes.ReadOnly) != 0)
-                            File.SetAttributes(f, attr & ~FileAttributes.ReadOnly);
-                    }
-                    Directory.Delete(root, true);
-                }
-            }
-            catch { }
+            if (root is not null)
+                TestScratch.Delete(root);
         }
     }
 
@@ -304,8 +292,7 @@ public sealed class NetworkCancelSilenceTests
     [AvaloniaFact]
     public async Task Cancelling_push_rejected_modal_is_logged_when_dev_log_enabled()
     {
-        var stateDir = Path.Combine(Path.GetTempPath(), "historia-netcancel-log-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(stateDir);
+        var stateDir = TestScratch.NewDirectory("historia-netcancel-log-");
         Historia.Diagnostics.AppLog.Enabled = false;
         AppPaths.OverrideForTesting(stateDir);
         try
@@ -346,14 +333,14 @@ public sealed class NetworkCancelSilenceTests
         {
             Historia.Diagnostics.AppLog.Enabled = false;
             AppPaths.OverrideForTesting(null);
-            try { Directory.Delete(stateDir, true); } catch { }
+            TestScratch.Delete(stateDir);
         }
     }
 
     [AvaloniaFact]
     public async Task Cancelled_network_op_shows_no_notification()
     {
-        var baseDir = Path.Combine(Path.GetTempPath(), "historia-netcancel-fetch-" + Guid.NewGuid().ToString("N"));
+        var baseDir = TestScratch.NewDirectory("historia-netcancel-fetch-");
         var remotePath = Path.Combine(baseDir, "remote.git");
         var localPath = Path.Combine(baseDir, "local");
         Directory.CreateDirectory(remotePath);
@@ -405,7 +392,7 @@ public sealed class NetworkCancelSilenceTests
         finally
         {
             await ws.CloseAsync(ctx);
-            try { Directory.Delete(baseDir, true); } catch { }
+            TestScratch.Delete(baseDir);
         }
 
         static void RunGit(string dir, params string[] args)
