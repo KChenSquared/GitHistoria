@@ -13,18 +13,6 @@ public sealed class StateDir : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            if (Directory.Exists(Path))
-            {
-                foreach (var f in Directory.EnumerateFiles(Path, "*", SearchOption.AllDirectories))
-                    File.SetAttributes(f, FileAttributes.Normal);
-                Directory.Delete(Path, recursive: true);
-            }
-        }
-        catch
-        {
-            // Best-effort cleanup.
-        }
+        TestScratch.Delete(Path);
     }
 }

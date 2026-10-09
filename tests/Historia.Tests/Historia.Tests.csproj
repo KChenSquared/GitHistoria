@@ -26,4 +26,11 @@
     <None Update="Fixtures\repo-state-cache-pre-gitobjectid\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TestScratchRoot</_Parameter1>
+      <_Parameter2>$(BaseOutputPath)scratch</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

@@ -6,29 +6,11 @@ namespace HistoriaApp.Tests;
 internal static class TestStateIsolation
 {
     public static string StateDirectory { get; } =
-        Path.Combine(Path.GetTempPath(), "historia-apptests-state-" + Guid.NewGuid().ToString("N"));
+        TestScratch.NewDirectory("historia-apptests-state-");
 
     [ModuleInitializer]
     internal static void Initialize()
     {
-        Directory.CreateDirectory(StateDirectory);
         AppPaths.OverrideProcessForTesting(StateDirectory);
-
-        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-        {
-            try
-            {
-                if (Directory.Exists(StateDirectory))
-                {
-                    foreach (var file in Directory.EnumerateFiles(StateDirectory, "*", SearchOption.AllDirectories))
-                        File.SetAttributes(file, FileAttributes.Normal);
-                    Directory.Delete(StateDirectory, recursive: true);
-                }
-            }
-            catch
-            {
-                // Best-effort cleanup.
-            }
-        };
     }
 }
