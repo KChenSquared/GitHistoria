@@ -612,9 +612,9 @@ public class DagLayoutEngineTests
     }
 
     [Fact]
-    public void Only_near_head_tips_are_pinned_a_reserved_lane()
+    public void Only_the_trunk_tip_is_pinned_a_reserved_lane()
     {
-        // A 40-row main line; two 1-commit branches fork near HEAD, three fork far below row 16.
+        // A 40-row main line; two 1-commit branches fork near HEAD, three fork further down.
         var list = new List<RawCommit>();
         for (var id = 100; id >= 60; id--)
             list.Add(C(id, id - 1));                 // main line, rows 0..40 (id 100-row)
@@ -635,24 +635,92 @@ public class DagLayoutEngineTests
 
         var r = Compute(list, deco: deco);
 
-        // Only the trunk + the two near-HEAD tips reserve a lane; the three far tips do not.
-        Assert.Equal(
-            new[] { Sha(49), Sha(50), Sha(100) }.OrderBy(x => x.ToString()),
-            r.State.TipTargetLane.Keys.OrderBy(x => x.ToString()));
+        // Only the trunk tip is pinned; other branches take free lanes when the walk reaches them.
+        Assert.Equal(Sha(100), r.State.TrunkTip);
 
-        // The far tips pack into the lanes freed by the near branches merging back — far-1/2/3 on
-        // lanes 1/2/3 (3 genuinely-concurrent branches), total 4 lanes. Pinning all six tips
-        // would put far-1/2/3 at pin ranks 3/4/5 and make the window 6 wide.
+        // The far tips pack into the lanes freed by earlier branches merging back — far-1/2/3 on
+        // lanes 1/2/3 (3 genuinely-concurrent branches), total 4 lanes.
         Assert.Equal(1, r.Layout.Rows[r.Layout.RowByCommitId[Sha(48)]].LaneIndex); // far-1
         Assert.Equal(3, r.Layout.Rows[r.Layout.RowByCommitId[Sha(46)]].LaneIndex); // far-3
         Assert.Equal(4, r.Layout.TotalLaneCount);
 
-        // The horizon is still a pure function of the fixed prefix — Extend matches a full compute.
+        // Trunk selection is a pure function of the fixed prefix — Extend matches a full compute.
         var full = _engine.Compute(list, deco, maxRows: 60);
         var partial = _engine.Compute(list, deco, maxRows: 8);
         var extended = _engine.Extend(partial, list.Skip(8).ToList(), deco, additionalRows: 60);
         Assert.Equal(full.Layout.Rows, extended.Layout.Rows);
         Assert.Equal(full.Layout.Edges, extended.Layout.Edges);
+    }
+
+    [Fact]
+    public void Merged_pull_request_commit_takes_the_lane_next_to_the_trunk()
+    {
+        var list = new[]
+        {
+            C(90, 70, 89),
+            C(89, 70),
+            C(88, 70),
+            C(87, 86, 70),
+            C(86, 50),
+            C(85, 84, 70),
+            C(84, 50),
+            C(70, 50, 69),
+            C(69, 50),
+            C(68, 50),
+            C(50, 1),
+            C(1),
+        };
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(90)] = [new(DecorationType.RemoteBranch, "origin/main")],
+            [Sha(88)] = [new(DecorationType.RemoteBranch, "origin/AddSkills")],
+            [Sha(87)] = [new(DecorationType.RemoteBranch, "origin/observation")],
+            [Sha(85)] = [new(DecorationType.RemoteBranch, "origin/kchen")],
+            [Sha(68)] = [new(DecorationType.RemoteBranch, "origin/dotnet-monitor")],
+        };
+
+        var r = Compute(list, deco: deco);
+
+        Assert.Equal(0, r.Layout.Rows[0].LaneIndex);
+        Assert.Equal(0, r.Layout.Rows[7].LaneIndex);
+        Assert.Equal(1, r.Layout.Rows[r.Layout.RowByCommitId[Sha(89)]].LaneIndex);
+        Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(88)]].LaneIndex);
+        Assert.Equal(3, r.Layout.Rows[r.Layout.RowByCommitId[Sha(87)]].LaneIndex);
+        Assert.Equal(4, r.Layout.Rows[r.Layout.RowByCommitId[Sha(85)]].LaneIndex);
+
+        var mergeEdge = Assert.Single(r.Layout.Edges, e => e.FromRow == 0 && e.ToRow == 1);
+        Assert.Equal(EdgeType.MergeIn, mergeEdge.Type);
+        Assert.Equal(-1, mergeEdge.ViaLane);
+        Assert.Equal(5, r.Layout.TotalLaneCount);
+
+        var full = _engine.Compute(list, deco, maxRows: 12);
+        var partial = _engine.Compute(list, deco, maxRows: 3);
+        var extended = _engine.Extend(partial, list.Skip(3).ToList(), deco, additionalRows: 12);
+        Assert.Equal(full.Layout.Rows, extended.Layout.Rows);
+        Assert.Equal(full.Layout.Edges, extended.Layout.Edges);
+    }
+
+    [Fact]
+    public void Ref_less_lineage_above_a_branch_tip_is_not_pushed_past_it()
+    {
+        var list = new[]
+        {
+            C(30, 10, 29),
+            C(29, 10),
+            C(28, 10),
+            C(10, 1),
+            C(1),
+        };
+        var deco = new Dictionary<GitObjectId, IReadOnlyList<GraphDecorationInput>>
+        {
+            [Sha(30)] = [new(DecorationType.LocalBranch, "main")],
+            [Sha(28)] = [new(DecorationType.LocalBranch, "feat")],
+        };
+
+        var r = Compute(list, deco: deco);
+
+        Assert.Equal(1, r.Layout.Rows[r.Layout.RowByCommitId[Sha(29)]].LaneIndex);
+        Assert.Equal(2, r.Layout.Rows[r.Layout.RowByCommitId[Sha(28)]].LaneIndex);
     }
 
     [Fact]
