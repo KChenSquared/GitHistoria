@@ -1,14 +1,15 @@
 namespace Historia.Diagnostics;
 
 /// <summary>
-/// The application log. One opt-in, structured logger for the whole app: every unhandled
+/// The application log. One structured logger for the whole app: every unhandled
 /// exception, every <c>Warning</c>/<c>Error</c> notification and classified git failure, every git
 /// operation (through <c>LoggingGitGateway</c>) and every git CLI invocation, plus repository
 /// open/close. Terminal session I/O is deliberately not logged.
 /// <para>
-/// Off unless the Developer panel toggle or the <c>HISTORIA_LOG</c> environment variable turns it
-/// on, at which point one file per session is written under <see cref="AppPaths.LogsDirectory"/>
-/// (<c>dev-&lt;timestamp&gt;.log</c>); the newest <see cref="RetainedSessions"/> are kept.
+/// Off unless turned on by the Enable logging setting in Settings → Advanced or the
+/// <c>HISTORIA_LOG</c> environment variable, at which point one file per session is written
+/// under <see cref="AppPaths.LogsDirectory"/> (<c>dev-&lt;timestamp&gt;.log</c>); logs older than
+/// 48 hours are deleted each auto-fetch round.
 /// </para>
 /// <para>
 /// This is <b>not</b> <see cref="PerfLog"/> — that stays a separate, perf-timing-only tool. Do not
@@ -17,11 +18,7 @@ namespace Historia.Diagnostics;
 /// </summary>
 public static partial class AppLog
 {
-    /// <summary>How many past <c>dev-*.log</c> files to keep when a new session starts.</summary>
-    private const int RetainedSessions = 10;
-
     private static readonly object Gate = new();
-    private static readonly OptInFlag Flag = new("HISTORIA_LOG", "dev-logging.on");
     private static string? _sessionPath;
 
     /// <summary>The session file's writer: the file is held open for as long as logging is
@@ -35,11 +32,38 @@ public static partial class AppLog
     {
         try
         {
-            if (Flag.IsOptedIn)
-                lock (Gate)
-                    OpenSessionLocked();
+            LoggingSwitch.Changed += OnLoggingSwitchChanged;
+            Reconcile();
         }
         catch { /* logging must never throw */ }
+    }
+
+    internal static void OnLoggingSwitchChanged(bool enabled)
+    {
+        Reconcile();
+    }
+
+    internal static void Reconcile()
+    {
+        QueuedLineWriter? retired = null;
+        lock (Gate)
+        {
+            if (LoggingSwitch.ProcessEnabled)
+            {
+                if (_writer is null)
+                    OpenSessionLocked();
+            }
+            else
+            {
+                if (_writer is not null)
+                {
+                    WriteLineLocked($"{Stamp()}  INFO   [app]  logging stopped");
+                    _sessionPath = null;
+                    retired = DetachWriterLocked();
+                }
+            }
+        }
+        retired?.Dispose();
     }
 
     /// <summary>The shared injectable instance handed to the DI container.</summary>
@@ -108,11 +132,11 @@ public static partial class AppLog
         }
     }
 
-    /// <summary>Whether anything is written. Setting it persists the choice (marker file) and
+    /// <summary>Whether anything is written. Setting it updates the process-wide switch and
     /// opens a fresh session file / closes the current one.</summary>
     public static bool Enabled
     {
-        get => _testSession.Value?.Enabled ?? Flag.Enabled;
+        get => _testSession.Value?.Enabled ?? LoggingSwitch.Enabled;
         set
         {
             if (_testSession.Value is { } testSession)
@@ -121,28 +145,7 @@ public static partial class AppLog
                 return;
             }
 
-            QueuedLineWriter? retired = null;
-            lock (Gate)
-            {
-                var wasEnabled = Flag.Enabled;
-                Flag.Enabled = value;
-                if (value == wasEnabled)
-                    return;
-
-                if (value)
-                {
-                    OpenSessionLocked();
-                }
-                else
-                {
-                    WriteLineLocked($"{Stamp()}  INFO   [app]  logging stopped");
-                    _sessionPath = null;
-                    retired = DetachWriterLocked();
-                }
-            }
-
-            // Drains the session's queued lines; outside Gate so other loggers never wait on it.
-            retired?.Dispose();
+            LoggingSwitch.Set(value);
         }
     }
 
@@ -205,7 +208,6 @@ public static partial class AppLog
         QueuedLineWriter? retired;
         lock (Gate)
         {
-            Flag.SetEnabledInMemory(false);
             _sessionPath = null;
             retired = DetachWriterLocked();
         }
@@ -230,7 +232,6 @@ public static partial class AppLog
     {
         var dir = AppPaths.LogsDirectory;
         Directory.CreateDirectory(dir);
-        PruneLocked(dir);
 
         // In case a session is still open. Disposed here, not deferred: the new session file can
         // have the same name (same second), and the old handle must be gone before it reopens.
@@ -250,7 +251,6 @@ public static partial class AppLog
             // silent no-op via the null check, same as any other diagnostics failure.
             _writer = null;
         }
-        Flag.SetEnabledInMemory(true);
 
         var asm = typeof(AppLog).Assembly.GetName();
         WriteLineLocked($"# Historia developer log — {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
@@ -263,22 +263,6 @@ public static partial class AppLog
         var writer = _writer;
         _writer = null;
         return writer;
-    }
-
-    private static void PruneLocked(string dir)
-    {
-        try
-        {
-            var stale = Directory.GetFiles(dir, "dev-*.log")
-                .OrderByDescending(f => f, StringComparer.Ordinal)
-                .Skip(RetainedSessions)
-                .ToArray();
-            foreach (var f in stale)
-            {
-                try { File.Delete(f); } catch { /* held open / gone — ignore */ }
-            }
-        }
-        catch { /* enumeration failure is not worth surfacing */ }
     }
 
     private static void WriteLineLocked(string line)

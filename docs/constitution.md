@@ -329,10 +329,11 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
 38. **One logger: `AppLog`. Do not add a second logging system.** `Historia.Core/Diagnostics/AppLog.cs`
     is the single application logger. Reach it by constructor-injecting `IAppLog` in a
     DI-constructed service, or via `AppLog.Current` / the static `AppLog` methods from a
-    framework-built view or a static helper. It is **opt-in**: off unless the *Enable developer
-    log* toggle in the Developer panel or the `HISTORIA_LOG` environment variable turns it on,
-    at which point one `dev-<timestamp>.log` per session is written under `AppPaths.LogsDirectory`
-    and the newest 10 are kept. Every call is a no-op when disabled and never throws.
+    framework-built view or a static helper. It is controlled by the *Enable logging* setting
+    in Settings → Advanced (default on, shared by the developer log and `PerfLog`) or the
+    `HISTORIA_LOG` environment variable forcing it on, at which point one `dev-<timestamp>.log`
+    per session is written under `AppPaths.LogsDirectory` and logs older than 48 hours are
+    deleted each auto-fetch cycle, after its idle wait and before its first fetch. Every call is a no-op when disabled and never throws.
     Automatically covered — do not hand-log these again: unhandled exceptions (the three handlers
     in `App`), every `Warning`/`Error` notification (`NotificationService.Publish`), every
     classified git failure (`HistoriaGitException`'s constructor), every `IGitGateway` call

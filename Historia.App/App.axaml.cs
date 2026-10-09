@@ -8,6 +8,7 @@ public sealed class App : Application
     private ServiceProvider? _provider;
     private SettingsService? _settings;
     private AvaloniaThemeApplier? _themeApplier;
+    private LoggingSettingBinding? _loggingBinding;
     private CancellationTokenSource? _singleInstanceCts;
     private SplashWindow? _splash;
     private MainWindow? _mainWindow;
@@ -31,13 +32,18 @@ public sealed class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        Historia.Diagnostics.PerfLog.Mark("App.OnFrameworkInitializationCompleted start");
-
         // Settings are loaded synchronously so the correct theme is applied on first paint
         // with no flash — the one permitted blocking read.
         AppPaths.EnsureCreated();
-        AppLog.Write(AppLogLevel.Info, "app", $"start — pid {Environment.ProcessId}, {Environment.OSVersion}");
         _settings = SettingsService.Load();
+        LoggingSwitch.Initialize(_settings.Current.LoggingEnabled);
+        Historia.Platform.DevMode.Initialize(_settings.Current);
+
+        Historia.Diagnostics.PerfLog.Mark("App.OnFrameworkInitializationCompleted start");
+        AppLog.Write(AppLogLevel.Info, "app", $"start — pid {Environment.ProcessId}, {Environment.OSVersion}");
+
+        _loggingBinding = LoggingSettingBinding.Attach(_settings);
+
         // Without developer mode, developer-only options are switched off before any theme is resolved.
         if (!Historia.Platform.DevMode.Enabled && _settings.Current.UseCustomTheme)
             _settings.UpdateAsync(s => s.WithoutDevOnlyOptions()).GetAwaiter().GetResult();
@@ -70,6 +76,8 @@ public sealed class App : Application
                 Historia.Diagnostics.PerfLog.Mark("desktop.Exit singleInstanceCts cancelled");
                 _singleInstanceCts?.Dispose();
                 Historia.Diagnostics.PerfLog.Mark("desktop.Exit singleInstanceCts disposed");
+                _loggingBinding?.Dispose();
+                Historia.Diagnostics.PerfLog.Mark("desktop.Exit loggingBinding disposed");
                 _themeApplier?.Dispose();
                 Historia.Diagnostics.PerfLog.Mark("desktop.Exit themeApplier disposed");
                 // The container's synchronous Dispose() refuses outright (throws
@@ -217,6 +225,7 @@ public sealed class App : Application
         services.AddSingleton<IScrollDirectionProbe, Historia.Platform.ScrollDirectionProbe>();
         services.AddSingleton<IRepoActionBus, RepoActionBus>();
         services.AddSingleton<IRepoNetworkActionRunner, RepoNetworkActionRunner>();
+        services.AddSingleton<ILogTrimmer, LogTrimmer>();
         services.AddSingleton<Historia.Services.AutoFetch.IAutoFetchHost, AutoFetchHost>();
         services.AddSingleton<Historia.Services.AutoFetch.IAutoFetchService, Historia.Services.AutoFetch.AutoFetchService>();
 

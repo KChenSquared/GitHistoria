@@ -10,7 +10,7 @@ public sealed class DeveloperView : UserControl
     {
         var root = new StackPanel { Spacing = 18, Margin = new Thickness(32), MaxWidth = 640 };
         root.Children.Add(WithHint(Text("Developer", "ColorText", 24, FontWeight.SemiBold),
-            "Shown only when an enableDevMode file is next to Historia.exe."));
+            "Shown when developer mode is on in Settings → Advanced, or an enableDevMode file is next to Historia.exe."));
 
         root.Children.Add(CustomThemeRow(sp));
 
@@ -28,22 +28,9 @@ public sealed class DeveloperView : UserControl
                 "Delete branch", "Delete 'sample-branch'?", "Delete")),
             "Opens the red confirm dialog shown before deleting a branch. Neither button changes anything."));
 
-        var perf = new CheckBox { Content = "Performance log", IsChecked = PerfLog.Enabled };
-        perf.IsCheckedChanged += (_, _) => PerfLog.Enabled = perf.IsChecked == true;
-        root.Children.Add(WithHint(perf,
-            $"Records startup and repository-open timings to {PerfLog.LogPath}. Stays on across launches; also on when HISTORIA_PERF is set."));
-
-        var devLog = new CheckBox { Content = "Developer log", IsChecked = AppLog.Enabled };
-        var devLogRow = WithHint(devLog, DevLogHint());
-        devLog.IsCheckedChanged += (_, _) =>
-        {
-            AppLog.Enabled = devLog.IsChecked == true;
-            SetHintText(devLogRow, DevLogHint());
-        };
-        root.Children.Add(devLogRow);
-
-        var openLogs = TextButton("Open logs folder", () =>
-            sp.GetRequiredService<IExternalLauncher>().OpenFolder(AppPaths.LogsDirectory));
+        var openLogs = WithHint(TextButton("Open logs folder", () =>
+            sp.GetRequiredService<IExternalLauncher>().OpenFolder(AppPaths.LogsDirectory)),
+            $"Opens {AppPaths.LogsDirectory}.");
         openLogs.HorizontalAlignment = HorizontalAlignment.Left;
         root.Children.Add(openLogs);
 
@@ -131,17 +118,6 @@ public sealed class DeveloperView : UserControl
         return WithHint(row,
             "Replaces the Light / Dark / System choice while a theme is selected. High Contrast still wins. Turned off when Historia starts without developer mode.");
     }
-
-    /// <summary>The developer-log hint: what is logged, then where — the second paragraph
-    /// follows <see cref="AppLog.Enabled"/>, so it is rebuilt whenever the box is toggled.</summary>
-    internal static string DevLogHint() =>
-        "Records errors, every Git command with its result, and repository open/close. Terminal "
-        + "input/output isn't logged. One file per session; the newest 10 are kept. Also on when "
-        + "HISTORIA_LOG is set.\n\n" + DevLogCaption();
-
-    internal static string DevLogCaption() => AppLog.Enabled
-        ? $"Writing to {AppLog.CurrentLogPath}"
-        : $"Saved under {AppPaths.LogsDirectory} when enabled";
 
     private static async Task DeleteAllAsync(IServiceProvider sp)
     {

@@ -43,11 +43,13 @@ public sealed class SettingsHelpHintTests
         ["Enhanced keyboard (Kitty protocol)"] = "Lets editors such as Neovim and Helix tell apart keys like Ctrl+Enter and Shift+Enter. Applies to new terminals.",
         ["Allow programs to copy to the clipboard (OSC 52)"] = "Lets copy in Vim or tmux reach the system clipboard, including over SSH. Programs can never read the clipboard.",
         ["Show splash screen"] = "A custom theme uses its own splash instead.",
+        ["Enable logging"] = "Records errors, every Git command and its result, repository open/close and startup timings, to the logs folder; terminal input/output isn't logged; logs older than 48 hours are deleted each auto-fetch round, and if that fails three rounds in a row, this setting turns itself off; HISTORIA_LOG keeps logging on regardless.",
         ["Auto hide notices"] = "Closes notices in the bottom-right corner after 10 seconds. Turn off to keep them until you close them.",
         ["Keep commit details on disk"] = "Reads commit messages, authors and dates from a disk cache to save memory on large repositories. Takes effect after restart.",
         ["Fast graph updates (experimental)"] = "On large repositories, adds new commits to the saved graph instead of rebuilding it. Takes effect after restart.",
         ["Background preload (rows)"] = "Rows loaded in the background after the graph opens, and again each time you scroll past them. 0 = no limit. Takes effect after restart.",
         ["Max rows in memory"] = "Most rows the graph keeps loaded per repository. Only used when commit details are on disk; otherwise 500,000. Takes effect after restart.",
+        ["Enable developer panel"] = "Adds a Developer entry to the app menu with testing and cleanup tools. Takes effect after restart.",
     };
 
     private static readonly string[] ApprovedLabels =
@@ -59,8 +61,8 @@ public sealed class SettingsHelpHintTests
         "Pattern (regex)", "Link URL ($1 = first group)", "Git", "Prune deleted remote branches on fetch",
         "Pull with rebase", "Reopen tabs on launch", "Ask for a stash message", "Terminal", "Shell",
         "Shell arguments", "Separated by spaces", "Font family", "Font size", "Scrollback (lines)",
-        "Cursor style", "Blinking cursor", "Advanced", "Auto hide notices", "Show splash screen", "Keep commit details on disk",
-        "Fast graph updates (experimental)", "Background preload (rows)", "Max rows in memory",
+        "Cursor style", "Blinking cursor", "Advanced", "Enable logging", "Auto hide notices", "Show splash screen", "Keep commit details on disk",
+        "Fast graph updates (experimental)", "Background preload (rows)", "Max rows in memory", "Enable developer panel",
     ];
 
     private static readonly string[] RetiredLabels =
@@ -438,9 +440,13 @@ public sealed class SettingsHelpHintTests
                 c.GetLogicalDescendants().OfType<TextBox>().Any(tb => tb.Watermark == "Pattern (regex)"));
             Assert.True(ruleRowIdx > autolinkHeadingIdx, "Rule row should come after Issue autolinks heading.");
 
-            var lastChild = children.LastOrDefault();
-            var isAddRuleButton = lastChild is Button b && (b.Content as string) == "Add rule";
-            Assert.True(isAddRuleButton, "The last child in Advanced should be the 'Add rule' button.");
+            var addRuleIdx = children.FindIndex(c => c is Button b && (b.Content as string) == "Add rule");
+            Assert.True(addRuleIdx > ruleRowIdx, "Add rule button should come after rule row.");
+
+            var devPanelIdx = children.FindIndex(c =>
+                c.GetLogicalDescendants().OfType<CheckBox>().Any(cb => (cb.Content as string) == "Enable developer panel"));
+            Assert.True(devPanelIdx > addRuleIdx, "Enable developer panel should come after Add rule button.");
+            Assert.Equal(children.Count - 1, devPanelIdx);
 
             var root = Root(view);
             Assert.DoesNotContain(root.Children, c => !ReferenceEquals(c, advBody) && c.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Issue autolinks"));
@@ -448,6 +454,53 @@ public sealed class SettingsHelpHintTests
 
             view.Dispose();
         });
+    }
+
+    [AvaloniaFact]
+    public void Enable_logging_sits_first_in_advanced_and_toggles_setting()
+    {
+        var sp = CreateServices();
+        var cfg = sp.GetRequiredService<ISettingsService>();
+        WithSettings(cfg, s => s with { LoggingEnabled = true }, () =>
+        {
+            var view = new SettingsView(sp);
+            var advBody = SectionBody(view, "Advanced");
+            var firstRow = advBody.Children[0];
+            Assert.Equal("Enable logging", RowLabel(firstRow));
+
+            var box = firstRow.GetLogicalDescendants().OfType<CheckBox>().Single();
+            Assert.True(box.IsChecked);
+
+            box.IsChecked = false;
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(cfg.Current.LoggingEnabled);
+
+            view.Dispose();
+        });
+    }
+
+    [AvaloniaFact]
+    public void Enable_developer_panel_sits_last_in_advanced()
+    {
+        var sp = CreateServices();
+        var view = new SettingsView(sp);
+        var advBody = SectionBody(view, "Advanced");
+        var lastRow = advBody.Children[^1];
+        Assert.Equal("Enable developer panel", RowLabel(lastRow));
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
+    public void Advanced_hints_start_with_logging_and_end_with_developer_panel()
+    {
+        var sp = CreateServices();
+        var view = new SettingsView(sp);
+        var advBody = SectionBody(view, "Advanced");
+        var badges = HelpHintMap.Badges(advBody).ToList();
+        Assert.NotEmpty(badges);
+        Assert.Equal("Enable logging", HelpHintMap.AnchorLabel(badges[0]));
+        Assert.Equal("Enable developer panel", HelpHintMap.AnchorLabel(badges[^1]));
+        view.Dispose();
     }
 
     /// <summary>The clickable header of a collapsible section.</summary>

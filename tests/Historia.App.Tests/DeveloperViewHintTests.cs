@@ -8,22 +8,14 @@ namespace HistoriaApp.Tests;
 [Trait("tier", "ui")]
 public sealed class DeveloperViewHintTests
 {
-    private const string DevLogExplanation =
-        "Records errors, every Git command with its result, and repository open/close. Terminal input/output isn't logged. One file per session; the newest 10 are kept. Also on when HISTORIA_LOG is set.";
-
-    private static string DevLogPathLine() => Historia.Diagnostics.AppLog.Enabled
-        ? $"Writing to {Historia.Diagnostics.AppLog.CurrentLogPath}"
-        : $"Saved under {AppPaths.LogsDirectory} when enabled";
-
     private static Dictionary<string, string> ExpectedHints() => new()
     {
-        ["Developer"] = "Shown only when an enableDevMode file is next to Historia.exe.",
+        ["Developer"] = "Shown when developer mode is on in Settings → Advanced, or an enableDevMode file is next to Historia.exe.",
         ["Use custom theme"] = "Replaces the Light / Dark / System choice while a theme is selected. High Contrast still wins. Turned off when Historia starts without developer mode.",
         ["Throw test exception"] = "Throws an unhandled error to test crash handling.",
         ["Show sample toast"] = "Shows a success toast. It closes after 2 s and has no Copy button.",
         ["Show sample alert"] = "Opens the red confirm dialog shown before deleting a branch. Neither button changes anything.",
-        ["Performance log"] = $"Records startup and repository-open timings to {Historia.Diagnostics.PerfLog.LogPath}. Stays on across launches; also on when HISTORIA_PERF is set.",
-        ["Developer log"] = DevLogExplanation + "\n\n" + DevLogPathLine(),
+        ["Open logs folder"] = $"Opens {AppPaths.LogsDirectory}.",
         ["Show auto-fetch status on tabs"] = "Adds a colour bar to each tab: red = auto-fetch not running, yellow = not fetched yet this round, green = fetched this round.",
         ["Clear graph cache"] = "Deletes saved graph layouts. Each repository rebuilds its graph next time it opens.",
         ["Clear sidebar cache"] = "Deletes saved sidebar data (branches, tags, stashes, submodules, worktrees). It's rebuilt from Git next time.",
@@ -54,36 +46,6 @@ public sealed class DeveloperViewHintTests
         var root = view.GetLogicalDescendants().OfType<ScrollViewer>().First().Content as StackPanel
             ?? throw new InvalidOperationException("Developer panel root StackPanel not found.");
         Assert.DoesNotContain(root.Children, c => c is TextBlock);
-    }
-
-    [AvaloniaFact]
-    public void Developer_log_hint_updates_when_toggled()
-    {
-        var wasEnabled = Historia.Diagnostics.AppLog.Enabled;
-        try
-        {
-            Historia.Diagnostics.AppLog.Enabled = false;
-            var (view, _) = CreateView();
-            var box = view.GetLogicalDescendants().OfType<CheckBox>().Single(c => (c.Content as string) == "Developer log");
-            string Hint() => HelpHintMap.Of(view)["Developer log"];
-
-            Assert.Equal(DevLogExplanation + $"\n\nSaved under {AppPaths.LogsDirectory} when enabled", Hint());
-
-            box.IsChecked = true;
-            Assert.True(Historia.Diagnostics.AppLog.Enabled);
-            Assert.StartsWith(DevLogExplanation + "\n\nWriting to ", Hint());
-            Assert.Equal(DevLogExplanation + $"\n\nWriting to {Historia.Diagnostics.AppLog.CurrentLogPath}", Hint());
-
-            var badge = HelpHintMap.Badges(view).Single(b => HelpHintMap.AnchorLabel(b) == "Developer log");
-            Assert.Equal(Hint(), Avalonia.Automation.AutomationProperties.GetHelpText(badge));
-
-            box.IsChecked = false;
-            Assert.Equal(DevLogExplanation + $"\n\nSaved under {AppPaths.LogsDirectory} when enabled", Hint());
-        }
-        finally
-        {
-            Historia.Diagnostics.AppLog.Enabled = wasEnabled;
-        }
     }
 
     [AvaloniaFact]

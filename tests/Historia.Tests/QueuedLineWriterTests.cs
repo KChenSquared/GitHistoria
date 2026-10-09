@@ -172,4 +172,65 @@ public sealed class QueuedLineWriterTests : IDisposable
         Assert.Equal(["a1", "a2"], File.ReadAllLines(a));
         Assert.Equal(["b1"], File.ReadAllLines(b));
     }
+
+    [Fact]
+    public async Task RunOnWriterAsync_runs_after_queued_lines_with_sink_closed_and_orders_subsequent_lines()
+    {
+        var path = Path.Combine(_dir, "h.log");
+        using var writer = QueuedLineWriter.HoldOpen(path, "test-hold-open-writer");
+
+        writer.Enqueue("line 1");
+        writer.Enqueue("line 2");
+
+        var actionRan = false;
+        var task = writer.RunOnWriterAsync(() =>
+        {
+            // Verify sink is closed and previously queued lines are on disk
+            using (var fs = File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                using var reader = new StreamReader(fs);
+                var content = reader.ReadToEnd();
+                Assert.Contains("line 1", content);
+                Assert.Contains("line 2", content);
+            }
+            // Enqueue a line while action is running
+            writer.Enqueue("line enqueued during action");
+            actionRan = true;
+        });
+
+        await task;
+        Assert.True(actionRan);
+
+        writer.Enqueue("line 3");
+        writer.Dispose();
+
+        var lines = File.ReadAllLines(path);
+        Assert.Equal(["line 1", "line 2", "line enqueued during action", "line 3"], lines);
+    }
+
+    [Fact]
+    public async Task RunOnWriterAsync_propagates_exceptions()
+    {
+        var path = Path.Combine(_dir, "h-ex.log");
+        using var writer = QueuedLineWriter.OpenPerBatch("test-writer");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            writer.RunOnWriterAsync(() => throw new InvalidOperationException("action failed")));
+
+        Assert.Equal("action failed", ex.Message);
+    }
+
+    [Fact]
+    public async Task RunOnWriterAsync_on_disposed_writer_returns_completed_task()
+    {
+        var writer = QueuedLineWriter.OpenPerBatch("test-writer");
+        writer.Dispose();
+
+        var ran = false;
+        var task = writer.RunOnWriterAsync(() => ran = true);
+
+        Assert.True(task.IsCompletedSuccessfully);
+        await task;
+        Assert.False(ran);
+    }
 }

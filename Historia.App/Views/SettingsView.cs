@@ -281,6 +281,10 @@ public sealed class SettingsView : UserControl, IDisposable
         // ── Advanced ──
         var advBody = new StackPanel { Spacing = 8 };
 
+        advBody.Children.Add(WithHint(Check("Enable logging", c.LoggingEnabled,
+            v => _ = _cfg.UpdateAsync(s => s with { LoggingEnabled = v })),
+            "Records errors, every Git command and its result, repository open/close and startup timings, to the logs folder; terminal input/output isn't logged; logs older than 48 hours are deleted each auto-fetch round, and if that fails three rounds in a row, this setting turns itself off; HISTORIA_LOG keeps logging on regardless."));
+
         advBody.Children.Add(WithHint(Check("Auto hide notices", c.AutoHideNotices,
             v => _ = _cfg.UpdateAsync(s => s with { AutoHideNotices = v })),
             "Closes notices in the bottom-right corner after 10 seconds. Turn off to keep them until you close them."));
@@ -345,6 +349,10 @@ public sealed class SettingsView : UserControl, IDisposable
         var addRule = TextButton("Add rule", () => _ = _cfg.UpdateAsync(s => s with { IssueAutolinks = [.. s.IssueAutolinks, new IssueAutolinkRule { Pattern = "", UrlTemplate = "" }] }));
         addRule.HorizontalAlignment = HorizontalAlignment.Left;
         advBody.Children.Add(addRule);
+
+        advBody.Children.Add(WithHint(Check("Enable developer panel", c.DeveloperPanelEnabled,
+            v => _ = _cfg.UpdateAsync(s => s with { DeveloperPanelEnabled = v })),
+            "Adds a Developer entry to the app menu with testing and cleanup tools. Takes effect after restart."));
 
         advBody.Margin = new Thickness(0, 10, 0, 0);
 

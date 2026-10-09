@@ -1,29 +1,51 @@
 namespace Historia.Diagnostics;
 
 /// <summary>
-/// Opt-in stopwatch logging for startup / repo-open latency work. On unless every call is a
-/// couple of cheap no-ops. Turned on by the <c>HISTORIA_PERF</c> environment variable or the
-/// Developer panel toggle (persisted as a marker file); lines append to <c>&lt;logs&gt;/perf.log</c>.
+/// Stopwatch logging for startup / repo-open latency work. Off unless turned on by the
+/// Enable logging setting in Settings → Advanced or the <c>HISTORIA_LOG</c> environment variable;
+/// lines append to <c>&lt;logs&gt;/perf.log</c>.
 /// </summary>
 public static class PerfLog
 {
-    private static readonly OptInFlag Flag = new("HISTORIA_PERF", "perf-logging.on");
-
-    /// <summary>Whether marks are written. Setting it persists the choice across launches.</summary>
+    /// <summary>Whether marks are written. Setting it updates the process-wide switch.</summary>
     public static bool Enabled
     {
-        get => Flag.Enabled;
-        set => Flag.Enabled = value;
+        get => LoggingSwitch.Enabled;
+        set => LoggingSwitch.Set(value);
     }
 
-    /// <summary>Test seam: overrides Enabled for the current async flow without touching the flag file.</summary>
+    /// <summary>Test seam: overrides Enabled for the current async flow.</summary>
     internal static void OverrideEnabledForTesting(bool? enabled)
     {
-        Flag.OverrideForTesting(enabled);
+        LoggingSwitch.OverrideForTesting(enabled);
     }
 
     /// <summary>Full path of the log file, for surfacing in the Developer panel.</summary>
     public static string LogPath => Path.Combine(AppPaths.LogsDirectory, "perf.log");
+
+    /// <summary>
+    /// Trims the perf log file to entries newer than <paramref name="cutoff"/>.
+    /// Runs on the writer's dedicated thread if one is active, or inline if no handle is open.
+    /// </summary>
+    internal static Task TrimAsync(DateTime cutoff, string? path = null)
+    {
+        var targetPath = path ?? LogPath;
+        var writer = Volatile.Read(ref _writer);
+        if (writer is null)
+        {
+            try
+            {
+                LogRetention.TrimPerfFile(targetPath, cutoff);
+                return Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                return Task.FromException(ex);
+            }
+        }
+
+        return writer.RunOnWriterAsync(() => LogRetention.TrimPerfFile(targetPath, cutoff));
+    }
 
     private static readonly long Origin = Stopwatch.GetTimestamp();
     private static QueuedLineWriter? _writer;
@@ -53,7 +75,9 @@ public static class PerfLog
             return;
 
         var ms = Stopwatch.GetElapsedTime(Origin).TotalMilliseconds;
-        var line = $"{DateTime.Now:HH:mm:ss.fff}  +{ms,10:F1}ms  {message}";
+        // Invariant: the trim parses the leading date back, and some cultures change the time
+        // separator or the calendar year.
+        var line = string.Create(CultureInfo.InvariantCulture, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}  +{ms,10:F1}ms  {message}");
         try { Writer.Enqueue(LogPath, line); }
         catch { /* diagnostics must never throw */ }
     }

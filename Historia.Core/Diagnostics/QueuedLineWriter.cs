@@ -24,7 +24,7 @@ internal sealed class QueuedLineWriter : IDisposable
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
     private static readonly TimeSpan DisposeDrainLimit = TimeSpan.FromSeconds(5);
 
-    private readonly record struct Item(string? Path, string? Line, TaskCompletionSource? Flushed);
+    private readonly record struct Item(string? Path, string? Line, TaskCompletionSource? Flushed, Action? Action, TaskCompletionSource? ActionDone);
 
     private readonly BlockingCollection<Item> _queue = new(new ConcurrentQueue<Item>());
     private readonly Func<string, Stream> _openStream;
@@ -84,7 +84,7 @@ internal sealed class QueuedLineWriter : IDisposable
             return;
         }
 
-        if (!TryAdd(new Item(path, line, null)))
+        if (!TryAdd(new Item(path, line, null, null, null)))
             Interlocked.Decrement(ref _backlog);
     }
 
@@ -96,9 +96,27 @@ internal sealed class QueuedLineWriter : IDisposable
         if (Volatile.Read(ref _disposed) != 0 || Thread.CurrentThread == _thread)
             return true;
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!TryAdd(new Item(null, null, done)))
+        if (!TryAdd(new Item(null, null, done, null, null)))
             return true;
         return done.Task.Wait(timeout);
+    }
+
+    /// <summary>
+    /// Queues a maintenance action to run on the writer thread. The writer thread flushes and closes
+    /// its sink, runs <paramref name="action"/>, and completes the returned task.
+    /// Preserves enqueue order. A disposed writer returns a completed task and does not run the action.
+    /// </summary>
+    public Task RunOnWriterAsync(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        if (Volatile.Read(ref _disposed) != 0)
+            return Task.CompletedTask;
+
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!TryAdd(new Item(null, null, null, action, done)))
+            return Task.CompletedTask;
+
+        return done.Task;
     }
 
     private bool TryAdd(Item item)
@@ -117,6 +135,22 @@ internal sealed class QueuedLineWriter : IDisposable
                 {
                     FlushSink(closeIfPerBatch: true);
                     flushed.TrySetResult();
+                    continue;
+                }
+
+                if (item.Action is { } action)
+                {
+                    FlushSink(closeIfPerBatch: true);
+                    CloseSink();
+                    try
+                    {
+                        action();
+                        item.ActionDone?.TrySetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        item.ActionDone?.TrySetException(ex);
+                    }
                     continue;
                 }
 

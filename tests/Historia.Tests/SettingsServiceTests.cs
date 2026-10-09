@@ -17,8 +17,33 @@ public class SettingsServiceTests : IDisposable
         Assert.True(svc.Current.PersistRepoCache);
         Assert.True(svc.Current.GraphMetadataFromDisk); // default on
         Assert.True(svc.Current.AutoFetchEnabled); // default on
+        Assert.True(svc.Current.LoggingEnabled); // default on
+        Assert.False(svc.Current.DeveloperPanelEnabled); // default off
         Assert.False(svc.Current.EnableGraphSplice); // Default off
         Assert.Equal(DiffViewMode.Unified, svc.Current.DefaultDiffView);
+    }
+
+    [Fact]
+    public void Logging_and_developer_panel_settings_defaults()
+    {
+        var settings = new AppSettings();
+        Assert.True(settings.LoggingEnabled);
+        Assert.False(settings.DeveloperPanelEnabled);
+    }
+
+    [Fact]
+    public async Task Logging_and_developer_panel_settings_round_trip()
+    {
+        var svc = SettingsService.Load();
+        Assert.True(svc.Current.LoggingEnabled);
+        Assert.False(svc.Current.DeveloperPanelEnabled);
+
+        await svc.UpdateAsync(s => s with { LoggingEnabled = false, DeveloperPanelEnabled = true });
+        await svc.FlushAsync();
+
+        var reloaded = SettingsService.Load().Current;
+        Assert.False(reloaded.LoggingEnabled);
+        Assert.True(reloaded.DeveloperPanelEnabled);
     }
 
     [Fact]

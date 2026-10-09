@@ -134,6 +134,7 @@ public sealed class TerminalControl : Control
         {
             _theme.ThemeChanged -= OnThemeChanged;
             _settings.Changed -= OnSettingsChanged;
+            _wired = false;
         }
         _blinkTimer?.Dispose();
         _blinkTimer = null;
@@ -147,16 +148,30 @@ public sealed class TerminalControl : Control
         InvalidateVisual();
     }
 
+    // Settings changes can arrive on any thread, and font work touches the visual tree.
     private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
     {
         if (e.OldSettings.TerminalFontFamily != e.NewSettings.TerminalFontFamily
             || e.OldSettings.TerminalFontSize != e.NewSettings.TerminalFontSize)
         {
-            RemeasureFont();
-            RecomputeGrid();
-            PushResizeToSession();
-            InvalidateVisual();
+            if (_ui.CheckAccess())
+                ApplyFontChange();
+            else
+                _ui.Post(ApplyFontChange);
         }
+    }
+
+    internal (double Width, double Height) CellSize => (_cellWidth, _cellHeight);
+
+    private void ApplyFontChange()
+    {
+        if (!_wired)
+            return;
+
+        RemeasureFont();
+        RecomputeGrid();
+        PushResizeToSession();
+        InvalidateVisual();
     }
 
     private void OnSessionBufferChanged(object? sender, EventArgs e)
