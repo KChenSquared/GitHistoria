@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public class RepositoryViewOpBannerTests : IDisposable
@@ -50,6 +50,20 @@ public class RepositoryViewOpBannerTests : IDisposable
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
         try { _fixture.Dispose(); } catch { }
+    }
+
+    private async Task RefreshUntilAsync(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (true)
+        {
+            await _context.State.RefreshStatusAsync();
+            Dispatcher.UIThread.RunJobs();
+            if (condition())
+                return;
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for {what}.");
+            await Task.Delay(50);
+        }
     }
 
     private async Task<(RepositoryView View, Window Window)> ShowRepositoryViewDuringSessionAsync()
@@ -129,8 +143,7 @@ public class RepositoryViewOpBannerTests : IDisposable
     {
         _fixture.CreateConflict();
         _fixture.SetOperation(OperationState.Bisecting);
-        await _context.State.RefreshStatusAsync();
-        Assert.True(_context.State.IsConflictSessionActive);
+        await RefreshUntilAsync(() => _context.State.IsConflictSessionActive, "the conflict session to start");
 
         var repoView = new RepositoryView(_sp);
         var window = new Window { Width = 800, Height = 600, Content = repoView };

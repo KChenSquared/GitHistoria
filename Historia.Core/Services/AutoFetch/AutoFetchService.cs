@@ -22,7 +22,6 @@ public sealed class AutoFetchService : IAutoFetchService
     private CancellationTokenSource? _cycleCts;
     private Task? _loop;
     private TaskCompletionSource? _firstRepo;
-    private RepoEntrySource? _pendingEntry;
     private int _lastCount;
     private bool _started;
 
@@ -52,12 +51,6 @@ public sealed class AutoFetchService : IAutoFetchService
     }
 
     public bool IsEnabled => _settings.Current.AutoFetchEnabled;
-
-    public void NotifyRepoEntering(RepoEntrySource source)
-    {
-        lock (_sync)
-            _pendingEntry = source;
-    }
 
     public AutoFetchTabState GetTabState(RepositoryContext context)
     {
@@ -166,25 +159,11 @@ public sealed class AutoFetchService : IAutoFetchService
         {
             var first = await WaitForFirstRepoAsync(ct).ConfigureAwait(false);
             await _host.WhenFullyLoadedAsync(first, ct).ConfigureAwait(false);
-
-            RepoEntrySource source;
-            lock (_sync)
-            {
-                source = _pendingEntry ?? RepoEntrySource.Opened;
-                _pendingEntry = null;
-            }
-
-            if (source == RepoEntrySource.Opened)
-                await SafeFetchAsync(first, ct).ConfigureAwait(false); // [InitialFetch]
         }
         else
         {
             // Wait for *every* open repo — active or not — to fully load.
             await Task.WhenAll(open.Select(r => _host.WhenFullyLoadedAsync(r, ct))).ConfigureAwait(false);
-
-            var target = _workspace.Focused ?? _workspace.OpenRepositories.FirstOrDefault();
-            if (target is not null)
-                await SafeFetchAsync(target, ct).ConfigureAwait(false); // [InitialFetch]
         }
 
         lock (_sync)
@@ -308,9 +287,8 @@ public sealed class AutoFetchService : IAutoFetchService
             using (lease)
                 await _host.FetchAsync(context, ct).ConfigureAwait(false);
 
-            // Refresh this repo's commit-graph after every successful fetch (the
-            // [InitialFetch] callers above and the [AutoFetch] loop both go through here). Itself
-            // fire-and-forget and best-effort — never allowed to fail this fetch or the loop.
+            // Refresh this repo's commit-graph after every successful fetch the loop runs.
+            // Itself fire-and-forget and best-effort — never allowed to fail this fetch or the loop.
             try { _graphLayoutService?.RefreshCommitGraphAfterFetch(context); }
             catch { /* commit-graph maintenance must never take the loop down */ }
 
