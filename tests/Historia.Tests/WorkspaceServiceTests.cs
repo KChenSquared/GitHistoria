@@ -474,7 +474,7 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
     // ── Identity resolution runs concurrently with the first refs/status refresh ──
 
     [Fact(Timeout = 20000)]
-    public async Task RefreshAllAsync_runs_concurrently_with_identity_resolution_not_after_it()
+    public async Task RefreshRefsAsync_runs_concurrently_with_identity_resolution_not_after_it()
     {
         var identity = new SlowIdentityService(); // blocks every context until released
         var ws = NewWorkspace(identity);
@@ -483,12 +483,12 @@ public class WorkspaceFocusPriorityTests : WorkspaceServiceTestBase
         var ctx1 = await ws.OpenAsync(r1.Path);
         ctx1.MarkFirstGraphPaintDone();
 
-        var statusRaised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        ctx1.State.StatusChanged += (_, _) => statusRaised.TrySetResult();
+        var refsRaised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx1.State.RefsChanged += (_, _) => refsRaised.TrySetResult();
 
-        // Identity resolution is still blocked (never released) — if RefreshAllAsync waited for it
+        // Identity resolution is still blocked (never released) — if RefreshRefsAsync waited for it
         // to finish first (running the two sequentially), this would time out.
-        await statusRaised.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await refsRaised.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.False(ctx1.FirstFullLoad.IsCompleted, "identity is still blocked, so the attempt as a whole isn't done");
         identity.Release(r1.Path);
