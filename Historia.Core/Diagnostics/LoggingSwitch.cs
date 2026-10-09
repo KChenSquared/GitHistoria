@@ -14,8 +14,19 @@ public static class LoggingSwitch
 
     /// <summary>
     /// Raised after the effective process-wide logging state flips. Never raised under a lock.
+    /// The argument is the value at the time of the flip; a handler that must be exact re-reads <see cref="ProcessEnabled"/>.
     /// </summary>
     internal static event Action<bool>? Changed;
+
+    /// <summary>
+    /// Gets the process-wide logging switch value, ignoring any flow-local test override.
+    /// </summary>
+    internal static bool ProcessEnabled => Volatile.Read(ref _enabled);
+
+    /// <summary>
+    /// Gets whether logging is forced on by the <c>HISTORIA_LOG</c> environment variable.
+    /// </summary>
+    internal static bool IsForcedByEnvironment => IsEnvForced();
 
     /// <summary>
     /// Gets whether logging is enabled. Flow-local test override takes precedence over the process-wide switch.

@@ -21,7 +21,7 @@ public sealed class LoggingSwitchTests : IDisposable
     [Fact]
     public void Starts_disabled()
     {
-        LoggingSwitch.Set(false);
+        Assert.False(TestStateIsolation.LoggingSwitchEnabledAtStartup);
         Assert.False(LoggingSwitch.Enabled);
     }
 

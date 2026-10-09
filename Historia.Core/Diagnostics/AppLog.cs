@@ -33,19 +33,22 @@ public static partial class AppLog
         try
         {
             LoggingSwitch.Changed += OnLoggingSwitchChanged;
-            if (LoggingSwitch.Enabled)
-                lock (Gate)
-                    OpenSessionLocked();
+            Reconcile();
         }
         catch { /* logging must never throw */ }
     }
 
-    private static void OnLoggingSwitchChanged(bool enabled)
+    internal static void OnLoggingSwitchChanged(bool enabled)
+    {
+        Reconcile();
+    }
+
+    internal static void Reconcile()
     {
         QueuedLineWriter? retired = null;
         lock (Gate)
         {
-            if (enabled)
+            if (LoggingSwitch.ProcessEnabled)
             {
                 if (_writer is null)
                     OpenSessionLocked();

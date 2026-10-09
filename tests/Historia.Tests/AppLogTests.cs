@@ -290,4 +290,49 @@ public sealed class AppLogTests : IDisposable
 
         Assert.Empty(Directory.GetFiles(AppPaths.MachineDirectory, "*logging.on"));
     }
+
+    [Fact]
+    public void Stale_enable_event_reconciles_to_the_switch()
+    {
+        LoggingSwitch.Set(false);
+        AppLog.OnLoggingSwitchChanged(true);
+
+        Assert.Null(AppLog.CurrentLogPath);
+        Assert.Empty(SessionFiles());
+    }
+
+    [Fact]
+    public void Flow_override_never_opens_a_process_session()
+    {
+        LoggingSwitch.Set(false);
+        LoggingSwitch.OverrideForTesting(true);
+        try
+        {
+            AppLog.Reconcile();
+
+            Assert.Null(AppLog.CurrentLogPath);
+            Assert.Empty(SessionFiles());
+        }
+        finally
+        {
+            LoggingSwitch.OverrideForTesting(null);
+        }
+    }
+
+    [Fact]
+    public void Reconcile_opens_and_closes_with_the_switch()
+    {
+        LoggingSwitch.Set(true);
+        AppLog.Reconcile();
+
+        var file = Assert.Single(SessionFiles());
+        Assert.Equal(file, AppLog.CurrentLogPath);
+
+        LoggingSwitch.Set(false);
+        AppLog.Reconcile();
+
+        Assert.Null(AppLog.CurrentLogPath);
+        var text = File.ReadAllText(file);
+        Assert.Contains("logging stopped", text);
+    }
 }
