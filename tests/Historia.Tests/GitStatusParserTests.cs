@@ -71,6 +71,23 @@ public class GitStatusParserTests
     }
 
     [Fact]
+    public void A_rename_staged_and_modified_in_worktree_lands_in_both_lists()
+    {
+        var input = "2 RM N... 100644 100644 100644 1111111111111111111111111111111111111111 2222222222222222222222222222222222222222 R100 new.txt\0old.txt\0";
+        var parsed = GitStatusParser.Parse(input);
+
+        var s = Assert.Single(parsed.Staged);
+        Assert.Equal("new.txt", s.Path);
+        Assert.Equal("old.txt", s.OldPath);
+        Assert.Equal(FileChangeKind.Renamed, s.Kind);
+
+        var u = Assert.Single(parsed.Unstaged);
+        Assert.Equal("new.txt", u.Path);
+        Assert.Null(u.OldPath);
+        Assert.Equal(FileChangeKind.Modified, u.Kind);
+    }
+
+    [Fact]
     public void Unmerged_records_are_conflicted_only()
     {
         var input = "u UU N... 100644 100644 100644 100644 1111 2222 3333 conflict.txt\0";
