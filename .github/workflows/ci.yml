@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@3951f0dfe7a07e2313ec93c75700083e2005cbab # v4.3.0
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'Directory.Build.props', 'global.json') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Verify Git version
+        shell: pwsh
+        run: |
+          if ($IsMacOS) {
+              if (Test-Path "/opt/homebrew/bin/git") {
+                  "/opt/homebrew/bin" >> $env:GITHUB_PATH
+                  $env:PATH = "/opt/homebrew/bin:$env:PATH"
+              } elseif (Test-Path "/usr/local/bin/git") {
+                  "/usr/local/bin" >> $env:GITHUB_PATH
+                  $env:PATH = "/usr/local/bin:$env:PATH"
+              }
+          }
+
+          $gitVerRaw = & git --version
+          Write-Host "Detected Git: $gitVerRaw"
+          if ($gitVerRaw -match '(\d+\.\d+(\.\d+)?)') {
+              $ver = [version]$matches[1]
+              if ($ver -lt [version]'2.46.0') {
+                  Write-Error "Git version $ver is below the minimum required version 2.46.0"
+                  exit 1
+              }
+          } else {
+              Write-Error "Could not parse git version string: $gitVerRaw"
+              exit 1
+          }
+
+      - name: Build solution
+        run: dotnet build Historia.slnx -c Release
+
+      - name: Run Core tests
+        run: dotnet test tests/Historia.Tests -c Release --no-build --logger "trx;LogFileName=core.trx" --blame-hang-timeout 15m
+
+      - name: Run App tests
+        run: dotnet test tests/Historia.App.Tests -c Release --no-build --logger "trx;LogFileName=app.trx" --blame-hang-timeout 15m
+
+      - name: Upload test results and crash dumps
+        if: failure()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: test-results-${{ matrix.os }}
+          path: |
+            **/*.trx
+            **/*.dmp
+            **/TestResults/**
