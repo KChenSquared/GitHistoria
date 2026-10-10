@@ -385,4 +385,200 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
         Assert.Equal(scrollViewer.Bounds.Height + 2, messageSection.Bounds.Height);
         Assert.Equal(((Control)scrollViewer.Content!).DesiredSize.Height, scrollViewer.Bounds.Height);
     }
+
+    private static double GrowMessageBoxToMax(StagingPanelView view, Window window)
+    {
+        var messageHandle = view.MessageResizeHandleForTesting!;
+        var messageHandleCenter = messageHandle.TranslatePoint(new Point(messageHandle.Bounds.Width / 2, messageHandle.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, messageHandleCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(messageHandleCenter.X, messageHandleCenter.Y - 2000));
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(messageHandleCenter.X, messageHandleCenter.Y - 2000), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        return view.MessageForTesting.Height;
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_down_past_staged_min_shrinks_message_box()
+    {
+        var (context, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        var splitHandle = view.SplitHandleForTesting!;
+        var splitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, splitCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(splitCenter.X, splitCenter.Y + 100));
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(splitCenter.X, splitCenter.Y + 100), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        var splitArea = view.SplitAreaForTesting!;
+        var changesRow = splitArea.RowDefinitions[0];
+        var stagedSection = (Border)splitArea.Children[1];
+
+        Assert.InRange(Math.Abs(changesRow.Height.Value - 250), 0, 1.01);
+        Assert.True(stagedSection.Bounds.Height >= 150);
+        Assert.InRange(Math.Abs(view.MessageForTesting.Height - (h - 100)), 0, 1.01);
+        Assert.InRange(Math.Abs(SectionFrame.GetSplitHeight(context.Id) - 250), 0, 1.01);
+
+        view.Dispose();
+        _views.Remove(view);
+
+        var view2 = new StagingPanelView(_sp, context);
+        _views.Add(view2);
+        window.Content = view2;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.InRange(Math.Abs(view2.MessageForTesting.Height - (h - 100)), 0, 1.01);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_down_stops_at_message_box_minimum()
+    {
+        var (_, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        var splitHandle = view.SplitHandleForTesting!;
+        var splitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, splitCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(splitCenter.X, splitCenter.Y + 5000));
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(splitCenter.X, splitCenter.Y + 5000), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        var splitArea = view.SplitAreaForTesting!;
+        var changesRow = splitArea.RowDefinitions[0];
+        var stagedSection = (Border)splitArea.Children[1];
+        var messageSection = view.MessageSectionForTesting!;
+
+        Assert.Equal(96, view.MessageForTesting.Height);
+        Assert.InRange(Math.Abs(changesRow.Height.Value - (150 + (h - 96))), 0, 1.01);
+        Assert.True(stagedSection.Bounds.Height >= 150);
+
+        var splitAreaBottom = splitArea.TranslatePoint(new Point(0, splitArea.Bounds.Height), window)!.Value.Y;
+        var messageSectionTop = messageSection.TranslatePoint(new Point(0, 0), window)!.Value.Y;
+        Assert.True(splitAreaBottom <= messageSectionTop + 1.01);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_reversed_in_one_gesture_restores_box()
+    {
+        var (_, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        var splitHandle = view.SplitHandleForTesting!;
+        var splitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, splitCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(splitCenter.X, splitCenter.Y + 100));
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, splitCenter);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, splitCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        var splitArea = view.SplitAreaForTesting!;
+        var changesRow = splitArea.RowDefinitions[0];
+
+        Assert.Equal(h, view.MessageForTesting.Height);
+        Assert.Equal(150, changesRow.Height.Value);
+    }
+
+    [AvaloniaFact]
+    public void Staged_divider_drag_also_borrows()
+    {
+        var (context, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        var stagedHandle = view.StagedDividerHandleForTesting!;
+        var stagedCenter = stagedHandle.TranslatePoint(new Point(stagedHandle.Bounds.Width / 2, stagedHandle.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, stagedCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(stagedCenter.X, stagedCenter.Y + 100));
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(stagedCenter.X, stagedCenter.Y + 100), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        var splitArea = view.SplitAreaForTesting!;
+        var changesRow = splitArea.RowDefinitions[0];
+        var stagedSection = (Border)splitArea.Children[1];
+
+        Assert.InRange(Math.Abs(changesRow.Height.Value - 250), 0, 1.01);
+        Assert.True(stagedSection.Bounds.Height >= 150);
+        Assert.InRange(Math.Abs(view.MessageForTesting.Height - (h - 100)), 0, 1.01);
+        Assert.InRange(Math.Abs(SectionFrame.GetSplitHeight(context.Id) - 250), 0, 1.01);
+
+        view.Dispose();
+        _views.Remove(view);
+
+        var view2 = new StagingPanelView(_sp, context);
+        _views.Add(view2);
+        window.Content = view2;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.InRange(Math.Abs(view2.MessageForTesting.Height - (h - 100)), 0, 1.01);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_up_does_not_regrow_box()
+    {
+        var (_, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        var splitHandle = view.SplitHandleForTesting!;
+        var splitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, splitCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(splitCenter.X, splitCenter.Y + 100));
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(splitCenter.X, splitCenter.Y + 100), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        var shrunkBoxH = view.MessageForTesting.Height;
+        Assert.InRange(Math.Abs(shrunkBoxH - (h - 100)), 0, 1.01);
+
+        var newSplitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, newSplitCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(newSplitCenter.X, newSplitCenter.Y - 100));
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(newSplitCenter.X, newSplitCenter.Y - 100), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        var splitArea = view.SplitAreaForTesting!;
+        var changesRow = splitArea.RowDefinitions[0];
+
+        Assert.Equal(shrunkBoxH, view.MessageForTesting.Height);
+        Assert.Equal(150, changesRow.Height.Value);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_with_box_at_minimum_is_blocked_at_staged_min()
+    {
+        var (context, view, window) = CreateView(width: 400, height: 900);
+        var splitArea = view.SplitAreaForTesting!;
+        SectionFrame.SetSplitHeight(context.Id, 2000);
+        SectionFrame.ApplySplitHeight(splitArea, splitArea.RowDefinitions[0], context.Id);
+        Dispatcher.UIThread.RunJobs();
+
+        var maxChanges = splitArea.RowDefinitions[0].Height.Value;
+
+        var splitHandle = view.SplitHandleForTesting!;
+        var splitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, splitCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(splitCenter.X, splitCenter.Y + 200));
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(splitCenter.X, splitCenter.Y + 200), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        var stagedSection = (Border)splitArea.Children[1];
+
+        Assert.Equal(96, view.MessageForTesting.Height);
+        Assert.Equal(maxChanges, splitArea.RowDefinitions[0].Height.Value);
+        Assert.True(stagedSection.Bounds.Height >= 150);
+    }
 }

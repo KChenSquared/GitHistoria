@@ -26,6 +26,39 @@ public class SectionFrameTests
         Assert.Equal(150, clamped);
     }
 
+    [Fact]
+    public void SplitWithLender_within_room_does_not_borrow()
+    {
+        var (top, lender) = SectionFrame.SplitWithLender(proposed: 200, available: 600, lenderStart: 300, lenderMin: 96);
+        Assert.Equal(200, top);
+        Assert.Equal(300, lender);
+    }
+
+    [Fact]
+    public void SplitWithLender_past_bottom_min_borrows_from_lender()
+    {
+        var (top, lender) = SectionFrame.SplitWithLender(proposed: 493, available: 600, lenderStart: 300, lenderMin: 96);
+        Assert.Equal(493, top);
+        Assert.Equal(250, lender);
+    }
+
+    [Fact]
+    public void SplitWithLender_stops_at_lender_min()
+    {
+        var (top, lender) = SectionFrame.SplitWithLender(proposed: 5000, available: 600, lenderStart: 300, lenderMin: 96);
+        Assert.Equal(647, top);
+        Assert.Equal(96, lender);
+    }
+
+    [Fact]
+    public void SplitWithLender_lender_at_min_matches_ClampTopHeight()
+    {
+        var clamped = SectionFrame.ClampTopHeight(500, 600, SectionFrame.TopMinHeight, SectionFrame.BottomMinHeight);
+        var (top, lender) = SectionFrame.SplitWithLender(proposed: 500, available: 600, lenderStart: 96, lenderMin: 96);
+        Assert.Equal(clamped, top);
+        Assert.Equal(96, lender);
+    }
+
     [AvaloniaFact]
     public void Header_row_is_centred_between_border_and_rule()
     {

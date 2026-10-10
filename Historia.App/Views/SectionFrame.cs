@@ -99,9 +99,28 @@ internal static class SectionFrame
         };
     }
 
-    public static void AttachRowResize(Control handle, Grid grid, RowDefinition topRow, Action<double> committed)
+    public static (double Top, double Lender) SplitWithLender(double proposed, double available, double lenderStart, double lenderMin)
+    {
+        var maxTop = Math.Max(TopMinHeight, available - HandleHeight - BottomMinHeight);
+        if (proposed <= maxTop)
+            return (ClampTopHeight(proposed, available, TopMinHeight, BottomMinHeight), lenderStart);
+
+        var lent = Math.Min(proposed - maxTop, Math.Max(0, lenderStart - lenderMin));
+        return (maxTop + lent, lenderStart - lent);
+    }
+
+    public static void AttachRowResize(
+        Control handle,
+        Grid grid,
+        RowDefinition topRow,
+        Action<double> committed,
+        Func<(double Start, double Min)>? lenderBegin = null,
+        Action<double>? lenderApply = null)
     {
         double startHeight = 0;
+        double startAvailable = 0;
+        double lenderStart = 0;
+        double lenderMin = 0;
 
         AttachVerticalDrag(
             handle,
@@ -109,12 +128,27 @@ internal static class SectionFrame
             begin: () =>
             {
                 startHeight = topRow.Height.IsAbsolute ? topRow.Height.Value : DefaultTopHeight;
+                if (lenderBegin is not null && lenderApply is not null)
+                {
+                    startAvailable = grid.Bounds.Height;
+                    (lenderStart, lenderMin) = lenderBegin();
+                }
             },
             moved: delta =>
             {
-                var proposed = startHeight + delta;
-                var clamped = ClampTopHeight(proposed, grid.Bounds.Height, TopMinHeight, BottomMinHeight);
-                topRow.Height = new GridLength(clamped, GridUnitType.Pixel);
+                if (lenderBegin is not null && lenderApply is not null)
+                {
+                    var (top, lender) = SplitWithLender(startHeight + delta, startAvailable, lenderStart, lenderMin);
+                    lenderApply(lender);
+                    topRow.Height = new GridLength(top, GridUnitType.Pixel);
+                    committed(top);
+                }
+                else
+                {
+                    var proposed = startHeight + delta;
+                    var clamped = ClampTopHeight(proposed, grid.Bounds.Height, TopMinHeight, BottomMinHeight);
+                    topRow.Height = new GridLength(clamped, GridUnitType.Pixel);
+                }
             },
             ended: () => committed(topRow.Height.Value));
     }
