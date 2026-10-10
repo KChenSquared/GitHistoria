@@ -9,6 +9,13 @@ public sealed class SettingsView : UserControl, IDisposable
     private readonly IGraphLayoutService _graph;
     private readonly Historia.Services.Storage.IRepoStateCache _repoCache;
     private readonly IAiIntegrationsPanel? _aiPanel;
+    private readonly ICmdrPathService _cmdrPath;
+    private CmdrPathStatus? _cmdrStatus;
+    private Task? _cmdrStatusTask;
+    private bool _cmdrApplyInProgress;
+
+    private const string CmdrPathHint = "Lets terminals and coding agents run historia-cmdr by name. Puts Historia's folder on your user PATH, replacing any other historia-cmdr folder there. Open a new terminal to use it.";
+
     private readonly StackPanel _root = new() { Spacing = 18, Margin = new Thickness(32), MaxWidth = 640 };
 
     // Survives the full Rebuild() that fires on every settings change.
@@ -27,10 +34,13 @@ public sealed class SettingsView : UserControl, IDisposable
         _graph = sp.GetRequiredService<IGraphLayoutService>();
         _repoCache = sp.GetRequiredService<Historia.Services.Storage.IRepoStateCache>();
         _aiPanel = sp.GetService<IAiIntegrationsPanel>();
+        _cmdrPath = sp.GetRequiredService<ICmdrPathService>();
 
         _onCfg = (_, _) => Post();
         _onTheme = (_, _) => Post();
         _onAiPanel = (_, _) => Post();
+
+        RefreshCmdrStatus();
 
         Content = ClosablePane(new ScrollViewer { Content = _root }, sp);
         this.Dyn(BackgroundProperty, "ColorChrome");
@@ -75,6 +85,84 @@ public sealed class SettingsView : UserControl, IDisposable
     private readonly EventHandler<ThemeChangedEventArgs> _onTheme;
     private readonly EventHandler _onAiPanel;
 
+    private void RefreshCmdrStatus()
+    {
+        _cmdrStatusTask = Task.Run(() =>
+        {
+            _cmdrStatus = _cmdrPath.GetStatus();
+            Post();
+        });
+    }
+
+    internal void EnsureCmdrStatusLoadedForTesting()
+    {
+        _cmdrStatusTask?.GetAwaiter().GetResult();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+    }
+
+    private async void OnAddToPath()
+    {
+        if (_cmdrStatus is not CmdrPathStatus.NeedsUpdate update || _cmdrApplyInProgress)
+            return;
+
+        var preview = update.Preview;
+        var folderToAdd = preview.Added ?? AppContext.BaseDirectory;
+        var sb = new StringBuilder();
+        sb.AppendLine($"Adds {folderToAdd} to your user PATH.");
+
+        if (preview.Removed.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Removes from your user PATH:");
+            foreach (var r in preview.Removed)
+                sb.AppendLine(r);
+        }
+
+        if (update.MachineCopies.Count > 0)
+        {
+            sb.AppendLine();
+            foreach (var m in update.MachineCopies)
+                sb.AppendLine($"A historia-cmdr in the system PATH ({m}) still runs first; an administrator must remove it.");
+        }
+
+        var backupFolder = System.IO.Path.Combine(Historia.Services.Storage.AppPaths.DataDirectory, "path-backups");
+        sb.AppendLine();
+        sb.AppendLine($"Your current PATH is backed up to {backupFolder} first.");
+        sb.Append("Open a new terminal to use it.");
+
+        var effect = sb.ToString();
+        var confirmed = await _dialogs.ConfirmDestructiveAsync("Update PATH", effect, "Add to PATH");
+        if (!confirmed)
+            return;
+
+        _cmdrApplyInProgress = true;
+        Post();
+
+        try
+        {
+            var result = await Task.Run(() => _cmdrPath.Apply(preview));
+            switch (result)
+            {
+                case CmdrPathApplyResult.Written:
+                    RefreshCmdrStatus();
+                    break;
+                case CmdrPathApplyResult.Changed:
+                    await _dialogs.ShowMessageAsync("Update PATH", "PATH changed while the dialog was open; try again.");
+                    RefreshCmdrStatus();
+                    break;
+                case CmdrPathApplyResult.Failed failed:
+                    await _dialogs.ShowMessageAsync("Update PATH", failed.Message);
+                    RefreshCmdrStatus();
+                    break;
+            }
+        }
+        finally
+        {
+            _cmdrApplyInProgress = false;
+            Post();
+        }
+    }
+
     private void Rebuild()
     {
         var c = _cfg.Current;
@@ -95,6 +183,13 @@ public sealed class SettingsView : UserControl, IDisposable
             themeRow.Children.Add(TextButton(m.ToString(), () => _ = _theme.ApplyModeAsync(mode), primary: _theme.CurrentMode == m));
         }
         generalBody.Children.Add(LabeledRow("Theme", themeRow));
+        if (_cmdrStatus is not null and not CmdrPathStatus.Unavailable)
+        {
+            var status = _cmdrStatus;
+            var button = TextButton(status is CmdrPathStatus.Current ? "On PATH" : "Add to PATH", OnAddToPath, primary: false);
+            button.IsEnabled = status is CmdrPathStatus.NeedsUpdate && !_cmdrApplyInProgress;
+            generalBody.Children.Add(WithHint(LabeledRow("Command line", button), CmdrPathHint));
+        }
         generalBody.Children.Add(WithHint(Check("Show splash screen", c.ShowSplashScreen,
             v => _ = _cfg.UpdateAsync(s => s with { ShowSplashScreen = v })),
             "A custom theme uses its own splash instead."));

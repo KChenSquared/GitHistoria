@@ -23,6 +23,12 @@ public sealed class SettingsFocusReleaseTests
         public Task DeleteTokenAsync(string key, CancellationToken ct = default) => Task.CompletedTask;
     }
 
+    private sealed class FakeCmdrPathService : ICmdrPathService
+    {
+        public CmdrPathStatus GetStatus() => new CmdrPathStatus.Unavailable();
+        public CmdrPathApplyResult Apply(PathChange confirmed) => new CmdrPathApplyResult.Failed("Unavailable");
+    }
+
     private static ServiceProvider CreateServices()
     {
         var sc = new ServiceCollection();
@@ -67,6 +73,7 @@ public sealed class SettingsFocusReleaseTests
         sc.AddSingleton<IRepoIdentityService, RepoIdentityService>();
         sc.AddSingleton<ICredentialVaultService, FakeVault>();
         sc.AddSingleton<IExternalLauncher, ExternalLauncher>();
+        sc.AddSingleton<ICmdrPathService, FakeCmdrPathService>();
         return sc.BuildServiceProvider();
     }
 
