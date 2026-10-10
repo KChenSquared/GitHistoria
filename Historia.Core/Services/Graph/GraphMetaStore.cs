@@ -251,39 +251,9 @@ internal sealed class GraphMetaStore
     }
 
     /// <summary>
-    /// Like <see cref="Probe"/> but WITHOUT a fingerprint check — for
-    /// <c>TryOptimisticSnapshot</c>'s stale-tolerant first paint, which runs before the fresh
-    /// ref-fingerprint check (a ref snapshot read, possibly a <c>for-each-ref</c>) even starts. The caller must
-    /// treat the result as provisional, exactly like <see cref="GraphWalkCache.TryLoadStale"/>.
-    /// Still requires <see cref="GraphWalkCache.CliWalkMarker"/>, so an optimistic frame is never
-    /// seeded from a store a retired walk engine wrote.
-    /// </summary>
-    public static (bool Ok, int RowCount) ProbeAny(string repoPath, bool includeRemoteBranches)
-    {
-        try
-        {
-            var hdrPath = GraphCachePaths.File(repoPath, HdrExt);
-            if (!File.Exists(hdrPath))
-                return (false, 0);
-            var hdr = JsonSerializer.Deserialize<Header>(ReadAllBytesShared(hdrPath), Json);
-            if (hdr is null || hdr.Version != Version || hdr.IncludeRemoteBranches != includeRemoteBranches
-                || hdr.WalkEngine != GraphWalkCache.CliWalkMarker || hdr.RowCount <= 0)
-                return (false, 0);
-            var hashSize = hdr.HashSize == 0 ? 20 : hdr.HashSize;
-            if (hashSize != 20 && hashSize != 32)
-                return (false, 0);
-            return (true, hdr.RowCount);
-        }
-        catch
-        {
-            return (false, 0);
-        }
-    }
-
-    /// <summary>
-    /// Like <see cref="ProbeAny"/> but returns the full header, including the WALK KEY
-    /// it was written under — used by the headless per-tab pipeline to tell "no store at all"
-    /// apart from "a store exists, but its walk key has moved" (a reorder opportunity)
+    /// Probes the cache header without matching against a fingerprint, returning the full header
+    /// including the WALK KEY it was written under — used by the headless per-tab pipeline to tell
+    /// "no store at all" apart from "a store exists, but its walk key has moved" (a reorder opportunity)
     /// without needing to know the current walk key up front.
     /// </summary>
     public static (bool Ok, long WalkKey, int RowCount, int RecordCount, int OrderVersion, bool Exhausted, long LastFullWalkMs) ProbeExisting(

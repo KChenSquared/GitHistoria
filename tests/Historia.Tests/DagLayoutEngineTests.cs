@@ -1088,7 +1088,7 @@ public class DagLayoutEngineTests
         // around whatever row is asked for (via the checkpoint-based candidate gather in
         // DagLayoutEngine.DeriveWindow); comparing that against DeriveWindow called once for the
         // FULL row range (which, spanning every checkpoint block, is provably equivalent to
-        // passing every edge — same as the legacy DeriveVisuals) catches any bug where the
+        // passing every edge) catches any bug where the
         // candidate gather drops or duplicates an edge for a genuinely partial window.
         var chain = BuildGnarlyChain(1200);
         var full = Compute(chain, maxRows: chain.Count);

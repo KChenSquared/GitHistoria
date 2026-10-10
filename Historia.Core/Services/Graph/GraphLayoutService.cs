@@ -5,12 +5,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
 {
     private const int WalkOverscan = 2_000;
 
-    /// <summary>Stuck-guard for <see cref="MaybeStartBackgroundSpill"/>: how long the background
-    /// full-history walk waits for this tab to fully load (<see cref="RepositoryContext.FirstGraphPaint"/>
-    /// + <see cref="RepositoryContext.FirstFullLoad"/>) before it starts anyway. In the running
-    /// app both signals always complete; this only bites a headless open where nothing raises
-    /// them — deliberately long so a slow-but-progressing large repo is never cut short.</summary>
-    private static readonly TimeSpan SpillStartGrace = TimeSpan.FromSeconds(180);
 
     /// <summary>Rows per chunk of the background full-history walk. Each chunk *resumes*
     /// the primed <c>git log</c> walk (cheap — no respawn) while no ref file has changed
@@ -154,8 +148,6 @@ public sealed class GraphLayoutService : IGraphLayoutService
 
     internal static GraphPrepareGate GetGateFor(RepositoryContext context) =>
         _gates.GetValue(context, c => new GraphPrepareGate(c.DisplayName));
-
-    internal GraphPrepareGate GetGateForInstance(RepositoryContext context) => GetGateFor(context);
 
     private readonly ISettingsService _settings;
     private readonly IGitExecutableLocator _locator;
@@ -456,7 +448,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // Refs that can't be read right now are no evidence the painted rows are stale — keep the
         // cache; EnsureWalkedAsync records the failure if it needs refs to go further.
         if (TotalWalked(cache) > 0 && cache.Fingerprint != 0
-            && await TryGetRefStateAsync(context, query, background: false, ct).ConfigureAwait(false) is { } state
+            && await TryGetRefStateAsync(context, query, ct).ConfigureAwait(false) is { } state
             && state.Fingerprint != cache.Fingerprint)
             cache = GetOrResetCache(context, query, force: true);
         await EnsureWalkedAsync(context, query, cache, maxRows + WalkOverscan, ct).ConfigureAwait(false);
@@ -931,7 +923,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// history in the background so the whole repo is cached on disk without the user
     /// scrolling. Cancelled by <see cref="Forget"/> when the ref set changes or the tab closes.
     /// <para>The heavy full-history walk does not start until this context's first graph paint
-    /// has landed (<see cref="SpillStartGrace"/> safety net) — on a large repo it can run for
+    /// has landed, waiting on the background-work gate (<c>WaitForGateAsync</c>) — on a large repo it can run for
     /// tens of seconds, so racing it against first paint is what makes a cold open of a big
     /// repo take far longer than the "small first window" design should ever cost.</para>
     /// </summary>
@@ -1118,7 +1110,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         // The tips come from the ref snapshot, and the probes are header reads
         // of Historia's own files.
         var repoPath = context.RepositoryPath;
-        if (await TryGetRefStateAsync(context, query, background: true, ct).ConfigureAwait(false) is not { } state)
+        if (await TryGetRefStateAsync(context, query, ct).ConfigureAwait(false) is not { } state)
             return null;
         var (_, _, tips, walkKey) = state;
         return (
@@ -1536,7 +1528,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
         if (reason == InvalidationReason.RefsChanged && previous.Fingerprint != 0)
         {
             // Unreadable refs: keep what is painted; the next RefsChanged tries again.
-            if (await TryGetRefStateAsync(context, query, background: false, ct).ConfigureAwait(false) is not { } state
+            if (await TryGetRefStateAsync(context, query, ct).ConfigureAwait(false) is not { } state
                 || state.Fingerprint == previous.Fingerprint)
                 return previous;
         }
@@ -1789,7 +1781,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
             // resolve decorations. It deliberately stops
             // short of spawning or pulling `git log` — the walk itself runs concurrently.
             prep = await WithGate(() =>
-                PrepareWalk(repoPath, query, wantCount, deco, cache, snapshot, _metaFromDisk, _walkCache, context.RemoteConfig, _cli, ct))
+                PrepareWalk(repoPath, query, wantCount, deco, cache, snapshot, _metaFromDisk, _walkCache, context.RemoteConfig, ct))
                 .ConfigureAwait(false);
 
             // The snapshot was read before the gate wait, which for the spill can be long. A prime
@@ -1951,7 +1943,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     private static async Task<GatePrep> PrepareWalk(
         string repoPath, GraphQuery query, int wantCount, DecoCache? decoCache,
         RepoCache cache, RefSnapshot snapshot, bool metaFromDisk, GraphWalkCache walkCache,
-        RepoConfigReader remoteConfig, IGitCliService cli, CancellationToken ct = default)
+        RepoConfigReader remoteConfig, CancellationToken ct = default)
     {
         // Read fresh on the gate — a concurrent EnsureWalkedAsync (the silent crawler vs the
         // background spill) serialises here and has usually already walked what this caller
@@ -2593,7 +2585,7 @@ public sealed class GraphLayoutService : IGraphLayoutService
     /// <see cref="HistoriaGitException"/> has already logged why, and each caller decides what an
     /// unknown ref state means for it; none lets the failure escape the service.</summary>
     private static async Task<(RefSnapshot Snapshot, long Fingerprint, string[] Tips, long WalkKey)?> TryGetRefStateAsync(
-        RepositoryContext context, GraphQuery query, bool background, CancellationToken ct)
+        RepositoryContext context, GraphQuery query, CancellationToken ct)
     {
         RefSnapshot snapshot;
         try { snapshot = await context.RefSnapshots.GetAsync(ct).ConfigureAwait(false); }
