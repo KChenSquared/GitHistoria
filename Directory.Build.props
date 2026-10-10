@@ -15,4 +15,13 @@
     <BaseIntermediateOutputPath>$(RepoRoot)obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
   </PropertyGroup>
 
+  <!-- The version comes from the nearest v* git tag. -->
+  <PropertyGroup>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MinVer" Version="8.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>

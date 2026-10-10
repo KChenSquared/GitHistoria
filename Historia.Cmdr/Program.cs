@@ -23,7 +23,7 @@ internal static class Program
 
         if (parsed.ShowVersion)
         {
-            Console.Out.WriteLine(Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0");
+            Console.Out.WriteLine(Historia.Diagnostics.AppVersion.Current);
             return ControlExitCode.Ok;
         }
 
