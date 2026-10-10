@@ -279,7 +279,7 @@ public class SettingsNumericCommitTests
             return Task.CompletedTask;
         });
 
-        nud.Text = "20000000"; // above the old 10M hard cap — no longer clamped
+        nud.Text = "20000000"; // a large value is accepted unclamped
         RaiseEnter(nud);
 
         await Task.Delay(500);

@@ -19,7 +19,7 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0" />
-    <!-- Pinned to the Avalonia line in Historia.App.csproj (constitution 0.7). -->
+    <!-- Pinned to the Avalonia line in Historia.App.csproj. -->
     <PackageReference Include="Avalonia.Headless" Version="11.3.20" />
     <PackageReference Include="Avalonia.Headless.XUnit" Version="11.3.20" />
     <PackageReference Include="LibGit2Sharp" Version="0.32.0" />
