@@ -4,12 +4,10 @@ namespace Historia.Controls;
 /// Abstract base class for diff code editor presenters.
 /// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
 /// </summary>
-public abstract class DiffPresenterBase : CodeEditor
+public abstract class DiffPresenterBase : ScrollSyncCodeEditor
 {
     private DiffDisplayModel? _model;
     private IReadOnlyList<DiffDisplayRow> _rows = [];
-    private IDisposable? _syntaxSubscription;
-    private string? _filePath;
     private int _currentBlockIndex = -1;
     private bool _allowStaging = true;
     private string _stageVerb = "Stage";
@@ -17,11 +15,8 @@ public abstract class DiffPresenterBase : CodeEditor
     private DiffHunkActionGenerator? _hunkActionGenerator;
     private int? _pointerLine;
     private (int Start, int End)? _visibleLineRange;
-    private ScrollViewer? _scrollViewer;
     private readonly DiffLineBackgroundRenderer _backgroundRenderer;
     private readonly DiffIndicatorTransformer _indicatorTransformer;
-
-    public IServiceProvider? ServicesProvider { get; set; }
 
     public DiffDisplayModel? Model
     {
@@ -41,19 +36,6 @@ public abstract class DiffPresenterBase : CodeEditor
         protected set => _rows = value;
     }
 
-    public string? FilePath
-    {
-        get => _filePath;
-        set
-        {
-            _filePath = value;
-            if (_syntaxSubscription != null)
-            {
-                DetachSyntaxHighlighting();
-                AttachSyntaxHighlighting();
-            }
-        }
-    }
 
     public bool EnableRowButtons
     {
@@ -141,7 +123,6 @@ public abstract class DiffPresenterBase : CodeEditor
 
     public event EventHandler<int>? HunkActionRequested;
     public event EventHandler<IReadOnlyList<DiffLineRef>>? SelectionActionRequested;
-    public event EventHandler<Vector>? ScrollOffsetChanged;
 
     protected DiffPresenterBase()
     {
@@ -162,118 +143,7 @@ public abstract class DiffPresenterBase : CodeEditor
 
     protected abstract void OnModelChanged();
 
-    protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
-    {
-        base.OnApplyTemplate(e);
-        UnhookScrollViewer();
-        _scrollViewer = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") ?? this.FindDescendantOfType<ScrollViewer>();
-        if (_scrollViewer != null)
-        {
-            _scrollViewer.ScrollChanged += OnScrollViewerScrollChanged;
-            if (_scrollOffset != Vector.Zero)
-            {
-                _scrollViewer.Offset = _scrollOffset;
-            }
-        }
-    }
-
-    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        base.OnAttachedToVisualTree(e);
-        AttachSyntaxHighlighting();
-        if (_scrollViewer == null)
-        {
-            HookScrollViewer();
-        }
-    }
-
-    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        UnhookScrollViewer();
-        DetachSyntaxHighlighting();
-        base.OnDetachedFromVisualTree(e);
-    }
-
-    private Vector _scrollOffset = Vector.Zero;
-
-    private void HookScrollViewer()
-    {
-        _scrollViewer = this.FindDescendantOfType<ScrollViewer>();
-        if (_scrollViewer != null)
-        {
-            _scrollViewer.ScrollChanged += OnScrollViewerScrollChanged;
-            if (_scrollOffset != Vector.Zero)
-            {
-                _scrollViewer.Offset = _scrollOffset;
-            }
-        }
-    }
-
-    private void UnhookScrollViewer()
-    {
-        if (_scrollViewer != null)
-        {
-            _scrollViewer.ScrollChanged -= OnScrollViewerScrollChanged;
-            _scrollViewer = null;
-        }
-    }
-
-    private void OnScrollViewerScrollChanged(object? sender, ScrollChangedEventArgs e)
-    {
-        if (_scrollViewer != null)
-        {
-            _scrollOffset = _scrollViewer.Offset;
-            ScrollOffsetChanged?.Invoke(this, _scrollOffset);
-            UpdateVisibleLineRange();
-        }
-    }
-
-    public Vector GetScrollOffset() => _scrollViewer?.Offset ?? _scrollOffset;
-
-    public void SetScrollOffset(Vector offset)
-    {
-        _scrollOffset = offset;
-        if (_scrollViewer != null)
-        {
-            _scrollViewer.Offset = offset;
-        }
-        else
-        {
-            ScrollToHorizontalOffset(offset.X);
-            ScrollToVerticalOffset(offset.Y);
-        }
-        ScrollOffsetChanged?.Invoke(this, offset);
-        UpdateVisibleLineRange();
-    }
-
-    private void AttachSyntaxHighlighting()
-    {
-        if (_syntaxSubscription != null)
-        {
-            return;
-        }
-
-        var host = ServicesProvider?.GetService(typeof(SyntaxThemeHost)) as SyntaxThemeHost
-                   ?? (Application.Current as App)?.Services?.GetService(typeof(SyntaxThemeHost)) as SyntaxThemeHost;
-
-        if (host != null)
-        {
-            try
-            {
-                _syntaxSubscription = host.Attach(this, FilePath);
-            }
-            catch
-            {
-                // Fall back to plain text if host fails
-            }
-        }
-    }
-
-    private void DetachSyntaxHighlighting()
-    {
-        _syntaxSubscription?.Dispose();
-        _syntaxSubscription = null;
-    }
+    protected override void OnScrollOffsetApplied() => UpdateVisibleLineRange();
 
     private void OnCaretPositionChanged(object? sender, EventArgs e)
     {

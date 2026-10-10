@@ -84,4 +84,35 @@ public class CodeEditorTests
             window.Close();
         }
     }
+
+    [AvaloniaFact]
+    public void SingleSideDiffPresenter_SetScrollOffset_raises_event_and_updates_visible_range()
+    {
+        var presenter = new SingleSideDiffPresenter(isOld: false);
+        presenter.Document = new TextDocument(string.Join("\n", Enumerable.Range(1, 100).Select(i => $"Line {i}")));
+
+        var window = new Window { Width = 400, Height = 300, Content = presenter };
+        window.Show();
+
+        try
+        {
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            bool scrollChangedFired = false;
+            presenter.ScrollOffsetChanged += (_, _) => scrollChangedFired = true;
+
+            presenter.SetScrollOffset(new Vector(0, 40));
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(scrollChangedFired);
+            Assert.Equal(new Vector(0, 40), presenter.GetScrollOffset());
+            Assert.NotNull(presenter.VisibleLineRange);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }
