@@ -9,10 +9,10 @@ public sealed class OpenAiCompatibleClient(AiHttp http) : IAiChatClient
     public async Task<IReadOnlyList<string>> ListModelsAsync(AiChatRequest request, CancellationToken ct)
     {
         var body = await http.SendAsync(
-            () => Create(HttpMethod.Get, $"{Base(request)}/models", request, null),
-            Secrets(request), null, ct).ConfigureAwait(false);
+            () => AiHttp.CreateJsonRequest(HttpMethod.Get, $"{Base(request)}/models", request, null, m => { if (!string.IsNullOrEmpty(request.ApiKey)) m.Headers.TryAddWithoutValidation("Authorization", $"Bearer {request.ApiKey}"); }),
+            AiHttp.Secrets(request), null, ct).ConfigureAwait(false);
 
-        var root = Parse(body);
+        var root = AiHttp.ParseJson(body, "The AI service");
         try
         {
             var data = root["data"] as JsonArray
@@ -43,8 +43,8 @@ public sealed class OpenAiCompatibleClient(AiHttp http) : IAiChatClient
 
         var json = payload.ToJsonString();
         var body = await http.SendAsync(
-            () => Create(HttpMethod.Post, $"{Base(request)}/chat/completions", request, json),
-            Secrets(request), RefineError, ct).ConfigureAwait(false);
+            () => AiHttp.CreateJsonRequest(HttpMethod.Post, $"{Base(request)}/chat/completions", request, json, m => { if (!string.IsNullOrEmpty(request.ApiKey)) m.Headers.TryAddWithoutValidation("Authorization", $"Bearer {request.ApiKey}"); }),
+            AiHttp.Secrets(request), RefineError, ct).ConfigureAwait(false);
 
         try
         {
@@ -66,7 +66,7 @@ public sealed class OpenAiCompatibleClient(AiHttp http) : IAiChatClient
 
     private static string ReadReply(string body)
     {
-        var root = Parse(body);
+        var root = AiHttp.ParseJson(body, "The AI service");
         var choice = (root["choices"] as JsonArray)?.FirstOrDefault()
             ?? throw new AiException(AiErrorKind.BadResponse, "The AI service returned a reply in an unexpected format.");
 
@@ -92,29 +92,5 @@ public sealed class OpenAiCompatibleClient(AiHttp http) : IAiChatClient
 
     private static string Base(AiChatRequest request) => request.Server.Trim().TrimEnd('/');
 
-    private static IReadOnlyCollection<string> Secrets(AiChatRequest request) =>
-        [.. AiExtraHeaders.Values(request.ExtraHeaders), .. (request.ApiKey is { Length: > 0 } k ? new[] { k } : [])];
 
-    private static HttpRequestMessage Create(HttpMethod method, string url, AiChatRequest request, string? json)
-    {
-        var message = new HttpRequestMessage(method, url);
-        if (!string.IsNullOrEmpty(request.ApiKey))
-            message.Headers.TryAddWithoutValidation("Authorization", $"Bearer {request.ApiKey}");
-        AiExtraHeaders.Apply(message, request.ExtraHeaders);
-        if (json is not null)
-            message.Content = new StringContent(json, Encoding.UTF8, "application/json");
-        return message;
-    }
-
-    private static JsonNode Parse(string body)
-    {
-        try
-        {
-            return JsonNode.Parse(body) ?? throw new JsonException();
-        }
-        catch (JsonException ex)
-        {
-            throw new AiException(AiErrorKind.BadResponse, "The AI service returned something that isn't JSON. Check the Server address.", null, ex);
-        }
-    }
 }

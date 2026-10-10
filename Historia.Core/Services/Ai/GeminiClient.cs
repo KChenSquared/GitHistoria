@@ -17,7 +17,9 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
         {
             var url = $"{Base(request)}/models?pageSize=1000"
                 + (pageToken is null ? "" : $"&pageToken={Uri.EscapeDataString(pageToken)}");
-            var body = await http.SendAsync(() => Create(HttpMethod.Get, url, request, null), Secrets(request), null, ct)
+            var body = await http.SendAsync(
+                () => AiHttp.CreateJsonRequest(HttpMethod.Get, url, request, null, m => { if (!string.IsNullOrEmpty(request.ApiKey)) m.Headers.TryAddWithoutValidation("x-goog-api-key", request.ApiKey); }),
+                AiHttp.Secrets(request), null, ct)
                 .ConfigureAwait(false);
 
             var (names, next) = ReadModelPage(body);
@@ -46,8 +48,8 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
         var url = $"{Base(request)}/models/{Uri.EscapeDataString(StripPrefix(request.Model))}:generateContent";
         var json = payload.ToJsonString();
         var body = await http.SendAsync(
-            () => Create(HttpMethod.Post, url, request, json),
-            Secrets(request), RefineError, ct).ConfigureAwait(false);
+            () => AiHttp.CreateJsonRequest(HttpMethod.Post, url, request, json, m => { if (!string.IsNullOrEmpty(request.ApiKey)) m.Headers.TryAddWithoutValidation("x-goog-api-key", request.ApiKey); }),
+            AiHttp.Secrets(request), RefineError, ct).ConfigureAwait(false);
 
         try
         {
@@ -61,7 +63,7 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
 
     private static (List<string> Ids, string? NextPageToken) ReadModelPage(string body)
     {
-        var root = Parse(body);
+        var root = AiHttp.ParseJson(body, "Gemini");
         try
         {
             var ids = new List<string>();
@@ -85,7 +87,7 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
 
     private static string ReadReply(string body)
     {
-        var root = Parse(body);
+        var root = AiHttp.ParseJson(body, "Gemini");
 
         if (root["promptFeedback"]?["blockReason"]?.GetValue<string>() is { Length: > 0 })
             throw new AiException(AiErrorKind.ContentFiltered, "Gemini declined the request because of its safety filters.");
@@ -175,29 +177,5 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
 
     private static string Base(AiChatRequest request) => request.Server.Trim().TrimEnd('/');
 
-    private static IReadOnlyCollection<string> Secrets(AiChatRequest request) =>
-        [.. AiExtraHeaders.Values(request.ExtraHeaders), .. (request.ApiKey is { Length: > 0 } k ? new[] { k } : [])];
 
-    private static HttpRequestMessage Create(HttpMethod method, string url, AiChatRequest request, string? json)
-    {
-        var message = new HttpRequestMessage(method, url);
-        if (!string.IsNullOrEmpty(request.ApiKey))
-            message.Headers.TryAddWithoutValidation("x-goog-api-key", request.ApiKey);
-        AiExtraHeaders.Apply(message, request.ExtraHeaders);
-        if (json is not null)
-            message.Content = new StringContent(json, Encoding.UTF8, "application/json");
-        return message;
-    }
-
-    private static JsonNode Parse(string body)
-    {
-        try
-        {
-            return JsonNode.Parse(body) ?? throw new JsonException();
-        }
-        catch (JsonException ex)
-        {
-            throw new AiException(AiErrorKind.BadResponse, "Gemini returned something that isn't JSON. Check the Server address.", null, ex);
-        }
-    }
 }
