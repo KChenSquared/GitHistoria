@@ -13,6 +13,11 @@ public sealed class ShapedTextRenderPathTests
     private static readonly string[] RenderPathFiles =
     [
         "Historia.App/Controls/CommitGraphControl.cs",
+        "Historia.App/Controls/CommitGraphControl.CommitActions.cs",
+        "Historia.App/Controls/CommitGraphControl.Input.cs",
+        "Historia.App/Controls/CommitGraphControl.Query.cs",
+        "Historia.App/Controls/CommitGraphControl.RefJump.cs",
+        "Historia.App/Controls/CommitGraphControl.Render.cs",
         "Historia.App/Controls/Diff/DiffRenderers.cs",
         "Historia.App/Controls/Diff/DiffMinimap.cs",
         "Historia.App/Controls/Conflicts/ConflictPaneEditor.cs",
