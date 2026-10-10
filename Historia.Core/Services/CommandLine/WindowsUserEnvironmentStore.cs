@@ -68,6 +68,13 @@ public sealed class WindowsUserEnvironmentStore : IUserEnvironmentStore
             out _);
     }
 
+    // The process target has no registry round trip, so it keeps the text it is given.
+    public string? ReadProcessPath() =>
+        Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Process);
+
+    public void WriteProcessPath(string value) =>
+        Environment.SetEnvironmentVariable("PATH", value, EnvironmentVariableTarget.Process);
+
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern IntPtr SendMessageTimeout(
         IntPtr hWnd,

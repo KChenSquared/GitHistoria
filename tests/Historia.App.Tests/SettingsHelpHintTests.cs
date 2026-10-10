@@ -98,7 +98,7 @@ public sealed class SettingsHelpHintTests
     private sealed class FakeCmdrPathService : ICmdrPathService
     {
         public CmdrPathStatus GetStatus() => new CmdrPathStatus.NeedsUpdate(
-            new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false),
+            new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [], false),
             [],
             @"C:\NewCmdr",
             @"C:\Backups");

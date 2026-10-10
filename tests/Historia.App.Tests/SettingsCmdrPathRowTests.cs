@@ -149,6 +149,13 @@ public sealed class SettingsCmdrPathRowTests
     private static StackPanel GeneralBody(SettingsView view)
     {
         view.EnsureCmdrStatusLoadedForTesting();
+        return GeneralBodyNow(view);
+    }
+
+    /// <summary>The General body as rendered now, without waiting for a status refresh that a
+    /// test may be holding back.</summary>
+    private static StackPanel GeneralBodyNow(SettingsView view)
+    {
         var root = (StackPanel)typeof(SettingsView).GetField("_root", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(view)!;
         var header = root.Children.OfType<Border>().Single(b =>
             b.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "General"));
@@ -177,7 +184,7 @@ public sealed class SettingsCmdrPathRowTests
         var cmdr = new RecordingCmdrPathService
         {
             StatusToReturn = new CmdrPathStatus.NeedsUpdate(
-                new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false),
+                new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [], false),
                 [],
                 @"C:\NewCmdr",
                 @"C:\Backups"),
@@ -250,7 +257,7 @@ public sealed class SettingsCmdrPathRowTests
         var cmdr = new RecordingCmdrPathService
         {
             StatusToReturn = new CmdrPathStatus.NeedsUpdate(
-                new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false),
+                new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [], false),
                 [],
                 @"C:\NewCmdr",
                 @"C:\Backups"),
@@ -272,7 +279,7 @@ public sealed class SettingsCmdrPathRowTests
     [AvaloniaFact]
     public async Task Clicking_calls_ConfirmDestructiveAsync_and_Cancel_skips_apply()
     {
-        var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [@"C:\OldCmdr1", @"C:\OldCmdr2"], false);
+        var preview = new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [@"C:\OldCmdr1", @"C:\OldCmdr2"], false);
         var cmdr = new RecordingCmdrPathService
         {
             StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [@"C:\System\cmdr"], @"C:\NewCmdr", @"C:\Backups"),
@@ -308,7 +315,7 @@ public sealed class SettingsCmdrPathRowTests
     [AvaloniaFact]
     public async Task Confirm_calls_Apply_once_with_previewed_change()
     {
-        var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
+        var preview = new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [], false);
         var cmdr = new RecordingCmdrPathService
         {
             StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
@@ -336,7 +343,7 @@ public sealed class SettingsCmdrPathRowTests
     [AvaloniaFact]
     public async Task Changed_result_shows_message()
     {
-        var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
+        var preview = new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [], false);
         var cmdr = new RecordingCmdrPathService
         {
             StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
@@ -364,7 +371,7 @@ public sealed class SettingsCmdrPathRowTests
     [AvaloniaFact]
     public async Task Failed_result_shows_message()
     {
-        var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
+        var preview = new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [], false);
         var cmdr = new RecordingCmdrPathService
         {
             StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
@@ -392,7 +399,7 @@ public sealed class SettingsCmdrPathRowTests
     [AvaloniaFact]
     public async Task Effect_says_keeps_when_nothing_is_added_and_lists_duplicates_separately()
     {
-        var preview = new PathChange(@"C:\NewCmdr", null, [@"C:\Old", @"C:\NewCmdr"], false);
+        var preview = new PathChange(null, @"C:\NewCmdr", null, [@"C:\Old", @"C:\NewCmdr"], false);
         var cmdr = new RecordingCmdrPathService
         {
             StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
@@ -426,7 +433,7 @@ public sealed class SettingsCmdrPathRowTests
     [AvaloniaFact]
     public async Task Button_is_disabled_while_apply_runs()
     {
-        var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
+        var preview = new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [], false);
         var applyGate = new TaskCompletionSource<bool>();
         var cmdr = new RecordingCmdrPathService
         {
@@ -459,7 +466,7 @@ public sealed class SettingsCmdrPathRowTests
     [AvaloniaFact]
     public async Task Button_stays_disabled_after_a_write_until_the_new_status_arrives()
     {
-        var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
+        var preview = new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [], false);
         var statusGate = new TaskCompletionSource<bool>();
         var cmdr = new RecordingCmdrPathService
         {
@@ -478,7 +485,7 @@ public sealed class SettingsCmdrPathRowTests
         await view.CmdrApplyTaskForTesting;
         Dispatcher.UIThread.RunJobs();
 
-        var buttonDuringWait = FindCmdrButton(GeneralBody(view));
+        var buttonDuringWait = FindCmdrButton(GeneralBodyNow(view));
         Assert.NotNull(buttonDuringWait);
         Assert.Equal("Add to PATH", buttonDuringWait.Content);
         Assert.False(buttonDuringWait.IsEnabled);
@@ -487,7 +494,7 @@ public sealed class SettingsCmdrPathRowTests
         statusGate.SetResult(true);
         view.EnsureCmdrStatusLoadedForTesting();
 
-        var currentButton = FindCmdrButton(general);
+        var currentButton = FindCmdrButton(GeneralBodyNow(view));
         Assert.NotNull(currentButton);
         Assert.Equal("On PATH", currentButton.Content);
         Assert.False(currentButton.IsEnabled);
@@ -519,7 +526,7 @@ public sealed class SettingsCmdrPathRowTests
     [AvaloniaFact]
     public async Task Throwing_apply_shows_a_message_and_refreshes()
     {
-        var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
+        var preview = new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [], false);
         var cmdr = new RecordingCmdrPathService
         {
             StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),

@@ -3,12 +3,14 @@ namespace Historia.Services.CommandLine;
 /// <summary>
 /// A proposed change to the user PATH environment variable.
 /// </summary>
+/// <param name="Original">The raw PATH value the change was planned from, or <c>null</c> when it was missing.</param>
 /// <param name="NewValue">The rewritten PATH value.</param>
 /// <param name="Added">The folder added, or <c>null</c> if our folder was already in place.</param>
 /// <param name="Removed">The raw text of every removed entry.</param>
 /// <param name="IsNoOp">True when the proposed rewrite does not alter effective entries.</param>
 /// <param name="TooLong">True when <see cref="NewValue"/> exceeds 32,767 characters.</param>
 public sealed record PathChange(
+    string? Original,
     string NewValue,
     string? Added,
     IReadOnlyList<string> Removed,
@@ -111,7 +113,7 @@ public static class UserPathEditor
         bool isNoOp = added is null && removed.Count == 0;
         bool tooLong = newValue.Length > MaxPathLength;
 
-        return new PathChange(newValue, added, removed, isNoOp, tooLong);
+        return new PathChange(raw, newValue, added, removed, isNoOp, tooLong);
     }
 
     /// <summary>

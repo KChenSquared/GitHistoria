@@ -13,7 +13,6 @@ public sealed class CmdrPathService : ICmdrPathService
     private readonly string _backupFolder;
     private readonly Func<string, string, string> _saveBackup;
     private readonly IAppLog _log;
-    private readonly Action<string> _updateProcessPath;
 
     public CmdrPathService(
         IUserEnvironmentStore store,
@@ -21,8 +20,7 @@ public sealed class CmdrPathService : ICmdrPathService
         Func<string, bool> fileExists,
         string backupFolder,
         Func<string, string, string> saveBackup,
-        IAppLog log,
-        Action<string>? updateProcessPath = null)
+        IAppLog log)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         ArgumentNullException.ThrowIfNull(ourFolder);
@@ -31,7 +29,6 @@ public sealed class CmdrPathService : ICmdrPathService
         _backupFolder = backupFolder ?? throw new ArgumentNullException(nameof(backupFolder));
         _saveBackup = saveBackup ?? throw new ArgumentNullException(nameof(saveBackup));
         _log = log ?? throw new ArgumentNullException(nameof(log));
-        _updateProcessPath = updateProcessPath ?? (path => Environment.SetEnvironmentVariable("PATH", path, EnvironmentVariableTarget.Process));
     }
 
     public CmdrPathStatus GetStatus()
@@ -81,13 +78,23 @@ public sealed class CmdrPathService : ICmdrPathService
             return new CmdrPathApplyResult.Failed(ex.Message);
         }
 
+        // Comparing the value read against the one the preview was planned from, not just the
+        // results, keeps an entry added while the dialog was open from being removed unconfirmed.
+        if (!string.Equals(currentValue, confirmed.Original, StringComparison.Ordinal))
+        {
+            return string.Equals(currentValue, confirmed.NewValue, StringComparison.Ordinal)
+                ? new CmdrPathApplyResult.AlreadyCurrent()
+                : new CmdrPathApplyResult.Changed();
+        }
+
         var newPlan = UserPathEditor.PlanReplace(currentValue, _ourFolder, HoldsCmdr);
-
-        if (!string.Equals(newPlan.NewValue, confirmed.NewValue, StringComparison.Ordinal))
-            return new CmdrPathApplyResult.Changed();
-
         if (newPlan.IsNoOp)
             return new CmdrPathApplyResult.AlreadyCurrent();
+
+        // The folders on PATH can gain or lose a historia-cmdr between preview and confirm.
+        if (!string.Equals(newPlan.NewValue, confirmed.NewValue, StringComparison.Ordinal)
+            || !newPlan.Removed.SequenceEqual(confirmed.Removed, StringComparer.Ordinal))
+            return new CmdrPathApplyResult.Changed();
 
         string backupPath;
         try
@@ -112,9 +119,8 @@ public sealed class CmdrPathService : ICmdrPathService
 
         try
         {
-            var processPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Process);
-            var processPlan = UserPathEditor.PlanReplace(processPath, _ourFolder, HoldsCmdr);
-            _updateProcessPath(processPlan.NewValue);
+            var processPlan = UserPathEditor.PlanReplace(_store.ReadProcessPath(), _ourFolder, HoldsCmdr);
+            _store.WriteProcessPath(processPlan.NewValue);
         }
         catch
         {
@@ -154,7 +160,7 @@ public sealed class CmdrPathService : ICmdrPathService
         foreach (var entry in entries)
         {
             var expanded = UserPathEditor.ExpandEntry(entry);
-            if (expanded is null)
+            if (expanded is null || UserPathEditor.SameFolder(entry, _ourFolder))
                 continue;
 
             try

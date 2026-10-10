@@ -1,7 +1,7 @@
 namespace Historia.Services.CommandLine;
 
 /// <summary>
-/// Abstraction over reading and writing the Windows user and machine environment variables.
+/// Abstraction over reading and writing the Windows user and machine environment variables and this process's PATH.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public interface IUserEnvironmentStore
@@ -27,4 +27,14 @@ public interface IUserEnvironmentStore
     /// Broadcasts <c>WM_SETTINGCHANGE</c> with lParam <c>"Environment"</c> to notify top-level windows of environment changes.
     /// </summary>
     void BroadcastEnvironmentChange();
+
+    /// <summary>
+    /// Reads this process's <c>PATH</c>.
+    /// </summary>
+    string? ReadProcessPath();
+
+    /// <summary>
+    /// Replaces this process's <c>PATH</c>, so programs it starts afterwards see the new value.
+    /// </summary>
+    void WriteProcessPath(string value);
 }

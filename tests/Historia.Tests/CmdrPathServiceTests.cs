@@ -8,6 +8,7 @@ public sealed class CmdrPathServiceTests
         public string? UserPath { get; set; }
         public RegistryValueKind UserKind { get; set; } = RegistryValueKind.ExpandString;
         public string? MachinePath { get; set; }
+        public string? ProcessPath { get; set; } = @"C:\Windows";
         public int BroadcastCount { get; private set; }
         public List<(string Value, RegistryValueKind Kind)> Writes { get; } = [];
         public bool ThrowOnWrite { get; set; }
@@ -42,6 +43,10 @@ public sealed class CmdrPathServiceTests
         {
             BroadcastCount++;
         }
+
+        public string? ReadProcessPath() => ProcessPath;
+
+        public void WriteProcessPath(string value) => ProcessPath = value;
     }
 
     [Fact]
@@ -575,22 +580,113 @@ public sealed class CmdrPathServiceTests
         var store = new FakeEnvironmentStore
         {
             UserPath = @"C:\Tools",
+            ProcessPath = @"C:\Windows;C:\OldHistoria;C:\Tools",
         };
-        string? capturedProcessPath = null;
+        files.Add(@"C:\OldHistoria\historia-cmdr.exe");
+        files.Add(@"C:\OldHistoria\Historia.exe");
         var service = new CmdrPathService(
             store,
             ourFolder,
             files.Contains,
             @"C:\Backups",
             (folder, content) => Path.Combine(folder, "backup.reg"),
-            AppLog.Current,
-            path => capturedProcessPath = path);
+            AppLog.Current);
 
         var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
         var result = service.Apply(preview);
 
         Assert.IsType<CmdrPathApplyResult.Written>(result);
-        Assert.NotNull(capturedProcessPath);
-        Assert.Contains(ourFolder, capturedProcessPath);
+        Assert.Equal(@"C:\Windows;C:\HistoriaApp;C:\Tools", store.ProcessPath);
+    }
+
+    [Fact]
+    public void Apply_reports_Changed_when_an_entry_appears_that_the_same_result_would_remove()
+    {
+        var ourFolder = @"C:\HistoriaApp";
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(ourFolder, "historia-cmdr.exe"),
+            Path.Combine(ourFolder, "Historia.exe"),
+            @"C:\Old\historia-cmdr.exe",
+            @"C:\Old\Historia.exe",
+        };
+        var store = new FakeEnvironmentStore
+        {
+            UserPath = @"C:\Tools",
+        };
+        var service = new CmdrPathService(
+            store,
+            ourFolder,
+            files.Contains,
+            @"C:\Backups",
+            (folder, content) => Path.Combine(folder, "backup.reg"),
+            AppLog.Current);
+
+        var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
+        Assert.Empty(preview.Removed);
+
+        // Replacing C:\Old in place gives the same new value the preview showed.
+        store.UserPath = @"C:\Tools;C:\Old";
+
+        var result = service.Apply(preview);
+        Assert.IsType<CmdrPathApplyResult.Changed>(result);
+        Assert.Empty(store.Writes);
+    }
+
+    [Fact]
+    public void Apply_reports_Changed_when_a_folder_gains_historia_cmdr_after_preview()
+    {
+        var ourFolder = @"C:\HistoriaApp";
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(ourFolder, "historia-cmdr.exe"),
+            Path.Combine(ourFolder, "Historia.exe"),
+        };
+        var store = new FakeEnvironmentStore
+        {
+            UserPath = @"C:\Tools;C:\Old",
+        };
+        var service = new CmdrPathService(
+            store,
+            ourFolder,
+            files.Contains,
+            @"C:\Backups",
+            (folder, content) => Path.Combine(folder, "backup.reg"),
+            AppLog.Current);
+
+        var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
+
+        files.Add(@"C:\Old\historia-cmdr.exe");
+        files.Add(@"C:\Old\Historia.exe");
+
+        var result = service.Apply(preview);
+        Assert.IsType<CmdrPathApplyResult.Changed>(result);
+        Assert.Empty(store.Writes);
+    }
+
+    [Fact]
+    public void Our_own_folder_on_the_machine_path_is_not_a_machine_copy()
+    {
+        var ourFolder = @"C:\HistoriaApp";
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(ourFolder, "historia-cmdr.exe"),
+            Path.Combine(ourFolder, "Historia.exe"),
+        };
+        var store = new FakeEnvironmentStore
+        {
+            UserPath = @"C:\Tools",
+            MachinePath = @"C:\Windows;C:\HistoriaApp\",
+        };
+        var service = new CmdrPathService(
+            store,
+            ourFolder,
+            files.Contains,
+            @"C:\Backups",
+            (folder, content) => Path.Combine(folder, "backup.reg"),
+            AppLog.Current);
+
+        var status = Assert.IsType<CmdrPathStatus.NeedsUpdate>(service.GetStatus());
+        Assert.Empty(status.MachineCopies);
     }
 }
