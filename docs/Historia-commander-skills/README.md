@@ -14,8 +14,9 @@ when and how to call it.
 
 ## The command
 
-`historia-cmdr.exe` is installed beside `Historia.exe`. Put that folder on your `PATH` so agents can
-run `historia-cmdr` from any repository.
+`historia-cmdr.exe` is installed beside `Historia.exe`. Settings → General → **Add to PATH** puts it
+on your user `PATH` (and moves it there when you run Historia from another folder); open a new
+terminal afterwards so agents can run `historia-cmdr` from any repository.
 
 | Command | What Historia shows |
 |---|---|

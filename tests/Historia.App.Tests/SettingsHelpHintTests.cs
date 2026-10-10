@@ -10,17 +10,18 @@ namespace HistoriaApp.Tests;
 [Trait("tier", "ui")]
 public sealed class SettingsHelpHintTests
 {
-    private const string AppearanceHint = "Graph columns are set in Repository settings: click the cog in the graph's GRAPH header.";
+    private const string GeneralHint = "Graph columns are set in Repository settings: click the cog in the graph's GRAPH header.";
 
-    /// <summary>The Appearance hint's second paragraph, shown only in developer mode. The
+    /// <summary>The General hint's second paragraph, shown only in developer mode. The
     /// <c>enableDevMode</c> marker is copied next to every build of the App — this test
     /// assembly's output included — so which text applies is read from <see cref="DevMode"/>.</summary>
-    private const string AppearanceDevModeParagraph = "In developer mode, a custom theme from the Developer panel overrides Light, Dark and System.";
+    private const string GeneralDevModeParagraph = "In developer mode, a custom theme from the Developer panel overrides Light, Dark and System.";
 
     /// <summary>Anchor label → full hint text, for every hint on the page.</summary>
     private static readonly Dictionary<string, string> ExpectedHints = new()
     {
-        ["Appearance"] = DevMode.Enabled ? AppearanceHint + "\n\n" + AppearanceDevModeParagraph : AppearanceHint,
+        ["General"] = DevMode.Enabled ? GeneralHint + "\n\n" + GeneralDevModeParagraph : GeneralHint,
+        ["Command line"] = "Lets terminals and coding agents run historia-cmdr by name. Puts Historia's folder on your user PATH, replacing any other historia-cmdr folder there. Open a new terminal to use it.",
         ["High contrast"] = "Overrides every other theme. Also turns on when Windows high contrast is on.",
         ["Wrap tabs onto more rows"] = "When tabs don't fit, they wrap to a new row instead of scrolling.",
         ["Fixed tab width"] = "When off, each tab fits its name, up to about 25 characters.",
@@ -54,7 +55,7 @@ public sealed class SettingsHelpHintTests
 
     private static readonly string[] ApprovedLabels =
     [
-        "Appearance", "Theme", "High contrast", "Wrap tabs onto more rows", "Maximum rows", "Fixed tab width",
+        "General", "Theme", "Command line", "Add to PATH", "High contrast", "Wrap tabs onto more rows", "Maximum rows", "Fixed tab width",
         "Tab width (px)", "Show author date", "Scroll direction", "Match system", "Standard", "Inverted",
         "Cache sidebar between launches", "Privacy & Network", "Auto-fetch open repositories", "Allow command-line control (historia-cmdr)", "Diff viewer",
         "Layout", "Unified", "Side by side", "Context lines", "Wrap long lines", "Issue autolinks",
@@ -67,7 +68,7 @@ public sealed class SettingsHelpHintTests
 
     private static readonly string[] RetiredLabels =
     [
-        "High Contrast mode", "Multi-line repository tabs", "Max tab rows", "Fixed-width repository tabs",
+        "Appearance", "High Contrast mode", "Multi-line repository tabs", "Max tab rows", "Fixed-width repository tabs",
         "Show author date instead of commit date", "Match system (natural / inverted)",
         "Store a local repository cache", "Automatically fetch open repositories", "Diff & Editor",
         "Default diff view", "Side-by-Side", "Word-wrap diff lines", "pattern (regex)", "URL template",
@@ -92,6 +93,16 @@ public sealed class SettingsHelpHintTests
         public Task StoreTokenAsync(string key, string token, CancellationToken ct = default) => Task.CompletedTask;
         public Task<string?> RetrieveTokenAsync(string key, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task DeleteTokenAsync(string key, CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    private sealed class FakeCmdrPathService : ICmdrPathService
+    {
+        public CmdrPathStatus GetStatus() => new CmdrPathStatus.NeedsUpdate(
+            new PathChange(null, @"C:\NewCmdr", @"C:\NewCmdr", [], false),
+            [],
+            @"C:\NewCmdr",
+            @"C:\Backups");
+        public CmdrPathApplyResult Apply(PathChange confirmed) => new CmdrPathApplyResult.Written(@"C:\backup.reg");
     }
 
     private static ServiceProvider CreateServices()
@@ -138,6 +149,7 @@ public sealed class SettingsHelpHintTests
         sc.AddSingleton<IRepoIdentityService, RepoIdentityService>();
         sc.AddSingleton<ICredentialVaultService, FakeVault>();
         sc.AddSingleton<IExternalLauncher, ExternalLauncher>();
+        sc.AddSingleton<ICmdrPathService, FakeCmdrPathService>();
         return sc.BuildServiceProvider();
     }
 
@@ -279,7 +291,8 @@ public sealed class SettingsHelpHintTests
     {
         var sp = CreateServices();
         var view = new SettingsView(sp);
-        SetPrivate(view, "_appearanceExpanded", true);
+        view.EnsureCmdrStatusLoadedForTesting();
+        SetPrivate(view, "_generalExpanded", true);
         SetPrivate(view, "_networkExpanded", true);
         SetPrivate(view, "_diffExpanded", true);
         SetPrivate(view, "_gitExpanded", true);
@@ -328,7 +341,7 @@ public sealed class SettingsHelpHintTests
     }
 
     [AvaloniaFact]
-    public void Appearance_offers_only_light_dark_system()
+    public void General_offers_only_light_dark_system()
     {
         var sp = CreateServices();
         var cfg = sp.GetRequiredService<ISettingsService>();
@@ -354,20 +367,20 @@ public sealed class SettingsHelpHintTests
     }
 
     [AvaloniaFact]
-    public void Splash_screen_sits_in_appearance_between_theme_and_high_contrast()
+    public void General_section_starts_with_theme_command_line_splash_and_high_contrast()
     {
         var sp = CreateServices();
         var view = new SettingsView(sp);
 
-        var body = SectionBody(view, "Appearance");
+        var body = SectionBody(view, "General");
         var order = body.Children.Select(RowLabel).ToList();
-        Assert.Equal(new[] { "Theme", "Show splash screen", "High contrast" }, order.Take(3));
+        Assert.Equal(new[] { "Theme", "Command line", "Show splash screen", "High contrast" }, order.Take(4));
         Assert.DoesNotContain("Show splash screen", SectionBody(view, "Advanced").Children.Select(RowLabel));
         view.Dispose();
     }
 
     [AvaloniaTheory]
-    [InlineData("Appearance")]
+    [InlineData("General")]
     [InlineData("Privacy & Network")]
     [InlineData("Diff viewer")]
     [InlineData("Git")]
@@ -511,6 +524,7 @@ public sealed class SettingsHelpHintTests
     /// <summary>The body a collapsible section's header shows and hides.</summary>
     private static StackPanel SectionBody(SettingsView view, string title)
     {
+        view.EnsureCmdrStatusLoadedForTesting();
         var root = Root(view);
         return (StackPanel)root.Children[root.Children.IndexOf(SectionHeader(view, title)) + 1];
     }
@@ -530,6 +544,8 @@ public sealed class SettingsHelpHintTests
     /// input watermarks.</summary>
     private static HashSet<string> VisibleLabels(Control view)
     {
+        if (view is SettingsView sv)
+            sv.EnsureCmdrStatusLoadedForTesting();
         var labels = new HashSet<string>(StringComparer.Ordinal);
         foreach (var c in view.GetLogicalDescendants())
         {
@@ -561,7 +577,11 @@ public sealed class SettingsHelpHintTests
 internal static class HelpHintMap
 {
     public static IEnumerable<Control> Badges(Control view)
-        => view.GetLogicalDescendants().OfType<Control>().Where(c => c.Classes.Contains(ViewKit.HelpHintClass));
+    {
+        if (view is SettingsView sv)
+            sv.EnsureCmdrStatusLoadedForTesting();
+        return view.GetLogicalDescendants().OfType<Control>().Where(c => c.Classes.Contains(ViewKit.HelpHintClass));
+    }
 
     public static string TipText(Control badge)
         => (ToolTip.GetTip(badge) as TextBlock)?.Text

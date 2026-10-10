@@ -89,6 +89,7 @@ public class DestructiveConfirmationTests
         (new(@"\.RemoveRemoteAsync\s*\(", RegexOptions.Compiled), "RemoveRemoteAsync"),
         (new(@"RemoveStaleLocksAsync\s*\(", RegexOptions.Compiled), "RemoveStaleLocksAsync"),
         (new(@"\.DeleteAiServiceAsync\s*\(", RegexOptions.Compiled), "DeleteAiServiceAsync"),
+        (new(@"_cmdrPath\.Apply\s*\(", RegexOptions.Compiled), "cmdr PATH Apply"),
         // Bounded lookahead (not a full parse) for the Force flag on the same statement, so a
         // plain push (no Force argument at all) never has to sit behind a confirm.
         (new(@"PushAsync\s*\([^;]{0,400}?Force", RegexOptions.Compiled | RegexOptions.Singleline), "force PushAsync"),
@@ -136,6 +137,16 @@ public class DestructiveConfirmationTests
         Assert.True(offenders.Count == 0,
             "Destructive-confirm violation — a destructive call site has no confirmation:\n  "
             + string.Join("\n  ", offenders));
+    }
+
+    [Fact]
+    public void Cmdr_path_apply_pattern_matches_its_call_site()
+    {
+        var root = RepoRoot();
+        var file = Path.Combine(root, "Historia.App", "Views", "SettingsView.cs");
+        var text = File.ReadAllText(file);
+        var pattern = new Regex(@"_cmdrPath\.Apply\s*\(", RegexOptions.Compiled);
+        Assert.Matches(pattern, text);
     }
 
     private static bool IsNear(string text, int index, string marker)
