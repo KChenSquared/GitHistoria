@@ -482,7 +482,8 @@ public sealed class App : Application
             AppContext.BaseDirectory,
             File.Exists,
             System.IO.Path.Combine(Historia.Services.Storage.AppPaths.DataDirectory, "path-backups"),
-            CmdrPathService.DefaultSaveBackup);
+            CmdrPathService.DefaultSaveBackup,
+            sp.GetRequiredService<IAppLog>());
 
     private sealed class UnavailableCmdrPathService : ICmdrPathService
     {

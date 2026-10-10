@@ -11,10 +11,22 @@ public sealed class CmdrPathServiceTests
         public int BroadcastCount { get; private set; }
         public List<(string Value, RegistryValueKind Kind)> Writes { get; } = [];
         public bool ThrowOnWrite { get; set; }
+        public bool ThrowOnRead { get; set; }
+        public bool ThrowOnMachineRead { get; set; }
 
-        public (string? Value, RegistryValueKind Kind) ReadUserPath() => (UserPath, UserKind);
+        public (string? Value, RegistryValueKind Kind) ReadUserPath()
+        {
+            if (ThrowOnRead)
+                throw new UnauthorizedAccessException("Registry read denied.");
+            return (UserPath, UserKind);
+        }
 
-        public string? ReadMachinePath() => MachinePath;
+        public string? ReadMachinePath()
+        {
+            if (ThrowOnMachineRead)
+                throw new UnauthorizedAccessException("Machine registry read denied.");
+            return MachinePath;
+        }
 
         public void WriteUserPath(string value, RegistryValueKind kind)
         {
@@ -45,7 +57,7 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => Path.Combine(folder, "backup.reg"),
-            _ => {});
+            AppLog.Current);
 
         var status = service.GetStatus();
         Assert.IsType<CmdrPathStatus.Unavailable>(status);
@@ -71,7 +83,7 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => Path.Combine(folder, "backup.reg"),
-            _ => {});
+            AppLog.Current);
 
         var status = service.GetStatus();
         Assert.IsType<CmdrPathStatus.Current>(status);
@@ -99,7 +111,7 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => Path.Combine(folder, "backup1.reg"),
-            _ => {});
+            AppLog.Current);
 
         var previewExpand = ((CmdrPathStatus.NeedsUpdate)serviceExpand.GetStatus()).Preview;
         var resultExpand = serviceExpand.Apply(previewExpand);
@@ -119,7 +131,7 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => Path.Combine(folder, "backup2.reg"),
-            _ => {});
+            AppLog.Current);
 
         var previewString = ((CmdrPathStatus.NeedsUpdate)serviceString.GetStatus()).Preview;
         var resultString = serviceString.Apply(previewString);
@@ -148,7 +160,7 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => Path.Combine(folder, "backup.reg"),
-            _ => {});
+            AppLog.Current);
 
         var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
         var result = service.Apply(preview);
@@ -177,7 +189,7 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => Path.Combine(folder, "backup.reg"),
-            _ => {});
+            AppLog.Current);
 
         var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
         Assert.Equal(0, store.BroadcastCount);
@@ -205,7 +217,7 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => Path.Combine(folder, "backup.reg"),
-            _ => {});
+            AppLog.Current);
 
         var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
 
@@ -238,7 +250,7 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => Path.Combine(folder, "backup.reg"),
-            _ => {});
+            AppLog.Current);
 
         var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
         var result = service.Apply(preview);
@@ -269,7 +281,7 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => Path.Combine(folder, "backup.reg"),
-            _ => {});
+            AppLog.Current);
 
         var status = Assert.IsType<CmdrPathStatus.NeedsUpdate>(service.GetStatus());
         Assert.Equal([machineCmdrFolder], status.MachineCopies);
@@ -305,7 +317,7 @@ public sealed class CmdrPathServiceTests
                 capturedBackupContent = content;
                 return Path.Combine(folder, "backup.reg");
             },
-            _ => {});
+            AppLog.Current);
 
         var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
         var result = service.Apply(preview);
@@ -337,7 +349,7 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => throw new IOException("Disk full"),
-            _ => {});
+            AppLog.Current);
 
         var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
         var result = service.Apply(preview);
@@ -368,12 +380,217 @@ public sealed class CmdrPathServiceTests
             files.Contains,
             @"C:\Backups",
             (folder, content) => expectedPath,
-            _ => {});
+            AppLog.Current);
 
         var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
         var result = service.Apply(preview);
 
         var written = Assert.IsType<CmdrPathApplyResult.Written>(result);
         Assert.Equal(expectedPath, written.BackupPath);
+    }
+
+    [Fact]
+    public void Status_is_Unavailable_when_user_path_read_throws()
+    {
+        var ourFolder = @"C:\HistoriaApp";
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(ourFolder, "historia-cmdr.exe"),
+            Path.Combine(ourFolder, "Historia.exe"),
+        };
+        var store = new FakeEnvironmentStore
+        {
+            ThrowOnRead = true,
+        };
+        var service = new CmdrPathService(
+            store,
+            ourFolder,
+            files.Contains,
+            @"C:\Backups",
+            (folder, content) => Path.Combine(folder, "backup.reg"),
+            AppLog.Current);
+
+        var status = service.GetStatus();
+        Assert.IsType<CmdrPathStatus.Unavailable>(status);
+    }
+
+    [Fact]
+    public void Machine_path_read_failure_gives_no_machine_copies()
+    {
+        var ourFolder = @"C:\HistoriaApp";
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(ourFolder, "historia-cmdr.exe"),
+            Path.Combine(ourFolder, "Historia.exe"),
+        };
+        var store = new FakeEnvironmentStore
+        {
+            UserPath = @"C:\Tools",
+            ThrowOnMachineRead = true,
+        };
+        var service = new CmdrPathService(
+            store,
+            ourFolder,
+            files.Contains,
+            @"C:\Backups",
+            (folder, content) => Path.Combine(folder, "backup.reg"),
+            AppLog.Current);
+
+        var status = Assert.IsType<CmdrPathStatus.NeedsUpdate>(service.GetStatus());
+        Assert.Empty(status.MachineCopies);
+    }
+
+    [Fact]
+    public void Apply_returns_Failed_when_user_path_read_throws()
+    {
+        var ourFolder = @"C:\HistoriaApp";
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(ourFolder, "historia-cmdr.exe"),
+            Path.Combine(ourFolder, "Historia.exe"),
+        };
+        var store = new FakeEnvironmentStore
+        {
+            UserPath = @"C:\Tools",
+        };
+        var service = new CmdrPathService(
+            store,
+            ourFolder,
+            files.Contains,
+            @"C:\Backups",
+            (folder, content) => Path.Combine(folder, "backup.reg"),
+            AppLog.Current);
+
+        var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
+
+        store.ThrowOnRead = true;
+        var result = service.Apply(preview);
+
+        var failed = Assert.IsType<CmdrPathApplyResult.Failed>(result);
+        Assert.Contains("Registry read denied", failed.Message);
+    }
+
+    [Fact]
+    public void Apply_twice_with_the_same_preview_writes_once_and_then_reports_AlreadyCurrent()
+    {
+        var ourFolder = @"C:\HistoriaApp";
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(ourFolder, "historia-cmdr.exe"),
+            Path.Combine(ourFolder, "Historia.exe"),
+        };
+        var store = new FakeEnvironmentStore
+        {
+            UserPath = @"C:\Tools",
+        };
+        int backupCalls = 0;
+        var service = new CmdrPathService(
+            store,
+            ourFolder,
+            files.Contains,
+            @"C:\Backups",
+            (folder, content) =>
+            {
+                backupCalls++;
+                return Path.Combine(folder, "backup.reg");
+            },
+            AppLog.Current);
+
+        var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
+
+        var result1 = service.Apply(preview);
+        Assert.IsType<CmdrPathApplyResult.Written>(result1);
+        Assert.Single(store.Writes);
+        Assert.Equal(1, backupCalls);
+        Assert.Equal(1, store.BroadcastCount);
+
+        var result2 = service.Apply(preview);
+        Assert.IsType<CmdrPathApplyResult.AlreadyCurrent>(result2);
+        Assert.Single(store.Writes);
+        Assert.Equal(1, backupCalls);
+        Assert.Equal(1, store.BroadcastCount);
+    }
+
+    [Fact]
+    public void Trailing_separator_on_our_folder_is_not_written()
+    {
+        var ourFolder = @"C:\HistoriaApp\";
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            @"C:\HistoriaApp\historia-cmdr.exe",
+            @"C:\HistoriaApp\Historia.exe",
+        };
+        var store = new FakeEnvironmentStore
+        {
+            UserPath = @"C:\Tools",
+        };
+        var service = new CmdrPathService(
+            store,
+            ourFolder,
+            files.Contains,
+            @"C:\Backups",
+            (folder, content) => Path.Combine(folder, "backup.reg"),
+            AppLog.Current);
+
+        var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
+        Assert.Equal(@"C:\Tools;C:\HistoriaApp", preview.NewValue);
+    }
+
+    [Fact]
+    public void NeedsUpdate_carries_our_folder_and_backup_folder()
+    {
+        var ourFolder = @"C:\HistoriaApp";
+        var backupFolder = @"C:\Backups";
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(ourFolder, "historia-cmdr.exe"),
+            Path.Combine(ourFolder, "Historia.exe"),
+        };
+        var store = new FakeEnvironmentStore
+        {
+            UserPath = @"C:\Tools",
+        };
+        var service = new CmdrPathService(
+            store,
+            ourFolder,
+            files.Contains,
+            backupFolder,
+            (folder, content) => Path.Combine(folder, "backup.reg"),
+            AppLog.Current);
+
+        var update = Assert.IsType<CmdrPathStatus.NeedsUpdate>(service.GetStatus());
+        Assert.Equal(ourFolder, update.OurFolder);
+        Assert.Equal(backupFolder, update.BackupFolder);
+    }
+
+    [Fact]
+    public void Apply_gives_the_process_path_the_same_replacement()
+    {
+        var ourFolder = @"C:\HistoriaApp";
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Path.Combine(ourFolder, "historia-cmdr.exe"),
+            Path.Combine(ourFolder, "Historia.exe"),
+        };
+        var store = new FakeEnvironmentStore
+        {
+            UserPath = @"C:\Tools",
+        };
+        string? capturedProcessPath = null;
+        var service = new CmdrPathService(
+            store,
+            ourFolder,
+            files.Contains,
+            @"C:\Backups",
+            (folder, content) => Path.Combine(folder, "backup.reg"),
+            AppLog.Current,
+            path => capturedProcessPath = path);
+
+        var preview = ((CmdrPathStatus.NeedsUpdate)service.GetStatus()).Preview;
+        var result = service.Apply(preview);
+
+        Assert.IsType<CmdrPathApplyResult.Written>(result);
+        Assert.NotNull(capturedProcessPath);
+        Assert.Contains(ourFolder, capturedProcessPath);
     }
 }

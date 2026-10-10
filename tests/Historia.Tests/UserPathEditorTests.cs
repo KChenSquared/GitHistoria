@@ -124,4 +124,45 @@ public sealed class UserPathEditorTests
         Assert.True(plan.NewValue.Length > 32767);
         Assert.True(plan.TooLong);
     }
+
+    [Fact]
+    public void Our_folder_written_as_a_variable_keeps_its_text_when_another_cmdr_entry_is_removed()
+    {
+        var raw = @"%LOCALAPPDATA%\HistoriaX;C:\Old";
+        var ourFolder = Environment.ExpandEnvironmentVariables(@"%LOCALAPPDATA%\HistoriaX\");
+        var plan = UserPathEditor.PlanReplace(raw, ourFolder, folder => string.Equals(folder, @"C:\Old", StringComparison.OrdinalIgnoreCase));
+
+        Assert.Equal(@"%LOCALAPPDATA%\HistoriaX", plan.NewValue);
+        Assert.Null(plan.Added);
+        Assert.Equal([@"C:\Old"], plan.Removed);
+        Assert.False(plan.IsNoOp);
+    }
+
+    [Fact]
+    public void Relative_and_unresolved_entries_are_copied_never_matched()
+    {
+        var raw = @".;bin;%HISTORIA_UNDEFINED_VAR%\x";
+        var ourFolder = Environment.CurrentDirectory;
+
+        Assert.False(UserPathEditor.SameFolder(".", Environment.CurrentDirectory));
+
+        var plan = UserPathEditor.PlanReplace(raw, ourFolder, _ => true);
+
+        Assert.Equal($@".;bin;%HISTORIA_UNDEFINED_VAR%\x;{ourFolder}", plan.NewValue);
+        Assert.Equal(ourFolder, plan.Added);
+        Assert.Empty(plan.Removed);
+    }
+
+    [Fact]
+    public void ExpandEntry_returns_null_for_relative_and_unquoted_full_path_for_quoted()
+    {
+        Assert.Null(UserPathEditor.ExpandEntry("."));
+        Assert.Null(UserPathEditor.ExpandEntry("bin"));
+        Assert.Null(UserPathEditor.ExpandEntry(@"%HISTORIA_UNDEFINED_VAR%\x"));
+        Assert.Null(UserPathEditor.ExpandEntry(""));
+        Assert.Null(UserPathEditor.ExpandEntry("   "));
+
+        var quoted = "\"C:\\Tools\\Sub\"";
+        Assert.Equal(@"C:\Tools\Sub", UserPathEditor.ExpandEntry(quoted));
+    }
 }

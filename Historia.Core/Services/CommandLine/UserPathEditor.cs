@@ -58,9 +58,9 @@ public static class UserPathEditor
 
     /// <summary>
     /// Plans a replacement of cmdr entries on PATH: the first entry holding cmdr or pointing to our folder
-    /// is replaced with <paramref name="ourFolder"/>; subsequent cmdr entries and duplicates of our folder
-    /// are removed; when no cmdr entry exists, <paramref name="ourFolder"/> is appended. Unrelated entries
-    /// are preserved verbatim.
+    /// is replaced with <paramref name="ourFolder"/> (preserving its raw text if it is already our folder);
+    /// subsequent cmdr entries and duplicates of our folder are removed; when no cmdr entry exists,
+    /// <paramref name="ourFolder"/> is appended. Unrelated entries are preserved verbatim.
     /// </summary>
     public static PathChange PlanReplace(string? raw, string ourFolder, Func<string, bool> holdsCmdr)
     {
@@ -88,7 +88,7 @@ public static class UserPathEditor
                         added = ourFolder;
                         removed.Add(entry);
                     }
-                    newEntries.Add(ourFolder);
+                    newEntries.Add(isOur ? entry : ourFolder);
                 }
                 else
                 {
@@ -114,17 +114,41 @@ public static class UserPathEditor
         return new PathChange(newValue, added, removed, isNoOp, tooLong);
     }
 
-    private static string? NormalizeFolder(string? path)
+    /// <summary>
+    /// Expands environment variables, trims whitespace, strips one pair of surrounding quotes,
+    /// and ensures the resulting path is fully qualified. Returns <c>null</c> if the result is empty,
+    /// relative, or on any exception.
+    /// </summary>
+    public static string? ExpandEntry(string? entry)
     {
-        if (string.IsNullOrWhiteSpace(path))
+        if (string.IsNullOrWhiteSpace(entry))
             return null;
 
         try
         {
-            var expanded = Environment.ExpandEnvironmentVariables(path).Trim();
+            var expanded = Environment.ExpandEnvironmentVariables(entry).Trim();
             if (expanded.StartsWith('"') && expanded.EndsWith('"') && expanded.Length >= 2)
                 expanded = expanded[1..^1].Trim();
 
+            if (expanded.Length == 0 || !Path.IsPathFullyQualified(expanded))
+                return null;
+
+            return expanded;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? NormalizeFolder(string? path)
+    {
+        var expanded = ExpandEntry(path);
+        if (expanded is null)
+            return null;
+
+        try
+        {
             var full = Path.GetFullPath(expanded);
             return full.TrimEnd('\\', '/');
         }
@@ -136,15 +160,12 @@ public static class UserPathEditor
 
     private static bool SafeHoldsCmdr(string entry, Func<string, bool> holdsCmdr)
     {
-        if (string.IsNullOrWhiteSpace(entry))
+        var expanded = ExpandEntry(entry);
+        if (expanded is null)
             return false;
 
         try
         {
-            var expanded = Environment.ExpandEnvironmentVariables(entry).Trim();
-            if (expanded.StartsWith('"') && expanded.EndsWith('"') && expanded.Length >= 2)
-                expanded = expanded[1..^1].Trim();
-
             return holdsCmdr(expanded);
         }
         catch

@@ -12,7 +12,11 @@ public abstract record CmdrPathStatus
     public sealed record Current : CmdrPathStatus;
 
     /// <summary>The user PATH can be updated to include or replace historia-cmdr.</summary>
-    public sealed record NeedsUpdate(PathChange Preview, IReadOnlyList<string> MachineCopies) : CmdrPathStatus;
+    public sealed record NeedsUpdate(
+        PathChange Preview,
+        IReadOnlyList<string> MachineCopies,
+        string OurFolder,
+        string BackupFolder) : CmdrPathStatus;
 }
 
 /// <summary>
@@ -28,6 +32,9 @@ public abstract record CmdrPathApplyResult
 
     /// <summary>Writing the backup or registry failed with an error message.</summary>
     public sealed record Failed(string Message) : CmdrPathApplyResult;
+
+    /// <summary>The confirmed change is already in place; nothing was written.</summary>
+    public sealed record AlreadyCurrent : CmdrPathApplyResult;
 }
 
 /// <summary>

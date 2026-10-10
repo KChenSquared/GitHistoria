@@ -99,7 +99,9 @@ public sealed class SettingsHelpHintTests
     {
         public CmdrPathStatus GetStatus() => new CmdrPathStatus.NeedsUpdate(
             new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false),
-            []);
+            [],
+            @"C:\NewCmdr",
+            @"C:\Backups");
         public CmdrPathApplyResult Apply(PathChange confirmed) => new CmdrPathApplyResult.Written(@"C:\backup.reg");
     }
 

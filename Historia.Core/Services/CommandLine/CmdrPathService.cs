@@ -12,6 +12,7 @@ public sealed class CmdrPathService : ICmdrPathService
     private readonly Func<string, bool> _fileExists;
     private readonly string _backupFolder;
     private readonly Func<string, string, string> _saveBackup;
+    private readonly IAppLog _log;
     private readonly Action<string> _updateProcessPath;
 
     public CmdrPathService(
@@ -20,33 +21,43 @@ public sealed class CmdrPathService : ICmdrPathService
         Func<string, bool> fileExists,
         string backupFolder,
         Func<string, string, string> saveBackup,
+        IAppLog log,
         Action<string>? updateProcessPath = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _ourFolder = ourFolder ?? throw new ArgumentNullException(nameof(ourFolder));
+        ArgumentNullException.ThrowIfNull(ourFolder);
+        _ourFolder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(ourFolder));
         _fileExists = fileExists ?? throw new ArgumentNullException(nameof(fileExists));
         _backupFolder = backupFolder ?? throw new ArgumentNullException(nameof(backupFolder));
         _saveBackup = saveBackup ?? throw new ArgumentNullException(nameof(saveBackup));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
         _updateProcessPath = updateProcessPath ?? (path => Environment.SetEnvironmentVariable("PATH", path, EnvironmentVariableTarget.Process));
     }
 
     public CmdrPathStatus GetStatus()
     {
-        if (!OperatingSystem.IsWindows())
-            return new CmdrPathStatus.Unavailable();
-
         var ourCmdrPath = Path.Combine(_ourFolder, CmdrExeName);
         if (!_fileExists(ourCmdrPath))
             return new CmdrPathStatus.Unavailable();
 
-        var (userPath, _) = _store.ReadUserPath();
-        var plan = UserPathEditor.PlanReplace(userPath, _ourFolder, HoldsCmdr);
+        string? userPath;
+        PathChange plan;
+        try
+        {
+            (userPath, _) = _store.ReadUserPath();
+            plan = UserPathEditor.PlanReplace(userPath, _ourFolder, HoldsCmdr);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException or IOException)
+        {
+            _log.Warn("cmdr-path", "Could not read the user PATH", ex);
+            return new CmdrPathStatus.Unavailable();
+        }
 
         if (plan.IsNoOp)
             return new CmdrPathStatus.Current();
 
         var machineCopies = FindMachineCopies();
-        return new CmdrPathStatus.NeedsUpdate(plan, machineCopies);
+        return new CmdrPathStatus.NeedsUpdate(plan, machineCopies, _ourFolder, _backupFolder);
     }
 
     public CmdrPathApplyResult Apply(PathChange confirmed)
@@ -56,14 +67,27 @@ public sealed class CmdrPathService : ICmdrPathService
         if (confirmed.TooLong)
             return new CmdrPathApplyResult.Failed("PATH value would exceed maximum allowed length of 32,767 characters.");
 
-        if (!OperatingSystem.IsWindows() || !_fileExists(Path.Combine(_ourFolder, CmdrExeName)))
+        if (!_fileExists(Path.Combine(_ourFolder, CmdrExeName)))
             return new CmdrPathApplyResult.Failed("historia-cmdr is unavailable.");
 
-        var (currentValue, kind) = _store.ReadUserPath();
+        string? currentValue;
+        RegistryValueKind kind;
+        try
+        {
+            (currentValue, kind) = _store.ReadUserPath();
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException or IOException)
+        {
+            return new CmdrPathApplyResult.Failed(ex.Message);
+        }
+
         var newPlan = UserPathEditor.PlanReplace(currentValue, _ourFolder, HoldsCmdr);
 
         if (!string.Equals(newPlan.NewValue, confirmed.NewValue, StringComparison.Ordinal))
             return new CmdrPathApplyResult.Changed();
+
+        if (newPlan.IsNoOp)
+            return new CmdrPathApplyResult.AlreadyCurrent();
 
         string backupPath;
         try
@@ -109,7 +133,17 @@ public sealed class CmdrPathService : ICmdrPathService
 
     private IReadOnlyList<string> FindMachineCopies()
     {
-        var machinePath = _store.ReadMachinePath();
+        string? machinePath;
+        try
+        {
+            machinePath = _store.ReadMachinePath();
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException or IOException)
+        {
+            _log.Warn("cmdr-path", "Could not read the machine PATH", ex);
+            return [];
+        }
+
         if (string.IsNullOrWhiteSpace(machinePath))
             return [];
 
@@ -119,9 +153,12 @@ public sealed class CmdrPathService : ICmdrPathService
 
         foreach (var entry in entries)
         {
+            var expanded = UserPathEditor.ExpandEntry(entry);
+            if (expanded is null)
+                continue;
+
             try
             {
-                var expanded = Environment.ExpandEnvironmentVariables(entry).Trim().Trim('"');
                 if (seen.Add(expanded))
                 {
                     var cmdr = Path.Combine(expanded, CmdrExeName);

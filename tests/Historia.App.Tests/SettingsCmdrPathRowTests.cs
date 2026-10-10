@@ -150,7 +150,9 @@ public sealed class SettingsCmdrPathRowTests
         {
             StatusToReturn = new CmdrPathStatus.NeedsUpdate(
                 new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false),
-                []),
+                [],
+                @"C:\NewCmdr",
+                @"C:\Backups"),
         };
         var dialogs = new ScriptedDialogService();
         var sp = CreateServices(cmdr, dialogs);
@@ -221,7 +223,9 @@ public sealed class SettingsCmdrPathRowTests
         {
             StatusToReturn = new CmdrPathStatus.NeedsUpdate(
                 new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false),
-                []),
+                [],
+                @"C:\NewCmdr",
+                @"C:\Backups"),
         };
         var dialogs = new ScriptedDialogService();
         var sp = CreateServices(cmdr, dialogs);
@@ -243,7 +247,7 @@ public sealed class SettingsCmdrPathRowTests
         var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [@"C:\OldCmdr1", @"C:\OldCmdr2"], false);
         var cmdr = new RecordingCmdrPathService
         {
-            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [@"C:\System\cmdr"]),
+            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [@"C:\System\cmdr"], @"C:\NewCmdr", @"C:\Backups"),
         };
         var dialogs = new ScriptedDialogService { ConfirmResult = false };
         var sp = CreateServices(cmdr, dialogs);
@@ -279,7 +283,7 @@ public sealed class SettingsCmdrPathRowTests
         var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
         var cmdr = new RecordingCmdrPathService
         {
-            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, []),
+            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
             ApplyResultToReturn = new CmdrPathApplyResult.Written(@"C:\Backups\backup.reg"),
         };
         var dialogs = new ScriptedDialogService { ConfirmResult = true };
@@ -307,7 +311,7 @@ public sealed class SettingsCmdrPathRowTests
         var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
         var cmdr = new RecordingCmdrPathService
         {
-            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, []),
+            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
             ApplyResultToReturn = new CmdrPathApplyResult.Changed(),
         };
         var dialogs = new ScriptedDialogService { ConfirmResult = true };
@@ -335,7 +339,7 @@ public sealed class SettingsCmdrPathRowTests
         var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
         var cmdr = new RecordingCmdrPathService
         {
-            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, []),
+            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
             ApplyResultToReturn = new CmdrPathApplyResult.Failed("Disk full"),
         };
         var dialogs = new ScriptedDialogService { ConfirmResult = true };
