@@ -81,11 +81,15 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private readonly Button _stageArrow;
     private readonly Button _unstageArrow;
     private readonly Button _discardAllChanges;
+    private readonly Button _stageAllChanges;
+    private readonly TextBlock _caseCollisionFootnote = Text("", "ColorTextFaint", 11);
     private readonly Dictionary<string, Border> _conflictedRowCache = new(StringComparer.Ordinal);
 
     internal StackPanel ChangesRowsForTesting => _changesRows;
     internal StackPanel StagedRowsForTesting => _stagedRows;
     internal Button DiscardAllChangesForTesting => _discardAllChanges;
+    internal Button StageAllChangesForTesting => _stageAllChanges;
+    internal TextBlock CaseCollisionFootnoteForTesting => _caseCollisionFootnote;
     internal Task DiscardAllChangesForTestingAsync() => DiscardAllChangesAsync();
     internal TextBlock ChangesHeaderForTesting => _changesHeader;
     internal Grid ConflictHeaderForTesting => _conflictHeader;
@@ -302,16 +306,16 @@ public sealed class StagingPanelView : UserControl, IDisposable
             VerticalAlignment = VerticalAlignment.Center,
         };
         changesRight.Children.Add(_discardAllChanges);
-        var stageAllBtn = new Button
+        _stageAllChanges = new Button
         {
             Content = "Stage all",
             FontSize = HeaderRowFontSize,
             Padding = new Thickness(8, 2),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        stageAllBtn.Classes.Add("success");
-        stageAllBtn.Click += (_, _) => _ = BulkAsync(_status.Unstaged.Concat(_status.Untracked).ToList(), staged: false);
-        changesRight.Children.Add(stageAllBtn);
+        _stageAllChanges.Classes.Add("success");
+        _stageAllChanges.Click += (_, _) => _ = BulkAsync(_status.Unstaged.Concat(_status.Untracked).ToList(), staged: false);
+        changesRight.Children.Add(_stageAllChanges);
 
         var stagedLeft = new StackPanel
         {
@@ -341,11 +345,18 @@ public sealed class StagingPanelView : UserControl, IDisposable
         unstageAllBtn.Click += (_, _) => _ = BulkAsync(_status.Staged, staged: true);
         stagedRight.Children.Add(unstageAllBtn);
 
+        _caseCollisionFootnote.Margin = new Thickness(0, 4, 0, 0);
+        _caseCollisionFootnote.IsVisible = false;
+
+        var changesBody = new StackPanel { Spacing = 2 };
+        changesBody.Children.Add(_changesRows);
+        changesBody.Children.Add(_caseCollisionFootnote);
+
         var changesSection = SectionFrame.Build(
             left: changesLeft,
             center: null,
             right: changesRight,
-            body: _changesRows,
+            body: changesBody,
             border: new Thickness(1, 1, 1, 0),
             minHeight: SectionFrame.TopMinHeight,
             out var _);
@@ -756,11 +767,28 @@ public sealed class StagingPanelView : UserControl, IDisposable
             RenderLists();
         });
 
+    private const string CaseCollisionTooltipHeader =
+        "These tracked files share one file on disk with another path that differs only in letter case, and the disk holds the other one's content. Git reports them as modified; Historia hides them because nothing was edited. To check out both names, enable case sensitivity for the folder (fsutil file setCaseSensitiveInfo <folder> enable, then check the files out again) or clone inside WSL.";
+
+    private static string FormatCaseCollisionTooltip(IReadOnlyList<string> hiddenPaths)
+    {
+        if (hiddenPaths.Count == 0)
+            return CaseCollisionTooltipHeader;
+
+        var take = Math.Min(hiddenPaths.Count, 10);
+        var lines = hiddenPaths.Take(take).ToList();
+        if (hiddenPaths.Count > 10)
+            lines.Add($"+{hiddenPaths.Count - 10} more");
+
+        return $"{CaseCollisionTooltipHeader}\n\n{string.Join('\n', lines)}";
+    }
+
     private static bool StatusEquivalent(RepositoryStatus a, RepositoryStatus b)
     {
         if (ReferenceEquals(a, b)) return true;
         if (a.Unstaged.Count != b.Unstaged.Count || a.Untracked.Count != b.Untracked.Count
-            || a.Staged.Count != b.Staged.Count || a.Conflicted.Count != b.Conflicted.Count)
+            || a.Staged.Count != b.Staged.Count || a.Conflicted.Count != b.Conflicted.Count
+            || a.HiddenCaseCollisions.Count != b.HiddenCaseCollisions.Count)
             return false;
 
         for (int i = 0; i < a.Unstaged.Count; i++)
@@ -771,6 +799,8 @@ public sealed class StagingPanelView : UserControl, IDisposable
             if (a.Staged[i].Path != b.Staged[i].Path || a.Staged[i].Kind != b.Staged[i].Kind) return false;
         for (int i = 0; i < a.Conflicted.Count; i++)
             if (a.Conflicted[i].Path != b.Conflicted[i].Path || a.Conflicted[i].Kind != b.Conflicted[i].Kind) return false;
+        for (int i = 0; i < a.HiddenCaseCollisions.Count; i++)
+            if (!string.Equals(a.HiddenCaseCollisions[i], b.HiddenCaseCollisions[i], StringComparison.Ordinal)) return false;
 
         return true;
     }
@@ -884,6 +914,21 @@ public sealed class StagingPanelView : UserControl, IDisposable
         {
             foreach (var c in changesChildren)
                 _changesRows.Children.Add(c);
+        }
+
+        var hiddenCount = _status.HiddenCaseCollisions.Count;
+        if (hiddenCount > 0)
+        {
+            _caseCollisionFootnote.Text = hiddenCount == 1
+                ? "1 case-collision file hidden"
+                : $"{hiddenCount} case-collision files hidden";
+            ToolTip.SetTip(_caseCollisionFootnote, FormatCaseCollisionTooltip(_status.HiddenCaseCollisions));
+            _caseCollisionFootnote.IsVisible = true;
+        }
+        else
+        {
+            _caseCollisionFootnote.IsVisible = false;
+            ToolTip.SetTip(_caseCollisionFootnote, null);
         }
 
         var stagedChildren = BuildRows(staged, _checkedStaged, staged: true, _stagedRowCache);
