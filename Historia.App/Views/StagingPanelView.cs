@@ -4,7 +4,8 @@ namespace Historia.Views;
 /// Working tree, staging area and commit box. Changes (unstaged) and Staged are the two
 /// resizable sections, with a checkbox column on each and a green ⬇ Stage / red ⬆ Unstage
 /// arrow pair in the Staged header acting on the checked rows; both the Staged section's
-/// top border and the rule under the Staged header resize the split. The commit-message strip
+/// top border and the rule under the Staged header resize the split. A downward split drag
+/// past Staged's minimum shrinks the commit box down to its minimum. The commit-message strip
 /// docks to the bottom; its top edge resizes the message box only, bounded by the box
 /// minimum and the two lists' minimums.
 /// </summary>
@@ -102,6 +103,8 @@ public sealed class StagingPanelView : UserControl, IDisposable
     internal Grid? CommitOptionsRowForTesting { get; private set; }
     internal Control? MessageResizeHandleForTesting { get; private set; }
     internal Grid? SplitAreaForTesting { get; private set; }
+    internal Control? SplitHandleForTesting { get; private set; }
+    internal Control? StagedDividerHandleForTesting { get; private set; }
     internal Border? MessageSectionForTesting { get; private set; }
     internal bool IsGeneratingForTesting => _generateCts is not null;
     internal Border? OfferBarForTesting => _offerBar;
@@ -274,7 +277,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
         // Inside that fill area a 3-row grid (Auto / Auto / *) holds Changes in a fixed-pixel
         // row that the splitter resizes, a thin splitter row, then Staged in the Star row that
         // absorbs the remainder. Changes is pinned to the top and is the section the splitter drag
-        // grows or shrinks; Staged gets the rest (floored at its row MinHeight).
+        // grows or shrinks; Staged gets the rest (floored at its row MinHeight). When a downward
+        // split drag reaches Staged's minimum, it continues by shrinking the commit box down to
+        // its minimum.
         // The stage/unstage arrows sit in the Staged header's empty middle column so they line up
         // with the "Staged" label.
         var arrowStrip = new StackPanel
@@ -368,6 +373,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             border: new Thickness(1),
             minHeight: 96,
             out var stagedDividerHandle);
+        StagedDividerHandleForTesting = stagedDividerHandle;
 
         var changesRow = new RowDefinition(new GridLength(SectionFrame.GetSplitHeight(_ctx.Id), GridUnitType.Pixel))
         {
@@ -398,11 +404,46 @@ public sealed class StagingPanelView : UserControl, IDisposable
             VerticalAlignment = VerticalAlignment.Center,
             Background = Brushes.Transparent,
         };
+        SplitHandleForTesting = splitHandle;
         Grid.SetRow(splitHandle, 1);
         splitArea.Children.Add(splitHandle);
 
-        SectionFrame.AttachRowResize(splitHandle, splitArea, changesRow, h => SectionFrame.SetSplitHeight(_ctx.Id, h));
-        SectionFrame.AttachRowResize(stagedDividerHandle, splitArea, changesRow, h => SectionFrame.SetSplitHeight(_ctx.Id, h));
+        Action<double> applyMessageHeight = h =>
+        {
+            _message.Height = h;
+            MessageHeightByRepo[_ctx.Id] = h;
+        };
+
+        // A split drag past Staged's minimum borrows from the commit box. Only a borrowed height
+        // becomes the remembered one; giving all of it back restores the height remembered before
+        // the drag, which a short window may have clamped the box below.
+        double lendStartHeight = 0;
+        double lendStartRemembered = 0;
+        var messageLender = (
+            Begin: (Func<(double Start, double Min)>)(() =>
+            {
+                lendStartHeight = _message.Height;
+                lendStartRemembered = MessageHeightByRepo.GetValueOrDefault(_ctx.Id, MessageMinHeight);
+                return (_message.Height, MessageMinHeight);
+            }),
+            Apply: (Action<double>)(h =>
+            {
+                _message.Height = h;
+                MessageHeightByRepo[_ctx.Id] = h < lendStartHeight ? h : lendStartRemembered;
+            }));
+
+        SectionFrame.AttachRowResize(
+            splitHandle,
+            splitArea,
+            changesRow,
+            h => SectionFrame.SetSplitHeight(_ctx.Id, h),
+            messageLender);
+        SectionFrame.AttachRowResize(
+            stagedDividerHandle,
+            splitArea,
+            changesRow,
+            h => SectionFrame.SetSplitHeight(_ctx.Id, h),
+            messageLender);
 
         var root = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(messageSection, Dock.Bottom);
@@ -410,11 +451,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
         root.Children.Add(splitArea);
         Content = root;
 
-        Action<double> applyMessageHeight = h =>
-        {
-            _message.Height = h;
-            MessageHeightByRepo[_ctx.Id] = h;
-        };
         SectionFrame.AttachBottomResize(
             messageHandle,
             root,

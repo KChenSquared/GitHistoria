@@ -385,4 +385,156 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
         Assert.Equal(scrollViewer.Bounds.Height + 2, messageSection.Bounds.Height);
         Assert.Equal(((Control)scrollViewer.Content!).DesiredSize.Height, scrollViewer.Bounds.Height);
     }
+
+    private static void Drag(Window window, Control handle, params double[] offsets)
+    {
+        var start = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, start, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        var end = start;
+        foreach (var offset in offsets)
+        {
+            end = new Point(start.X, start.Y + offset);
+            Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, end);
+            Dispatcher.UIThread.RunJobs();
+        }
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, end, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    private static double GrowMessageBoxToMax(StagingPanelView view, Window window)
+    {
+        Drag(window, view.MessageResizeHandleForTesting!, -2000);
+        return view.MessageForTesting.Height;
+    }
+
+    private void AssertSplitDragBorrowsAndIsRemembered(Func<StagingPanelView, Control> handleOf)
+    {
+        var (context, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        Drag(window, handleOf(view), 100);
+
+        var splitArea = view.SplitAreaForTesting!;
+        var changesRow = splitArea.RowDefinitions[0];
+        var stagedSection = (Border)splitArea.Children[1];
+
+        Assert.InRange(Math.Abs(changesRow.Height.Value - 250), 0, 1.01);
+        Assert.True(stagedSection.Bounds.Height >= 150);
+        Assert.InRange(Math.Abs(view.MessageForTesting.Height - (h - 100)), 0, 1.01);
+        Assert.InRange(Math.Abs(SectionFrame.GetSplitHeight(context.Id) - 250), 0, 1.01);
+
+        view.Dispose();
+        _views.Remove(view);
+
+        var view2 = new StagingPanelView(_sp, context);
+        _views.Add(view2);
+        window.Content = view2;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.InRange(Math.Abs(view2.MessageForTesting.Height - (h - 100)), 0, 1.01);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_down_past_staged_min_shrinks_message_box()
+    {
+        AssertSplitDragBorrowsAndIsRemembered(v => v.SplitHandleForTesting!);
+    }
+
+    [AvaloniaFact]
+    public void Staged_divider_drag_also_borrows()
+    {
+        AssertSplitDragBorrowsAndIsRemembered(v => v.StagedDividerHandleForTesting!);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_down_stops_at_message_box_minimum()
+    {
+        var (_, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        Drag(window, view.SplitHandleForTesting!, 5000);
+
+        var splitArea = view.SplitAreaForTesting!;
+        var changesRow = splitArea.RowDefinitions[0];
+        var stagedSection = (Border)splitArea.Children[1];
+        var messageSection = view.MessageSectionForTesting!;
+
+        Assert.Equal(96, view.MessageForTesting.Height);
+        Assert.InRange(Math.Abs(changesRow.Height.Value - (150 + (h - 96))), 0, 1.01);
+        Assert.True(stagedSection.Bounds.Height >= 150);
+
+        var splitAreaBottom = splitArea.TranslatePoint(new Point(0, splitArea.Bounds.Height), window)!.Value.Y;
+        var messageSectionTop = messageSection.TranslatePoint(new Point(0, 0), window)!.Value.Y;
+        Assert.True(splitAreaBottom <= messageSectionTop + 1.01);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_reversed_in_one_gesture_restores_box()
+    {
+        var (_, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        Drag(window, view.SplitHandleForTesting!, 100, 0);
+
+        Assert.Equal(h, view.MessageForTesting.Height);
+        Assert.Equal(150, view.SplitAreaForTesting!.RowDefinitions[0].Height.Value);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_up_does_not_regrow_box()
+    {
+        var (_, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        Drag(window, view.SplitHandleForTesting!, 100);
+
+        var shrunkBoxH = view.MessageForTesting.Height;
+        Assert.InRange(Math.Abs(shrunkBoxH - (h - 100)), 0, 1.01);
+
+        Drag(window, view.SplitHandleForTesting!, -100);
+
+        Assert.Equal(shrunkBoxH, view.MessageForTesting.Height);
+        Assert.Equal(150, view.SplitAreaForTesting!.RowDefinitions[0].Height.Value);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_with_box_at_minimum_is_blocked_at_staged_min()
+    {
+        var (context, view, window) = CreateView(width: 400, height: 900);
+        var splitArea = view.SplitAreaForTesting!;
+        SectionFrame.SetSplitHeight(context.Id, 2000);
+        SectionFrame.ApplySplitHeight(splitArea, splitArea.RowDefinitions[0], context.Id);
+        Dispatcher.UIThread.RunJobs();
+
+        var maxChanges = splitArea.RowDefinitions[0].Height.Value;
+
+        Drag(window, view.SplitHandleForTesting!, 200);
+
+        var stagedSection = (Border)splitArea.Children[1];
+
+        Assert.Equal(96, view.MessageForTesting.Height);
+        Assert.Equal(maxChanges, splitArea.RowDefinitions[0].Height.Value);
+        Assert.True(stagedSection.Bounds.Height >= 150);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_in_short_window_keeps_remembered_box_height()
+    {
+        var (_, view, window) = CreateView(width: 400, height: 900);
+        Drag(window, view.MessageResizeHandleForTesting!, -104);
+        Assert.Equal(200, view.MessageForTesting.Height);
+
+        window.Height = 400;
+        Dispatcher.UIThread.RunJobs();
+        var clampedBox = view.MessageForTesting.Height;
+        Assert.True(clampedBox < 200);
+
+        Drag(window, view.SplitHandleForTesting!, -20);
+        Assert.Equal(clampedBox, view.MessageForTesting.Height);
+
+        window.Height = 900;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(200, view.MessageForTesting.Height);
+    }
 }
