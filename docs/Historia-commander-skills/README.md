@@ -95,10 +95,12 @@ Each agent gets the same set of skills:
 | `historia-showwork` | At the end of a task, show the uncommitted changes with the first changed file open |
 | `historia-review` | A guided review tour of a branch, one file at a time |
 | `historia-trace` | "Where did this line come from?" |
-| `historia-commit` | Stage the agent's files and propose the commit message |
+| `historia-propose-commit` | Stage the agent's files and propose the commit message |
+| `historia-commit` | After the agent commits, open the first commit and list the rest |
 
 The skills that call `historia-cmdr` show the command so you can rerun it, then run it.
-`historia-showworkNoAutoShow` and `historia-commitNoAutoShow` are alternatives that never open
+`historia-showworkNoAutoShow`, `historia-propose-commitNoAutoShow` and `historia-commitNoAutoShow`
+are alternatives that never open
 Historia on their own: they show the command and leave running it to you. Each alternative has the
 same `name` as the skill it replaces, so install one or the other, in a folder named after the skill.
 
