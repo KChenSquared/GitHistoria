@@ -28,8 +28,8 @@ When contributing to Historia, keep these core tenets in mind:
 ## 2. Prerequisites & Environment Setup
 
 ### Required Tools
-- **Operating System:** Windows 10 (version 1809 / build 17763 or higher) or Windows 11
-- **.NET SDK:** .NET 10.0 SDK (or latest installed version)
+- **Operating System:** Windows 10 (version 1809 / build 17763 or higher) or Windows 11 is the parity target. Linux and macOS can build and run the test suites.
+- **.NET SDK:** .NET 10.0 SDK (version 10.0.202 or compatible latest feature, pinned in `global.json`)
 - **IDE:**
   - [Visual Studio 2022 / 2025](https://visualstudio.microsoft.com/) with the **.NET Desktop Development** workload, OR
   - [Visual Studio Code](https://code.visualstudio.com/) with the **C# Dev Kit** extension, OR
@@ -179,9 +179,31 @@ I adhere to [Conventional Commits](https://www.conventionalcommits.org/):
 ### 3. Pull Request Guidelines
 1. Ensure your changes build cleanly without warnings (`dotnet build Historia.slnx`).
 2. Run unit and integration tests (`dev/test.ps1 -Tier fast` during development, `dev/test.ps1 -Tier all` before pushing).
-3. For performance-sensitive code, include benchmark results or profiling notes in the PR description.
-4. Keep PRs focused on a single logical change for ease of review.
-5. If coding agents helped, say which parts in the description.
+3. Ensure formatting checks pass (`dotnet format whitespace Historia.slnx --verify-no-changes`).
+4. For performance-sensitive code, include benchmark results or profiling notes in the PR description.
+5. Keep PRs focused on a single logical change for ease of review.
+6. If coding agents helped, say which parts in the description.
+
+### 4. CI Checks
+Every pull request and push to `main` triggers automated GitHub Actions workflows:
+- **`ci.yml` (Test Suite Matrix):** Runs the full test suites (`Historia.Tests` and `Historia.App.Tests`) across `windows-latest`, `ubuntu-latest`, and `macos-latest` with `fail-fast: false`.
+- **`lint.yml` (Code and Workflow Formatting):** Runs `dotnet format whitespace` and `dotnet format style` checks on Windows, `actionlint` in Docker on Ubuntu, and `gitleaks` secret analysis on Ubuntu.
+
+To reproduce and verify these checks locally:
+```powershell
+# Format verification
+dotnet format whitespace Historia.slnx --verify-no-changes
+dotnet format style Historia.slnx --verify-no-changes --severity warn
+
+# Configure git blame to ignore bulk reformatting commits
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+### 5. Releases
+Versions are automatically derived from git tags via MinVer (`MinVerTagPrefix=v`).
+- Pushing a tag matching `v*` (such as `v0.1.0`) triggers `.github/workflows/package.yml`, which compiles release builds, packages archives and native installers across all target operating systems (win-x64, osx-arm64, osx-x64, linux-x64), computes SHA-256 hashes in `SHA256SUMS.txt`, and generates a draft GitHub Release for maintainer review.
+- The packaging workflow may also be invoked manually (`workflow_dispatch`) with checkboxes to selectively build specific operating systems or package types (archives or installers).
+- When a new .NET 10 servicing release is published, bump the pinned Windows Desktop Runtime version, URL, and SHA-512 hash in `.github/workflows/package.yml`.
 
 ---
 

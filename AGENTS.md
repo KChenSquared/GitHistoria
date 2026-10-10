@@ -18,6 +18,7 @@ Avalonia). This file is the single source; `CLAUDE.md` and `.github/copilot-inst
 dotnet build Historia.App                     # the app; required after App changes
 dotnet test tests/Historia.Tests              # Core tests; works while Historia is running
 dotnet test tests/Historia.App.Tests          # headless UI tests; close Historia if the build cannot copy its exe
+dotnet format whitespace Historia.slnx        # formatting check; required before committing
 .\dev\test.ps1 -Tier fast                     # also: git, ui, slow, all
 ```
 
