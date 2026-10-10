@@ -12,6 +12,7 @@ public sealed partial class GitGateway(
     ISshHostResolver? sshHosts = null) : IGitGateway
 {
     private readonly ISshHostResolver _sshHosts = sshHosts ?? SshHostResolver.Shared;
+    private readonly IndexCaseCollisions _caseCollisions = new(cli, context.GitDirectory, context.RepositoryPath);
 
     public string RepositoryPath => context.RepositoryPath;
 
@@ -74,7 +75,95 @@ public sealed partial class GitGateway(
         }
 
         var status = GitStatusParser.PairExactMoves(parsed, untrackedHashes);
+        status = await HideCaseCollisionArtifactsAsync(status, ct).ConfigureAwait(false);
         return PopulateSizes(status, context.RepositoryPath);
+    }
+
+    private async Task<RepositoryStatus> HideCaseCollisionArtifactsAsync(RepositoryStatus status, CancellationToken ct)
+    {
+        if (!status.Unstaged.Any(u => u.Kind == FileChangeKind.Modified))
+            return status;
+
+        try
+        {
+            if (!await _caseCollisions.IgnoreCaseAsync(ct).ConfigureAwait(false))
+                return status;
+
+            var groups = await _caseCollisions.GroupsAsync(ct).ConfigureAwait(false);
+            if (groups.Count == 0)
+                return status;
+
+            List<FileStatusEntry>? candidateEntries = null;
+            List<string>? candidatePaths = null;
+            foreach (var u in status.Unstaged)
+            {
+                if (u.Kind == FileChangeKind.Modified && groups.ContainsKey(u.Path))
+                {
+                    candidateEntries ??= [];
+                    candidatePaths ??= [];
+                    candidateEntries.Add(u);
+                    candidatePaths.Add(u.Path);
+                }
+            }
+
+            if (candidateEntries is null || candidateEntries.Count == 0)
+                return status;
+
+            var diskHashes = await _caseCollisions.HashWorktreeAsync(candidatePaths!, ct).ConfigureAwait(false);
+
+            var hidden = new List<string>();
+            var hiddenSet = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var candidate in candidateEntries)
+            {
+                if (!diskHashes.TryGetValue(candidate.Path, out var diskHash))
+                    continue;
+
+                if (!groups.TryGetValue(candidate.Path, out var peers))
+                    continue;
+
+                var isCollision = false;
+                foreach (var peer in peers)
+                {
+                    if (string.Equals(diskHash, peer.BlobId, StringComparison.OrdinalIgnoreCase)
+                        && IndexCaseCollisions.SharesOneDiskEntry(context.RepositoryPath, candidate.Path, peer.Path))
+                    {
+                        isCollision = true;
+                        break;
+                    }
+                }
+
+                if (isCollision)
+                {
+                    hidden.Add(candidate.Path);
+                    hiddenSet.Add(candidate.Path);
+                }
+            }
+
+            if (hidden.Count == 0)
+                return status;
+
+            hidden.Sort(StringComparer.Ordinal);
+
+            var rest = status.Unstaged.Where(u => !hiddenSet.Contains(u.Path)).ToList();
+            var isDirty = status.Staged.Count + rest.Count + status.Untracked.Count + status.Conflicted.Count > 0;
+
+            return status with
+            {
+                Unstaged = rest,
+                HiddenCaseCollisions = hidden,
+                IsDirty = isDirty,
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(AppLogLevel.Warn, "git", $"Case collision detection failed: {ex.Message}", ex);
+            return status;
+        }
     }
 
     public async Task<(string? Name, string? Email)> GetConfiguredIdentityAsync(CancellationToken ct = default)

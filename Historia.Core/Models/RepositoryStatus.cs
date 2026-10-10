@@ -1,4 +1,4 @@
-﻿namespace Historia.Models;
+namespace Historia.Models;
 
 /// <summary>
 /// Working-directory status snapshot. Paths are always repo-relative with forward
@@ -16,12 +16,20 @@ public sealed record RepositoryStatus
     public required int BehindBy { get; init; }
     public required DateTimeOffset ComputedAt { get; init; }
 
+    /// <summary>
+    /// Tracked paths left out of <see cref="Unstaged"/> because their working-tree content
+    /// is the blob of another index path that differs only in letter case and shares one file on
+    /// disk.
+    /// </summary>
+    public IReadOnlyList<string> HiddenCaseCollisions { get; init; } = [];
+
     public static RepositoryStatus Empty { get; } = new()
     {
         Staged = [],
         Unstaged = [],
         Untracked = [],
         Conflicted = [],
+        HiddenCaseCollisions = [],
         IsDirty = false,
         AheadBy = 0,
         BehindBy = 0,
