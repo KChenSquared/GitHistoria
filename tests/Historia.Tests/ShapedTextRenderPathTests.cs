@@ -15,7 +15,14 @@ public sealed class ShapedTextRenderPathTests
         "Historia.App/Controls/CommitGraphControl.cs",
         "Historia.App/Controls/Diff/DiffRenderers.cs",
         "Historia.App/Controls/Diff/DiffMinimap.cs",
-        "Historia.App/Controls/Conflicts/ConflictPanes.cs",
+        "Historia.App/Controls/Conflicts/ConflictPaneEditor.cs",
+        "Historia.App/Controls/Conflicts/ConflictRowTints.cs",
+        "Historia.App/Controls/Conflicts/ConflictLineNumberMargin.cs",
+        "Historia.App/Controls/Conflicts/ConflictToggleMargin.cs",
+        "Historia.App/Controls/Conflicts/ConflictExcludedLineColorizer.cs",
+        "Historia.App/Controls/Conflicts/ConflictBackgroundRenderer.cs",
+        "Historia.App/Controls/Conflicts/ConflictResolverMinimap.cs",
+        "Historia.App/Controls/Conflicts/ConflictPaneUpdateHelper.cs",
     ];
 
     /// <summary>
