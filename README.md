@@ -2,9 +2,9 @@
 
 > *The commit graph you love: every commit, no lag, no subscriptions.*
 
-A high-performance, open-source desktop Git client built with **C# (.NET 10)** and
-**Avalonia UI**. Windows is the primary platform and macOS is supported; other platforms
-will follow.
+A fast, open-source desktop Git client with a beautiful, easy-to-read commit graph, built
+with **C# (.NET 10)** and **Avalonia UI**. Historia is developed on Windows, macOS support
+is on the way, and other platforms are part of the long-term plan.
 
 ---
 
@@ -126,8 +126,8 @@ the graph at 30k commits for lower memory use is available in settings.
 
 ## 📋 Requirements
 
-- **Windows** (primary): Windows 10 (1809+) or Windows 11
-- **macOS** (secondary): Apple Silicon or Intel; builds must be ad-hoc signed locally (see
+- **Windows**: Windows 10 (1809+) or Windows 11
+- **macOS** (in progress): Apple Silicon or Intel; builds must be ad-hoc signed locally (see
   [macOS: ad-hoc signing](#macos-ad-hoc-signing))
 - [.NET 10 Runtime](https://dotnet.microsoft.com/download) (the Desktop Runtime on
   Windows)
