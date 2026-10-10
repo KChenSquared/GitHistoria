@@ -18,7 +18,7 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
             var url = $"{Base(request)}/models?pageSize=1000"
                 + (pageToken is null ? "" : $"&pageToken={Uri.EscapeDataString(pageToken)}");
             var body = await http.SendAsync(
-                () => AiHttp.CreateJsonRequest(HttpMethod.Get, url, request, null, m => { if (!string.IsNullOrEmpty(request.ApiKey)) m.Headers.TryAddWithoutValidation("x-goog-api-key", request.ApiKey); }),
+                () => AiHttp.CreateJsonRequest(HttpMethod.Get, url, request, null, m => AddAuth(m, request)),
                 AiHttp.Secrets(request), null, ct)
                 .ConfigureAwait(false);
 
@@ -48,7 +48,7 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
         var url = $"{Base(request)}/models/{Uri.EscapeDataString(StripPrefix(request.Model))}:generateContent";
         var json = payload.ToJsonString();
         var body = await http.SendAsync(
-            () => AiHttp.CreateJsonRequest(HttpMethod.Post, url, request, json, m => { if (!string.IsNullOrEmpty(request.ApiKey)) m.Headers.TryAddWithoutValidation("x-goog-api-key", request.ApiKey); }),
+            () => AiHttp.CreateJsonRequest(HttpMethod.Post, url, request, json, m => AddAuth(m, request)),
             AiHttp.Secrets(request), RefineError, ct).ConfigureAwait(false);
 
         try
@@ -177,5 +177,9 @@ public sealed class GeminiClient(AiHttp http) : IAiChatClient
 
     private static string Base(AiChatRequest request) => request.Server.Trim().TrimEnd('/');
 
-
+    private static void AddAuth(HttpRequestMessage message, AiChatRequest request)
+    {
+        if (!string.IsNullOrEmpty(request.ApiKey))
+            message.Headers.TryAddWithoutValidation("x-goog-api-key", request.ApiKey);
+    }
 }

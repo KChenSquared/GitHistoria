@@ -95,6 +95,4 @@ public static class TerminalColorResolver
     }
 
     private static byte CubeChannel(int c) => (byte)(c == 0 ? 0 : 55 + c * 40);
-
-    public static double ContrastRatio(Rgb a, Rgb b) => Rgb.ContrastRatio(a, b);
 }

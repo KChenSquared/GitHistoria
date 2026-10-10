@@ -1131,7 +1131,6 @@ public sealed partial class ConflictResolverView : UserControl, IDisposable
         _editorArea.Content = card;
     }
 
-
     public void Dispose()
     {
         if (_disposed)

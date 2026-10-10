@@ -185,7 +185,6 @@ internal static class ViewKit
         return row;
     }
 
-
     private static void ApplyHintText(Control badge, string text)
     {
         // A plain wrapping TextBlock sizes itself to the text (up to MaxWidth) with no

@@ -10,6 +10,9 @@ public class ConflictSelectionTests
     private static ConflictSide[] FirstSides(ConflictSelection s)
         => s.Layout.Select(r => r.Side).Distinct().ToArray();
 
+    private static (ConflictSide Side, int Index, bool Included)[] Selection(ConflictSelection s)
+        => s.Layout.Select(r => (r.Side, r.Index, s.IsIncluded(r.Side, r.Index))).ToArray();
+
     [Fact]
     public void New_selection_keeps_nothing_and_lists_ours_first()
     {
@@ -185,7 +188,7 @@ public class ConflictSelectionTests
         var s = Make(ours: 0, theirs: 2);
         s.SetHunk(ConflictSide.Ours, true);
         var copy = s.Clone();
-        Assert.Equal(s.SideLayout, copy.SideLayout);
+        Assert.Equal(Selection(s), Selection(copy));
         Assert.True(copy.IsDeletion(ConflictSide.Ours));
         Assert.False(copy.IsDeletion(ConflictSide.Theirs));
     }
@@ -207,11 +210,13 @@ public class ConflictSelectionTests
         var s = Make();
         s.SetHunk(ConflictSide.Ours, true);
         var copy = s.Clone();
-        Assert.Equal(s.SideLayout, copy.SideLayout);
+        var cloned = Selection(copy);
+        Assert.Equal(Selection(s), cloned);
 
         s.SetHunk(ConflictSide.Theirs, true);
         s.SetOrder(ConflictSide.Theirs);
-        Assert.NotEqual(s.SideLayout, copy.SideLayout);
+        Assert.NotEqual(Selection(s), Selection(copy));
+        Assert.Equal(cloned, Selection(copy));
         Assert.Equal(ConflictHunkState.Unchecked, copy.HunkState(ConflictSide.Theirs));
         Assert.Equal(new[] { ConflictSide.Ours, ConflictSide.Theirs }, copy.SideLayout);
     }

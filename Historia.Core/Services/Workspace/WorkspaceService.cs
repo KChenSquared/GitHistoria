@@ -142,7 +142,6 @@ public sealed partial class WorkspaceService : IWorkspaceService, IAsyncDisposab
         get { lock (_sync) return _focused; }
     }
 
-
     public async Task CloseAsync(RepositoryContext context)
     {
         bool removed;
@@ -282,7 +281,6 @@ public sealed partial class WorkspaceService : IWorkspaceService, IAsyncDisposab
         _open.InsertRange(Math.Clamp(target, 0, _open.Count), block);
         return true;
     }
-
 
     private void RaiseOpenChanged()
     {

@@ -1,6 +1,5 @@
 namespace Historia.Models;
 
-
 /// <summary>Full detail for a single selected commit.</summary>
 public sealed record CommitDetail
 {

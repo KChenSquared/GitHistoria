@@ -36,7 +36,6 @@ public abstract class DiffPresenterBase : ScrollSyncCodeEditor
         protected set => _rows = value;
     }
 
-
     public bool EnableRowButtons
     {
         get => _enableRowButtons;

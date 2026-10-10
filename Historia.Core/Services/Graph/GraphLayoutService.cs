@@ -5,7 +5,6 @@ public sealed partial class GraphLayoutService : IGraphLayoutService
 {
     private const int WalkOverscan = 2_000;
 
-
     /// <summary>Rows per chunk of the background full-history walk. Each chunk *resumes*
     /// the primed <c>git log</c> walk (cheap — no respawn) while no ref file has changed
     /// and otherwise after one low-priority gate turn, so this bounds how long a
@@ -208,7 +207,6 @@ public sealed partial class GraphLayoutService : IGraphLayoutService
     /// that never received one.</summary>
     private Task WaitForGateAsync(CancellationToken ct) =>
         _gate?.WaitUntilOpenAsync(ct) ?? Task.CompletedTask;
-
 
     private readonly DagLayoutEngine _engine = new();
     private readonly GraphWalkCache _walkCache = new();
@@ -424,7 +422,6 @@ public sealed partial class GraphLayoutService : IGraphLayoutService
         MaybeStartBackgroundSpill(context, cache, cache.Query); // resume if it stalled/hadn't started
         return swapped with { Fingerprint = cache.Fingerprint };
     }
-
 
     public async Task<GraphLayoutResult> RecomputeAsync(
         RepositoryContext context, GraphQuery query, GraphLayoutResult previous,

@@ -9,7 +9,7 @@ public sealed class OpenAiCompatibleClient(AiHttp http) : IAiChatClient
     public async Task<IReadOnlyList<string>> ListModelsAsync(AiChatRequest request, CancellationToken ct)
     {
         var body = await http.SendAsync(
-            () => AiHttp.CreateJsonRequest(HttpMethod.Get, $"{Base(request)}/models", request, null, m => { if (!string.IsNullOrEmpty(request.ApiKey)) m.Headers.TryAddWithoutValidation("Authorization", $"Bearer {request.ApiKey}"); }),
+            () => AiHttp.CreateJsonRequest(HttpMethod.Get, $"{Base(request)}/models", request, null, m => AddAuth(m, request)),
             AiHttp.Secrets(request), null, ct).ConfigureAwait(false);
 
         var root = AiHttp.ParseJson(body, "The AI service");
@@ -43,7 +43,7 @@ public sealed class OpenAiCompatibleClient(AiHttp http) : IAiChatClient
 
         var json = payload.ToJsonString();
         var body = await http.SendAsync(
-            () => AiHttp.CreateJsonRequest(HttpMethod.Post, $"{Base(request)}/chat/completions", request, json, m => { if (!string.IsNullOrEmpty(request.ApiKey)) m.Headers.TryAddWithoutValidation("Authorization", $"Bearer {request.ApiKey}"); }),
+            () => AiHttp.CreateJsonRequest(HttpMethod.Post, $"{Base(request)}/chat/completions", request, json, m => AddAuth(m, request)),
             AiHttp.Secrets(request), RefineError, ct).ConfigureAwait(false);
 
         try
@@ -92,5 +92,9 @@ public sealed class OpenAiCompatibleClient(AiHttp http) : IAiChatClient
 
     private static string Base(AiChatRequest request) => request.Server.Trim().TrimEnd('/');
 
-
+    private static void AddAuth(HttpRequestMessage message, AiChatRequest request)
+    {
+        if (!string.IsNullOrEmpty(request.ApiKey))
+            message.Headers.TryAddWithoutValidation("Authorization", $"Bearer {request.ApiKey}");
+    }
 }

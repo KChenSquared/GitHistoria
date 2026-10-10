@@ -40,7 +40,6 @@ public class PaletteParityTests
             Assert.Equal(Color.FromRgb(0xFF, 0xFF, 0xFF), HistoriaPalette.Get(theme, "ref-label"));
     }
 
-
     // dark is Synthwave Sunset and light is Retro Sunset, each verbatim in index order.
     [Theory]
     [InlineData(EffectiveTheme.Dark, 0, "#E09E1D")] // Cyber Yellow
