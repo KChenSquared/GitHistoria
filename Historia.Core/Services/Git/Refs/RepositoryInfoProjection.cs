@@ -41,6 +41,7 @@ public static class RepositoryInfoProjection
             IsBare = isBare,
             IsHeadDetached = snapshot.IsHeadDetached,
             IsHeadUnborn = snapshot.IsHeadUnborn,
+            HeadCommitId = snapshot.HeadTarget,
             CurrentBranchName = currentBranchName,
             HasCommitHooks = CheckHasCommitHooks(hooksDir),
         };

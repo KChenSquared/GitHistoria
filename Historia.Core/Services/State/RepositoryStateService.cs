@@ -363,11 +363,13 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         var stamp = RefStateToken.StashStamp(_context.GitDirectory);
         var branches = await _gateway.GetBranchesAsync(ct).ConfigureAwait(false);
         var remotes = await _gateway.GetRemotesAsync(ct).ConfigureAwait(false);
+        var info = await _gateway.GetRepositoryInfoAsync(ct).ConfigureAwait(false);
 
         markDataRead();
 
         bool branchesOrRemotesChanged;
         bool stashChanged;
+        bool headChanged;
         IReadOnlyList<TagInfo> existingTags;
         lock (_sync)
         {
@@ -378,12 +380,18 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             _stashStamp = stamp;
             _branches = branches;
             _remotes = remotes;
+
+            headChanged = _repository.IsHeadDetached != info.IsHeadDetached
+                          || _repository.IsHeadUnborn != info.IsHeadUnborn
+                          || _repository.HeadCommitId != info.HeadCommitId;
+            _repository = info;
+
             existingTags = _tags;
         }
 
         // publish branches and remotes first so the sidebar populates in ~57ms rather than waiting
         // seconds on thousands of tags to project.
-        if (branchesOrRemotesChanged || stashChanged)
+        if (branchesOrRemotesChanged || stashChanged || headChanged)
             Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, existingTags, remotes) { StashStamp = stamp }));
 
         var tags = await _gateway.GetTagsAsync(ct).ConfigureAwait(false);
