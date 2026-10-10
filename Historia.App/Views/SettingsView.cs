@@ -13,6 +13,9 @@ public sealed class SettingsView : UserControl, IDisposable
     private CmdrPathStatus? _cmdrStatus;
     private Task? _cmdrStatusTask;
     private bool _cmdrApplyInProgress;
+    private Task? _cmdrApplyTask;
+
+    internal Task CmdrApplyTaskForTesting => _cmdrApplyTask ?? Task.CompletedTask;
 
     private const string CmdrPathHint = "Lets terminals and coding agents run historia-cmdr by name. Puts Historia's folder on your user PATH, replacing any other historia-cmdr folder there. Open a new terminal to use it.";
 
@@ -89,8 +92,23 @@ public sealed class SettingsView : UserControl, IDisposable
     {
         _cmdrStatusTask = Task.Run(() =>
         {
-            _cmdrStatus = _cmdrPath.GetStatus();
-            Post();
+            CmdrPathStatus status;
+            try
+            {
+                status = _cmdrPath.GetStatus();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write(AppLogLevel.Warn, "cmdr-path", "Could not check historia-cmdr PATH status", ex);
+                status = new CmdrPathStatus.Unavailable();
+            }
+
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _cmdrStatus = status;
+                _cmdrApplyInProgress = false;
+                Rebuild();
+            });
         });
     }
 
@@ -100,22 +118,45 @@ public sealed class SettingsView : UserControl, IDisposable
         Avalonia.Threading.Dispatcher.UIThread.RunJobs();
     }
 
-    private async void OnAddToPath()
+    private void OnAddToPath() => _cmdrApplyTask = AddToPathAsync();
+
+    private async Task AddToPathAsync()
     {
         if (_cmdrStatus is not CmdrPathStatus.NeedsUpdate update || _cmdrApplyInProgress)
             return;
 
         var preview = update.Preview;
-        var folderToAdd = preview.Added ?? AppContext.BaseDirectory;
+        var ourFolder = update.OurFolder;
         var sb = new StringBuilder();
-        sb.AppendLine($"Adds {folderToAdd} to your user PATH.");
+        if (preview.Added is not null)
+            sb.AppendLine($"Adds {ourFolder} to your user PATH.");
+        else
+            sb.AppendLine($"Keeps {ourFolder} on your user PATH.");
 
-        if (preview.Removed.Count > 0)
+        var duplicates = new List<string>();
+        var removes = new List<string>();
+        foreach (var r in preview.Removed)
+        {
+            if (UserPathEditor.SameFolder(r, ourFolder))
+                duplicates.Add(r);
+            else
+                removes.Add(r);
+        }
+
+        if (removes.Count > 0)
         {
             sb.AppendLine();
             sb.AppendLine("Removes from your user PATH:");
-            foreach (var r in preview.Removed)
+            foreach (var r in removes)
                 sb.AppendLine(r);
+        }
+
+        if (duplicates.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Removes duplicates of that folder:");
+            foreach (var d in duplicates)
+                sb.AppendLine(d);
         }
 
         if (update.MachineCopies.Count > 0)
@@ -125,9 +166,8 @@ public sealed class SettingsView : UserControl, IDisposable
                 sb.AppendLine($"A historia-cmdr in the system PATH ({m}) still runs first; an administrator must remove it.");
         }
 
-        var backupFolder = System.IO.Path.Combine(Historia.Services.Storage.AppPaths.DataDirectory, "path-backups");
         sb.AppendLine();
-        sb.AppendLine($"Your current PATH is backed up to {backupFolder} first.");
+        sb.AppendLine($"Your current PATH is backed up to {update.BackupFolder} first.");
         sb.Append("Open a new terminal to use it.");
 
         var effect = sb.ToString();
@@ -136,31 +176,30 @@ public sealed class SettingsView : UserControl, IDisposable
             return;
 
         _cmdrApplyInProgress = true;
-        Post();
+        Rebuild();
 
         try
         {
             var result = await Task.Run(() => _cmdrPath.Apply(preview));
             switch (result)
             {
-                case CmdrPathApplyResult.Written:
-                    RefreshCmdrStatus();
+                case CmdrPathApplyResult.Written or CmdrPathApplyResult.AlreadyCurrent:
                     break;
                 case CmdrPathApplyResult.Changed:
                     await _dialogs.ShowMessageAsync("Update PATH", "PATH changed while the dialog was open; try again.");
-                    RefreshCmdrStatus();
                     break;
                 case CmdrPathApplyResult.Failed failed:
                     await _dialogs.ShowMessageAsync("Update PATH", failed.Message);
-                    RefreshCmdrStatus();
                     break;
             }
         }
-        finally
+        catch (Exception ex)
         {
-            _cmdrApplyInProgress = false;
-            Post();
+            AppLog.Write(AppLogLevel.Error, "cmdr-path", "Failed to apply historia-cmdr to user PATH", ex);
+            await _dialogs.ShowMessageAsync("Update PATH", ex.Message);
         }
+
+        RefreshCmdrStatus();
     }
 
     private void Rebuild()

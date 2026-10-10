@@ -58,12 +58,40 @@ public sealed class SettingsCmdrPathRowTests
         public CmdrPathStatus StatusToReturn { get; set; } = new CmdrPathStatus.Current();
         public CmdrPathApplyResult ApplyResultToReturn { get; set; } = new CmdrPathApplyResult.Written(@"C:\Backups\path.reg");
         public List<PathChange> ApplyCalls { get; } = [];
+        public bool ThrowFromGetStatus { get; set; }
+        public bool ThrowFromApply { get; set; }
+        public TaskCompletionSource<bool>? ApplyGate { get; set; }
+        public TaskCompletionSource<bool>? SubsequentStatusGate { get; set; }
+        private int _statusCallCount;
 
-        public CmdrPathStatus GetStatus() => StatusToReturn;
+        public int StatusCallCount => _statusCallCount;
+
+        public CmdrPathStatus GetStatus()
+        {
+            if (ThrowFromGetStatus)
+                throw new InvalidOperationException("Status error");
+
+            _statusCallCount++;
+            if (_statusCallCount > 1 && SubsequentStatusGate != null)
+            {
+                SubsequentStatusGate.Task.GetAwaiter().GetResult();
+            }
+
+            return StatusToReturn;
+        }
 
         public CmdrPathApplyResult Apply(PathChange confirmed)
         {
             ApplyCalls.Add(confirmed);
+
+            if (ApplyGate != null)
+            {
+                ApplyGate.Task.GetAwaiter().GetResult();
+            }
+
+            if (ThrowFromApply)
+                throw new InvalidOperationException("Apply error");
+
             return ApplyResultToReturn;
         }
     }
@@ -258,8 +286,8 @@ public sealed class SettingsCmdrPathRowTests
         Assert.NotNull(button);
 
         button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await Task.Delay(50);
-        Dispatcher.UIThread.RunJobs();
+        await view.CmdrApplyTaskForTesting;
+        view.EnsureCmdrStatusLoadedForTesting();
 
         Assert.Single(dialogs.DestructiveCalls);
         var call = dialogs.DestructiveCalls[0];
@@ -268,7 +296,7 @@ public sealed class SettingsCmdrPathRowTests
         Assert.Contains(@"C:\NewCmdr", call.Effect);
         Assert.Contains(@"C:\OldCmdr1", call.Effect);
         Assert.Contains(@"C:\OldCmdr2", call.Effect);
-        Assert.Contains("path-backups", call.Effect);
+        Assert.Contains(@"C:\Backups", call.Effect);
         Assert.Contains(@"C:\System\cmdr", call.Effect);
 
         Assert.Empty(dialogs.ConfirmCalls);
@@ -295,8 +323,8 @@ public sealed class SettingsCmdrPathRowTests
         Assert.NotNull(button);
 
         button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        await view.CmdrApplyTaskForTesting;
+        view.EnsureCmdrStatusLoadedForTesting();
 
         Assert.Single(cmdr.ApplyCalls);
         Assert.Equal(preview, cmdr.ApplyCalls[0]);
@@ -323,8 +351,8 @@ public sealed class SettingsCmdrPathRowTests
         Assert.NotNull(button);
 
         button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        await view.CmdrApplyTaskForTesting;
+        view.EnsureCmdrStatusLoadedForTesting();
 
         Assert.Single(dialogs.ShowMessageCalls);
         Assert.Equal("Update PATH", dialogs.ShowMessageCalls[0].Title);
@@ -351,12 +379,168 @@ public sealed class SettingsCmdrPathRowTests
         Assert.NotNull(button);
 
         button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        await view.CmdrApplyTaskForTesting;
+        view.EnsureCmdrStatusLoadedForTesting();
 
         Assert.Single(dialogs.ShowMessageCalls);
         Assert.Equal("Update PATH", dialogs.ShowMessageCalls[0].Title);
         Assert.Equal("Disk full", dialogs.ShowMessageCalls[0].Message);
+
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
+    public async Task Effect_says_keeps_when_nothing_is_added_and_lists_duplicates_separately()
+    {
+        var preview = new PathChange(@"C:\NewCmdr", null, [@"C:\Old", @"C:\NewCmdr"], false);
+        var cmdr = new RecordingCmdrPathService
+        {
+            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
+        };
+        var dialogs = new ScriptedDialogService { ConfirmResult = false };
+        var sp = CreateServices(cmdr, dialogs);
+        var view = new SettingsView(sp);
+
+        var general = GeneralBody(view);
+        var button = FindCmdrButton(general);
+        Assert.NotNull(button);
+
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await view.CmdrApplyTaskForTesting;
+        view.EnsureCmdrStatusLoadedForTesting();
+
+        Assert.Single(dialogs.DestructiveCalls);
+        var call = dialogs.DestructiveCalls[0];
+        Assert.DoesNotContain("Adds", call.Effect);
+        Assert.Contains(@"Keeps C:\NewCmdr on your user PATH.", call.Effect);
+        Assert.Contains("Removes from your user PATH:", call.Effect);
+        Assert.Contains(@"C:\Old", call.Effect);
+        Assert.Contains("Removes duplicates of that folder:", call.Effect);
+        Assert.Contains(@"C:\NewCmdr", call.Effect);
+        Assert.Contains(@"C:\Backups", call.Effect);
+        Assert.DoesNotContain(AppContext.BaseDirectory, call.Effect);
+
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
+    public async Task Button_is_disabled_while_apply_runs()
+    {
+        var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
+        var applyGate = new TaskCompletionSource<bool>();
+        var cmdr = new RecordingCmdrPathService
+        {
+            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
+            ApplyGate = applyGate,
+        };
+        var dialogs = new ScriptedDialogService { ConfirmResult = true };
+        var sp = CreateServices(cmdr, dialogs);
+        var view = new SettingsView(sp);
+
+        var general = GeneralBody(view);
+        var button = FindCmdrButton(general);
+        Assert.NotNull(button);
+        Assert.True(button.IsEnabled);
+
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Dispatcher.UIThread.RunJobs();
+
+        var buttonDuringApply = FindCmdrButton(GeneralBody(view));
+        Assert.NotNull(buttonDuringApply);
+        Assert.False(buttonDuringApply.IsEnabled);
+
+        applyGate.SetResult(true);
+        await view.CmdrApplyTaskForTesting;
+        view.EnsureCmdrStatusLoadedForTesting();
+
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
+    public async Task Button_stays_disabled_after_a_write_until_the_new_status_arrives()
+    {
+        var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
+        var statusGate = new TaskCompletionSource<bool>();
+        var cmdr = new RecordingCmdrPathService
+        {
+            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
+            SubsequentStatusGate = statusGate,
+        };
+        var dialogs = new ScriptedDialogService { ConfirmResult = true };
+        var sp = CreateServices(cmdr, dialogs);
+        var view = new SettingsView(sp);
+
+        var general = GeneralBody(view);
+        var button = FindCmdrButton(general);
+        Assert.NotNull(button);
+
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await view.CmdrApplyTaskForTesting;
+        Dispatcher.UIThread.RunJobs();
+
+        var buttonDuringWait = FindCmdrButton(GeneralBody(view));
+        Assert.NotNull(buttonDuringWait);
+        Assert.Equal("Add to PATH", buttonDuringWait.Content);
+        Assert.False(buttonDuringWait.IsEnabled);
+
+        cmdr.StatusToReturn = new CmdrPathStatus.Current();
+        statusGate.SetResult(true);
+        view.EnsureCmdrStatusLoadedForTesting();
+
+        var currentButton = FindCmdrButton(general);
+        Assert.NotNull(currentButton);
+        Assert.Equal("On PATH", currentButton.Content);
+        Assert.False(currentButton.IsEnabled);
+
+        Assert.Single(dialogs.DestructiveCalls);
+        Assert.Single(cmdr.ApplyCalls);
+
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
+    public void Throwing_status_hides_the_row()
+    {
+        var cmdr = new RecordingCmdrPathService
+        {
+            ThrowFromGetStatus = true,
+        };
+        var dialogs = new ScriptedDialogService();
+        var sp = CreateServices(cmdr, dialogs);
+        var view = new SettingsView(sp);
+
+        var general = GeneralBody(view);
+        var button = FindCmdrButton(general);
+        Assert.Null(button);
+
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
+    public async Task Throwing_apply_shows_a_message_and_refreshes()
+    {
+        var preview = new PathChange(@"C:\NewCmdr", @"C:\NewCmdr", [], false);
+        var cmdr = new RecordingCmdrPathService
+        {
+            StatusToReturn = new CmdrPathStatus.NeedsUpdate(preview, [], @"C:\NewCmdr", @"C:\Backups"),
+            ThrowFromApply = true,
+        };
+        var dialogs = new ScriptedDialogService { ConfirmResult = true };
+        var sp = CreateServices(cmdr, dialogs);
+        var view = new SettingsView(sp);
+
+        var general = GeneralBody(view);
+        var button = FindCmdrButton(general);
+        Assert.NotNull(button);
+
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await view.CmdrApplyTaskForTesting;
+        view.EnsureCmdrStatusLoadedForTesting();
+
+        Assert.Single(dialogs.ShowMessageCalls);
+        Assert.Equal("Update PATH", dialogs.ShowMessageCalls[0].Title);
+        Assert.Equal("Apply error", dialogs.ShowMessageCalls[0].Message);
+        Assert.Equal(2, cmdr.StatusCallCount);
 
         view.Dispose();
     }
