@@ -23,7 +23,7 @@ public class TerminalContrastTests
         var bg = palette["term-bg"];
 
         var failures = AnsiTokens
-            .Select(t => (t, ratio: TerminalColorResolver.ContrastRatio(palette[t], bg)))
+            .Select(t => (t, ratio: Rgb.ContrastRatio(palette[t], bg)))
             .Where(x => x.ratio < 4.5)
             .Select(x => $"{x.t}={x.ratio:F2}")
             .ToList();
@@ -36,8 +36,8 @@ public class TerminalContrastTests
     {
         var palette = HistoriaPalette.For(EffectiveTheme.HighContrast);
         var bg = palette["term-bg"];
-        Assert.True(TerminalColorResolver.ContrastRatio(palette["term-cursor"], bg) >= 3.0);
-        Assert.True(TerminalColorResolver.ContrastRatio(palette["term-fg"], bg) >= 7.0);
+        Assert.True(Rgb.ContrastRatio(palette["term-cursor"], bg) >= 3.0);
+        Assert.True(Rgb.ContrastRatio(palette["term-fg"], bg) >= 7.0);
     }
 
     [Theory]
@@ -46,6 +46,6 @@ public class TerminalContrastTests
     public void NonHcThemes_DefaultTextClearsBackground(EffectiveTheme theme)
     {
         var palette = HistoriaPalette.For(theme);
-        Assert.True(TerminalColorResolver.ContrastRatio(palette["term-fg"], palette["term-bg"]) >= 4.5);
+        Assert.True(Rgb.ContrastRatio(palette["term-fg"], palette["term-bg"]) >= 4.5);
     }
 }

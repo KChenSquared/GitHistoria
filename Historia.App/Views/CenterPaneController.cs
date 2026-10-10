@@ -30,7 +30,6 @@ public sealed class CenterPaneController : IDisposable
 
     internal DiffView? ActiveDiffViewForTesting => _activeDiffView;
     internal AiIntegrationsView? ActiveAiViewForTesting => _aiView;
-    internal RepositoryContext? ActiveContextForTesting => _activeCtx;
 
     public CenterPaneController(
         ContentControl centerHost,

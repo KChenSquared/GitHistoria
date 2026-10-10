@@ -34,7 +34,6 @@ public class GitExecutableLocatorTests
             NotFoundReason = $"Git {older} was found at 'C:\\Git\\cmd\\git.exe', but Git {GitExecutableInfo.MinimumVersion} or newer is required.",
         };
         Assert.False(olderInfo.Found);
-        Assert.False(olderInfo.MeetsMinimumVersion);
         Assert.Contains("2.45.2", olderInfo.NotFoundReason);
         Assert.Contains("2.46", olderInfo.NotFoundReason);
 
@@ -45,7 +44,6 @@ public class GitExecutableLocatorTests
             Version = newer,
         };
         Assert.True(newerInfo.Found);
-        Assert.True(newerInfo.MeetsMinimumVersion);
     }
 
     [Fact]

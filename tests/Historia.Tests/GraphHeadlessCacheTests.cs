@@ -251,7 +251,7 @@ public sealed class GraphHeadlessCacheTests : IAsyncDisposable
         var expected = await memSvc.ComputeLayoutAsync(memCtx, Q);
         Assert.Equal(CommitCount + 1, expected.Layout.RowCount);
 
-        // The headlessly-reordered disk store: ProbeExisting (not ProbeAny/Probe) so this reads
+        // The headlessly-reordered disk store: ProbeExisting (not Probe) so this reads
         // through the actual OrderVersion/RecordCount the reorder wrote, not the identity order.
         var probe = GraphMetaStore.ProbeExisting(_repo.Path, includeRemoteBranches: true);
         Assert.True(probe.Ok);

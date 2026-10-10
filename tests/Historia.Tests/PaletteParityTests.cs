@@ -40,18 +40,6 @@ public class PaletteParityTests
             Assert.Equal(Color.FromRgb(0xFF, 0xFF, 0xFF), HistoriaPalette.Get(theme, "ref-label"));
     }
 
-    // the palette hues are the SOLID line and pill-border colour, so EdgeColorFor
-    // is the identity in every theme.
-    [Theory]
-    [InlineData(EffectiveTheme.Dark)]
-    [InlineData(EffectiveTheme.Light)]
-    [InlineData(EffectiveTheme.HighContrast)]
-    public void EdgeColorFor_is_identity_in_every_theme(EffectiveTheme theme)
-    {
-        for (var i = 0; i < LanePalette.Size; i++)
-            Assert.Equal(LanePalette.ColorFor(i, theme), LanePalette.EdgeColorFor(i, theme));
-    }
-
     // dark is Synthwave Sunset and light is Retro Sunset, each verbatim in index order.
     [Theory]
     [InlineData(EffectiveTheme.Dark, 0, "#E09E1D")] // Cyber Yellow

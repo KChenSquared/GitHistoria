@@ -25,8 +25,6 @@ public sealed class TerminalControl : Control
     private IGlyphTypeface? _glyphTypeface;
     private double _cellWidth = 8;
     private double _cellHeight = 16;
-    private double _lastScaling = 1;
-    private string? _lastFontFamily;
     private double _lastFontSize = DefaultFontSize;
 
     private int _cols = 80;
@@ -197,9 +195,7 @@ public sealed class TerminalControl : Control
         var size = _settings?.Current.TerminalFontSize ?? DefaultFontSize;
         if (size < 6) size = DefaultFontSize;
 
-        _lastFontFamily = family;
         _lastFontSize = size;
-        _lastScaling = (this.GetVisualRoot() as ILayoutRoot)?.LayoutScaling ?? 1;
 
         var ff = string.IsNullOrWhiteSpace(family)
             ? new FontFamily(PlatformMonospaceStack())
@@ -389,7 +385,7 @@ public sealed class TerminalControl : Control
         var haveRun = false;
         for (var col = 0; col <= cols; col++)
         {
-            uint bg = col < cols ? ResolveBg(view.GetCell(line, col), palette) : defaultBg + 1; // sentinel to flush
+            uint bg = col < cols ? ResolveBg(view.GetCell(line, col)) : defaultBg + 1; // sentinel to flush
             if (haveRun && bg == runBg)
                 continue;
             if (haveRun && runBg != defaultBg)
@@ -413,7 +409,7 @@ public sealed class TerminalControl : Control
                 continue;
             }
 
-            var (fg, flags) = ResolveFg(cell, palette);
+            var (fg, flags) = ResolveFg(cell);
             var start = b;
             var sb = new System.Text.StringBuilder();
             while (b < cols)
@@ -421,7 +417,7 @@ public sealed class TerminalControl : Control
                 var c = view.GetCell(line, b);
                 if (c.Width == 0) { b++; continue; }
                 if (c.CodePoint is 0 or 32) break;
-                var (cfg, cflags) = ResolveFg(c, palette);
+                var (cfg, cflags) = ResolveFg(c);
                 if (cfg != fg || cflags != flags) break;
                 sb.Append(c.Content.Length > 0 ? c.Content : char.ConvertFromUtf32(c.CodePoint));
                 b += Math.Max(1, c.Width);
@@ -523,26 +519,26 @@ public sealed class TerminalControl : Control
 
     // ── colour resolution ───────────────────────────────────────────────────────────────────
 
-    private uint ResolveBg(TerminalCellSnapshot cell, IReadOnlyDictionary<string, Rgb> palette)
+    private uint ResolveBg(TerminalCellSnapshot cell)
     {
-        var (bg, _) = ApplyInverse(cell, palette);
+        var (bg, _) = ApplyInverse(cell);
         return bg;
     }
 
-    private (uint Fg, TerminalCellFlags Flags) ResolveFg(TerminalCellSnapshot cell, IReadOnlyDictionary<string, Rgb> palette)
+    private (uint Fg, TerminalCellFlags Flags) ResolveFg(TerminalCellSnapshot cell)
     {
-        var (_, fg) = ApplyInverse(cell, palette);
+        var (_, fg) = ApplyInverse(cell);
         var flags = cell.Flags;
         if (flags.HasFlag(TerminalCellFlags.Hidden))
-            fg = ResolveBg(cell, palette);
+            fg = ResolveBg(cell);
         if (flags.HasFlag(TerminalCellFlags.Dim))
-            fg = Blend(fg, ResolveBg(cell, palette), 0.4);
+            fg = Blend(fg, ResolveBg(cell), 0.4);
         return (fg, flags);
     }
 
     /// <summary>Resolves fg/bg, swapping them first when the cell is inverse so
     /// inverse cells still merge into runs.</summary>
-    private (uint Bg, uint Fg) ApplyInverse(TerminalCellSnapshot cell, IReadOnlyDictionary<string, Rgb> palette)
+    private (uint Bg, uint Fg) ApplyInverse(TerminalCellSnapshot cell)
     {
         var fg = ArgbOf(TerminalColorResolver.Resolve(cell.Foreground, _themeMode));
         var bg = ArgbOf(TerminalColorResolver.Resolve(cell.Background, _themeMode));

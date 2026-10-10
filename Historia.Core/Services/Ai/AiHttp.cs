@@ -224,4 +224,34 @@ public sealed class AiHttp
         }
         return text;
     }
+
+    internal static IReadOnlyCollection<string> Secrets(AiChatRequest request) =>
+        [.. AiExtraHeaders.Values(request.ExtraHeaders), .. (request.ApiKey is { Length: > 0 } k ? new[] { k } : [])];
+
+    internal static HttpRequestMessage CreateJsonRequest(
+        HttpMethod method,
+        string url,
+        AiChatRequest request,
+        string? json,
+        Action<HttpRequestMessage> addAuth)
+    {
+        var message = new HttpRequestMessage(method, url);
+        addAuth(message);
+        AiExtraHeaders.Apply(message, request.ExtraHeaders);
+        if (json is not null)
+            message.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        return message;
+    }
+
+    internal static JsonNode ParseJson(string body, string serviceName)
+    {
+        try
+        {
+            return JsonNode.Parse(body) ?? throw new JsonException();
+        }
+        catch (JsonException ex)
+        {
+            throw new AiException(AiErrorKind.BadResponse, $"{serviceName} returned something that isn't JSON. Check the Server address.", null, ex);
+        }
+    }
 }

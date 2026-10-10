@@ -59,7 +59,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
         (bool Ok, int RowCount, bool Exhausted) probe = default;
         while (DateTime.UtcNow < deadline)
         {
-            probe = GraphMetaStore.Probe(_repo.Path, FingerprintOf(svc, ctx), includeRemoteBranches: true);
+            probe = GraphMetaStore.Probe(_repo.Path, FingerprintOf(ctx), includeRemoteBranches: true);
             if (probe is { Ok: true, Exhausted: true })
                 break;
             await Task.Delay(100);
@@ -72,7 +72,7 @@ public sealed class GraphDiskMetaIntegrationTests : IAsyncDisposable
 
     // The service computes the fingerprint privately; re-derive it the same way the store keys on
     // by opening any store file — simplest is to read it back from the header the spill just wrote.
-    private static long FingerprintOf(GraphLayoutService svc, RepositoryContext ctx)
+    private static long FingerprintOf(RepositoryContext ctx)
     {
         var hdr = GraphCachePaths.File(ctx.RepositoryPath, GraphMetaStore.HdrExt);
         if (!File.Exists(hdr))

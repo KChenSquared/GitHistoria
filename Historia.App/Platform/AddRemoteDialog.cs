@@ -47,28 +47,12 @@ internal static class AddRemoteDialog
         nameBox.TextChanged += (_, _) => Revalidate();
         urlBox.TextChanged += (_, _) => Revalidate();
 
-        static TextBlock Label(string t) => new()
-        {
-            Text = t,
-            FontSize = 11,
-            FontWeight = FontWeight.SemiBold,
-            Margin = new Thickness(0, 10, 0, 3),
-        };
-
-        var buttons = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 8,
-            Margin = new Thickness(0, 20, 0, 0),
-        };
-        buttons.Children.Add(add);
-        buttons.Children.Add(cancel);
+        var buttons = EditRemoteDialog.ButtonRow(add, cancel);
 
         var panel = new StackPanel { Margin = new Thickness(20) };
-        panel.Children.Add(Label("Name"));
+        panel.Children.Add(EditRemoteDialog.FieldLabel("Name"));
         panel.Children.Add(nameBox);
-        panel.Children.Add(Label("URL"));
+        panel.Children.Add(EditRemoteDialog.FieldLabel("URL"));
         panel.Children.Add(urlBox);
         panel.Children.Add(fetch);
         panel.Children.Add(hint);

@@ -213,7 +213,7 @@ public sealed class ConflictPaneRenderTests
         {
             Document = new TextDocument(string.Join('\n', Enumerable.Range(1, 200).Select(i => $"line {i}"))),
         };
-        var margin = new ConflictToggleMargin(editor, glyph);
+        var margin = new ConflictToggleMargin(glyph);
         editor.TextArea.LeftMargins.Insert(0, margin);
         var window = new Window { Width = 600, Height = 500, Content = editor };
         window.Show();
@@ -335,7 +335,7 @@ public sealed class ConflictPaneRenderTests
     {
         var editor = new TextEditor { Document = new TextDocument(text) };
         var parse = ConflictMarkerParser.Parse(text);
-        var renderer = new ConflictBackgroundRenderer(editor, () => null, () => parse, getRowVisual: rowVisual);
+        var renderer = new ConflictBackgroundRenderer(() => null, () => parse, getRowVisual: rowVisual);
         editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
         var window = new Window { Width = 400, Height = 300, Content = editor };
         window.Show();
@@ -468,7 +468,7 @@ public sealed class ConflictPaneRenderTests
         IReadOnlyList<ConflictPaneLine> lines, ConflictRegionAnalysis analysis)
     {
         var editor = new TextEditor { Document = new TextDocument(string.Join('\n', lines.Select(l => l.Text))) };
-        var renderer = new ConflictBackgroundRenderer(editor, () => ConflictSide.Theirs, () => null, () => lines, () => [analysis]);
+        var renderer = new ConflictBackgroundRenderer(() => ConflictSide.Theirs, () => null, () => lines, () => [analysis]);
         editor.TextArea.TextView.BackgroundRenderers.Add(renderer);
         var window = new Window { Width = 400, Height = 300, Content = editor };
         window.Show();

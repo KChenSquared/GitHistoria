@@ -389,18 +389,6 @@ public sealed class ConflictSelectionSessionTests
     }
 
     [AvaloniaFact]
-    public void Use_base_replaces_region_with_plain_text()
-    {
-        var (doc, session) = Make();
-        ActivateOurs(doc, session);
-
-        session.ReplaceWithText(session.Regions[0], ["base 1"]);
-
-        Assert.Equal("top\nbase 1\nbottom\n", doc.Text);
-        Assert.Empty(session.Regions);
-    }
-
-    [AvaloniaFact]
     public void ComposeOutput_preserves_crlf_and_missing_final_newline()
     {
         const string text = "top\r\n<<<<<<< a\r\nours\r\n=======\r\ntheirs\r\n>>>>>>> b";

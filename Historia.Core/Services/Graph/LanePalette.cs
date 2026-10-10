@@ -13,7 +13,7 @@ namespace Historia.Services.Graph;
 /// colour <i>within</i> a theme (asserted by <c>PaletteParityTests</c> with a CIE76 ΔE floor).
 /// This is the graph layer's palette only — <see cref="Historia.Services.Theming.HistoriaPalette"/>
 /// still owns the theme tokens. These are "the available colors" for the <b>solid</b> lane
-/// lines and the branch/tag pill borders, so <see cref="EdgeColorFor"/> is the identity.
+/// lines and the branch/tag pill borders, which use <see cref="ColorFor"/> directly.
 /// Backgrounds (the lane-square fill, the pill fills) derive a translucent tint from
 /// <see cref="ColorFor"/>. Changing <see cref="Size"/> breaks the colour-index stability
 /// guarantee — existing repos re-seed their lane colours on next open.
@@ -89,12 +89,4 @@ public static class LanePalette
             (byte)(baseColor.G * factor),
             (byte)(baseColor.B * factor));
     }
-
-    /// <summary>
-    /// The stroke/border variant of a lane colour: the identity in every theme, since the
-    /// palette hues are drawn as the <b>solid</b> line and pill border colour. A named seam so the
-    /// call sites (lane pens, emphasis pens, pill borders, the tick) ask for the stroke colour
-    /// explicitly, separate from the fill.
-    /// </summary>
-    public static Rgb EdgeColorFor(int colorIndex, EffectiveTheme theme) => ColorFor(colorIndex, theme);
 }

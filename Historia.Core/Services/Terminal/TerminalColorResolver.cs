@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Terminal;
+namespace Historia.Services.Terminal;
 
 /// <summary>How an emulator cell colour is expressed.</summary>
 public enum TerminalColorKind
@@ -95,44 +95,4 @@ public static class TerminalColorResolver
     }
 
     private static byte CubeChannel(int c) => (byte)(c == 0 ? 0 : 55 + c * 40);
-
-    /// <summary>
-    /// Lifts <paramref name="fg"/> toward <paramref name="reference"/> until it reaches
-    /// <paramref name="minRatio"/> contrast against <paramref name="bg"/>. Used for the
-    /// high-contrast theme, and as a defence against output that paints itself invisible.
-    /// Returns <paramref name="fg"/> unchanged when it is already compliant.
-    /// </summary>
-    public static Rgb EnsureContrast(Rgb fg, Rgb bg, Rgb reference, double minRatio = 4.5)
-    {
-        if (ContrastRatio(fg, bg) >= minRatio)
-            return fg;
-
-        // Binary-search the blend factor toward the reference for the smallest compliant lift.
-        double lo = 0, hi = 1;
-        var best = reference;
-        for (var iteration = 0; iteration < 24; iteration++)
-        {
-            var mid = (lo + hi) / 2;
-            var candidate = Lerp(fg, reference, mid);
-            if (ContrastRatio(candidate, bg) >= minRatio)
-            {
-                best = candidate;
-                hi = mid;
-            }
-            else
-            {
-                lo = mid;
-            }
-        }
-
-        return ContrastRatio(best, bg) >= minRatio ? best : reference;
-    }
-
-    public static double ContrastRatio(Rgb a, Rgb b) => Rgb.ContrastRatio(a, b);
-
-    private static Rgb Lerp(Rgb from, Rgb to, double t) => Rgb.FromArgb(
-        0xFF,
-        (byte)Math.Round(from.R + (to.R - from.R) * t),
-        (byte)Math.Round(from.G + (to.G - from.G) * t),
-        (byte)Math.Round(from.B + (to.B - from.B) * t));
 }

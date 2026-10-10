@@ -84,4 +84,82 @@ public class CodeEditorTests
             window.Close();
         }
     }
+
+    [AvaloniaFact]
+    public void SingleSideDiffPresenter_SetScrollOffset_raises_event_and_updates_visible_range()
+    {
+        var presenter = new SingleSideDiffPresenter(isOld: false);
+        presenter.Document = new TextDocument(string.Join("\n", Enumerable.Range(1, 100).Select(i => $"Line {i}")));
+
+        var window = new Window { Width = 400, Height = 300, Content = presenter };
+        window.Show();
+
+        try
+        {
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var before = presenter.VisibleLineRange!.Value;
+
+            bool scrollChangedFired = false;
+            presenter.ScrollOffsetChanged += (_, _) => scrollChangedFired = true;
+
+            presenter.SetScrollOffset(new Vector(0, 400));
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(scrollChangedFired);
+            Assert.Equal(new Vector(0, 400), presenter.GetScrollOffset());
+            var after = presenter.VisibleLineRange!.Value;
+            var firstScrolledLine = 1 + (int)(400 / presenter.TextArea.TextView.DefaultLineHeight);
+            Assert.True(after.Start > before.End, $"range {after} did not move past {before}");
+            Assert.InRange(firstScrolledLine, after.Start, after.End);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    private sealed class ScrollHookProbe : ScrollSyncCodeEditor
+    {
+        public int Applied { get; private set; }
+
+        protected override void OnScrollOffsetApplied() => Applied++;
+    }
+
+    [AvaloniaFact]
+    public void ScrollSyncCodeEditor_calls_the_scroll_hook_after_each_offset_change()
+    {
+        var editor = new ScrollHookProbe
+        {
+            Document = new TextDocument(string.Join("\n", Enumerable.Range(1, 100).Select(i => $"Line {i}"))),
+        };
+        var window = new Window { Width = 400, Height = 300, Content = editor };
+        window.Show();
+
+        try
+        {
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            var hookCountAtEvent = -1;
+            editor.ScrollOffsetChanged += (_, _) => hookCountAtEvent = editor.Applied;
+            var start = editor.Applied;
+
+            editor.SetScrollOffset(new Vector(0, 200));
+
+            Assert.True(editor.Applied > start, "SetScrollOffset did not call the hook");
+            Assert.Equal(start, hookCountAtEvent);
+
+            var afterSet = editor.Applied;
+            editor.FindDescendantOfType<ScrollViewer>()!.Offset = new Vector(0, 300);
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(editor.Applied > afterSet, "a scroll-viewer scroll did not call the hook");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
 }

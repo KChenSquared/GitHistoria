@@ -148,7 +148,7 @@ public sealed class RefSnapshotBrokenRefTests : IAsyncDisposable
     private static async Task<long> WalkKeyAsync(RepositoryContext ctx, GraphQuery query)
     {
         var method = typeof(GraphLayoutService).GetMethod("TryGetRefStateAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
-        var task = (Task)method.Invoke(null, [ctx, query, false, CancellationToken.None])!;
+        var task = (Task)method.Invoke(null, [ctx, query, CancellationToken.None])!;
         await task;
         var state = (System.Runtime.CompilerServices.ITuple)task.GetType().GetProperty("Result")!.GetValue(task)!;
         return (long)state[3]!;

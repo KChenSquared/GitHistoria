@@ -18,9 +18,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     private IWorkspaceService _workspace = default!;
     private ISettingsService _settings = default!;
     private IKeyboardCommandRouter _keyboard = default!;
-    private INotificationService _notifications = default!;
     private IThemeService _theme = default!;
-    private IServiceProvider _services = default!;
     private IDisposable? _chord;
     private bool _wired;
 
@@ -170,12 +168,10 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     {
         if (_wired)
             return;
-        _services = services;
         _sessions = services.GetRequiredService<ITerminalSessionService>();
         _workspace = services.GetRequiredService<IWorkspaceService>();
         _settings = services.GetRequiredService<ISettingsService>();
         _keyboard = services.GetRequiredService<IKeyboardCommandRouter>();
-        _notifications = services.GetRequiredService<INotificationService>();
         _theme = services.GetRequiredService<IThemeService>();
 
         _terminal.Attach(services);

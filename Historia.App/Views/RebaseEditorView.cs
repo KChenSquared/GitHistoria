@@ -1,4 +1,4 @@
-﻿namespace Historia.Views;
+namespace Historia.Views;
 
 /// <summary>
 /// Interactive-rebase todo editor. Reached via the
@@ -6,7 +6,6 @@
 /// </summary>
 public sealed class RebaseEditorView : UserControl
 {
-    private readonly IServiceProvider _sp;
     private readonly IRebaseService _rebase;
     private readonly INotificationService _notifications;
     private readonly INavigationBus _nav;
@@ -21,7 +20,6 @@ public sealed class RebaseEditorView : UserControl
 
     public RebaseEditorView(IServiceProvider sp, string onto)
     {
-        _sp = sp;
         _onto = onto;
         _rebase = sp.GetRequiredService<IRebaseService>();
         _notifications = sp.GetRequiredService<INotificationService>();

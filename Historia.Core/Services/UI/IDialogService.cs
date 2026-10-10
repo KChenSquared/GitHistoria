@@ -20,8 +20,8 @@ public interface IDialogService
 
     /// <summary>Non-destructive confirmation — detached checkout, merge,
     /// "switch to Local config", and the like. For anything that destroys uncommitted work or
-    /// rewrites history, use <see cref="ConfirmDestructiveAsync"/> instead (constitution Rule
-    /// 00). <paramref name="defaultToCancel"/> makes <c>Cancel</c> the highlighted (primary /
+    /// rewrites history, use <see cref="ConfirmDestructiveAsync"/> instead.
+    /// <paramref name="defaultToCancel"/> makes <c>Cancel</c> the highlighted (primary /
     /// Enter) button and leaves the confirm button plain. <paramref name="icon"/> puts a
     /// leading glyph (e.g. a red <c>warning</c>) beside the message.</summary>
     Task<bool> ConfirmAsync(string title, string message, bool destructive = false,

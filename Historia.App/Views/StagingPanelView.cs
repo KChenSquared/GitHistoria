@@ -86,7 +86,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
     internal StackPanel ChangesRowsForTesting => _changesRows;
     internal StackPanel StagedRowsForTesting => _stagedRows;
-    internal Button DiscardAllChangesForTesting => _discardAllChanges;
     internal TextBlock CaseCollisionFootnoteForTesting => _caseCollisionFootnote;
     internal Task DiscardAllChangesForTestingAsync() => DiscardAllChangesAsync();
     internal Task StageAllChangesForTestingAsync() => StageAllChangesAsync();
@@ -105,7 +104,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
     internal Border? MessageSectionForTesting { get; private set; }
     internal bool IsGeneratingForTesting => _generateCts is not null;
     internal Border? OfferBarForTesting => _offerBar;
-    internal Button? OfferUseForTesting => _offerUse;
     internal Button? OfferDismissForTesting => _offerDismiss;
     internal TextBlock? AgentNoteForTesting => _agentNote;
     internal Task OfferUseForTestingAsync() => UseOfferAsync();
