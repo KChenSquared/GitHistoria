@@ -25,8 +25,6 @@ public sealed class TerminalControl : Control
     private IGlyphTypeface? _glyphTypeface;
     private double _cellWidth = 8;
     private double _cellHeight = 16;
-    private double _lastScaling = 1;
-    private string? _lastFontFamily;
     private double _lastFontSize = DefaultFontSize;
 
     private int _cols = 80;
@@ -197,9 +195,7 @@ public sealed class TerminalControl : Control
         var size = _settings?.Current.TerminalFontSize ?? DefaultFontSize;
         if (size < 6) size = DefaultFontSize;
 
-        _lastFontFamily = family;
         _lastFontSize = size;
-        _lastScaling = (this.GetVisualRoot() as ILayoutRoot)?.LayoutScaling ?? 1;
 
         var ff = string.IsNullOrWhiteSpace(family)
             ? new FontFamily(PlatformMonospaceStack())
@@ -525,13 +521,13 @@ public sealed class TerminalControl : Control
 
     private uint ResolveBg(TerminalCellSnapshot cell, IReadOnlyDictionary<string, Rgb> palette)
     {
-        var (bg, _) = ApplyInverse(cell, palette);
+        var (bg, _) = ApplyInverse(cell);
         return bg;
     }
 
     private (uint Fg, TerminalCellFlags Flags) ResolveFg(TerminalCellSnapshot cell, IReadOnlyDictionary<string, Rgb> palette)
     {
-        var (_, fg) = ApplyInverse(cell, palette);
+        var (_, fg) = ApplyInverse(cell);
         var flags = cell.Flags;
         if (flags.HasFlag(TerminalCellFlags.Hidden))
             fg = ResolveBg(cell, palette);
@@ -542,7 +538,7 @@ public sealed class TerminalControl : Control
 
     /// <summary>Resolves fg/bg, swapping them first when the cell is inverse so
     /// inverse cells still merge into runs.</summary>
-    private (uint Bg, uint Fg) ApplyInverse(TerminalCellSnapshot cell, IReadOnlyDictionary<string, Rgb> palette)
+    private (uint Bg, uint Fg) ApplyInverse(TerminalCellSnapshot cell)
     {
         var fg = ArgbOf(TerminalColorResolver.Resolve(cell.Foreground, _themeMode));
         var bg = ArgbOf(TerminalColorResolver.Resolve(cell.Background, _themeMode));

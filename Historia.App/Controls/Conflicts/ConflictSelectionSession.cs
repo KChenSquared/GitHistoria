@@ -275,20 +275,6 @@ public sealed class ConflictSelectionSession : IReadOnlySectionProvider
         });
     }
 
-    /// <summary>Replaces the region with plain <paramref name="lines"/> (no toggles) and drops it.</summary>
-    public void ReplaceWithText(ManagedRegion region, IReadOnlyList<string> lines)
-    {
-        Mutate(() =>
-        {
-            var (start, end) = RegionRange(region);
-            var lastLine = _document.GetLineByNumber(region.EndLine + 1);
-            string trailing = _document.GetText(lastLine.EndOffset, lastLine.DelimiterLength);
-            DropRegion(region);
-            string text = lines.Count == 0 ? string.Empty : string.Join(region.Delimiter, lines) + trailing;
-            _document.Replace(start, end - start, text);
-        });
-    }
-
     /// <summary>
     /// Forgets every region without touching the document or the undo stack. Must run before the
     /// view replaces the whole text: a full-text replace collapses every segment, and normalising

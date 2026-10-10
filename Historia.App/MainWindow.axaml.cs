@@ -18,8 +18,6 @@ public partial class MainWindow : Window
     private readonly CommitGraphControl? _graph;
     private readonly TerminalDockControl? _terminalDock;
     private readonly CenterPaneController? _centerPaneController;
-    private IRepoNetworkActionRunner? _networkRunner;
-    private IWorkspaceService? _workspace;
 
     // Parameterless ctor for the XAML previewer only.
     public MainWindow() : this(null!) { }
@@ -56,7 +54,7 @@ public partial class MainWindow : Window
             // right away — Fetch/Pull/Push from the shortcuts bar must keep working regardless of
             // which route the detail pane shows (Home, Settings, …), not just while RepositoryView
             // happens to be the mounted view.
-            _networkRunner = services.GetRequiredService<IRepoNetworkActionRunner>();
+            _ = services.GetRequiredService<IRepoNetworkActionRunner>();
 
             _graph = new CommitGraphControl();
             _graph.Initialize(services);
@@ -68,8 +66,6 @@ public partial class MainWindow : Window
             _terminalDock = new TerminalDockControl();
             TerminalDockHost.Content = _terminalDock;
             _terminalDock.Initialize(services);
-
-            _workspace = services.GetService<IWorkspaceService>();
         }
 
         RestorePlacement();

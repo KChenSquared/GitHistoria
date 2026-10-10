@@ -1314,7 +1314,7 @@ public sealed partial class CommitGraphControl : Control
             SingleReader = true,
             SingleWriter = false
         });
-        _ = RunExtendPumpAsync(_extendChannel.Reader, context, ct);
+        _ = RunExtendPumpAsync(_extendChannel.Reader, ct);
     }
 
     // Every path that stops extending because the resident-row ceiling was reached routes
@@ -1330,7 +1330,7 @@ public sealed partial class CommitGraphControl : Control
             $"Loaded {rowCount:N0} commits. Further history is capped to preserve system memory.");
     }
 
-    private async Task RunExtendPumpAsync(ChannelReader<ExtendRequest> reader, RepositoryContext context, CancellationToken ct)
+    private async Task RunExtendPumpAsync(ChannelReader<ExtendRequest> reader, CancellationToken ct)
     {
         try
         {

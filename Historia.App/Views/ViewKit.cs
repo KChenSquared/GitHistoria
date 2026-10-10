@@ -127,7 +127,7 @@ internal static class ViewKit
     }
 
     /// <summary>Style class on every <see cref="HelpHint"/> badge — the handle
-    /// <see cref="SetHintText"/> (and the UI tests) find it by.</summary>
+    /// the UI tests find it by.</summary>
     public const string HelpHintClass = "help-hint";
 
     /// <summary>
@@ -185,18 +185,6 @@ internal static class ViewKit
         return row;
     }
 
-    /// <summary>
-    /// Replaces the text of a <see cref="HelpHint"/> badge, or of the badge inside a
-    /// <see cref="WithHint"/> row: both the tooltip and the automation help text.
-    /// </summary>
-    public static void SetHintText(Control hint, string text)
-    {
-        var badge = hint.Classes.Contains(HelpHintClass)
-            ? hint
-            : (hint as Panel)?.Children.FirstOrDefault(c => c.Classes.Contains(HelpHintClass))
-              ?? throw new ArgumentException("Not a help hint or a row holding one.", nameof(hint));
-        ApplyHintText(badge, text);
-    }
 
     private static void ApplyHintText(Control badge, string text)
     {

@@ -46,9 +46,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
     internal readonly TextBox _stashesFilterBox;
 
     internal bool LocalFilterOpen => _localFilterOpen;
-    internal bool RemotesFilterOpen => _remotesFilterOpen;
     internal bool TagsFilterOpen => _tagsFilterOpen;
-    internal bool StashesFilterOpen => _stashesFilterOpen;
     internal bool LocalOpen => _localOpen;
     internal bool RemotesOpen => _remotesOpen;
     internal bool TagsOpen => _tagsOpen;

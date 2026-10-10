@@ -213,7 +213,6 @@ public sealed class ConflictResolverView : UserControl, IDisposable
     internal ConflictResolverMinimap MinimapForTesting => _minimap;
     internal Button ContinueButtonForTesting => _continueBtn;
     internal Button SkipButtonForTesting => _skipBtn;
-    internal Button AbortButtonForTesting => _abortBtn;
     internal StackPanel OpBarForTesting => _opBar;
     internal Button SaveAndResolveButtonForTesting => _saveAndResolveBtn;
     internal Button ResolveFileButtonForTesting => _resolveFileBtn;

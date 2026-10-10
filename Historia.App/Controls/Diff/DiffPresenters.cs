@@ -583,12 +583,6 @@ public sealed class SingleSideDiffPresenter : DiffPresenterBase
 {
     private bool _isOld;
 
-    public bool IsOld
-    {
-        get => _isOld;
-        set => _isOld = value;
-    }
-
     public override IReadOnlyList<DiffBlock> Blocks => Model?.SideBySideBlocks ?? [];
 
     public SingleSideDiffPresenter(bool isOld)

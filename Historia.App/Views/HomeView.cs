@@ -11,7 +11,6 @@ public sealed class HomeView : UserControl, IDisposable
     private readonly INavigationBus _nav;
     private readonly IExternalLauncher _launcher;
     private readonly IProfileService _profiles;
-    private readonly IRepoLayoutService _repoLayout;
     private readonly ISubmoduleService _submodules;
 
     // Breathing gap keeping content clear of the reserved scrollbar lane.
@@ -38,7 +37,6 @@ public sealed class HomeView : UserControl, IDisposable
         _nav = sp.GetRequiredService<INavigationBus>();
         _launcher = sp.GetRequiredService<IExternalLauncher>();
         _profiles = sp.GetRequiredService<IProfileService>();
-        _repoLayout = sp.GetRequiredService<IRepoLayoutService>();
         _submodules = sp.GetRequiredService<ISubmoduleService>();
 
         var root = new StackPanel { Spacing = 16, Margin = new Thickness(32), MaxWidth = 640 };

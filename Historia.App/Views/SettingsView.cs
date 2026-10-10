@@ -6,7 +6,6 @@ public sealed class SettingsView : UserControl, IDisposable
     private readonly ISettingsService _cfg;
     private readonly IThemeService _theme;
     private readonly IDialogService _dialogs;
-    private readonly IGraphLayoutService _graph;
     private readonly Historia.Services.Storage.IRepoStateCache _repoCache;
     private readonly IAiIntegrationsPanel? _aiPanel;
     private readonly ICmdrPathService _cmdrPath;
@@ -34,7 +33,6 @@ public sealed class SettingsView : UserControl, IDisposable
         _cfg = sp.GetRequiredService<ISettingsService>();
         _theme = sp.GetRequiredService<IThemeService>();
         _dialogs = sp.GetRequiredService<IDialogService>();
-        _graph = sp.GetRequiredService<IGraphLayoutService>();
         _repoCache = sp.GetRequiredService<Historia.Services.Storage.IRepoStateCache>();
         _aiPanel = sp.GetService<IAiIntegrationsPanel>();
         _cmdrPath = sp.GetRequiredService<ICmdrPathService>();
@@ -729,7 +727,6 @@ public sealed class RepoSettingsView : UserControl, IDisposable
     private const double DragThreshold = 4;
     private readonly List<Border> _columnRows = [];
     private int _columnsBaseIndex;
-    private string _dragRepoPath = "";
     private Border? _dragRow;
     private bool _dragging;
     private Point _pressPos;
@@ -827,7 +824,6 @@ public sealed class RepoSettingsView : UserControl, IDisposable
         // the editor works on the application-wide column set and shows even with no repo.
         var columns = _repoLayout.GlobalColumns;
         var path = ctx?.RepositoryPath ?? "";
-        _dragRepoPath = path;
         _columnRows.Clear();
         _columnsBaseIndex = _root.Children.Count;
 

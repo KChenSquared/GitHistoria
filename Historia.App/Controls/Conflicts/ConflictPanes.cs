@@ -421,7 +421,6 @@ public sealed class ConflictToggleMargin : AbstractMargin
 
     private static readonly Cursor HandCursor = new(StandardCursorType.Hand);
 
-    private readonly TextEditor _editor;
     private readonly Func<int, ConflictToggleGlyph> _getGlyph;
     private readonly Func<int, string?>? _getTip;
 
@@ -444,7 +443,6 @@ public sealed class ConflictToggleMargin : AbstractMargin
 
     public ConflictToggleMargin(TextEditor editor, Func<int, ConflictToggleGlyph> getGlyph, Func<int, string?>? getTip = null)
     {
-        _editor = editor;
         _getGlyph = getGlyph;
         _getTip = getTip;
         ClipToBounds = true;
@@ -651,7 +649,6 @@ public sealed class ConflictExcludedLineColorizer : DocumentColorizingTransforme
 /// </summary>
 public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
 {
-    private readonly TextEditor _editor;
     private readonly Func<ConflictSide?> _getSide;
     private readonly Func<ConflictParse?> _getParse;
     private readonly Func<IReadOnlyList<ConflictPaneLine>?>? _getLines;
@@ -674,7 +671,6 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
         Func<IReadOnlyList<ConflictRegionAnalysis>?>? getAnalysis = null,
         Func<int, ConflictRowVisual>? getRowVisual = null)
     {
-        _editor = editor;
         _getSide = getSide;
         _getParse = getParse;
         _getLines = getLines;
