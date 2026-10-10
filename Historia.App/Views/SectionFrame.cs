@@ -114,13 +114,13 @@ internal static class SectionFrame
         Grid grid,
         RowDefinition topRow,
         Action<double> committed,
-        Func<(double Start, double Min)>? lenderBegin = null,
-        Action<double>? lenderApply = null)
+        (Func<(double Start, double Min)> Begin, Action<double> Apply)? lender = null)
     {
         double startHeight = 0;
         double startAvailable = 0;
         double lenderStart = 0;
         double lenderMin = 0;
+        double lenderApplied = 0;
 
         AttachVerticalDrag(
             handle,
@@ -128,18 +128,24 @@ internal static class SectionFrame
             begin: () =>
             {
                 startHeight = topRow.Height.IsAbsolute ? topRow.Height.Value : DefaultTopHeight;
-                if (lenderBegin is not null && lenderApply is not null)
+                if (lender is { } l)
                 {
                     startAvailable = grid.Bounds.Height;
-                    (lenderStart, lenderMin) = lenderBegin();
+                    (lenderStart, lenderMin) = l.Begin();
+                    lenderApplied = lenderStart;
                 }
             },
             moved: delta =>
             {
-                if (lenderBegin is not null && lenderApply is not null)
+                if (lender is { } l)
                 {
-                    var (top, lender) = SplitWithLender(startHeight + delta, startAvailable, lenderStart, lenderMin);
-                    lenderApply(lender);
+                    var (top, lenderHeight) = SplitWithLender(startHeight + delta, startAvailable, lenderStart, lenderMin);
+                    // The lender is only told about heights it actually gives up or takes back.
+                    if (lenderHeight != lenderApplied)
+                    {
+                        l.Apply(lenderHeight);
+                        lenderApplied = lenderHeight;
+                    }
                     topRow.Height = new GridLength(top, GridUnitType.Pixel);
                     committed(top);
                 }

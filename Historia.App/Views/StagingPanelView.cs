@@ -414,20 +414,36 @@ public sealed class StagingPanelView : UserControl, IDisposable
             MessageHeightByRepo[_ctx.Id] = h;
         };
 
+        // A split drag past Staged's minimum borrows from the commit box. Only a borrowed height
+        // becomes the remembered one; giving all of it back restores the height remembered before
+        // the drag, which a short window may have clamped the box below.
+        double lendStartHeight = 0;
+        double lendStartRemembered = 0;
+        var messageLender = (
+            Begin: (Func<(double Start, double Min)>)(() =>
+            {
+                lendStartHeight = _message.Height;
+                lendStartRemembered = MessageHeightByRepo.GetValueOrDefault(_ctx.Id, MessageMinHeight);
+                return (_message.Height, MessageMinHeight);
+            }),
+            Apply: (Action<double>)(h =>
+            {
+                _message.Height = h;
+                MessageHeightByRepo[_ctx.Id] = h < lendStartHeight ? h : lendStartRemembered;
+            }));
+
         SectionFrame.AttachRowResize(
             splitHandle,
             splitArea,
             changesRow,
             h => SectionFrame.SetSplitHeight(_ctx.Id, h),
-            lenderBegin: () => (_message.Height, MessageMinHeight),
-            lenderApply: applyMessageHeight);
+            messageLender);
         SectionFrame.AttachRowResize(
             stagedDividerHandle,
             splitArea,
             changesRow,
             h => SectionFrame.SetSplitHeight(_ctx.Id, h),
-            lenderBegin: () => (_message.Height, MessageMinHeight),
-            lenderApply: applyMessageHeight);
+            messageLender);
 
         var root = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(messageSection, Dock.Bottom);

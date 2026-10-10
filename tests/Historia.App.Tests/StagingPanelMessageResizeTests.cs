@@ -386,33 +386,34 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
         Assert.Equal(((Control)scrollViewer.Content!).DesiredSize.Height, scrollViewer.Bounds.Height);
     }
 
+    private static void Drag(Window window, Control handle, params double[] offsets)
+    {
+        var start = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, start, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        var end = start;
+        foreach (var offset in offsets)
+        {
+            end = new Point(start.X, start.Y + offset);
+            Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, end);
+            Dispatcher.UIThread.RunJobs();
+        }
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, end, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+    }
+
     private static double GrowMessageBoxToMax(StagingPanelView view, Window window)
     {
-        var messageHandle = view.MessageResizeHandleForTesting!;
-        var messageHandleCenter = messageHandle.TranslatePoint(new Point(messageHandle.Bounds.Width / 2, messageHandle.Bounds.Height / 2), window)!.Value;
-        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, messageHandleCenter, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(messageHandleCenter.X, messageHandleCenter.Y - 2000));
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(messageHandleCenter.X, messageHandleCenter.Y - 2000), MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
+        Drag(window, view.MessageResizeHandleForTesting!, -2000);
         return view.MessageForTesting.Height;
     }
 
-    [AvaloniaFact]
-    public void Split_drag_down_past_staged_min_shrinks_message_box()
+    private void AssertSplitDragBorrowsAndIsRemembered(Func<StagingPanelView, Control> handleOf)
     {
         var (context, view, window) = CreateView(width: 400, height: 900);
         var h = GrowMessageBoxToMax(view, window);
 
-        var splitHandle = view.SplitHandleForTesting!;
-        var splitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
-        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, splitCenter, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(splitCenter.X, splitCenter.Y + 100));
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(splitCenter.X, splitCenter.Y + 100), MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
+        Drag(window, handleOf(view), 100);
 
         var splitArea = view.SplitAreaForTesting!;
         var changesRow = splitArea.RowDefinitions[0];
@@ -435,19 +436,24 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Split_drag_down_past_staged_min_shrinks_message_box()
+    {
+        AssertSplitDragBorrowsAndIsRemembered(v => v.SplitHandleForTesting!);
+    }
+
+    [AvaloniaFact]
+    public void Staged_divider_drag_also_borrows()
+    {
+        AssertSplitDragBorrowsAndIsRemembered(v => v.StagedDividerHandleForTesting!);
+    }
+
+    [AvaloniaFact]
     public void Split_drag_down_stops_at_message_box_minimum()
     {
         var (_, view, window) = CreateView(width: 400, height: 900);
         var h = GrowMessageBoxToMax(view, window);
 
-        var splitHandle = view.SplitHandleForTesting!;
-        var splitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
-        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, splitCenter, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(splitCenter.X, splitCenter.Y + 5000));
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(splitCenter.X, splitCenter.Y + 5000), MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
+        Drag(window, view.SplitHandleForTesting!, 5000);
 
         var splitArea = view.SplitAreaForTesting!;
         var changesRow = splitArea.RowDefinitions[0];
@@ -469,57 +475,10 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
         var (_, view, window) = CreateView(width: 400, height: 900);
         var h = GrowMessageBoxToMax(view, window);
 
-        var splitHandle = view.SplitHandleForTesting!;
-        var splitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
-        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, splitCenter, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(splitCenter.X, splitCenter.Y + 100));
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, splitCenter);
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, splitCenter, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-
-        var splitArea = view.SplitAreaForTesting!;
-        var changesRow = splitArea.RowDefinitions[0];
+        Drag(window, view.SplitHandleForTesting!, 100, 0);
 
         Assert.Equal(h, view.MessageForTesting.Height);
-        Assert.Equal(150, changesRow.Height.Value);
-    }
-
-    [AvaloniaFact]
-    public void Staged_divider_drag_also_borrows()
-    {
-        var (context, view, window) = CreateView(width: 400, height: 900);
-        var h = GrowMessageBoxToMax(view, window);
-
-        var stagedHandle = view.StagedDividerHandleForTesting!;
-        var stagedCenter = stagedHandle.TranslatePoint(new Point(stagedHandle.Bounds.Width / 2, stagedHandle.Bounds.Height / 2), window)!.Value;
-        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, stagedCenter, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(stagedCenter.X, stagedCenter.Y + 100));
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(stagedCenter.X, stagedCenter.Y + 100), MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-
-        var splitArea = view.SplitAreaForTesting!;
-        var changesRow = splitArea.RowDefinitions[0];
-        var stagedSection = (Border)splitArea.Children[1];
-
-        Assert.InRange(Math.Abs(changesRow.Height.Value - 250), 0, 1.01);
-        Assert.True(stagedSection.Bounds.Height >= 150);
-        Assert.InRange(Math.Abs(view.MessageForTesting.Height - (h - 100)), 0, 1.01);
-        Assert.InRange(Math.Abs(SectionFrame.GetSplitHeight(context.Id) - 250), 0, 1.01);
-
-        view.Dispose();
-        _views.Remove(view);
-
-        var view2 = new StagingPanelView(_sp, context);
-        _views.Add(view2);
-        window.Content = view2;
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.InRange(Math.Abs(view2.MessageForTesting.Height - (h - 100)), 0, 1.01);
+        Assert.Equal(150, view.SplitAreaForTesting!.RowDefinitions[0].Height.Value);
     }
 
     [AvaloniaFact]
@@ -528,31 +487,15 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
         var (_, view, window) = CreateView(width: 400, height: 900);
         var h = GrowMessageBoxToMax(view, window);
 
-        var splitHandle = view.SplitHandleForTesting!;
-        var splitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
-        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, splitCenter, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(splitCenter.X, splitCenter.Y + 100));
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(splitCenter.X, splitCenter.Y + 100), MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
+        Drag(window, view.SplitHandleForTesting!, 100);
 
         var shrunkBoxH = view.MessageForTesting.Height;
         Assert.InRange(Math.Abs(shrunkBoxH - (h - 100)), 0, 1.01);
 
-        var newSplitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
-        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, newSplitCenter, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(newSplitCenter.X, newSplitCenter.Y - 100));
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(newSplitCenter.X, newSplitCenter.Y - 100), MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-
-        var splitArea = view.SplitAreaForTesting!;
-        var changesRow = splitArea.RowDefinitions[0];
+        Drag(window, view.SplitHandleForTesting!, -100);
 
         Assert.Equal(shrunkBoxH, view.MessageForTesting.Height);
-        Assert.Equal(150, changesRow.Height.Value);
+        Assert.Equal(150, view.SplitAreaForTesting!.RowDefinitions[0].Height.Value);
     }
 
     [AvaloniaFact]
@@ -566,19 +509,32 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
 
         var maxChanges = splitArea.RowDefinitions[0].Height.Value;
 
-        var splitHandle = view.SplitHandleForTesting!;
-        var splitCenter = splitHandle.TranslatePoint(new Point(splitHandle.Bounds.Width / 2, splitHandle.Bounds.Height / 2), window)!.Value;
-        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, splitCenter, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(splitCenter.X, splitCenter.Y + 200));
-        Dispatcher.UIThread.RunJobs();
-        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(splitCenter.X, splitCenter.Y + 200), MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
+        Drag(window, view.SplitHandleForTesting!, 200);
 
         var stagedSection = (Border)splitArea.Children[1];
 
         Assert.Equal(96, view.MessageForTesting.Height);
         Assert.Equal(maxChanges, splitArea.RowDefinitions[0].Height.Value);
         Assert.True(stagedSection.Bounds.Height >= 150);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_in_short_window_keeps_remembered_box_height()
+    {
+        var (_, view, window) = CreateView(width: 400, height: 900);
+        Drag(window, view.MessageResizeHandleForTesting!, -104);
+        Assert.Equal(200, view.MessageForTesting.Height);
+
+        window.Height = 400;
+        Dispatcher.UIThread.RunJobs();
+        var clampedBox = view.MessageForTesting.Height;
+        Assert.True(clampedBox < 200);
+
+        Drag(window, view.SplitHandleForTesting!, -20);
+        Assert.Equal(clampedBox, view.MessageForTesting.Height);
+
+        window.Height = 900;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(200, view.MessageForTesting.Height);
     }
 }
