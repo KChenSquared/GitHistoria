@@ -64,8 +64,12 @@ public class RefTreeTests
     {
         var remote = new BranchInfo
         {
-            Name = "origin/feature/x", CanonicalName = "refs/remotes/origin/feature/x",
-            IsRemote = true, IsCurrent = false, TipCommitId = null, RemoteName = "origin",
+            Name = "origin/feature/x",
+            CanonicalName = "refs/remotes/origin/feature/x",
+            IsRemote = true,
+            IsCurrent = false,
+            TipCommitId = null,
+            RemoteName = "origin",
         };
         var tree = RefTree.Build([remote], b => b.Name["origin/".Length..]);
 

@@ -1,4 +1,5 @@
 namespace Historia.Tests;
+
 [Trait("tier", "git")]
 
 /// <summary>Mutating commands that update the work tree, run hooks or drive a sequencer must not

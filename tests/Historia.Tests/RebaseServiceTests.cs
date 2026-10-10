@@ -1,4 +1,5 @@
 namespace Historia.Tests;
+
 [Trait("tier", "git")]
 
 public class RebaseServiceTests : IDisposable
@@ -52,7 +53,10 @@ public class RebaseServiceTests : IDisposable
 
         var session = new RebaseSession
         {
-            OntoCommitId = new(new string('b', 40)), OntoRefName = "main", UpstreamRefName = "main", SourceBranchName = "f",
+            OntoCommitId = new(new string('b', 40)),
+            OntoRefName = "main",
+            UpstreamRefName = "main",
+            SourceBranchName = "f",
             Entries = [E("a", RebaseAction.Squash), E("b", RebaseAction.Reword, ""), E("c", RebaseAction.Drop)],
         };
 

@@ -75,7 +75,9 @@ public sealed class ThemesView : UserControl, IDisposable
             var active = _theme.CustomThemeActive && _cfg.Current.CustomThemeId == theme.Id;
             row.Children.Add(new Border
             {
-                Width = 18, Height = 18, CornerRadius = new CornerRadius(4),
+                Width = 18,
+                Height = 18,
+                CornerRadius = new CornerRadius(4),
                 Background = SafeBrush(theme.Tokens.GetValueOrDefault("bg"), theme.BaseTheme, "bg"),
                 BorderThickness = new Thickness(1),
                 BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0x88, 0x88, 0x88)),
@@ -206,7 +208,11 @@ public sealed class ThemesView : UserControl, IDisposable
 
         var secondsBox = new NumericUpDown
         {
-            Minimum = 0, Maximum = 10, Increment = 1, FormatString = "0", Width = 100,
+            Minimum = 0,
+            Maximum = 10,
+            Increment = 1,
+            FormatString = "0",
+            Width = 100,
             Value = (decimal)_draftSplashSeconds,
         };
         secondsBox.ValueChanged += (_, e) => _draftSplashSeconds = (int)(e.NewValue ?? 0m);
@@ -245,12 +251,16 @@ public sealed class ThemesView : UserControl, IDisposable
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         row.Children.Add(new TextBlock
         {
-            Text = label, Width = 120, VerticalAlignment = VerticalAlignment.Center,
+            Text = label,
+            Width = 120,
+            VerticalAlignment = VerticalAlignment.Center,
         }.Dyn(TextBlock.ForegroundProperty, "ColorTextMuted"));
 
         var swatch = new Border
         {
-            Width = 22, Height = 22, CornerRadius = new CornerRadius(4),
+            Width = 22,
+            Height = 22,
+            CornerRadius = new CornerRadius(4),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0x88, 0x88, 0x88)),
             Background = HexBrush(current) ?? HexBrush(baseHex),

@@ -75,13 +75,13 @@ public class PaletteParityTests
             .Select(i => LanePalette.ColorFor(i, theme)).ToArray();
 
         for (var a = 0; a < colours.Length; a++)
-        for (var b = a + 1; b < colours.Length; b++)
-        {
-            Assert.NotEqual(colours[a], colours[b]);
-            Assert.True(DeltaE76(colours[a], colours[b]) >= 12,
-                $"{theme}: lanes {a} ({colours[a].ToHex()}) and {b} ({colours[b].ToHex()}) " +
-                $"are only ΔE {DeltaE76(colours[a], colours[b]):F1} apart");
-        }
+            for (var b = a + 1; b < colours.Length; b++)
+            {
+                Assert.NotEqual(colours[a], colours[b]);
+                Assert.True(DeltaE76(colours[a], colours[b]) >= 12,
+                    $"{theme}: lanes {a} ({colours[a].ToHex()}) and {b} ({colours[b].ToHex()}) " +
+                    $"are only ΔE {DeltaE76(colours[a], colours[b]):F1} apart");
+            }
     }
 
     // a light-theme lane must stay visible on the light field, but pale lanes are

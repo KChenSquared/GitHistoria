@@ -151,41 +151,41 @@ public sealed partial class CommitGraphControl
         // Clip the row-background band to the row area: the first drawn row starts two rows
         // above the viewport top, so its fill would otherwise bleed up into the header band.
         using (dc.PushClip(new Rect(0, RowsTop, size.Width, Math.Max(0, rowArea))))
-        for (var row = first; row <= last; row++)
-        {
-            var y = RowY(row);
-            if (matchSet is not null && matchSet.Contains(row))
-                dc.DrawRectangle(_matchFill, null, new Rect(0, y, size.Width, _rowHeight));
-
-            var selected = row == _selectedRow || _multiSelect.Contains(row);
-            if (selected)
-                dc.DrawRectangle(_selectionFill, null, new Rect(0, y, size.Width, _rowHeight));
-            else if (row == _hoverRow)
-                dc.DrawRectangle(_hoverFill, null, new Rect(0, y, size.Width, _rowHeight));
-
-            if (_graphColWidth > 0)
+            for (var row = first; row <= last; row++)
             {
-                var gr = layout.Rows[row];
-                var colorIndex = gr.ColorIndex;
-                // the wash starts at the commit's own node — the graph line it sits on —
-                // and runs right to the column edge, rather than beginning half a lane to its
-                // left and covering the whole lane band.
-                var fillLeft = Math.Max(gx, NodeX(gr.LaneIndex, out _));
-                // Inset half the gap top and bottom so adjacent rows' washes and right-edge ticks
-                // are separated by WashRowGap px; the lane lines stay continuous.
-                if (washRight > fillLeft)
-                    dc.DrawRectangle(LaneFill(colorIndex), null,
-                        new Rect(fillLeft, y + WashRowGap / 2, washRight - fillLeft, _rowHeight - WashRowGap));
-                // The solid right-edge tick is drawn in DrawGraphColumn, AFTER the edges, so a
-                // lane line routed near the column's right edge can't paint over it.
+                var y = RowY(row);
+                if (matchSet is not null && matchSet.Contains(row))
+                    dc.DrawRectangle(_matchFill, null, new Rect(0, y, size.Width, _rowHeight));
+
+                var selected = row == _selectedRow || _multiSelect.Contains(row);
+                if (selected)
+                    dc.DrawRectangle(_selectionFill, null, new Rect(0, y, size.Width, _rowHeight));
+                else if (row == _hoverRow)
+                    dc.DrawRectangle(_hoverFill, null, new Rect(0, y, size.Width, _rowHeight));
+
+                if (_graphColWidth > 0)
+                {
+                    var gr = layout.Rows[row];
+                    var colorIndex = gr.ColorIndex;
+                    // the wash starts at the commit's own node — the graph line it sits on —
+                    // and runs right to the column edge, rather than beginning half a lane to its
+                    // left and covering the whole lane band.
+                    var fillLeft = Math.Max(gx, NodeX(gr.LaneIndex, out _));
+                    // Inset half the gap top and bottom so adjacent rows' washes and right-edge ticks
+                    // are separated by WashRowGap px; the lane lines stay continuous.
+                    if (washRight > fillLeft)
+                        dc.DrawRectangle(LaneFill(colorIndex), null,
+                            new Rect(fillLeft, y + WashRowGap / 2, washRight - fillLeft, _rowHeight - WashRowGap));
+                    // The solid right-edge tick is drawn in DrawGraphColumn, AFTER the edges, so a
+                    // lane line routed near the column's right edge can't paint over it.
+                }
+
+                if (selected)
+                    dc.DrawRectangle(_selectionBar, null, new Rect(0, y, 2, _rowHeight));
+
+                if (row == currentMatchRow)
+                    dc.DrawRectangle(_selectionBar, null, new Rect(0, y, 3, _rowHeight));
             }
-
-            if (selected)
-                dc.DrawRectangle(_selectionBar, null, new Rect(0, y, 2, _rowHeight));
-
-            if (row == currentMatchRow)
-                dc.DrawRectangle(_selectionBar, null, new Rect(0, y, 3, _rowHeight));
-        }
 
         var decosByRow = DecorationsByRow(layout);
 

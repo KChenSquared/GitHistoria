@@ -11,7 +11,10 @@ public sealed class GraphElbowPaintOrderTests
 
     private static RowElbow E(int from, int to, int color, ElbowKind kind) => new()
     {
-        FromLane = from, ToLane = to, ColorIndex = color, Kind = kind,
+        FromLane = from,
+        ToLane = to,
+        ColorIndex = color,
+        Kind = kind,
     };
 
     private static int[] Order(RowElbow[] source, int hoverLane)

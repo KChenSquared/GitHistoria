@@ -12,8 +12,12 @@ public sealed partial class CommitGraphControl
         {
             CheckoutFromBadge(new GraphDecoration
             {
-                RowIndex = 0, Type = type, Label = label, ColorIndex = 0,
-                IsLocal = isLocal, RemotesOrNull = remotes,
+                RowIndex = 0,
+                Type = type,
+                Label = label,
+                ColorIndex = 0,
+                IsLocal = isLocal,
+                RemotesOrNull = remotes,
             });
             return;
         }

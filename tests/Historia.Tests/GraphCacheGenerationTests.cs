@@ -108,8 +108,13 @@ public sealed class GraphCacheGenerationTests : IAsyncDisposable
         var other = Enumerable.Range(0, 10).Select(i => new RawCommit(
             new GitObjectId(i.ToString("x40")), [], new CommitMetadata
             {
-                Id = new GitObjectId(i.ToString("x40")), MessageShort = "other", AuthorName = "A", AuthorEmail = "a@x",
-                AuthorWhen = DateTimeOffset.UnixEpoch, CommitWhen = DateTimeOffset.UnixEpoch, ParentCount = 0,
+                Id = new GitObjectId(i.ToString("x40")),
+                MessageShort = "other",
+                AuthorName = "A",
+                AuthorEmail = "a@x",
+                AuthorWhen = DateTimeOffset.UnixEpoch,
+                CommitWhen = DateTimeOffset.UnixEpoch,
+                ParentCount = 0,
             })).ToList();
         Assert.Equal(SpillOutcome.Appended, new GraphMetaWriter(repo.Path, otherKey, true).AppendSpillBatch(other, 0, other.Count, exhausted: false).Outcome);
         Assert.Equal(SpillOutcome.Appended, new GraphMetaWriter(repo.Path, probe.WalkKey, true).AppendSpillBatch(raw.GetRange(0, painted), 0, painted, exhausted: false).Outcome);

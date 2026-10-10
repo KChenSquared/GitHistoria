@@ -225,7 +225,7 @@ public sealed class RebaseService(IGitCliService cli) : IRebaseService
 
         var fields = stdout.Split('\0');
         var entries = new List<RebaseEntry>();
-        for (var i = 0; i + 4 <= fields.Length; )
+        for (var i = 0; i + 4 <= fields.Length;)
         {
             var shaStr = fields[i].TrimStart('\r', '\n');
             if (string.IsNullOrWhiteSpace(shaStr))

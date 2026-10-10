@@ -128,7 +128,9 @@ public class CommitMessageGeneratorTests
         var rig = new Rig();
         await rig.Activate(p => p with
         {
-            Server = "https://ai.example.test/v1", Model = "m", ReadApiKeyFromEnv = true,
+            Server = "https://ai.example.test/v1",
+            Model = "m",
+            ReadApiKeyFromEnv = true,
             ApiKey = $"HISTORIA_UNSET_{Guid.NewGuid():N}",
         });
 

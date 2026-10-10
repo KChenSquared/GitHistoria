@@ -489,12 +489,14 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             {
                 await repo.Gateway.PruneRemoteAsync(remote, progress, ct);
                 _notifications.Publish(NotificationSeverity.Success, $"Pruned {remote}.");
-            },
+            }
+            ,
             RepoNetworkAction.DeleteRemoteBranch => async () =>
             {
                 await repo.Gateway.DeleteRemoteBranchAsync(remote, request.RemoteBranch!, progress, ct);
                 _notifications.Publish(NotificationSeverity.Success, $"Deleted {remote}/{request.RemoteBranch}.");
-            },
+            }
+            ,
             _ => () => ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct),
         };
         try

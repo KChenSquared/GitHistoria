@@ -35,7 +35,11 @@ public class CloneDialogTests
 
     private static Historia.Models.GitProfile Profile(string name, bool global = false) => new()
     {
-        Id = Guid.NewGuid(), DisplayName = name, GitUserName = name, GitUserEmail = $"{name}@example.com", IsGlobal = global,
+        Id = Guid.NewGuid(),
+        DisplayName = name,
+        GitUserName = name,
+        GitUserEmail = $"{name}@example.com",
+        IsGlobal = global,
     };
 
     // the clone dialog pre-selects the default profile (picker index = profile index + 1).
