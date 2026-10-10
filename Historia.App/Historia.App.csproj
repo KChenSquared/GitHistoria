@@ -22,7 +22,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Pinned, no floating wildcard (constitution rule 0.7). -->
+    <!-- Pinned, no floating wildcard. -->
     <PackageReference Include="Avalonia" Version="11.3.20" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.20" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.20" />

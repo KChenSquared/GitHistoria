@@ -9,7 +9,6 @@ namespace Historia.Views;
 /// </summary>
 public sealed class ThemesView : UserControl, IDisposable
 {
-    private readonly IServiceProvider _sp;
     private readonly ICustomThemeService _themes;
     private readonly IThemeService _theme;
     private readonly ISettingsService _cfg;
@@ -28,7 +27,6 @@ public sealed class ThemesView : UserControl, IDisposable
 
     public ThemesView(IServiceProvider sp)
     {
-        _sp = sp;
         _themes = sp.GetRequiredService<ICustomThemeService>();
         _theme = sp.GetRequiredService<IThemeService>();
         _cfg = sp.GetRequiredService<ISettingsService>();

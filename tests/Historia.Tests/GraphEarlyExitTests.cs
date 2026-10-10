@@ -73,9 +73,8 @@ public sealed class GraphEarlyExitTests : IAsyncDisposable
         var scansBefore = GraphLayoutService.RefScanCountForTesting(ctx.RepositoryPath);
 
         // Exactly what the crawler's step sees once the spill's pull landed: want <= have.
-        var cli = new GitCliService(_host.Locator);
         var task = (Task)prepareWalk.Invoke(null,
-            [ctx.RepositoryPath, new GraphQuery { RefScope = GraphRefScope.AllRefs }, 1_500, null, cache, snapshot, false, walkCache, ctx.RemoteConfig, cli, CancellationToken.None])!;
+            [ctx.RepositoryPath, new GraphQuery { RefScope = GraphRefScope.AllRefs }, 1_500, null, cache, snapshot, false, walkCache, ctx.RemoteConfig, CancellationToken.None])!;
         await task;
         var prep = task.GetType().GetProperty("Result")!.GetValue(task)!;
 

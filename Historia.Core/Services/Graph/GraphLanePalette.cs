@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Graph;
+namespace Historia.Services.Graph;
 
 /// <summary>
 /// pure lane-colour resolution for the commit-graph render pass. The Avalonia
@@ -14,7 +14,7 @@ public static class GraphLanePalette
     /// <paramref name="laneColors"/> (the built-in rainbow or the active custom overlay) with
     /// the cycle-darkening shift for indices past one palette cycle. Falls back to
     /// <see cref="LanePalette.ColorFor"/> when <paramref name="laneColors"/> is empty.
-    /// <c>EdgeColorFor</c> is the identity, so this covers both the fill and the stroke.
+    /// Edges and pills use <see cref="LanePalette.ColorFor"/> directly, covering both the fill and the stroke.
     /// </summary>
     public static Rgb LaneRgb(int colorIndex, IReadOnlyList<Rgb> laneColors, EffectiveTheme mode)
     {

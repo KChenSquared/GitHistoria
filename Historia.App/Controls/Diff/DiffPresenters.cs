@@ -4,12 +4,10 @@ namespace Historia.Controls;
 /// Abstract base class for diff code editor presenters.
 /// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
 /// </summary>
-public abstract class DiffPresenterBase : CodeEditor
+public abstract class DiffPresenterBase : ScrollSyncCodeEditor
 {
     private DiffDisplayModel? _model;
     private IReadOnlyList<DiffDisplayRow> _rows = [];
-    private IDisposable? _syntaxSubscription;
-    private string? _filePath;
     private int _currentBlockIndex = -1;
     private bool _allowStaging = true;
     private string _stageVerb = "Stage";
@@ -17,11 +15,8 @@ public abstract class DiffPresenterBase : CodeEditor
     private DiffHunkActionGenerator? _hunkActionGenerator;
     private int? _pointerLine;
     private (int Start, int End)? _visibleLineRange;
-    private ScrollViewer? _scrollViewer;
     private readonly DiffLineBackgroundRenderer _backgroundRenderer;
     private readonly DiffIndicatorTransformer _indicatorTransformer;
-
-    public IServiceProvider? ServicesProvider { get; set; }
 
     public DiffDisplayModel? Model
     {
@@ -39,20 +34,6 @@ public abstract class DiffPresenterBase : CodeEditor
     {
         get => _rows;
         protected set => _rows = value;
-    }
-
-    public string? FilePath
-    {
-        get => _filePath;
-        set
-        {
-            _filePath = value;
-            if (_syntaxSubscription != null)
-            {
-                DetachSyntaxHighlighting();
-                AttachSyntaxHighlighting();
-            }
-        }
     }
 
     public bool EnableRowButtons
@@ -141,7 +122,6 @@ public abstract class DiffPresenterBase : CodeEditor
 
     public event EventHandler<int>? HunkActionRequested;
     public event EventHandler<IReadOnlyList<DiffLineRef>>? SelectionActionRequested;
-    public event EventHandler<Vector>? ScrollOffsetChanged;
 
     protected DiffPresenterBase()
     {
@@ -162,118 +142,7 @@ public abstract class DiffPresenterBase : CodeEditor
 
     protected abstract void OnModelChanged();
 
-    protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
-    {
-        base.OnApplyTemplate(e);
-        UnhookScrollViewer();
-        _scrollViewer = e.NameScope.Find<ScrollViewer>("PART_ScrollViewer") ?? this.FindDescendantOfType<ScrollViewer>();
-        if (_scrollViewer != null)
-        {
-            _scrollViewer.ScrollChanged += OnScrollViewerScrollChanged;
-            if (_scrollOffset != Vector.Zero)
-            {
-                _scrollViewer.Offset = _scrollOffset;
-            }
-        }
-    }
-
-    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        base.OnAttachedToVisualTree(e);
-        AttachSyntaxHighlighting();
-        if (_scrollViewer == null)
-        {
-            HookScrollViewer();
-        }
-    }
-
-    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
-    {
-        UnhookScrollViewer();
-        DetachSyntaxHighlighting();
-        base.OnDetachedFromVisualTree(e);
-    }
-
-    private Vector _scrollOffset = Vector.Zero;
-
-    private void HookScrollViewer()
-    {
-        _scrollViewer = this.FindDescendantOfType<ScrollViewer>();
-        if (_scrollViewer != null)
-        {
-            _scrollViewer.ScrollChanged += OnScrollViewerScrollChanged;
-            if (_scrollOffset != Vector.Zero)
-            {
-                _scrollViewer.Offset = _scrollOffset;
-            }
-        }
-    }
-
-    private void UnhookScrollViewer()
-    {
-        if (_scrollViewer != null)
-        {
-            _scrollViewer.ScrollChanged -= OnScrollViewerScrollChanged;
-            _scrollViewer = null;
-        }
-    }
-
-    private void OnScrollViewerScrollChanged(object? sender, ScrollChangedEventArgs e)
-    {
-        if (_scrollViewer != null)
-        {
-            _scrollOffset = _scrollViewer.Offset;
-            ScrollOffsetChanged?.Invoke(this, _scrollOffset);
-            UpdateVisibleLineRange();
-        }
-    }
-
-    public Vector GetScrollOffset() => _scrollViewer?.Offset ?? _scrollOffset;
-
-    public void SetScrollOffset(Vector offset)
-    {
-        _scrollOffset = offset;
-        if (_scrollViewer != null)
-        {
-            _scrollViewer.Offset = offset;
-        }
-        else
-        {
-            ScrollToHorizontalOffset(offset.X);
-            ScrollToVerticalOffset(offset.Y);
-        }
-        ScrollOffsetChanged?.Invoke(this, offset);
-        UpdateVisibleLineRange();
-    }
-
-    private void AttachSyntaxHighlighting()
-    {
-        if (_syntaxSubscription != null)
-        {
-            return;
-        }
-
-        var host = ServicesProvider?.GetService(typeof(SyntaxThemeHost)) as SyntaxThemeHost
-                   ?? (Application.Current as App)?.Services?.GetService(typeof(SyntaxThemeHost)) as SyntaxThemeHost;
-
-        if (host != null)
-        {
-            try
-            {
-                _syntaxSubscription = host.Attach(this, FilePath);
-            }
-            catch
-            {
-                // Fall back to plain text if host fails
-            }
-        }
-    }
-
-    private void DetachSyntaxHighlighting()
-    {
-        _syntaxSubscription?.Dispose();
-        _syntaxSubscription = null;
-    }
+    protected override void OnScrollOffsetApplied() => UpdateVisibleLineRange();
 
     private void OnCaretPositionChanged(object? sender, EventArgs e)
     {
@@ -583,12 +452,6 @@ public sealed class SingleSideDiffPresenter : DiffPresenterBase
 {
     private bool _isOld;
 
-    public bool IsOld
-    {
-        get => _isOld;
-        set => _isOld = value;
-    }
-
     public override IReadOnlyList<DiffBlock> Blocks => Model?.SideBySideBlocks ?? [];
 
     public SingleSideDiffPresenter(bool isOld)
@@ -625,233 +488,5 @@ public sealed class SingleSideDiffPresenter : DiffPresenterBase
 
         Rows = _isOld ? Model.SideBySideOldRows : Model.SideBySideNewRows;
         Text = string.Join('\n', Rows.Select(r => r.Content));
-    }
-}
-
-/// <summary>
-/// Side-by-side paired diff presenter with synchronized scrolling and aligned lines.
-/// Adapted from SourceGit (MIT) — see docs/third-party-licenses.md.
-/// </summary>
-public sealed class SideBySideDiffPresenter : Control
-{
-    private readonly SingleSideDiffPresenter _leftPresenter;
-    private readonly SingleSideDiffPresenter _rightPresenter;
-    private readonly Grid _grid;
-    private DiffDisplayModel? _model;
-    private string? _filePath;
-    private bool _isSyncingScroll;
-    private bool _allowStaging = true;
-    private string _stageVerb = "Stage";
-
-    public SingleSideDiffPresenter LeftPresenter => _leftPresenter;
-    public SingleSideDiffPresenter RightPresenter => _rightPresenter;
-
-    public IServiceProvider? ServicesProvider
-    {
-        get => _leftPresenter.ServicesProvider;
-        set
-        {
-            _leftPresenter.ServicesProvider = value;
-            _rightPresenter.ServicesProvider = value;
-        }
-    }
-
-    public DiffDisplayModel? Model
-    {
-        get => _model;
-        set
-        {
-            _model = value;
-            _leftPresenter.Model = value;
-            _rightPresenter.Model = value;
-        }
-    }
-
-    public string? FilePath
-    {
-        get => _filePath;
-        set
-        {
-            _filePath = value;
-            _leftPresenter.FilePath = value;
-            _rightPresenter.FilePath = value;
-        }
-    }
-
-    public bool AllowStaging
-    {
-        get => _allowStaging;
-        set
-        {
-            _allowStaging = value;
-            _leftPresenter.AllowStaging = value;
-            _rightPresenter.AllowStaging = value;
-        }
-    }
-
-    public string StageVerb
-    {
-        get => _stageVerb;
-        set
-        {
-            _stageVerb = value;
-            _leftPresenter.StageVerb = value;
-            _rightPresenter.StageVerb = value;
-        }
-    }
-
-    public event EventHandler<int>? HunkActionRequested;
-    public event EventHandler<IReadOnlyList<DiffLineRef>>? SelectionActionRequested;
-
-    public (int Start, int End)? VisibleLineRange => _leftPresenter.VisibleLineRange;
-    public event EventHandler<(int Start, int End)?>? VisibleLineRangeChanged;
-
-    public void ScrollToLine(int line)
-    {
-        _leftPresenter.ScrollToLine(line);
-        _rightPresenter.ScrollToLine(line);
-    }
-
-    public SideBySideDiffPresenter()
-    {
-        _leftPresenter = new SingleSideDiffPresenter(isOld: true);
-        _rightPresenter = new SingleSideDiffPresenter(isOld: false);
-
-        _leftPresenter.VisibleLineRangeChanged += (_, r) => VisibleLineRangeChanged?.Invoke(this, r);
-
-        _leftPresenter.ScrollOffsetChanged += OnLeftScrollChanged;
-        _rightPresenter.ScrollOffsetChanged += OnRightScrollChanged;
-
-        _leftPresenter.HunkActionRequested += (_, hi) => HunkActionRequested?.Invoke(this, hi);
-        _rightPresenter.HunkActionRequested += (_, hi) => HunkActionRequested?.Invoke(this, hi);
-
-        _leftPresenter.SelectionActionRequested += (_, refs) => SelectionActionRequested?.Invoke(this, refs);
-        _rightPresenter.SelectionActionRequested += (_, refs) => SelectionActionRequested?.Invoke(this, refs);
-
-        var separator = new Rectangle
-        {
-            Width = 1,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Stretch,
-        };
-        separator[!Shape.FillProperty] = new DynamicResourceExtension("ColorBorder");
-
-        _grid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto,*"),
-        };
-
-        Grid.SetColumn(_leftPresenter, 0);
-        Grid.SetColumn(separator, 1);
-        Grid.SetColumn(_rightPresenter, 2);
-
-        _grid.Children.Add(_leftPresenter);
-        _grid.Children.Add(separator);
-        _grid.Children.Add(_rightPresenter);
-
-        VisualChildren.Add(_grid);
-        LogicalChildren.Add(_grid);
-    }
-
-    private void OnLeftScrollChanged(object? sender, Vector offset)
-    {
-        if (_isSyncingScroll)
-        {
-            return;
-        }
-
-        _isSyncingScroll = true;
-        try
-        {
-            _rightPresenter.SetScrollOffset(offset);
-        }
-        finally
-        {
-            _isSyncingScroll = false;
-        }
-    }
-
-    private void OnRightScrollChanged(object? sender, Vector offset)
-    {
-        if (_isSyncingScroll)
-        {
-            return;
-        }
-
-        _isSyncingScroll = true;
-        try
-        {
-            _leftPresenter.SetScrollOffset(offset);
-        }
-        finally
-        {
-            _isSyncingScroll = false;
-        }
-    }
-
-    public IReadOnlyList<DiffLineRef> GetSelectedLineRefs()
-    {
-        if (Model == null)
-        {
-            return [];
-        }
-
-        // Check right selection first
-        var rightSel = _rightPresenter.TextArea.Selection;
-        if (!rightSel.IsEmpty)
-        {
-            var (start, end) = DiffPresenterBase.SelectedLineSpan(rightSel, _rightPresenter.Document);
-            return Model.GetSelectedLinesForSideBySide(start, end, oldSide: false);
-        }
-
-        // Check left selection
-        var leftSel = _leftPresenter.TextArea.Selection;
-        if (!leftSel.IsEmpty)
-        {
-            var (start, end) = DiffPresenterBase.SelectedLineSpan(leftSel, _leftPresenter.Document);
-            return Model.GetSelectedLinesForSideBySide(start, end, oldSide: true);
-        }
-
-        return [];
-    }
-
-    public void RequestHunkAction(int hunkIndex)
-    {
-        HunkActionRequested?.Invoke(this, hunkIndex);
-    }
-
-    public void RequestSelectionAction()
-    {
-        var refs = GetSelectedLineRefs();
-        if (refs.Count > 0)
-        {
-            SelectionActionRequested?.Invoke(this, refs);
-        }
-    }
-
-    public DiffBlock? GoToNextChange()
-    {
-        var block = _leftPresenter.GoToNextChange();
-        _rightPresenter.CurrentBlockIndex = _leftPresenter.CurrentBlockIndex;
-        return block;
-    }
-
-    public DiffBlock? GoToPreviousChange()
-    {
-        var block = _leftPresenter.GoToPreviousChange();
-        _rightPresenter.CurrentBlockIndex = _leftPresenter.CurrentBlockIndex;
-        return block;
-    }
-
-    protected override Size MeasureOverride(Size availableSize)
-    {
-        _grid.Measure(availableSize);
-        return _grid.DesiredSize;
-    }
-
-    protected override Size ArrangeOverride(Size finalSize)
-    {
-        _grid.Arrange(new Rect(finalSize));
-        return finalSize;
     }
 }

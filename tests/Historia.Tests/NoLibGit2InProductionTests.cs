@@ -3,7 +3,7 @@ namespace Historia.Tests;
 /// <summary>
 /// Architecture guard: LibGit2Sharp must not appear anywhere in production code.
 /// Scans every .cs, .csproj, and .props file under Historia.Core and Historia.App.
-/// Comments may reference libgit2 (e.g. trap notes or history explanations per Rule 35),
+/// Comments may reference libgit2 (e.g. trap notes),
 /// but code, package references, and using directives must have zero occurrences.
 /// </summary>
 [Trait("tier", "unit")]

@@ -51,6 +51,28 @@ internal static class EditRemoteDialog
         return owners;
     }
 
+    internal static TextBlock FieldLabel(string t) => new()
+    {
+        Text = t,
+        FontSize = 11,
+        FontWeight = FontWeight.SemiBold,
+        Margin = new Thickness(0, 10, 0, 3),
+    };
+
+    internal static StackPanel ButtonRow(Button primary, Button cancel)
+    {
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8,
+            Margin = new Thickness(0, 20, 0, 0),
+        };
+        buttons.Children.Add(primary);
+        buttons.Children.Add(cancel);
+        return buttons;
+    }
+
     /// <summary>Shows the dialog for <paramref name="remote"/>. Returns <see langword="null"/>
     /// when the user cancels or saves without changing anything.</summary>
     public static async Task<EditRemoteResult?> ShowAsync(RemoteInfo remote, IReadOnlyCollection<string> otherNames,
@@ -87,28 +109,12 @@ internal static class EditRemoteDialog
         nameBox.TextChanged += (_, _) => Revalidate();
         urlBox.TextChanged += (_, _) => Revalidate();
 
-        static TextBlock Label(string t) => new()
-        {
-            Text = t,
-            FontSize = 11,
-            FontWeight = FontWeight.SemiBold,
-            Margin = new Thickness(0, 10, 0, 3),
-        };
-
-        var buttons = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 8,
-            Margin = new Thickness(0, 20, 0, 0),
-        };
-        buttons.Children.Add(save);
-        buttons.Children.Add(cancel);
+        var buttons = ButtonRow(save, cancel);
 
         var panel = new StackPanel { Margin = new Thickness(20) };
-        panel.Children.Add(Label("Name"));
+        panel.Children.Add(FieldLabel("Name"));
         panel.Children.Add(nameBox);
-        panel.Children.Add(Label("URL"));
+        panel.Children.Add(FieldLabel("URL"));
         panel.Children.Add(urlBox);
         if (resetPush is not null)
             panel.Children.Add(resetPush);

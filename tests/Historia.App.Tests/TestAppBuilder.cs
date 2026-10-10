@@ -8,8 +8,7 @@ namespace HistoriaApp.Tests;
 /// AvaloniaEdit and the scrollbar theme) + Inter fonts so controls construct, lay out as they
 /// ship and resolve their <c>DynamicResource</c> keys, but none of the real
 /// <c>Historia.App</c> startup / DI. Tests construct a control, drive its logic, and
-/// assert — no pixel or snapshot assertions (that layer is still deferred; see
-/// <c>Historia-DevDocs/todo/add-historia-app-tests-project.md</c>).
+/// assert; there are no pixel or snapshot assertions.
 /// </summary>
 public sealed class TestAppBuilder
 {

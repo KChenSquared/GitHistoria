@@ -33,7 +33,6 @@ public sealed class DiffView : UserControl, IDisposable
     public DiffMinimap MinimapForTesting => _minimap;
     public FileDiff? DiffForTesting => _diff;
     internal DiffDisplayModel? ModelForTesting => _model;
-    public Button ToggleButtonForTesting => _toggleButton;
     internal Button CloseButtonForTesting => _closeButton;
     public void ToggleModeForTesting() => OnToggleMode();
     internal int LastModelCreationThreadId { get; private set; }

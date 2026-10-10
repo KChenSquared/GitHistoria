@@ -185,12 +185,6 @@ public sealed class ConflictSelection
 
     public ConflictSelection Clone() => new(this);
 
-    /// <summary>Same rows kept and same side order.</summary>
-    public bool SelectionEquals(ConflictSelection other)
-        => _sideLayout[0] == other._sideLayout[0]
-           && _ours.AsSpan().SequenceEqual(other._ours)
-           && _theirs.AsSpan().SequenceEqual(other._theirs);
-
     private void MoveAfterCheckedSide(ConflictSide side)
     {
         var other = Other(side);

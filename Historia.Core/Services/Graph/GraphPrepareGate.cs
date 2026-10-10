@@ -48,33 +48,7 @@ public sealed class GraphPrepareGate(string displayName = "")
             Interlocked.Decrement(ref _foregroundWaiters);
         }
 
-        var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds;
-        var waitedBehind = _lastHolder ?? _activeHolder ?? "unknown";
-        if (waitMs > GateLogThresholdMs && PerfLog.Enabled)
-            PerfLog.Mark($"graph prepare wait {waitMs:F1}ms ({_displayName}) behind {waitedBehind}");
-
-        var resolvedLabel = ResolveCallerLabel(label, callerMember, callerFile);
-        var holderDesc = PerfLog.Enabled ? $"[foreground] {resolvedLabel}" : null;
-        if (holderDesc is not null)
-            _activeHolder = holderDesc;
-
-        var holdStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        try
-        {
-            return await work().ConfigureAwait(false);
-        }
-        finally
-        {
-            var holdMs = System.Diagnostics.Stopwatch.GetElapsedTime(holdStart).TotalMilliseconds;
-            if (holdMs > GateLogThresholdMs && PerfLog.Enabled)
-                PerfLog.Mark($"graph prepare hold [foreground] {resolvedLabel} {holdMs:F1}ms ({_displayName})");
-            if (holderDesc is not null)
-            {
-                _lastHolder = holderDesc;
-                _activeHolder = null;
-            }
-            _gate.Release();
-        }
+        return await HoldAsync("[foreground]", waitStart, label, callerMember, callerFile, work).ConfigureAwait(false);
     }
 
     public Task<T> ExecuteAsync<T>(
@@ -141,33 +115,7 @@ public sealed class GraphPrepareGate(string displayName = "")
             Interlocked.Decrement(ref _backgroundWaiters);
         }
 
-        var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart).TotalMilliseconds;
-        var waitedBehind = _lastHolder ?? _activeHolder ?? "unknown";
-        if (waitMs > GateLogThresholdMs && PerfLog.Enabled)
-            PerfLog.Mark($"graph prepare wait {waitMs:F1}ms ({_displayName}) behind {waitedBehind}");
-
-        var resolvedLabel = ResolveCallerLabel(label, callerMember, callerFile);
-        var holderDesc = PerfLog.Enabled ? $"[background] {resolvedLabel}" : null;
-        if (holderDesc is not null)
-            _activeHolder = holderDesc;
-
-        var holdStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        try
-        {
-            return await work().ConfigureAwait(false);
-        }
-        finally
-        {
-            var holdMs = System.Diagnostics.Stopwatch.GetElapsedTime(holdStart).TotalMilliseconds;
-            if (holdMs > GateLogThresholdMs && PerfLog.Enabled)
-                PerfLog.Mark($"graph prepare hold [background] {resolvedLabel} {holdMs:F1}ms ({_displayName})");
-            if (holderDesc is not null)
-            {
-                _lastHolder = holderDesc;
-                _activeHolder = null;
-            }
-            _gate.Release();
-        }
+        return await HoldAsync("[background]", yieldStart, label, callerMember, callerFile, work).ConfigureAwait(false);
     }
 
     public Task<T> ExecuteBackgroundAsync<T>(
@@ -226,13 +174,24 @@ public sealed class GraphPrepareGate(string displayName = "")
             break;
         }
 
-        var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(yieldStart).TotalMilliseconds;
+        return await HoldAsync("[spill]", yieldStart, label, callerMember, callerFile, work).ConfigureAwait(false);
+    }
+
+    private async Task<T> HoldAsync<T>(
+        string tier,
+        long waitStart,
+        string? label,
+        string callerMember,
+        string callerFile,
+        Func<Task<T>> work)
+    {
+        var waitMs = System.Diagnostics.Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds;
         var waitedBehind = _lastHolder ?? _activeHolder ?? "unknown";
         if (waitMs > GateLogThresholdMs && PerfLog.Enabled)
             PerfLog.Mark($"graph prepare wait {waitMs:F1}ms ({_displayName}) behind {waitedBehind}");
 
         var resolvedLabel = ResolveCallerLabel(label, callerMember, callerFile);
-        var holderDesc = PerfLog.Enabled ? $"[spill] {resolvedLabel}" : null;
+        var holderDesc = PerfLog.Enabled ? $"{tier} {resolvedLabel}" : null;
         if (holderDesc is not null)
             _activeHolder = holderDesc;
 
@@ -245,7 +204,7 @@ public sealed class GraphPrepareGate(string displayName = "")
         {
             var holdMs = System.Diagnostics.Stopwatch.GetElapsedTime(holdStart).TotalMilliseconds;
             if (holdMs > GateLogThresholdMs && PerfLog.Enabled)
-                PerfLog.Mark($"graph prepare hold [spill] {resolvedLabel} {holdMs:F1}ms ({_displayName})");
+                PerfLog.Mark($"graph prepare hold {tier} {resolvedLabel} {holdMs:F1}ms ({_displayName})");
             if (holderDesc is not null)
             {
                 _lastHolder = holderDesc;

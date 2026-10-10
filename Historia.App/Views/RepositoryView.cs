@@ -12,9 +12,6 @@ public sealed class RepositoryView : UserControl, IDisposable
     private readonly IWorkspaceService _workspace;
     private readonly INotificationService _notifications;
     private readonly Historia.Services.UI.IDialogService _dialogs;
-    private readonly Historia.Services.PowerTools.IStashService _stashes;
-    private readonly Historia.Services.Settings.IRepoLayoutService _repoLayout;
-    private readonly Historia.Services.Settings.ISettingsService _settings;
 
     private readonly TextBlock _branch = Text("", "ColorText", 16, FontWeight.Bold);
     private readonly TextBlock _ab = Text("", "ColorTextMuted", 12);
@@ -58,9 +55,6 @@ public sealed class RepositoryView : UserControl, IDisposable
         _workspace = sp.GetRequiredService<IWorkspaceService>();
         _notifications = sp.GetRequiredService<INotificationService>();
         _dialogs = sp.GetRequiredService<Historia.Services.UI.IDialogService>();
-        _stashes = sp.GetRequiredService<Historia.Services.PowerTools.IStashService>();
-        _repoLayout = sp.GetRequiredService<Historia.Services.Settings.IRepoLayoutService>();
-        _settings = sp.GetRequiredService<Historia.Services.Settings.ISettingsService>();
         _networkRunner = sp.GetRequiredService<Historia.Services.UI.IRepoNetworkActionRunner>();
 
         _branchBar = new Grid

@@ -268,7 +268,7 @@ public sealed class DagLayoutEngine
         //
         // Rows carry no Segment/Elbow slice indices — GraphLayout derives lines
         // for a row window on demand from the shared crossing index (DeriveWindow), rather than
-        // DeriveVisuals materialising flat Segments/Elbows arrays sized to every resident row on
+        // materialising flat Segments/Elbows arrays sized to every resident row on
         // every Build/Extend call.
         var layout = new GraphLayout
         {
@@ -317,8 +317,8 @@ public sealed class DagLayoutEngine
     /// Derives <see cref="RowLaneSegment"/>/<see cref="RowElbow"/> data for rows
     /// <paramref name="a"/>..<paramref name="b"/> only, using <paramref name="state"/>'s crossing
     /// index to gather just the edges that can touch that range instead of every edge ever laid
-    /// out. Produces byte-identical per-row content to a full <see cref="DeriveVisuals"/> over
-    /// the same rows, because edges outside the gathered set cannot contribute to any row in
+    /// out. Produces byte-identical per-row content to <see cref="DeriveWindow"/> over
+    /// the whole row range, because edges outside the gathered set cannot contribute to any row in
     /// [a, b] (a real edge spans a contiguous row range; an edge not selected either never
     /// touches [a, b] or was excluded from a checkpoint it doesn't actually cross), and the
     /// gathered edges are processed in the same relative order (ascending <c>RealEdges</c> index,
@@ -374,9 +374,9 @@ public sealed class DagLayoutEngine
         }
     }
 
-    /// <summary>Same per-edge rules as <see cref="DeriveVisuals"/>, restricted to emitting rows
+    /// <summary>Per-edge visual rules, restricted to emitting rows
     /// in [<paramref name="a"/>, <paramref name="b"/>] — <paramref name="rowCount"/> is the
-    /// layout's true total row count, used (as in <see cref="DeriveVisuals"/>) to decide whether
+    /// layout's true total row count, used to decide whether
     /// an edge's endpoint is a real row at all, which is independent of the render window.</summary>
     private static (RowLaneSegment[] Segments, int[] SegStart, int[] SegCount,
         RowElbow[] Elbows, int[] ElbStart, int[] ElbCount) ComputeWindowVisuals(
@@ -527,7 +527,7 @@ public sealed class DagLayoutEngine
                     ToLane = toLane,
                     Type = EdgeType.OffWindow,
                     ColorIndex = stubColor,
-                    // An off-window stub never reaches an elbow (DeriveVisuals skips ToRow for
+                    // An off-window stub never reaches an elbow (derivation skips ToRow for
                     // EdgeType.OffWindow) — its only visible segments are the lead-in ones, which
                     // must match the lane they're actually drawn in, same as a real edge's lead-in.
                     LeadColorIndex = s.LaneColor.GetValueOrDefault(fromLane, fromLane % LanePalette.Size),
@@ -535,24 +535,6 @@ public sealed class DagLayoutEngine
             }
         }
         return offWindow;
-    }
-
-    /// <summary>
-    /// Test oracle only: whole-range derivation that tests compare <see cref="DeriveWindow"/>'s
-    /// windowed lines against, row for row. Delegates to the same <see cref="ComputeWindowVisuals"/>
-    /// used by the real, windowed path (<see cref="DeriveWindow"/>), just called for the whole
-    /// row range at once, so there is exactly one implementation of the per-edge line rules to
-    /// keep correct.
-    /// </summary>
-    internal static (GraphRow[] Rows, RowLaneSegment[] Segments, RowElbow[] Elbows) DeriveVisuals(
-        List<GraphRow> rawRows, GraphEdge[] edges)
-    {
-        var rowCount = rawRows.Count;
-        if (rowCount == 0)
-            return ([], [], []);
-
-        var (segments, _, _, elbows, _, _) = ComputeWindowVisuals([.. edges], rowCount, 0, rowCount - 1);
-        return ([.. rawRows], segments, elbows);
     }
 
     // ── Lane allocation ──

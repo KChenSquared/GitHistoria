@@ -22,13 +22,6 @@ internal static class GitStatusParser
     public static GitObjectId? ParseId(string? s) =>
         s is { Length: 40 or 64 } && GitObjectId.TryParse(s, out var id) && !id.IsZero ? id : null;
 
-    public static GitObjectId? ParseOid(string? s) => ParseId(s);
-
-    public static GitObjectId ParseIdOrZero(string? s) =>
-        s is { Length: 40 or 64 } && GitObjectId.TryParse(s, out var id)
-            ? (id.IsZero ? GitObjectId.Zero : id)
-            : GitObjectId.Zero;
-
     public static bool IsZeroOid(string? s) =>
         s is { Length: 40 or 64 } && GitObjectId.TryParse(s, out var id) && id.IsZero;
 
@@ -107,78 +100,13 @@ internal static class GitStatusParser
                 if (parts.Length < 9)
                     continue;
 
-                var xy = parts[1];
-                var sub = parts[2];
-                var mH = parts[3];
-                var mI = parts[4];
-                var mW = parts[5];
-                var hH = parts[6];
-                var hI = parts[7];
-                var path = parts[8];
-
-                var isSubmodule = sub.StartsWith('S');
-                var x = xy.Length > 0 ? xy[0] : '.';
-                var y = xy.Length > 1 ? xy[1] : '.';
-
-                if (x != '.')
-                {
-                    var stagedKind = x switch
-                    {
-                        'A' => FileChangeKind.Added,
-                        'M' => FileChangeKind.Modified,
-                        'D' => FileChangeKind.Deleted,
-                        'R' => FileChangeKind.Renamed,
-                        'C' => FileChangeKind.Copied,
-                        'T' => FileChangeKind.TypeChanged,
-                        _ => (FileChangeKind?)null,
-                    };
-
-                    if (stagedKind is { } sk)
-                    {
-                        staged.Add(new FileStatusEntry
-                        {
-                            Path = path,
-                            Kind = sk,
-                            OldPath = null,
-                            IsBinary = false,
-                            IsSubmodule = isSubmodule,
-                            SizeBytes = 0,
-                        });
-                    }
-                }
-
-                if (y != '.')
-                {
-                    var unstagedKind = y switch
-                    {
-                        'M' => FileChangeKind.Modified,
-                        'D' => FileChangeKind.Deleted,
-                        'T' => FileChangeKind.TypeChanged,
-                        'A' => FileChangeKind.Added,
-                        'R' => FileChangeKind.Renamed,
-                        'C' => FileChangeKind.Copied,
-                        _ => (FileChangeKind?)null,
-                    };
-
-                    if (unstagedKind is { } uk)
-                    {
-                        unstaged.Add(new FileStatusEntry
-                        {
-                            Path = path,
-                            Kind = uk,
-                            OldPath = null,
-                            IsBinary = false,
-                            IsSubmodule = isSubmodule,
-                            SizeBytes = 0,
-                        });
-                    }
-
-                    if (y == 'D')
-                    {
-                        worktreeDeletions.Add(new WorktreeDeletion(path, mI, hI));
-                    }
-                }
-
+                AddEntry(staged, unstaged, worktreeDeletions,
+                    xy: parts[1],
+                    sub: parts[2],
+                    path: parts[8],
+                    origPath: null,
+                    mI: parts[4],
+                    hI: parts[7]);
                 continue;
             }
 
@@ -190,85 +118,19 @@ internal static class GitStatusParser
                 if (parts.Length < 10)
                     continue;
 
-                var xy = parts[1];
-                var sub = parts[2];
-                var mH = parts[3];
-                var mI = parts[4];
-                var mW = parts[5];
-                var hH = parts[6];
-                var hI = parts[7];
-                var xScore = parts[8];
-                var path = parts[9];
-
                 string? origPath = null;
                 if (i < tokens.Length)
                 {
                     origPath = tokens[i++];
                 }
 
-                var isSubmodule = sub.StartsWith('S');
-                var x = xy.Length > 0 ? xy[0] : '.';
-                var y = xy.Length > 1 ? xy[1] : '.';
-
-                if (x != '.')
-                {
-                    var stagedKind = x switch
-                    {
-                        'A' => FileChangeKind.Added,
-                        'M' => FileChangeKind.Modified,
-                        'D' => FileChangeKind.Deleted,
-                        'R' => FileChangeKind.Renamed,
-                        'C' => FileChangeKind.Copied,
-                        'T' => FileChangeKind.TypeChanged,
-                        _ => (FileChangeKind?)null,
-                    };
-
-                    if (stagedKind is { } sk)
-                    {
-                        staged.Add(new FileStatusEntry
-                        {
-                            Path = path,
-                            Kind = sk,
-                            OldPath = (sk is FileChangeKind.Renamed or FileChangeKind.Copied) ? origPath : null,
-                            IsBinary = false,
-                            IsSubmodule = isSubmodule,
-                            SizeBytes = 0,
-                        });
-                    }
-                }
-
-                if (y != '.')
-                {
-                    var unstagedKind = y switch
-                    {
-                        'M' => FileChangeKind.Modified,
-                        'D' => FileChangeKind.Deleted,
-                        'T' => FileChangeKind.TypeChanged,
-                        'A' => FileChangeKind.Added,
-                        'R' => FileChangeKind.Renamed,
-                        'C' => FileChangeKind.Copied,
-                        _ => (FileChangeKind?)null,
-                    };
-
-                    if (unstagedKind is { } uk)
-                    {
-                        unstaged.Add(new FileStatusEntry
-                        {
-                            Path = path,
-                            Kind = uk,
-                            OldPath = (uk is FileChangeKind.Renamed or FileChangeKind.Copied) ? origPath : null,
-                            IsBinary = false,
-                            IsSubmodule = isSubmodule,
-                            SizeBytes = 0,
-                        });
-                    }
-
-                    if (y == 'D')
-                    {
-                        worktreeDeletions.Add(new WorktreeDeletion(path, mI, hI));
-                    }
-                }
-
+                AddEntry(staged, unstaged, worktreeDeletions,
+                    xy: parts[1],
+                    sub: parts[2],
+                    path: parts[9],
+                    origPath: origPath,
+                    mI: parts[4],
+                    hI: parts[7]);
                 continue;
             }
 
@@ -431,5 +293,66 @@ internal static class GitStatusParser
             aheadBy = a;
         if (behindPart.StartsWith("-") && int.TryParse(behindPart[1..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var b))
             behindBy = b;
+    }
+
+    private static FileChangeKind? KindOf(char c) => c switch
+    {
+        'A' => FileChangeKind.Added,
+        'M' => FileChangeKind.Modified,
+        'D' => FileChangeKind.Deleted,
+        'R' => FileChangeKind.Renamed,
+        'C' => FileChangeKind.Copied,
+        'T' => FileChangeKind.TypeChanged,
+        _ => null,
+    };
+
+    private static void AddEntry(
+        List<FileStatusEntry> staged,
+        List<FileStatusEntry> unstaged,
+        List<WorktreeDeletion> worktreeDeletions,
+        string xy,
+        string sub,
+        string path,
+        string? origPath,
+        string mI,
+        string hI)
+    {
+        var isSubmodule = sub.StartsWith('S');
+        var x = xy.Length > 0 ? xy[0] : '.';
+        var y = xy.Length > 1 ? xy[1] : '.';
+
+        if (x != '.' && KindOf(x) is { } sk)
+        {
+            staged.Add(new FileStatusEntry
+            {
+                Path = path,
+                Kind = sk,
+                OldPath = (sk is FileChangeKind.Renamed or FileChangeKind.Copied) ? origPath : null,
+                IsBinary = false,
+                IsSubmodule = isSubmodule,
+                SizeBytes = 0,
+            });
+        }
+
+        if (y != '.')
+        {
+            if (KindOf(y) is { } uk)
+            {
+                unstaged.Add(new FileStatusEntry
+                {
+                    Path = path,
+                    Kind = uk,
+                    OldPath = (uk is FileChangeKind.Renamed or FileChangeKind.Copied) ? origPath : null,
+                    IsBinary = false,
+                    IsSubmodule = isSubmodule,
+                    SizeBytes = 0,
+                });
+            }
+
+            if (y == 'D')
+            {
+                worktreeDeletions.Add(new WorktreeDeletion(path, mI, hI));
+            }
+        }
     }
 }

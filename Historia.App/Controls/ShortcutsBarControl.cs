@@ -21,7 +21,6 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
     private readonly IWorkspaceService? _workspace;
     private readonly IRepoActionBus? _actions;
     private readonly ISettingsService? _settings;
-    private readonly INavigationBus? _nav;
     private readonly INotificationService? _notifications;
     private readonly IStashService? _stash;
     private readonly IDialogService? _dialogs;
@@ -74,7 +73,6 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
         _workspace = sp?.GetService<IWorkspaceService>();
         _actions = sp?.GetService<IRepoActionBus>();
         _settings = sp?.GetService<ISettingsService>();
-        _nav = sp?.GetService<INavigationBus>();
         _notifications = sp?.GetService<INotificationService>();
         _stash = sp?.GetService<IStashService>();
         _dialogs = sp?.GetService<IDialogService>();

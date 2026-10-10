@@ -255,9 +255,6 @@ public sealed class ObjectFormatParsingTests
         Assert.NotNull(GitStatusParser.ParseId(Sha1Commit1));
         Assert.NotNull(GitStatusParser.ParseId(Sha256Commit1));
 
-        Assert.Equal(GitObjectId.Zero, GitStatusParser.ParseIdOrZero(Sha1Zero));
-        Assert.Equal(GitObjectId.Zero, GitStatusParser.ParseIdOrZero(Sha256Zero));
-
         var parsedInitial = GitStatusParser.Parse("# branch.oid (initial)\0");
         Assert.Null(parsedInitial.HeadCommitId);
 

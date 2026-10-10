@@ -182,7 +182,6 @@ public sealed class GraphMetaStoreTests : IDisposable
 
         Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, true, 50));
         Assert.Equal((false, 0, false), GraphMetaStore.Probe(Repo, Fp, true));
-        Assert.Equal((false, 0), GraphMetaStore.ProbeAny(Repo, true));
         Assert.False(GraphMetaStore.ProbeExisting(Repo, true).Ok);
     }
 
@@ -357,7 +356,7 @@ public sealed class GraphMetaStoreTests : IDisposable
     public void A_version_1_style_header_is_rejected_not_misread()
     {
         // Simulates an older-version store: same layout, one
-        // version number lower. TryOpen/Probe/ProbeAny must all treat it as absent, never try to
+        // version number lower. TryOpen/Probe/ProbeExisting must all treat it as absent, never try to
         // decode records in the old shape.
         Write(10, exhausted: true);
         var hdrPath = GraphCachePaths.File(Repo, GraphMetaStore.HdrExt);
@@ -367,7 +366,7 @@ public sealed class GraphMetaStoreTests : IDisposable
 
         Assert.Null(GraphMetaStore.TryOpen(Repo, Fp, true, 10));
         Assert.Equal((false, 0, false), GraphMetaStore.Probe(Repo, Fp, true));
-        Assert.Equal((false, 0), GraphMetaStore.ProbeAny(Repo, true));
+        Assert.False(GraphMetaStore.ProbeExisting(Repo, true).Ok);
     }
 
     [Fact]

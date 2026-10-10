@@ -13,7 +13,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Pinned, no floating wildcard (constitution rule 0.7). -->
+    <!-- Pinned, no floating wildcard. -->
     <PackageReference Include="DiffPlex" Version="1.9.0" />
     <!-- RepositoryContext resolves per-repo collaborators from the app's IServiceProvider. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />

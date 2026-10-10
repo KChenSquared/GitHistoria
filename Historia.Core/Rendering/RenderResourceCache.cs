@@ -1,4 +1,4 @@
-﻿namespace Historia.Rendering;
+namespace Historia.Rendering;
 
 /// <summary>
 /// A bounded LRU cache of render resources with <b>miss and hit counters</b>, so
@@ -33,7 +33,7 @@ public sealed class RenderResourceCache<TKey, TValue>
     }
 
     /// <summary>Resources created because the key was absent. Non-zero on a second identical
-    /// frame is a rule-24 regression.</summary>
+    /// frame is a per-frame allocation regression.</summary>
     public long Misses { get; private set; }
 
     /// <summary>Resources served from the cache.</summary>

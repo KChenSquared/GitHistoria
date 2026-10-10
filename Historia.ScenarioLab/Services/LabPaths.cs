@@ -14,7 +14,6 @@ public static class LabPaths
 
     public static string Scripts => Path.Combine(Root, "scripts");
     public static string Templates => Path.Combine(Root, "templates");
-    public static string Instructions => Path.Combine(Root, "instructions");
     public static string Lib => Path.Combine(Root, "lib");
     public static string LibScript => Path.Combine(Lib, "scenario.sh");
     public static string RepoRoot => _repoRoot
