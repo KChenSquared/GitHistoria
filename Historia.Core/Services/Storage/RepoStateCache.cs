@@ -22,8 +22,14 @@ public sealed class RepoStateCache(ISettingsService settings) : IRepoStateCache
         if (refs is null && pt is null)
             return null;
 
+        IReadOnlyList<BranchInfo>? branches = refs?.Branches;
+        if (branches is not null && branches.Any(BranchProjection.IsRemoteHead))
+        {
+            branches = branches.Where(b => !BranchProjection.IsRemoteHead(b)).ToList();
+        }
+
         return new RepoStateSnapshot(
-            refs?.Branches,
+            branches,
             refs?.Tags,
             refs?.Remotes,
             pt?.Stashes,
