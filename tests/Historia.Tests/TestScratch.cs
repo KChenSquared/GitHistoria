@@ -93,6 +93,24 @@ public static class TestScratch
         }
     }
 
+    /// <summary>
+    /// True when <paramref name="directory"/> ignores letter case: a file written as
+    /// <c>probe</c> can be opened as <c>PROBE</c>.
+    /// </summary>
+    public static bool IsCaseInsensitive(string directory)
+    {
+        var probe = Path.Combine(directory, $"case-probe-{Guid.NewGuid():N}");
+        File.WriteAllText(probe, "probe");
+        try
+        {
+            return File.Exists(Path.Combine(directory, Path.GetFileName(probe).ToUpperInvariant()));
+        }
+        finally
+        {
+            File.Delete(probe);
+        }
+    }
+
     public static string NewDirectory(string prefix = "historia-test-")
     {
         var path = NewPath(prefix);

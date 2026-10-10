@@ -16,7 +16,7 @@ allowed-tools: Bash(historia-cmdr *) Bash(git blame *) Bash(git log *) Bash(git 
 
 ## Rules
 
-- A boundary commit (blame shows `^sha`, or the history is shallow) is the oldest the repository
+- A boundary commit (the porcelain output has a `boundary` line, or the history is shallow) is the oldest the repository
   knows about; say so rather than guessing.
 - Exit code 2 means Historia is unreachable or switched off: give the commit and message in chat.
 - Read-only: blame, log and show only.

@@ -11,8 +11,8 @@ show each file.
 2. Order the files for reading: interfaces and models first, then implementations, then call sites, then
    tests, then configuration and docs. Skip generated files.
 3. Show me the ordered list, one line each saying why the file is where it is.
-4. Show stop 1: run
-   `historia-cmdr compare ${input:base:main} HEAD <file> --line <first changed line>`
+4. Show stop 1: find the fork point with `git merge-base ${input:base:main} HEAD`, then run
+   `historia-cmdr compare <merge-base> HEAD <file> --line <first changed line>`
    and add a 2–4 line note on what changed and what to check.
 5. Wait for me before each next stop. I will say "next", "back", "skip to N" or "done". Use
    `--no-focus` after the first stop.
