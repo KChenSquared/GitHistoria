@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/KChenSquared/GitHistoria/refs/heads/stor001-linuxReadme/assets/LinuxReadme/Linux.gif" alt="Historia scrolling the Linux kernel commit graph">
+</p>
+
 # Historia 📜
 
 > *The commit graph you love: every commit, no lag, no subscriptions.*
