@@ -21,6 +21,12 @@ public sealed class AboutDialogTests
         public Task DeleteTokenAsync(string key, CancellationToken ct = default) => Task.CompletedTask;
     }
 
+    private sealed class FakeCmdrPathService : ICmdrPathService
+    {
+        public CmdrPathStatus GetStatus() => new CmdrPathStatus.Unavailable();
+        public CmdrPathApplyResult Apply(PathChange confirmed) => new CmdrPathApplyResult.Failed("Unavailable");
+    }
+
     [Fact]
     public void FormatVersion_splits_sha() =>
         Assert.Equal("Version 1.0.0 (dac352a)",
@@ -96,6 +102,7 @@ public sealed class AboutDialogTests
         sc.AddSingleton<IRepoIdentityService, RepoIdentityService>();
         sc.AddSingleton<ICredentialVaultService, FakeVault>();
         sc.AddSingleton<IExternalLauncher, ExternalLauncher>();
+        sc.AddSingleton<ICmdrPathService, FakeCmdrPathService>();
         var sp = sc.BuildServiceProvider();
 
         var view = new SettingsView(sp);

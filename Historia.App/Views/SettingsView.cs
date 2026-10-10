@@ -9,10 +9,20 @@ public sealed class SettingsView : UserControl, IDisposable
     private readonly IGraphLayoutService _graph;
     private readonly Historia.Services.Storage.IRepoStateCache _repoCache;
     private readonly IAiIntegrationsPanel? _aiPanel;
+    private readonly ICmdrPathService _cmdrPath;
+    private CmdrPathStatus? _cmdrStatus;
+    private Task? _cmdrStatusTask;
+    private bool _cmdrApplyInProgress;
+    private Task? _cmdrApplyTask;
+
+    internal Task CmdrApplyTaskForTesting => _cmdrApplyTask ?? Task.CompletedTask;
+
+    private const string CmdrPathHint = "Lets terminals and coding agents run historia-cmdr by name. Puts Historia's folder on your user PATH, replacing any other historia-cmdr folder there. Open a new terminal to use it.";
+
     private readonly StackPanel _root = new() { Spacing = 18, Margin = new Thickness(32), MaxWidth = 640 };
 
     // Survives the full Rebuild() that fires on every settings change.
-    private bool _appearanceExpanded;
+    private bool _generalExpanded;
     private bool _networkExpanded;
     private bool _diffExpanded;
     private bool _gitExpanded;
@@ -27,10 +37,13 @@ public sealed class SettingsView : UserControl, IDisposable
         _graph = sp.GetRequiredService<IGraphLayoutService>();
         _repoCache = sp.GetRequiredService<Historia.Services.Storage.IRepoStateCache>();
         _aiPanel = sp.GetService<IAiIntegrationsPanel>();
+        _cmdrPath = sp.GetRequiredService<ICmdrPathService>();
 
         _onCfg = (_, _) => Post();
         _onTheme = (_, _) => Post();
         _onAiPanel = (_, _) => Post();
+
+        RefreshCmdrStatus();
 
         Content = ClosablePane(new ScrollViewer { Content = _root }, sp);
         this.Dyn(BackgroundProperty, "ColorChrome");
@@ -75,32 +88,153 @@ public sealed class SettingsView : UserControl, IDisposable
     private readonly EventHandler<ThemeChangedEventArgs> _onTheme;
     private readonly EventHandler _onAiPanel;
 
+    private void RefreshCmdrStatus()
+    {
+        _cmdrStatusTask = Task.Run(() =>
+        {
+            CmdrPathStatus status;
+            try
+            {
+                status = _cmdrPath.GetStatus();
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write(AppLogLevel.Warn, "cmdr-path", "Could not check historia-cmdr PATH status", ex);
+                status = new CmdrPathStatus.Unavailable();
+            }
+
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _cmdrStatus = status;
+                _cmdrApplyInProgress = false;
+                Rebuild();
+            });
+        });
+    }
+
+    internal void EnsureCmdrStatusLoadedForTesting()
+    {
+        _cmdrStatusTask?.GetAwaiter().GetResult();
+        Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+    }
+
+    private void OnAddToPath() => _cmdrApplyTask = AddToPathAsync();
+
+    private async Task AddToPathAsync()
+    {
+        if (_cmdrStatus is not CmdrPathStatus.NeedsUpdate update || _cmdrApplyInProgress)
+            return;
+
+        var preview = update.Preview;
+        var ourFolder = update.OurFolder;
+        var sb = new StringBuilder();
+        if (preview.Added is not null)
+            sb.AppendLine($"Adds {ourFolder} to your user PATH.");
+        else
+            sb.AppendLine($"Keeps {ourFolder} on your user PATH.");
+
+        var duplicates = new List<string>();
+        var removes = new List<string>();
+        foreach (var r in preview.Removed)
+        {
+            if (UserPathEditor.SameFolder(r, ourFolder))
+                duplicates.Add(r);
+            else
+                removes.Add(r);
+        }
+
+        if (removes.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Removes from your user PATH:");
+            foreach (var r in removes)
+                sb.AppendLine(r);
+        }
+
+        if (duplicates.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Removes duplicates of that folder:");
+            foreach (var d in duplicates)
+                sb.AppendLine(d);
+        }
+
+        if (update.MachineCopies.Count > 0)
+        {
+            sb.AppendLine();
+            foreach (var m in update.MachineCopies)
+                sb.AppendLine($"A historia-cmdr in the system PATH ({m}) still runs first; an administrator must remove it.");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine($"Your current PATH is backed up to {update.BackupFolder} first.");
+        sb.Append("Open a new terminal to use it.");
+
+        var effect = sb.ToString();
+        var confirmed = await _dialogs.ConfirmDestructiveAsync("Update PATH", effect, "Add to PATH");
+        if (!confirmed)
+            return;
+
+        _cmdrApplyInProgress = true;
+        Rebuild();
+
+        try
+        {
+            var result = await Task.Run(() => _cmdrPath.Apply(preview));
+            switch (result)
+            {
+                case CmdrPathApplyResult.Written or CmdrPathApplyResult.AlreadyCurrent:
+                    break;
+                case CmdrPathApplyResult.Changed:
+                    await _dialogs.ShowMessageAsync("Update PATH", "PATH changed while the dialog was open; try again.");
+                    break;
+                case CmdrPathApplyResult.Failed failed:
+                    await _dialogs.ShowMessageAsync("Update PATH", failed.Message);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(AppLogLevel.Error, "cmdr-path", "Failed to apply historia-cmdr to user PATH", ex);
+            await _dialogs.ShowMessageAsync("Update PATH", ex.Message);
+        }
+
+        RefreshCmdrStatus();
+    }
+
     private void Rebuild()
     {
         var c = _cfg.Current;
         _root.Children.Clear();
         _root.Children.Add(Text("Settings", "ColorText", 24, FontWeight.SemiBold));
 
-        // ── Appearance ──
-        var appearanceBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
+        // ── General ──
+        var generalBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };
         // The custom-theme override lives in the Developer panel, so only developer mode
         // mentions it here.
-        var appearanceHint = "Graph columns are set in Repository settings: click the cog in the graph's GRAPH header.";
+        var generalHint = "Graph columns are set in Repository settings: click the cog in the graph's GRAPH header.";
         if (Historia.Platform.DevMode.Enabled)
-            appearanceHint += "\n\nIn developer mode, a custom theme from the Developer panel overrides Light, Dark and System.";
+            generalHint += "\n\nIn developer mode, a custom theme from the Developer panel overrides Light, Dark and System.";
         var themeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         foreach (var m in new[] { ThemeMode.Light, ThemeMode.Dark, ThemeMode.System })
         {
             var mode = m;
             themeRow.Children.Add(TextButton(m.ToString(), () => _ = _theme.ApplyModeAsync(mode), primary: _theme.CurrentMode == m));
         }
-        appearanceBody.Children.Add(LabeledRow("Theme", themeRow));
-        appearanceBody.Children.Add(WithHint(Check("Show splash screen", c.ShowSplashScreen,
+        generalBody.Children.Add(LabeledRow("Theme", themeRow));
+        if (_cmdrStatus is not null and not CmdrPathStatus.Unavailable)
+        {
+            var status = _cmdrStatus;
+            var button = TextButton(status is CmdrPathStatus.Current ? "On PATH" : "Add to PATH", OnAddToPath, primary: false);
+            button.IsEnabled = status is CmdrPathStatus.NeedsUpdate && !_cmdrApplyInProgress;
+            generalBody.Children.Add(WithHint(LabeledRow("Command line", button), CmdrPathHint));
+        }
+        generalBody.Children.Add(WithHint(Check("Show splash screen", c.ShowSplashScreen,
             v => _ = _cfg.UpdateAsync(s => s with { ShowSplashScreen = v })),
             "A custom theme uses its own splash instead."));
-        appearanceBody.Children.Add(WithHint(Check("High contrast", _theme.HighContrastEnabled, v => _ = _theme.SetHighContrastAsync(v)),
+        generalBody.Children.Add(WithHint(Check("High contrast", _theme.HighContrastEnabled, v => _ = _theme.SetHighContrastAsync(v)),
             "Overrides every other theme. Also turns on when Windows high contrast is on."));
-        appearanceBody.Children.Add(WithHint(Check("Wrap tabs onto more rows", c.EnableMultiLineTabs,
+        generalBody.Children.Add(WithHint(Check("Wrap tabs onto more rows", c.EnableMultiLineTabs,
             v => _ = _cfg.UpdateAsync(s => s with { EnableMultiLineTabs = v })),
             "When tabs don't fit, they wrap to a new row instead of scrolling."));
         if (c.EnableMultiLineTabs)
@@ -108,9 +242,9 @@ public sealed class SettingsView : UserControl, IDisposable
             var maxRows = new NumericUpDown { Minimum = 2, Maximum = 5, Value = c.MaxTabRows, FormatString = "0", Width = 120, HorizontalAlignment = HorizontalAlignment.Left };
             WireNumericCommit(maxRows, c.MaxTabRows, v => Math.Clamp(v, 2, 5),
                 next => _ = _cfg.UpdateAsync(s => s with { MaxTabRows = next }));
-            appearanceBody.Children.Add(LabeledRow("Maximum rows", maxRows));
+            generalBody.Children.Add(LabeledRow("Maximum rows", maxRows));
         }
-        appearanceBody.Children.Add(WithHint(Check("Fixed tab width", c.TabWidthMode == TabWidthMode.Fixed,
+        generalBody.Children.Add(WithHint(Check("Fixed tab width", c.TabWidthMode == TabWidthMode.Fixed,
             v => _ = _cfg.UpdateAsync(s => s with { TabWidthMode = v ? TabWidthMode.Fixed : TabWidthMode.Dynamic })),
             "When off, each tab fits its name, up to about 25 characters."));
         if (c.TabWidthMode == TabWidthMode.Fixed)
@@ -127,9 +261,9 @@ public sealed class SettingsView : UserControl, IDisposable
             };
             WireNumericCommit(tabLen, c.FixedTabWidth, AppSettings.ClampFixedTabWidth,
                 next => _ = _cfg.UpdateAsync(s => s with { FixedTabWidth = next }));
-            appearanceBody.Children.Add(LabeledRow("Tab width (px)", tabLen));
+            generalBody.Children.Add(LabeledRow("Tab width (px)", tabLen));
         }
-        appearanceBody.Children.Add(WithHint(Check("Show author date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })),
+        generalBody.Children.Add(WithHint(Check("Show author date", c.ShowAuthorDate, v => _ = _cfg.UpdateAsync(s => s with { ShowAuthorDate = v })),
             "Shows when a commit was written, not when it was committed. The graph stays sorted by commit date."));
 
         // Mouse-wheel / trackpad scroll direction for the graph and the tab strip.
@@ -148,9 +282,9 @@ public sealed class SettingsView : UserControl, IDisposable
             if ((wheelDir.SelectedItem as ComboBoxItem)?.Tag is WheelScrollDirection wd)
                 _ = _cfg.UpdateAsync(s => s with { WheelScrollDirection = wd });
         };
-        appearanceBody.Children.Add(WithHint(LabeledRow("Scroll direction", wheelDir),
+        generalBody.Children.Add(WithHint(LabeledRow("Scroll direction", wheelDir),
             "Applies to the graph and the tab strip. On Windows, Match system is always Standard."));
-        appearanceBody.Children.Add(WithHint(Check("Cache sidebar between launches", c.PersistRepoCache,
+        generalBody.Children.Add(WithHint(Check("Cache sidebar between launches", c.PersistRepoCache,
             v =>
             {
                 _ = _cfg.UpdateAsync(s => s with { PersistRepoCache = v });
@@ -158,7 +292,7 @@ public sealed class SettingsView : UserControl, IDisposable
                     _repoCache.WipeAll(); // turning it off also clears what's on disk
             }),
             "Saves each repository's branches, tags, stashes and more so the sidebar appears instantly, then refreshes from Git. Turning it off deletes the cache."));
-        AddCollapsibleSection("Appearance", appearanceBody, () => _appearanceExpanded, v => _appearanceExpanded = v, appearanceHint);
+        AddCollapsibleSection("General", generalBody, () => _generalExpanded, v => _generalExpanded = v, generalHint);
 
         // ── Privacy & Network ──
         var networkBody = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 0) };

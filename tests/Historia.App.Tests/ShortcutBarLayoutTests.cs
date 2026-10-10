@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 [Trait("tier", "ui")]
 
 public class ShortcutBarLayoutTests
@@ -47,6 +47,7 @@ public class ShortcutBarLayoutTests
         sc.AddSingleton<IRepoIdentityService, RepoIdentityService>();
         sc.AddSingleton<ICredentialVaultService, FakeVault>();
         sc.AddSingleton<IExternalLauncher, ExternalLauncher>();
+        sc.AddSingleton<ICmdrPathService, FakeCmdrPathService>();
         return sc.BuildServiceProvider();
     }
 
@@ -384,5 +385,11 @@ public class ShortcutBarLayoutTests
         public Task StoreTokenAsync(string key, string token, CancellationToken ct = default) => Task.CompletedTask;
         public Task<string?> RetrieveTokenAsync(string key, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task DeleteTokenAsync(string key, CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    private sealed class FakeCmdrPathService : ICmdrPathService
+    {
+        public CmdrPathStatus GetStatus() => new CmdrPathStatus.Unavailable();
+        public CmdrPathApplyResult Apply(PathChange confirmed) => new CmdrPathApplyResult.Failed("Unavailable in test.");
     }
 }

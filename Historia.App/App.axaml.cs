@@ -277,6 +277,16 @@ public sealed class App : Application
         services.AddSingleton<IUnsavedWorkRegistry, UnsavedWorkRegistry>();
         services.AddSingleton<ConflictResolverHost>();
 
+        if (OperatingSystem.IsWindows())
+        {
+            services.AddSingleton<IUserEnvironmentStore, WindowsUserEnvironmentStore>();
+            services.AddSingleton<ICmdrPathService>(CreateWindowsCmdrPathService);
+        }
+        else
+        {
+            services.AddSingleton<ICmdrPathService, UnavailableCmdrPathService>();
+        }
+
         // ── AI commit messages. Nothing here is resolved at startup, so launch makes no AI request. ──
         services.AddSingleton<IAiProfileService, AiProfileService>();
         services.AddSingleton<IAiIntegrationsPanel, AiIntegrationsPanel>();
@@ -463,5 +473,21 @@ public sealed class App : Application
         {
             // Never rethrow from the last-chance handler.
         }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static ICmdrPathService CreateWindowsCmdrPathService(IServiceProvider sp) =>
+        new CmdrPathService(
+            sp.GetRequiredService<IUserEnvironmentStore>(),
+            AppContext.BaseDirectory,
+            File.Exists,
+            System.IO.Path.Combine(Historia.Services.Storage.AppPaths.DataDirectory, "path-backups"),
+            CmdrPathService.DefaultSaveBackup,
+            sp.GetRequiredService<IAppLog>());
+
+    private sealed class UnavailableCmdrPathService : ICmdrPathService
+    {
+        public CmdrPathStatus GetStatus() => new CmdrPathStatus.Unavailable();
+        public CmdrPathApplyResult Apply(PathChange confirmed) => new CmdrPathApplyResult.Failed("historia-cmdr is unavailable.");
     }
 }

@@ -42,6 +42,7 @@ global using Historia.Platform;
 global using Historia.Rendering;
 global using Historia.Services.Ai;
 global using Historia.Services.AutoFetch;
+global using Historia.Services.CommandLine;
 global using Historia.Services.Git;
 global using Historia.Services.Git.Helpers;
 global using Historia.Services.Graph;
@@ -69,6 +70,7 @@ global using System.Runtime.InteropServices;
 global using System.Runtime.Versioning;
 global using System.Security.AccessControl;
 global using System.Security.Principal;
+global using System.Text;
 global using System.Text.Json;
 global using System.Threading.Channels;
 
