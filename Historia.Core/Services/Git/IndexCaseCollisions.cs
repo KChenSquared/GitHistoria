@@ -1,27 +1,35 @@
 namespace Historia.Services.Git;
 
+/// <summary>A stage-0 index entry whose path differs from another entry's only in letter case.</summary>
+internal readonly record struct CaseTwin(string Path, string Mode, string BlobId);
+
 /// <summary>
 /// Detects index paths that differ only in letter case and share a single on-disk file on
 /// case-insensitive filesystems, caching collision groups and worktree hashes against index and
-/// config timestamps.
+/// config timestamps, and remembering which name last held the disk content.
 /// </summary>
 internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirectory, string workingDirectory)
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly string _cwd = string.IsNullOrWhiteSpace(workingDirectory) ? gitDirectory : workingDirectory;
 
-    private sealed record IgnoreCaseCache((long Mtime, long Length) Stamp, bool Value);
+    private sealed record IgnoreCaseCache(((long Mtime, long Length) Config, (long Mtime, long Length) Worktree) Stamp, bool Value);
     private IgnoreCaseCache? _ignoreCaseCache;
+
+    // Keyed case-insensitively, so every member of a group maps to the same owner.
+    private readonly Dictionary<string, string> _owners = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Lock _ownersGate = new();
 
     private sealed record GroupsCache(
         (long Mtime, long Length) Stamp,
-        IReadOnlyDictionary<string, IReadOnlyList<(string Path, string BlobId)>> Groups);
+        IReadOnlyDictionary<string, IReadOnlyList<CaseTwin>> Groups);
     private GroupsCache? _groupsCache;
 
     private readonly Dictionary<string, (long Length, long Mtime, string Hash)> _worktreeHashCache = new(StringComparer.Ordinal);
 
     public async Task<bool> IgnoreCaseAsync(CancellationToken ct = default)
     {
+        // The stamp is read before git config runs, so a config write during it invalidates the entry.
         var stamp = GetConfigStamp();
 
         var cached = Volatile.Read(ref _ignoreCaseCache);
@@ -64,11 +72,55 @@ internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirector
         }
     }
 
-    public async Task<IReadOnlyDictionary<string, IReadOnlyList<(string Path, string BlobId)>>> GroupsAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Records that <paramref name="owner"/>'s index blob is the content of the shared disk file.
+    /// </summary>
+    public void RecordOwner(string owner)
     {
+        lock (_ownersGate)
+            _owners[owner] = owner;
+    }
+
+    /// <summary>The group member last seen holding the disk content, or null when never seen.</summary>
+    public string? OwnerOf(string path)
+    {
+        lock (_ownersGate)
+            return _owners.TryGetValue(path, out var owner) ? owner : null;
+    }
+
+    /// <summary>
+    /// Collision groups for a stage operation. Returns the empty map without listing the index when
+    /// the last listing found no collisions, so staging in an ordinary repository spawns nothing.
+    /// </summary>
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<CaseTwin>>> GroupsForStagingAsync(CancellationToken ct = default)
+    {
+        var cached = Volatile.Read(ref _groupsCache);
+        return cached is not null && cached.Groups.Count == 0
+            ? Task.FromResult(cached.Groups)
+            : GroupsAsync(ct);
+    }
+
+    /// <summary>The index mode of <paramref name="path"/>, read from its peers' entries.</summary>
+    internal static string? ModeOf(IReadOnlyDictionary<string, IReadOnlyList<CaseTwin>> groups, string path)
+    {
+        if (!groups.TryGetValue(path, out var peers) || peers.Count == 0
+            || !groups.TryGetValue(peers[0].Path, out var peersOfPeer))
+            return null;
+
+        foreach (var twin in peersOfPeer)
+        {
+            if (string.Equals(twin.Path, path, StringComparison.Ordinal))
+                return twin.Mode;
+        }
+        return null;
+    }
+
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<CaseTwin>>> GroupsAsync(CancellationToken ct = default)
+    {
+        // The stamp is read before the listing, so an index write during it invalidates the entry.
         var stamp = GetIndexStamp();
         if (stamp == (0L, 0L))
-            return ImmutableDictionary<string, IReadOnlyList<(string Path, string BlobId)>>.Empty;
+            return ImmutableDictionary<string, IReadOnlyList<CaseTwin>>.Empty;
 
         var cached = Volatile.Read(ref _groupsCache);
         if (cached is not null && cached.Stamp == stamp)
@@ -106,10 +158,10 @@ internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirector
         }
     }
 
-    internal static IReadOnlyDictionary<string, IReadOnlyList<(string Path, string BlobId)>> ParseGroups(string lsFilesStageOutput)
+    internal static IReadOnlyDictionary<string, IReadOnlyList<CaseTwin>> ParseGroups(string lsFilesStageOutput)
         => ParseGroups(lsFilesStageOutput, out _, out _);
 
-    internal static IReadOnlyDictionary<string, IReadOnlyList<(string Path, string BlobId)>> ParseGroups(
+    internal static IReadOnlyDictionary<string, IReadOnlyList<CaseTwin>> ParseGroups(
         string lsFilesStageOutput,
         out int totalEntries,
         out int groupCount)
@@ -118,12 +170,12 @@ internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirector
         groupCount = 0;
 
         if (string.IsNullOrEmpty(lsFilesStageOutput))
-            return ImmutableDictionary<string, IReadOnlyList<(string Path, string BlobId)>>.Empty;
+            return ImmutableDictionary<string, IReadOnlyList<CaseTwin>>.Empty;
 
         var entries = lsFilesStageOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
         totalEntries = entries.Length;
 
-        var caseGroups = new Dictionary<string, List<(string Path, string BlobId)>>(StringComparer.OrdinalIgnoreCase);
+        var caseGroups = new Dictionary<string, List<CaseTwin>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var entry in entries)
         {
@@ -141,6 +193,7 @@ internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirector
             if (space2 < 0)
                 continue;
 
+            var mode = meta[..space1];
             var oid = meta.Substring(space1 + 1, space2 - space1 - 1);
             var stage = meta[(space2 + 1)..];
 
@@ -152,10 +205,10 @@ internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirector
                 list = [];
                 caseGroups[path] = list;
             }
-            list.Add((path, oid));
+            list.Add(new CaseTwin(path, mode, oid));
         }
 
-        var result = new Dictionary<string, IReadOnlyList<(string Path, string BlobId)>>(StringComparer.Ordinal);
+        var result = new Dictionary<string, IReadOnlyList<CaseTwin>>(StringComparer.Ordinal);
 
         foreach (var group in caseGroups.Values)
         {
@@ -167,7 +220,7 @@ internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirector
             for (var i = 0; i < group.Count; i++)
             {
                 var member = group[i];
-                var peers = new List<(string Path, string BlobId)>(group.Count - 1);
+                var peers = new List<CaseTwin>(group.Count - 1);
                 for (var j = 0; j < group.Count; j++)
                 {
                     if (i != j)
@@ -207,6 +260,7 @@ internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirector
                 if (!File.Exists(fullPath))
                     continue;
 
+                // Stat before hashing, so a write during the hash leaves a stale stamp, not a stale hash.
                 var fi = new FileInfo(fullPath);
                 var length = fi.Length;
                 var mtime = fi.LastWriteTimeUtc.Ticks;
@@ -269,7 +323,21 @@ internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirector
     }
 
     internal static bool SharesOneDiskEntry(string workDir, string a, string b)
+        => TryGetSharedDiskEntry(workDir, a, b, out _, out _);
+
+    /// <summary>
+    /// True when <paramref name="path"/> and <paramref name="twin"/> share one disk file whose name,
+    /// at the segment where the two paths differ, is spelled exactly as in <paramref name="path"/>.
+    /// Checkout recreates the file under the name it writes, so the spelling follows the last writer.
+    /// </summary>
+    internal static bool IsDiskNameOf(string workDir, string path, string twin)
+        => TryGetSharedDiskEntry(workDir, path, twin, out var segment, out var diskName)
+           && string.Equals(segment, diskName, StringComparison.Ordinal);
+
+    private static bool TryGetSharedDiskEntry(string workDir, string a, string b, out string segmentOfA, out string diskName)
     {
+        segmentOfA = "";
+        diskName = "";
         try
         {
             var fullA = Path.Combine(workDir, a.Replace('/', Path.DirectorySeparatorChar));
@@ -309,16 +377,23 @@ internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirector
 
             var targetSeg = segsA[diffIndex];
             var count = 0;
+            var match = "";
             foreach (var entry in Directory.EnumerateFileSystemEntries(parentDir))
             {
                 var name = Path.GetFileName(entry);
                 if (string.Equals(name, targetSeg, StringComparison.OrdinalIgnoreCase))
                 {
                     count++;
+                    match = name;
                 }
             }
 
-            return count == 1;
+            if (count != 1)
+                return false;
+
+            segmentOfA = targetSeg;
+            diskName = match;
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -326,24 +401,19 @@ internal sealed class IndexCaseCollisions(IGitCliService cli, string gitDirector
         }
     }
 
-    private (long Mtime, long Length) GetConfigStamp()
-    {
-        var commonDir = RepoConfigReader.ResolveCommonDir(gitDirectory);
-        var configPath = Path.Combine(commonDir, "config");
-        if (File.Exists(configPath))
-        {
-            var fi = new FileInfo(configPath);
-            return (fi.LastWriteTimeUtc.Ticks, fi.Length);
-        }
-        return (0L, 0L);
-    }
+    // The worktree file is read as well, because extensions.worktreeConfig lets it override the
+    // shared config. Global and included config files are not watched.
+    private ((long Mtime, long Length) Config, (long Mtime, long Length) Worktree) GetConfigStamp()
+        => (GetFileStamp(Path.Combine(RepoConfigReader.ResolveCommonDir(gitDirectory), "config")),
+            GetFileStamp(Path.Combine(gitDirectory, "config.worktree")));
 
-    private (long Mtime, long Length) GetIndexStamp()
+    private (long Mtime, long Length) GetIndexStamp() => GetFileStamp(Path.Combine(gitDirectory, "index"));
+
+    private static (long Mtime, long Length) GetFileStamp(string path)
     {
-        var indexPath = Path.Combine(gitDirectory, "index");
-        if (File.Exists(indexPath))
+        if (File.Exists(path))
         {
-            var fi = new FileInfo(indexPath);
+            var fi = new FileInfo(path);
             return (fi.LastWriteTimeUtc.Ticks, fi.Length);
         }
         return (0L, 0L);

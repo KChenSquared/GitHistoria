@@ -93,57 +93,80 @@ public sealed partial class GitGateway(
             if (groups.Count == 0)
                 return status;
 
-            List<FileStatusEntry>? candidateEntries = null;
-            List<string>? candidatePaths = null;
-            foreach (var u in status.Unstaged)
-            {
-                if (u.Kind == FileChangeKind.Modified && groups.ContainsKey(u.Path))
-                {
-                    candidateEntries ??= [];
-                    candidatePaths ??= [];
-                    candidateEntries.Add(u);
-                    candidatePaths.Add(u.Path);
-                }
-            }
+            var candidatePaths = status.Unstaged
+                .Where(u => u.Kind == FileChangeKind.Modified && groups.ContainsKey(u.Path))
+                .Select(u => u.Path)
+                .ToList();
 
-            if (candidateEntries is null || candidateEntries.Count == 0)
+            if (candidatePaths.Count == 0)
                 return status;
 
-            var diskHashes = await _caseCollisions.HashWorktreeAsync(candidatePaths!, ct).ConfigureAwait(false);
+            var diskHashes = await _caseCollisions.HashWorktreeAsync(candidatePaths, ct).ConfigureAwait(false);
 
+            var workDir = context.RepositoryPath;
             var hidden = new List<string>();
             var hiddenSet = new HashSet<string>(StringComparer.Ordinal);
+            var visible = new List<string>();
 
-            foreach (var candidate in candidateEntries)
+            // A candidate whose disk content is a twin's blob is that twin's file; the twin owns it.
+            foreach (var path in candidatePaths)
             {
-                if (!diskHashes.TryGetValue(candidate.Path, out var diskHash))
-                    continue;
-
-                if (!groups.TryGetValue(candidate.Path, out var peers))
-                    continue;
-
-                var isCollision = false;
-                foreach (var peer in peers)
+                if (diskHashes.TryGetValue(path, out var diskHash))
                 {
-                    if (string.Equals(diskHash, peer.BlobId, StringComparison.OrdinalIgnoreCase)
-                        && IndexCaseCollisions.SharesOneDiskEntry(context.RepositoryPath, candidate.Path, peer.Path))
+                    var owner = groups[path].FirstOrDefault(peer =>
+                        string.Equals(diskHash, peer.BlobId, StringComparison.OrdinalIgnoreCase)
+                        && IndexCaseCollisions.SharesOneDiskEntry(workDir, path, peer.Path));
+                    if (owner.Path is not null)
                     {
-                        isCollision = true;
-                        break;
+                        _caseCollisions.RecordOwner(owner.Path);
+                        hidden.Add(path);
+                        hiddenSet.Add(path);
+                        continue;
                     }
                 }
-
-                if (isCollision)
-                {
-                    hidden.Add(candidate.Path);
-                    hiddenSet.Add(candidate.Path);
-                }
+                visible.Add(path);
             }
 
-            if (hidden.Count == 0)
+            // The rest were edited, or could not be hashed. Where several names of one disk file
+            // remain, the edit belongs to the owner seen before it, provided the file still carries
+            // the owner's spelling; otherwise no name can be trusted and the rows stay ambiguous.
+            var visibleSet = new HashSet<string>(visible, StringComparer.Ordinal);
+            var ambiguous = new List<string>();
+            foreach (var path in visible)
+            {
+                if (!diskHashes.ContainsKey(path))
+                {
+                    ambiguous.Add(path);
+                    continue;
+                }
+
+                var twinsOnDisk = groups[path]
+                    .Where(peer => visibleSet.Contains(peer.Path) && IndexCaseCollisions.SharesOneDiskEntry(workDir, path, peer.Path))
+                    .ToList();
+                if (twinsOnDisk.Count == 0)
+                    continue;
+
+                var owner = _caseCollisions.OwnerOf(path);
+                if (owner is not null && string.Equals(owner, path, StringComparison.Ordinal)
+                    && IndexCaseCollisions.IsDiskNameOf(workDir, path, twinsOnDisk[0].Path))
+                    continue;
+
+                if (owner is not null && twinsOnDisk.Any(peer => string.Equals(peer.Path, owner, StringComparison.Ordinal))
+                    && IndexCaseCollisions.IsDiskNameOf(workDir, owner, path))
+                {
+                    hidden.Add(path);
+                    hiddenSet.Add(path);
+                    continue;
+                }
+
+                ambiguous.Add(path);
+            }
+
+            if (hidden.Count == 0 && ambiguous.Count == 0)
                 return status;
 
             hidden.Sort(StringComparer.Ordinal);
+            ambiguous.Sort(StringComparer.Ordinal);
 
             var rest = status.Unstaged.Where(u => !hiddenSet.Contains(u.Path)).ToList();
             var isDirty = status.Staged.Count + rest.Count + status.Untracked.Count + status.Conflicted.Count > 0;
@@ -152,6 +175,7 @@ public sealed partial class GitGateway(
             {
                 Unstaged = rest,
                 HiddenCaseCollisions = hidden,
+                AmbiguousCaseCollisions = ambiguous,
                 IsDirty = isDirty,
             };
         }

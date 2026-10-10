@@ -13,11 +13,10 @@ public sealed class GitGatewayDiscardCasingTests : IAsyncDisposable
     [Fact]
     public async Task Discard_staged_case_rename_does_not_delete_the_file()
     {
-        if (!OperatingSystem.IsWindows())
-            return;
-
         using var repo = TestRepositoryBuilder.FromTemplate("casing-staged-mv", r =>
             r.WriteFile("Foo.txt", "line1\n").Stage().Commit("init"));
+        if (!TestScratch.IsCaseInsensitive(repo.Path))
+            return;
 
         await _host.Cli.RunAsync(new GitCliRequest
         {
@@ -51,11 +50,10 @@ public sealed class GitGatewayDiscardCasingTests : IAsyncDisposable
     [Fact]
     public async Task Discard_unstaged_case_rename_with_ignorecase_false_restores_old_name()
     {
-        if (!OperatingSystem.IsWindows())
-            return;
-
         using var repo = TestRepositoryBuilder.FromTemplate("casing-unstaged-false", r =>
             r.WriteFile("Foo.txt", "content\n").Stage().Commit("init"));
+        if (!TestScratch.IsCaseInsensitive(repo.Path))
+            return;
 
         await _host.Cli.RunAsync(new GitCliRequest
         {

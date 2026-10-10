@@ -29,19 +29,11 @@ public class StagingPanelCaseCollisionTests : IDisposable
 
     private async Task<(string RepoPath, string LosingPath, string WinningPath)?> CreateCollisionFixtureAsync()
     {
-        if (!OperatingSystem.IsWindows())
-            return null;
-
         var repoPath = TestScratch.NewPath("historia-staging-collision-");
         _scratchDirs.Add(repoPath);
         Directory.CreateDirectory(repoPath);
 
-        var probePath = System.IO.Path.Combine(repoPath, "probe");
-        await File.WriteAllTextAsync(probePath, "probe");
-        var isCaseInsensitive = File.Exists(System.IO.Path.Combine(repoPath, "PROBE"));
-        File.Delete(probePath);
-
-        if (!isCaseInsensitive)
+        if (!TestScratch.IsCaseInsensitive(repoPath))
             return null;
 
         await _cli.RunAsync(new GitCliRequest { Arguments = ["init", "-b", "main"], WorkingDirectory = repoPath });
@@ -130,9 +122,6 @@ public class StagingPanelCaseCollisionTests : IDisposable
     [AvaloniaFact]
     public async Task With_no_collisions_the_footnote_is_hidden()
     {
-        if (!OperatingSystem.IsWindows())
-            return;
-
         var repoPath = TestScratch.NewPath("historia-staging-no-collision-");
         _scratchDirs.Add(repoPath);
         RepoTemplates.Initial(repoPath);
@@ -169,7 +158,7 @@ public class StagingPanelCaseCollisionTests : IDisposable
             WorkingDirectory = fixture.Value.RepoPath,
         });
 
-        panel.StageAllChangesForTesting.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await panel.StageAllChangesForTestingAsync();
         Dispatcher.UIThread.RunJobs();
 
         var lsFilesAfterStage = await _cli.RunAsync(new GitCliRequest
@@ -188,6 +177,46 @@ public class StagingPanelCaseCollisionTests : IDisposable
         Assert.False(context.State.Status.IsDirty);
         Assert.Equal("Changes (0)", panel.ChangesHeaderForTesting.Text);
         Assert.True(panel.CaseCollisionFootnoteForTesting.IsVisible);
+
+        await context.DisposeAsync();
+    }
+
+    [AvaloniaFact]
+    public async Task Stage_all_leaves_out_ambiguous_rows_and_says_so()
+    {
+        var fixture = await CreateCollisionFixtureAsync();
+        if (fixture is null)
+            return;
+
+        await File.AppendAllTextAsync(System.IO.Path.Combine(fixture.Value.RepoPath, fixture.Value.WinningPath), "real edit\n");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(fixture.Value.RepoPath, "new.txt"), "new\n");
+
+        var context = await _workspace.OpenAsync(fixture.Value.RepoPath);
+        _workspace.Focus(context);
+        await context.State.RefreshStatusAsync();
+
+        var panel = new StagingPanelView(_sp, context);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, context.State.Status.AmbiguousCaseCollisions.Count);
+        Assert.Equal("2 case-collision rows left out of Stage all", panel.CaseCollisionFootnoteForTesting.Text);
+
+        var lsFilesBefore = await _cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["ls-files", "-s", "--", "Foo.txt", "foo.txt"],
+            WorkingDirectory = fixture.Value.RepoPath,
+        });
+
+        await panel.StageAllChangesForTestingAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        var lsFilesAfter = await _cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["ls-files", "-s", "--", "Foo.txt", "foo.txt"],
+            WorkingDirectory = fixture.Value.RepoPath,
+        });
+        Assert.Equal(lsFilesBefore.StandardOutput, lsFilesAfter.StandardOutput);
+        Assert.Equal("new.txt", Assert.Single(context.State.Status.Staged).Path);
 
         await context.DisposeAsync();
     }

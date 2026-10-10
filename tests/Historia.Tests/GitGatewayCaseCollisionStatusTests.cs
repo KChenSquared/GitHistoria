@@ -10,19 +10,25 @@ public sealed class GitGatewayCaseCollisionStatusTests : IAsyncDisposable
         await _host.DisposeAsync();
     }
 
+    private async Task<GitCliResult> GitAsync(string repoPath, params string[] args)
+        => await _host.Cli.RunAsync(new GitCliRequest { Arguments = args, WorkingDirectory = repoPath });
+
+    private async Task<string> IndexBlobAsync(string repoPath, string path)
+    {
+        var ls = await GitAsync(repoPath, "ls-files", "-s", "-z");
+        foreach (var entry in ls.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var tab = entry.IndexOf('\t');
+            if (entry[(tab + 1)..] == path)
+                return entry.Split(' ')[1];
+        }
+        throw new InvalidOperationException($"{path} is not in the index");
+    }
+
     private async Task<(TestRepositoryBuilder Repo, string LosingPath, string WinningPath)?> CreateCollisionFixtureAsync()
     {
-        if (!OperatingSystem.IsWindows())
-            return null;
-
         var repo = TestRepositoryBuilder.Create();
-
-        var probePath = Path.Combine(repo.Path, "probe");
-        await File.WriteAllTextAsync(probePath, "probe");
-        var isCaseInsensitive = File.Exists(Path.Combine(repo.Path, "PROBE"));
-        File.Delete(probePath);
-
-        if (!isCaseInsensitive)
+        if (!TestScratch.IsCaseInsensitive(repo.Path))
         {
             repo.Dispose();
             return null;
@@ -44,41 +50,14 @@ public sealed class GitGatewayCaseCollisionStatusTests : IAsyncDisposable
         });
         var oid2 = hash2.StandardOutput.Trim();
 
-        await _host.Cli.RunAsync(new GitCliRequest
-        {
-            Arguments = ["update-index", "--add", "--cacheinfo", $"100644,{oid1},Foo.txt"],
-            WorkingDirectory = repo.Path,
-        });
-
-        await _host.Cli.RunAsync(new GitCliRequest
-        {
-            Arguments = ["update-index", "--add", "--cacheinfo", $"100644,{oid2},foo.txt"],
-            WorkingDirectory = repo.Path,
-        });
-
-        await _host.Cli.RunAsync(new GitCliRequest
-        {
-            Arguments = ["commit", "-m", "init collision"],
-            WorkingDirectory = repo.Path,
-        });
-
-        await _host.Cli.RunAsync(new GitCliRequest
-        {
-            Arguments = ["checkout-index", "-f", "-a"],
-            WorkingDirectory = repo.Path,
-        });
-
-        await _host.Cli.RunAsync(new GitCliRequest
-        {
-            Arguments = ["config", "core.ignorecase", "true"],
-            WorkingDirectory = repo.Path,
-        });
+        await GitAsync(repo.Path, "update-index", "--add", "--cacheinfo", $"100644,{oid1},Foo.txt");
+        await GitAsync(repo.Path, "update-index", "--add", "--cacheinfo", $"100644,{oid2},foo.txt");
+        await GitAsync(repo.Path, "commit", "-m", "init collision");
+        await GitAsync(repo.Path, "checkout-index", "-f", "-a");
+        await GitAsync(repo.Path, "config", "core.ignorecase", "true");
 
         var content = (await File.ReadAllTextAsync(Path.Combine(repo.Path, "Foo.txt"))).Trim();
-        string winningPath = content == "blob Foo" ? "Foo.txt" : "foo.txt";
-        string losingPath = content == "blob Foo" ? "foo.txt" : "Foo.txt";
-
-        return (repo, losingPath, winningPath);
+        return content == "blob Foo" ? (repo, "foo.txt", "Foo.txt") : (repo, "Foo.txt", "foo.txt");
     }
 
     [Fact]
@@ -94,28 +73,123 @@ public sealed class GitGatewayCaseCollisionStatusTests : IAsyncDisposable
         var status = await ctx.Gateway.GetStatusAsync();
         Assert.Empty(status.Unstaged);
         Assert.Equal([fixture.Value.LosingPath], status.HiddenCaseCollisions);
+        Assert.Empty(status.AmbiguousCaseCollisions);
         Assert.False(status.IsDirty);
     }
 
     [Fact]
-    public async Task Real_edit_of_a_collided_file_still_shows()
+    public async Task Real_edit_without_a_known_owner_is_ambiguous()
     {
         var fixture = await CreateCollisionFixtureAsync();
         if (fixture is null)
             return;
 
         using var repo = fixture.Value.Repo;
-        await File.AppendAllTextAsync(Path.Combine(repo.Path, "Foo.txt"), "real edit\n");
+        await File.AppendAllTextAsync(Path.Combine(repo.Path, fixture.Value.WinningPath), "real edit\n");
 
         var ctx = _host.Open(repo.Path);
         var status = await ctx.Gateway.GetStatusAsync();
 
         Assert.Equal(2, status.Unstaged.Count);
         Assert.All(status.Unstaged, u => Assert.Equal(FileChangeKind.Modified, u.Kind));
-        Assert.Contains(status.Unstaged, u => u.Path == "Foo.txt");
-        Assert.Contains(status.Unstaged, u => u.Path == "foo.txt");
+        Assert.Equal(["Foo.txt", "foo.txt"], status.AmbiguousCaseCollisions);
         Assert.Empty(status.HiddenCaseCollisions);
         Assert.True(status.IsDirty);
+    }
+
+    [Fact]
+    public async Task Real_edit_after_a_refresh_shows_only_the_owner()
+    {
+        var fixture = await CreateCollisionFixtureAsync();
+        if (fixture is null)
+            return;
+
+        using var repo = fixture.Value.Repo;
+        var ctx = _host.Open(repo.Path);
+        await ctx.Gateway.GetStatusAsync();
+
+        await File.AppendAllTextAsync(Path.Combine(repo.Path, fixture.Value.WinningPath), "real edit\n");
+        var status = await ctx.Gateway.GetStatusAsync();
+
+        var row = Assert.Single(status.Unstaged);
+        Assert.Equal(fixture.Value.WinningPath, row.Path);
+        Assert.Equal([fixture.Value.LosingPath], status.HiddenCaseCollisions);
+        Assert.Empty(status.AmbiguousCaseCollisions);
+    }
+
+    [Fact]
+    public async Task Owner_change_between_refreshes_makes_both_rows_ambiguous()
+    {
+        var fixture = await CreateCollisionFixtureAsync();
+        if (fixture is null)
+            return;
+
+        using var repo = fixture.Value.Repo;
+        var ctx = _host.Open(repo.Path);
+        await ctx.Gateway.GetStatusAsync();
+
+        await GitAsync(repo.Path, "checkout-index", "-f", "--", fixture.Value.LosingPath);
+        await File.AppendAllTextAsync(Path.Combine(repo.Path, fixture.Value.LosingPath), "real edit\n");
+        var status = await ctx.Gateway.GetStatusAsync();
+
+        Assert.Equal(2, status.Unstaged.Count);
+        Assert.Equal(["Foo.txt", "foo.txt"], status.AmbiguousCaseCollisions);
+        Assert.Empty(status.HiddenCaseCollisions);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Staging_the_owner_leaves_the_twin_blob_unchanged(bool swapOwner)
+    {
+        var fixture = await CreateCollisionFixtureAsync();
+        if (fixture is null)
+            return;
+
+        using var repo = fixture.Value.Repo;
+        var (owner, twin) = (fixture.Value.WinningPath, fixture.Value.LosingPath);
+        if (swapOwner)
+        {
+            await GitAsync(repo.Path, "checkout-index", "-f", "--", twin);
+            (owner, twin) = (twin, owner);
+        }
+
+        var ctx = _host.Open(repo.Path);
+        await ctx.Gateway.GetStatusAsync();
+        await File.AppendAllTextAsync(Path.Combine(repo.Path, owner), "real edit\n");
+        var edited = await ctx.Gateway.GetStatusAsync();
+        Assert.Equal(owner, Assert.Single(edited.Unstaged).Path);
+
+        var twinBlobBefore = await IndexBlobAsync(repo.Path, twin);
+        await ctx.Gateway.StageAsync([owner]);
+
+        Assert.Equal(twinBlobBefore, await IndexBlobAsync(repo.Path, twin));
+        var diskBlob = (await GitAsync(repo.Path, "hash-object", "--", owner)).StandardOutput.Trim();
+        Assert.Equal(diskBlob, await IndexBlobAsync(repo.Path, owner));
+
+        var status = await ctx.Gateway.GetStatusAsync();
+        Assert.Equal(owner, Assert.Single(status.Staged).Path);
+        Assert.Empty(status.Unstaged);
+        Assert.Equal([twin], status.HiddenCaseCollisions);
+    }
+
+    [Fact]
+    public async Task Staging_both_names_of_one_disk_file_is_refused()
+    {
+        var fixture = await CreateCollisionFixtureAsync();
+        if (fixture is null)
+            return;
+
+        using var repo = fixture.Value.Repo;
+        await File.AppendAllTextAsync(Path.Combine(repo.Path, fixture.Value.WinningPath), "real edit\n");
+
+        var ctx = _host.Open(repo.Path);
+        await ctx.Gateway.GetStatusAsync();
+        var indexBefore = (await GitAsync(repo.Path, "ls-files", "-s")).StandardOutput;
+
+        await Assert.ThrowsAsync<HistoriaGitException>(() => ctx.Gateway.StageAsync(["Foo.txt", "foo.txt"]));
+
+        Assert.Equal(indexBefore, (await GitAsync(repo.Path, "ls-files", "-s")).StandardOutput);
     }
 
     [Fact]
@@ -148,11 +222,7 @@ public sealed class GitGatewayCaseCollisionStatusTests : IAsyncDisposable
             return;
 
         using var repo = fixture.Value.Repo;
-        await _host.Cli.RunAsync(new GitCliRequest
-        {
-            Arguments = ["config", "core.ignorecase", "false"],
-            WorkingDirectory = repo.Path,
-        });
+        await GitAsync(repo.Path, "config", "core.ignorecase", "false");
 
         var ctx = _host.Open(repo.Path);
         var status = await ctx.Gateway.GetStatusAsync();
@@ -161,6 +231,27 @@ public sealed class GitGatewayCaseCollisionStatusTests : IAsyncDisposable
         Assert.Equal(fixture.Value.LosingPath, status.Unstaged[0].Path);
         Assert.Empty(status.HiddenCaseCollisions);
         Assert.True(status.IsDirty);
+    }
+
+    [Fact]
+    public async Task Worktree_config_change_invalidates_the_ignorecase_cache()
+    {
+        var fixture = await CreateCollisionFixtureAsync();
+        if (fixture is null)
+            return;
+
+        using var repo = fixture.Value.Repo;
+        await GitAsync(repo.Path, "config", "extensions.worktreeConfig", "true");
+
+        var ctx = _host.Open(repo.Path);
+        var before = await ctx.Gateway.GetStatusAsync();
+        Assert.Single(before.HiddenCaseCollisions);
+
+        await GitAsync(repo.Path, "config", "--worktree", "core.ignorecase", "false");
+        var after = await ctx.Gateway.GetStatusAsync();
+
+        Assert.Equal(fixture.Value.LosingPath, Assert.Single(after.Unstaged).Path);
+        Assert.Empty(after.HiddenCaseCollisions);
     }
 
     [Fact]
@@ -192,18 +283,10 @@ public sealed class GitGatewayCaseCollisionStatusTests : IAsyncDisposable
     [Fact]
     public async Task Repo_without_collisions_never_lists_the_index()
     {
-        if (!OperatingSystem.IsWindows())
-            return;
-
         using var repo = TestRepositoryBuilder.FromTemplate("no-collision-cache", r =>
             r.WriteFile("file.txt", "v1\n").Stage().Commit("init"));
 
-        await _host.Cli.RunAsync(new GitCliRequest
-        {
-            Arguments = ["config", "core.ignorecase", "true"],
-            WorkingDirectory = repo.Path,
-        });
-
+        await GitAsync(repo.Path, "config", "core.ignorecase", "true");
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "file.txt"), "v2\n");
 
         var spy = new InterceptingGitCliService(_host.Cli);
@@ -218,7 +301,9 @@ public sealed class GitGatewayCaseCollisionStatusTests : IAsyncDisposable
         Assert.Single(secondStatus.Unstaged);
         Assert.Empty(secondStatus.HiddenCaseCollisions);
 
-        var secondRequests = spy.Requests.Skip(countBefore).ToList();
-        Assert.DoesNotContain(secondRequests, r => r.Arguments.Contains("ls-files"));
+        await ctx.Gateway.StageAsync(["file.txt"]);
+
+        var laterRequests = spy.Requests.Skip(countBefore).ToList();
+        Assert.DoesNotContain(laterRequests, r => r.Arguments.Contains("ls-files") && r.Arguments.Contains("-s"));
     }
 }

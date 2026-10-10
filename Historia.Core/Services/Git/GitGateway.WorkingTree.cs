@@ -19,6 +19,10 @@ public sealed partial class GitGateway
                 return;
 
             var normalizedPaths = validPaths.Select(p => p.Replace('\\', '/')).ToList();
+            normalizedPaths = await StageCaseTwinsExactlyAsync(normalizedPaths, innerCt).ConfigureAwait(false);
+            if (normalizedPaths.Count == 0)
+                return;
+
             var stdin = string.Join('\0', normalizedPaths) + '\0';
 
             var result = await cli.RunAsync(new GitCliRequest
@@ -377,6 +381,79 @@ public sealed partial class GitGateway
         }
 
         return resultList;
+    }
+
+    /// <summary>
+    /// Stages index paths that have a twin differing only in case by writing their exact index
+    /// entries, because <c>git add</c> under <c>core.ignorecase</c> may record the content under the
+    /// twin's name instead. Returns the paths left for <c>git add</c>. Refuses to
+    /// stage two names of one disk file together, since both entries would receive the same content.
+    /// </summary>
+    private async Task<List<string>> StageCaseTwinsExactlyAsync(List<string> paths, CancellationToken ct)
+    {
+        if (!await _caseCollisions.IgnoreCaseAsync(ct).ConfigureAwait(false))
+            return paths;
+
+        var groups = await _caseCollisions.GroupsForStagingAsync(ct).ConfigureAwait(false);
+        if (groups.Count == 0)
+            return paths;
+
+        var workDir = context.RepositoryPath;
+        var exact = new List<(string Path, string Mode)>();
+        var rest = new List<string>(paths.Count);
+        foreach (var path in paths)
+        {
+            var mode = IndexCaseCollisions.ModeOf(groups, path);
+            if (mode is "100644" or "100755" && File.Exists(Path.Combine(workDir, path)))
+                exact.Add((path, mode));
+            else
+                rest.Add(path);
+        }
+
+        if (exact.Count == 0)
+            return paths;
+
+        for (var i = 0; i < exact.Count; i++)
+        {
+            for (var j = i + 1; j < exact.Count; j++)
+            {
+                if (string.Equals(exact[i].Path, exact[j].Path, StringComparison.OrdinalIgnoreCase)
+                    && IndexCaseCollisions.SharesOneDiskEntry(workDir, exact[i].Path, exact[j].Path))
+                    throw new HistoriaGitException(GitErrorKind.Unknown,
+                        $"Stage failed: {exact[i].Path} and {exact[j].Path} are one file on disk. Stage only the name you edited.");
+            }
+        }
+
+        var hash = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["hash-object", "-w", "--stdin-paths"],
+            WorkingDirectory = workDir,
+            StandardInput = string.Join('\n', exact.Select(e => e.Path)) + '\n',
+            Timeout = TimeSpan.FromMinutes(5),
+        }, ct).ConfigureAwait(false);
+
+        if (!hash.IsSuccess)
+            throw HistoriaGitException.FromCli(hash, "Stage");
+
+        var oids = hash.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        if (oids.Length != exact.Count)
+            throw new HistoriaGitException(GitErrorKind.Unknown, "Stage failed: git hash-object returned an unexpected number of ids.");
+
+        var indexInfo = new StringBuilder();
+        for (var i = 0; i < exact.Count; i++)
+            indexInfo.Append(exact[i].Mode).Append(' ').Append(oids[i].Trim()).Append('\t').Append(exact[i].Path).Append('\0');
+
+        var update = await cli.RunAsync(new GitCliRequest
+        {
+            Arguments = ["update-index", "-z", "--index-info"],
+            WorkingDirectory = workDir,
+            StandardInput = indexInfo.ToString(),
+        }, ct).ConfigureAwait(false);
+
+        if (!update.IsSuccess)
+            throw HistoriaGitException.FromCli(update, "Stage");
+
+        return rest;
     }
 
     private static IEnumerable<List<string>> ChunkPathsByCommandLineLength(
