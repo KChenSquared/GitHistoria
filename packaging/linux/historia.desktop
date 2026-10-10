@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Historia
+Comment=Git client with an easy-to-read commit graph
+Exec=historia
+Icon=historia
+Terminal=false
+Categories=Development;RevisionControl;
+StartupWMClass=Historia

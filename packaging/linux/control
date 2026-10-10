@@ -1,0 +1,9 @@
+Package: historia
+Version: __VERSION__
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: git, dotnet-runtime-10.0
+Maintainer: Kevin Chen <https://github.com/KChenSquared>
+Description: Fast, open-source Git client with an easy-to-read commit graph.
+ A desktop Git client built with C# and Avalonia UI featuring a high-performance commit graph.

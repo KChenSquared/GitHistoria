@@ -23,6 +23,7 @@
 [Dd]ebugPublic/
 [Rr]elease/
 [Rr]eleases/
+dist/
 Generated\ Files/
 *_wpftmp.csproj
 
