@@ -1,6 +1,6 @@
 namespace Historia.Models;
 
-/// <summary>What the user chose in Settings &gt; Appearance.</summary>
+/// <summary>What the user chose in Settings &gt; General.</summary>
 public enum ThemeMode
 {
     Dark,
