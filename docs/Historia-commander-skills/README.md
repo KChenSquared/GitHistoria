@@ -83,26 +83,26 @@ The reply lists `stagedPaths`, so the agent can check them against what it meant
 `nothing-staged` (exit 1) means the index was empty; Historia's view is unchanged.
 
 Historia never stages or commits for the agent. Files you staged before the agent ran are part of
-the commit too; the staging panel shows them, and the commit skills report them rather than
-unstaging them. Read the diff, not the agent's message.
+the commit too; the staging panel shows them, and `historia-propose-commit` reports them rather
+than unstaging them. Read the diff, not the agent's message.
 
 ## Installing the samples
 
 Each agent gets the same set of skills:
 
-| Skill | Use |
-|---|---|
-| `historia-showwork` | At the end of a task, show the uncommitted changes with the first changed file open |
-| `historia-review` | A guided review tour of a branch, one file at a time |
-| `historia-trace` | "Where did this line come from?" |
-| `historia-propose-commit` | Stage the agent's files and propose the commit message |
-| `historia-commit` | After the agent commits, open the first commit and list the rest |
+| Skill | Use | Samples |
+|---|---|---|
+| `historia-showwork` | At the end of a task, show the uncommitted changes with the first changed file open | [Claude](claude/skills/historia-showwork/SKILL.md) · [Copilot](copilot/skills/historia-showwork/SKILL.md) · [Antigravity](antigravity/skills/historia-showwork/SKILL.md) |
+| `historia-review` | A guided review tour of a branch, one file at a time | [Claude](claude/skills/historia-review/SKILL.md) · [Copilot](copilot/skills/historia-review/SKILL.md) · [Antigravity](antigravity/skills/historia-review/SKILL.md) |
+| `historia-trace` | "Where did this line come from?" | [Claude](claude/skills/historia-trace/SKILL.md) · [Copilot](copilot/skills/historia-trace/SKILL.md) · [Antigravity](antigravity/skills/historia-trace/SKILL.md) |
+| `historia-propose-commit` | Stage the agent's files and propose the commit message | [Claude](claude/skills/historia-propose-commit/SKILL.md) · [Copilot](copilot/skills/historia-propose-commit/SKILL.md) · [Antigravity](antigravity/skills/historia-propose-commit/SKILL.md) |
+| `historia-commit` | After the agent commits, open the first commit and list the rest | [Claude](claude/skills/historia-commit/SKILL.md) · [Copilot](copilot/skills/historia-commit/SKILL.md) · [Antigravity](antigravity/skills/historia-commit/SKILL.md) |
 
-The skills that call `historia-cmdr` show the command so you can rerun it, then run it.
-`historia-showworkNoAutoShow`, `historia-propose-commitNoAutoShow` and `historia-commitNoAutoShow`
-are alternatives that never open
-Historia on their own: they show the command and leave running it to you. Each alternative has the
-same `name` as the skill it replaces, so install one or the other, in a folder named after the skill.
+`historia-showwork`, `historia-trace`, `historia-propose-commit` and `historia-commit` show each
+`historia-cmdr` command in a code block so you can rerun it. `historia-showworkNoAutoShow` and
+`historia-commitNoAutoShow` are alternatives that never open Historia on their own: they show the
+command and leave running it to you. Each alternative has the same `name` as the skill it replaces,
+so install one or the other, in a folder named after the skill.
 
 - **Claude Code** reads skills from `~/.claude/skills/<name>/` (all projects) or
   `<repo>/.claude/skills/<name>/` (one repository). Copy the folders from

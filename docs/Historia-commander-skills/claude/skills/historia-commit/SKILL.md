@@ -13,7 +13,8 @@ Run this after you commit. Commit only when the user asked you to.
 1. **Wait until you are done committing.** When one request makes several commits in a row, such as
    one per milestone, run this once after the last of them, not after each.
 2. **List the commits you made**, oldest first: `git log --reverse --format='%h %s' <before>..HEAD`,
-   where `<before>` is the commit `HEAD` pointed at before you started.
+   where `<before>` is the commit `HEAD` pointed at before you started. If you did not note it,
+   list the SHAs your `git commit` calls printed instead.
 3. **One commit: show the command, then run it.** Print it in a fenced `bash` block so the user can
    rerun it:
 

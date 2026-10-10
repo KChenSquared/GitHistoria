@@ -1,7 +1,7 @@
 ---
 name: historia-propose-commit
 description: Stage only the files this task changed and hand them to the user in Historia with a proposed commit message, so the user reviews the staged files and clicks Commit themselves. Use when the user says "stage it for me", "let me commit it" or "hand it to Historia", or when you finish a task and the user prefers to commit themselves.
-allowed-tools: Bash(historia-cmdr *) Bash(git status *) Bash(git log *) Bash(git diff *)
+allowed-tools: Bash(historia-cmdr *) Bash(git status *) Bash(git add *) Bash(git log *) Bash(git diff *)
 ---
 
 # Hand the change to the user for committing
