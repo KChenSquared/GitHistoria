@@ -11,13 +11,15 @@ Take the user through a change set as a tour. Historia shows each file's diff; y
 ## Procedure
 
 1. **Pick the base.** Use the base the user names; otherwise the branch's upstream, otherwise `main`.
-2. **List the changes:** `git diff --name-status <base>...HEAD`.
+2. **List the changes:** `git diff --name-status <base>...HEAD`. Find the fork point with
+   `git merge-base <base> HEAD` and compare against it, so commits that landed on the base after the
+   branch started do not show up as reversed changes.
 3. **Order the files for reading:** interfaces and models first, then implementations, then call
    sites, then tests, then configuration and docs. Skip generated files and pure renames unless the
    user asks.
 4. **Present the plan:** the ordered list, one line each saying why the file is where it is.
 5. **Show stop 1:** run
-   `historia-cmdr compare <base> HEAD <file> --line <first changed line>`
+   `historia-cmdr compare <merge-base> HEAD <file> --line <first changed line>`
    and add a 2–4 line note: what changed, what to check, anything risky.
 6. **Wait for the user** before each next stop. They say "next", "back", "skip to N", or "done".
    Only then show the next file the same way.
