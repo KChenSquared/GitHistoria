@@ -109,8 +109,6 @@ the graph at 30k commits for lower memory use is available in settings.
 
 ## 📚 Documentation
 
-- 📐 [**Comprehensive Design Documentation**](Historia-DevDocs/ComprehensiveDesign/README.md)
-  — Technical architecture, Git data access strategy, and DAG graph layout engine.
 - 📜 [**Historia Constitution**](docs/constitution.md) — Architectural invariants, security
   policies, and performance ceilings.
 - 🛣️ [**Roadmap**](docs/roadmap.md) — Planned features for upcoming releases.
