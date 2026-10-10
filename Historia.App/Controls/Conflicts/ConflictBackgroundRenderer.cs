@@ -21,7 +21,6 @@ public sealed class ConflictBackgroundRenderer : SafeBackgroundRenderer
     /// <param name="getRowVisual">Result pane only: how a managed-region line (0-based document
     /// line) is painted; <see cref="ConflictRowVisual.None"/> for every other line.</param>
     public ConflictBackgroundRenderer(
-        TextEditor editor,
         Func<ConflictSide?> getSide,
         Func<ConflictParse?> getParse,
         Func<IReadOnlyList<ConflictPaneLine>?>? getLines = null,

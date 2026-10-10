@@ -1106,7 +1106,7 @@ public sealed partial class CommitGraphControl : Control
         CancelAndDisposeLayoutCts();
         _layoutCts = new CancellationTokenSource();
         var ct = _layoutCts.Token;
-        InitializeExtendPump(context, ct);
+        InitializeExtendPump(ct);
         _crawl = new GraphCrawlThreshold(_silentCrawlRowCap, ResidentRowCap);
         _crawlTarget = _crawl.Target;
         Volatile.Write(ref _crawlRunning, 0);
@@ -1289,7 +1289,7 @@ public sealed partial class CommitGraphControl : Control
         CancelAndDisposeLayoutCts();
         _layoutCts = new CancellationTokenSource();
         var ct = _layoutCts.Token;
-        InitializeExtendPump(context, ct);
+        InitializeExtendPump(ct);
 
         try
         {
@@ -1306,7 +1306,7 @@ public sealed partial class CommitGraphControl : Control
         catch { }
     }
 
-    private void InitializeExtendPump(RepositoryContext context, CancellationToken ct)
+    private void InitializeExtendPump(CancellationToken ct)
     {
         Interlocked.Exchange(ref _cappedNotified, 0);
         _extendChannel = Channel.CreateUnbounded<ExtendRequest>(new UnboundedChannelOptions

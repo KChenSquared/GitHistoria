@@ -279,21 +279,21 @@ public sealed partial class ConflictResolverView : UserControl, IDisposable
         _session.Changed += OnSessionChanged;
 
         // Margins and Renderers
-        _oursToggleMargin = new ConflictToggleMargin(_oursEditor, row => PaneHunkGlyph(ConflictSide.Ours, row), row => PaneHunkTip(ConflictSide.Ours, row));
+        _oursToggleMargin = new ConflictToggleMargin(row => PaneHunkGlyph(ConflictSide.Ours, row), row => PaneHunkTip(ConflictSide.Ours, row));
         _oursToggleMargin.ToggleClicked += (_, row) => OnHunkToggleClicked(ConflictSide.Ours, row);
         _oursEditor.TextArea.LeftMargins.Add(_oursToggleMargin);
         _oursEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_oursEditor, () => GetPaneLines(ConflictSide.Ours), row => PaneTint(ConflictSide.Ours, row)));
         _oursEditor.TextArea.TextView.BackgroundRenderers.Add(
-            new ConflictBackgroundRenderer(_oursEditor, () => ConflictSide.Ours, () => _parse, () => GetPaneLines(ConflictSide.Ours), () => _snapshot?.Analyses));
+            new ConflictBackgroundRenderer(() => ConflictSide.Ours, () => _parse, () => GetPaneLines(ConflictSide.Ours), () => _snapshot?.Analyses));
 
-        _theirsToggleMargin = new ConflictToggleMargin(_theirsEditor, row => PaneHunkGlyph(ConflictSide.Theirs, row), row => PaneHunkTip(ConflictSide.Theirs, row));
+        _theirsToggleMargin = new ConflictToggleMargin(row => PaneHunkGlyph(ConflictSide.Theirs, row), row => PaneHunkTip(ConflictSide.Theirs, row));
         _theirsToggleMargin.ToggleClicked += (_, row) => OnHunkToggleClicked(ConflictSide.Theirs, row);
         _theirsEditor.TextArea.LeftMargins.Add(_theirsToggleMargin);
         _theirsEditor.TextArea.LeftMargins.Add(new ConflictLineNumberMargin(_theirsEditor, () => GetPaneLines(ConflictSide.Theirs), row => PaneTint(ConflictSide.Theirs, row)));
         _theirsEditor.TextArea.TextView.BackgroundRenderers.Add(
-            new ConflictBackgroundRenderer(_theirsEditor, () => ConflictSide.Theirs, () => _parse, () => GetPaneLines(ConflictSide.Theirs), () => _snapshot?.Analyses));
+            new ConflictBackgroundRenderer(() => ConflictSide.Theirs, () => _parse, () => GetPaneLines(ConflictSide.Theirs), () => _snapshot?.Analyses));
 
-        _resultToggleMargin = new ConflictToggleMargin(_resultEditor, _session.RowGlyph, line => _session.IsDeletionRow(line)
+        _resultToggleMargin = new ConflictToggleMargin(_session.RowGlyph, line => _session.IsDeletionRow(line)
             ? (_session.IsExcluded(line) ? "Mark as deleted" : "Unmark the deletion")
             : (_session.IsExcluded(line) ? "Keep this line" : "Drop this line"));
         _resultToggleMargin.ToggleClicked += (_, line) => OnRowToggleClicked(line);
@@ -301,7 +301,7 @@ public sealed partial class ConflictResolverView : UserControl, IDisposable
         _resultNumberMargin = new ConflictLineNumberMargin(_resultEditor, getTint: ResultTint);
         _resultEditor.TextArea.LeftMargins.Add(_resultNumberMargin);
         _resultEditor.TextArea.TextView.BackgroundRenderers.Add(
-            new ConflictBackgroundRenderer(_resultEditor, () => null, () => _parse, getRowVisual: _session.RowVisual));
+            new ConflictBackgroundRenderer(() => null, () => _parse, getRowVisual: _session.RowVisual));
         _excludedColorizer = new ConflictExcludedLineColorizer(_session.IsExcluded);
         _resultEditor.TextArea.TextView.LineTransformers.Add(_excludedColorizer);
         _resultEditor.AttachedToVisualTree += (_, _) => Dispatcher.UIThread.Post(EnsureExcludedColorizerLast);

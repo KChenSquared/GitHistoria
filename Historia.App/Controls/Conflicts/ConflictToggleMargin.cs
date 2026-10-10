@@ -49,7 +49,7 @@ public sealed class ConflictToggleMargin : AbstractMargin
     internal int RenderCountForTesting { get; private set; }
     internal void ResetPoolCountersForTesting() => PoolMissesForTesting = 0;
 
-    public ConflictToggleMargin(TextEditor editor, Func<int, ConflictToggleGlyph> getGlyph, Func<int, string?>? getTip = null)
+    public ConflictToggleMargin(Func<int, ConflictToggleGlyph> getGlyph, Func<int, string?>? getTip = null)
     {
         _getGlyph = getGlyph;
         _getTip = getTip;
