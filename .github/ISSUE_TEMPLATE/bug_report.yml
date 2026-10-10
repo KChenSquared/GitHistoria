@@ -1,0 +1,83 @@
+name: Bug report
+description: Something in Historia is broken or behaves unexpectedly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. For security problems, please follow the
+        [security policy](https://github.com/KChenSquared/GitHistoria/security/policy) instead
+        of opening a public issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect to see instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a repository with ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+
+  - type: input
+    id: historia-version
+    attributes:
+      label: Historia version
+      description: Shown in **About Historia**.
+      placeholder: e.g. 1.0.0 (abc1234)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: git-version
+    attributes:
+      label: Git version
+      description: Output of `git --version`.
+      placeholder: e.g. git version 2.47.0
+    validations:
+      required: true
+
+  - type: input
+    id: repo-size
+    attributes:
+      label: Repository size
+      description: Roughly how many commits and branches, if it seems related.
+      placeholder: e.g. ~350k commits, 40 branches
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, screenshots or screen recording
+      description: |
+        Logs are in the folder opened by **Open logs folder** in the Developer panel.
+        Check them for anything private (paths, remote URLs, branch names) before attaching.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this hasn't been reported yet.
+          required: true
