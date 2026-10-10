@@ -43,13 +43,16 @@ You stage; the user commits. Historia never stages or commits for you.
    '@ | historia-cmdr propose-commit -F -
    ```
 
-5. **Read the JSON reply.**
+5. **Show the command, then run it.** Print the exact command you run, message included, in a fenced
+   block tagged with its shell (`bash` or `powershell`) so the user can rerun it, then run it.
+6. **Read the JSON reply.**
    - Compare `stagedPaths` with what you meant to stage and report any difference.
    - `"draft": "pending"`: tell the user their existing draft was kept and Historia is offering the
      message in a bar above the box.
    - `nothing-staged` (exit 1): say so and stop.
-   - Exit 2: Historia is unreachable or external control is switched off; show the message in chat instead.
-6. **Finish with one line:** the files are staged and the message is in Historia's commit box; review
+   - Exit 2: Historia is unreachable or external control is switched off; say so, and point the user
+     at the command above to rerun once Historia is up.
+7. **Finish with one line:** the files are staged and the message is in Historia's commit box; review
    and click Commit.
 
 ## Rules

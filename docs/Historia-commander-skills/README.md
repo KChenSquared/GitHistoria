@@ -9,8 +9,8 @@ review the files and click **Commit**.
 It navigates and proposes, nothing else. It never stages, commits, or changes your repository,
 index, refs, working tree or settings.
 
-This folder holds sample skills for Claude Code and GitHub Copilot (VS Code) that teach an agent
-when and how to call it.
+This folder holds sample skills for Claude Code, GitHub Copilot (VS Code) and Antigravity that teach
+an agent when and how to call it.
 
 ## The command
 
@@ -88,31 +88,35 @@ unstaging them. Read the diff, not the agent's message.
 
 ## Installing the samples
 
-Claude Code skills live in `~/.claude/skills/<name>/` (all projects) or `<repo>/.claude/skills/<name>/`
-(one repository). Copy the folders from [`claude/skills/`](claude/skills):
+Each agent gets the same set of skills:
 
 | Skill | Use |
 |---|---|
-| [`historia-show`](claude/skills/historia-show/SKILL.md) | Open Historia on a commit, diff or uncommitted change |
-| [`historia-review`](claude/skills/historia-review/SKILL.md) | A guided review tour of a branch, one file at a time |
-| [`historia-trace`](claude/skills/historia-trace/SKILL.md) | "Where did this line come from?" |
-| [`historia-commit`](claude/skills/historia-commit/SKILL.md) | Stage the agent's files and propose the commit message |
+| `historia-showwork` | At the end of a task, show the uncommitted changes with the first changed file open |
+| `historia-review` | A guided review tour of a branch, one file at a time |
+| `historia-trace` | "Where did this line come from?" |
+| `historia-commit` | Stage the agent's files and propose the commit message |
 
-GitHub Copilot in VS Code (agent mode) reads skills from `<repo>/.github/skills/<name>/` or
-`~/.copilot/skills/<name>/`, prompt files from `<repo>/.github/prompts/`, and custom instructions from
-`<repo>/.github/copilot-instructions.md`. Copy the files from [`copilot/`](copilot):
+The skills that call `historia-cmdr` show the command so you can rerun it, then run it.
+`historia-showworkNoAutoShow` and `historia-commitNoAutoShow` are alternatives that never open
+Historia on their own: they show the command and leave running it to you. Each alternative has the
+same `name` as the skill it replaces, so install one or the other, in a folder named after the skill.
 
-| File | Install at |
-|---|---|
-| [`skills/historia-show/SKILL.md`](copilot/skills/historia-show/SKILL.md) | `.github/skills/historia-show/SKILL.md` |
-| [`skills/historia-commit/SKILL.md`](copilot/skills/historia-commit/SKILL.md) | `.github/skills/historia-commit/SKILL.md` |
-| [`prompts/historia-review.prompt.md`](copilot/prompts/historia-review.prompt.md) | `.github/prompts/historia-review.prompt.md` (run it with `/historia-review`) |
-| [`copilot-instructions.snippet.md`](copilot/copilot-instructions.snippet.md) | Paste into `.github/copilot-instructions.md` |
+- **Claude Code** reads skills from `~/.claude/skills/<name>/` (all projects) or
+  `<repo>/.claude/skills/<name>/` (one repository). Copy the folders from
+  [`claude/skills/`](claude/skills).
+- **GitHub Copilot** in VS Code (agent mode) reads skills from `<repo>/.github/skills/<name>/` or
+  `~/.copilot/skills/<name>/`. Copy the folders from [`copilot/skills/`](copilot/skills), and paste
+  [`copilot-instructions.snippet.md`](copilot/copilot-instructions.snippet.md) into
+  `<repo>/.github/copilot-instructions.md`.
+- **Antigravity** reads skills from `<repo>/.agents/skills/<name>/` (one workspace) or
+  `~/.gemini/config/skills/<name>/` (all workspaces). Copy the folders from
+  [`antigravity/skills/`](antigravity/skills).
 
 Agent file formats change; if a sample stops loading, check the current
 [Claude Code skills](https://code.claude.com/docs/en/skills) and
-[VS Code agent skills](https://code.visualstudio.com/docs/copilot/customization/agent-skills)
-documentation.
+[VS Code agent skills](https://code.visualstudio.com/docs/copilot/customization/agent-skills) and
+[Antigravity skills](https://antigravity.google/docs/skills) documentation.
 
 ## Skipping the approval prompts
 
