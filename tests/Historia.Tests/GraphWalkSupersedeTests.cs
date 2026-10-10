@@ -70,7 +70,7 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
     private static async Task<long> CurrentWalkKeyAsync(RepositoryContext ctx, GraphQuery query)
     {
         var method = typeof(GraphLayoutService).GetMethod("TryGetRefStateAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
-        var task = (Task)method.Invoke(null, [ctx, query, false, CancellationToken.None])!;
+        var task = (Task)method.Invoke(null, [ctx, query, CancellationToken.None])!;
         await task;
         var state = (System.Runtime.CompilerServices.ITuple)task.GetType().GetProperty("Result")!.GetValue(task)!;
         return (long)state[3]!;
@@ -258,7 +258,7 @@ public sealed class GraphWalkSupersedeTests : IAsyncDisposable
     private static async Task<(string[] Tips, long WalkKey)> CurrentTipsAsync(RepositoryContext ctx, GraphQuery query)
     {
         var method = typeof(GraphLayoutService).GetMethod("TryGetRefStateAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
-        var task = (Task)method.Invoke(null, [ctx, query, false, CancellationToken.None])!;
+        var task = (Task)method.Invoke(null, [ctx, query, CancellationToken.None])!;
         await task;
         var state = (System.Runtime.CompilerServices.ITuple)task.GetType().GetProperty("Result")!.GetValue(task)!;
         return ((string[])state[2]!, (long)state[3]!);
