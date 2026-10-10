@@ -22,13 +22,6 @@ internal static class GitStatusParser
     public static GitObjectId? ParseId(string? s) =>
         s is { Length: 40 or 64 } && GitObjectId.TryParse(s, out var id) && !id.IsZero ? id : null;
 
-    public static GitObjectId? ParseOid(string? s) => ParseId(s);
-
-    public static GitObjectId ParseIdOrZero(string? s) =>
-        s is { Length: 40 or 64 } && GitObjectId.TryParse(s, out var id)
-            ? (id.IsZero ? GitObjectId.Zero : id)
-            : GitObjectId.Zero;
-
     public static bool IsZeroOid(string? s) =>
         s is { Length: 40 or 64 } && GitObjectId.TryParse(s, out var id) && id.IsZero;
 

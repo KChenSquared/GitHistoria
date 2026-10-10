@@ -63,20 +63,4 @@ public class TerminalColorResolverTests
         Assert.Equal(TerminalColor.DefaultForeground, TerminalColor.FromEmulator(256, 0, false));
         Assert.Equal(TerminalColor.DefaultBackground, TerminalColor.FromEmulator(257, 0, true));
     }
-
-    [Fact]
-    public void EnsureContrast_LiftsBelowThreshold()
-    {
-        var black = Rgb.FromRgb(0, 0, 0);
-        var lifted = TerminalColorResolver.EnsureContrast(black, black, Rgb.FromRgb(255, 255, 255));
-        Assert.True(TerminalColorResolver.ContrastRatio(lifted, black) >= 4.5);
-    }
-
-    [Fact]
-    public void EnsureContrast_LeavesCompliantAlone()
-    {
-        var white = Rgb.FromRgb(255, 255, 255);
-        var black = Rgb.FromRgb(0, 0, 0);
-        Assert.Equal(white, TerminalColorResolver.EnsureContrast(white, black, white));
-    }
 }

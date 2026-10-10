@@ -75,7 +75,6 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
     private AtomicFileWriter? _sessionWriter;
     private AtomicFileWriter SessionWriter => _sessionWriter ??= new AtomicFileWriter(AppPaths.SessionFile);
     private long _sessionPersistSequence;
-    private string? _restoredFocusPath;
 
     // After focusing the restored session's active repo, RestoreSessionAsync pauses
     // briefly before opening the rest of the session's tabs -- see RestoreSessionAsync for why.
@@ -828,7 +827,6 @@ public sealed class WorkspaceService : IWorkspaceService, IAsyncDisposable
         var existing = paths.FirstOrDefault(p => System.IO.Directory.Exists(p)
             && string.Equals(p, focusedPath, StringComparison.OrdinalIgnoreCase));
         var focusTarget = existing ?? paths.FirstOrDefault(System.IO.Directory.Exists);
-        _restoredFocusPath = focusTarget;
         // Trim a trailing separator before GetFileName: RepositoryPath (the source of both
         // "paths" and "focusedPath" once persisted) may end in a separator,
         // and GetFileName returns "" for a path ending in a separator.

@@ -12,12 +12,11 @@ public sealed class BackgroundRefreshQueueTests : IAsyncDisposable
 {
     private readonly MiniHost _host = new();
     private readonly List<TestRepositoryBuilder> _repos = [];
-    private RecentRepositoryService? _recents;
 
     private WorkspaceService NewWorkspace(IRepoIdentityService? identity = null)
     {
         var cli = _host.Provider.GetRequiredService<IGitCliService>();
-        var recents = _recents = new RecentRepositoryService(_host.Settings);
+        var recents = new RecentRepositoryService(_host.Settings);
         var profiles = new ProfileService(_host.Settings, new FakeVault(), cli);
         identity ??= new RepoIdentityService(cli);
         return new WorkspaceService(_host.Provider, cli, recents, profiles, identity);

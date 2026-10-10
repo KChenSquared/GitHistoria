@@ -1,19 +1,5 @@
 namespace Historia.Models;
 
-/// <summary>
-/// Lightweight commit row for the history list and the graph. Projected
-/// from the git CLI — immutable commit metadata.
-/// </summary>
-public sealed record CommitSummary
-{
-    public required GitObjectId Id { get; init; }
-    public required string MessageShort { get; init; }
-    public required string AuthorName { get; init; }
-    public required string AuthorEmail { get; init; }
-    public required DateTimeOffset AuthorWhen { get; init; }
-    public required int ParentCount { get; init; }
-    public required IReadOnlyList<CommitDecoration> Decorations { get; init; }
-}
 
 /// <summary>Full detail for a single selected commit.</summary>
 public sealed record CommitDetail

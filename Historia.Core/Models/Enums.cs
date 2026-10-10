@@ -189,13 +189,6 @@ public enum DecorationType
     Head,
 }
 
-/// <summary>Which refs a history/graph query includes.</summary>
-public enum CommitRefScope
-{
-    AllRefs,
-    CurrentBranch,
-}
-
 /// <summary><c>git reset</c> mode (context menu). <see cref="Hard"/> discards working-tree changes.</summary>
 public enum GitResetMode
 {

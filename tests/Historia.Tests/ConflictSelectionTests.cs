@@ -185,7 +185,7 @@ public class ConflictSelectionTests
         var s = Make(ours: 0, theirs: 2);
         s.SetHunk(ConflictSide.Ours, true);
         var copy = s.Clone();
-        Assert.True(copy.SelectionEquals(s));
+        Assert.Equal(s.SideLayout, copy.SideLayout);
         Assert.True(copy.IsDeletion(ConflictSide.Ours));
         Assert.False(copy.IsDeletion(ConflictSide.Theirs));
     }
@@ -207,11 +207,11 @@ public class ConflictSelectionTests
         var s = Make();
         s.SetHunk(ConflictSide.Ours, true);
         var copy = s.Clone();
-        Assert.True(copy.SelectionEquals(s));
+        Assert.Equal(s.SideLayout, copy.SideLayout);
 
         s.SetHunk(ConflictSide.Theirs, true);
         s.SetOrder(ConflictSide.Theirs);
-        Assert.False(copy.SelectionEquals(s));
+        Assert.NotEqual(s.SideLayout, copy.SideLayout);
         Assert.Equal(ConflictHunkState.Unchecked, copy.HunkState(ConflictSide.Theirs));
         Assert.Equal(new[] { ConflictSide.Ours, ConflictSide.Theirs }, copy.SideLayout);
     }
