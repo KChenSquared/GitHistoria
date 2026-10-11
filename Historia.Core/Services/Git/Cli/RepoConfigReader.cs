@@ -27,6 +27,9 @@ public sealed class RepoConfigReader(IGitCliService cli, string gitDirectory, st
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // The config may have changed while this call waited; a stamp taken before the gate
+            // would miss the entry another reader just cached and cache a stale stamp in its place.
+            stamp = GetConfigStamp();
             cached = Volatile.Read(ref _cache);
             if (cached is not null && cached.Stamp == stamp)
                 return cached.Remotes;
