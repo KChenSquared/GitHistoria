@@ -295,9 +295,15 @@ public class IconPathTests
 
     private static string RepoRoot()
     {
+        // A worktree's top-level .git is a file, not a directory.
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        while (dir is not null)
+        {
+            var gitEntry = Path.Combine(dir.FullName, ".git");
+            if (Directory.Exists(gitEntry) || File.Exists(gitEntry))
+                break;
             dir = dir.Parent;
+        }
         Assert.NotNull(dir);
         return dir!.FullName;
     }
