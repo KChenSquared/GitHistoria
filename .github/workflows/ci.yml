@@ -71,6 +71,14 @@ jobs:
               exit 1
           }
 
+      # Every repository a test opens holds an inotify instance, and parallel tests outrun
+      # Ubuntu's default of 128 per user.
+      - name: Raise inotify limits
+        if: runner.os == 'Linux'
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=8192
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+
       - name: Build solution
         run: dotnet build Historia.slnx -c Release
 

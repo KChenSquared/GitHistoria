@@ -61,7 +61,10 @@ public sealed class GraphSpoolTests : IAsyncDisposable
         const int window = 10;
         SeedCommits(total);
 
-        var svc = await DiskBackedServiceAsync();
+        // The gate lets the foreground spill write and holds the background spool, which would
+        // otherwise race these assertions and spill the rest of the history first.
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
+        var svc = new GraphLayoutService(_host.Settings, _host.Locator, _host.Cli, new PaintOnlyGate());
         await using var ctx = _host.Open(_repo.Path);
 
         var result = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs }, maxRows: window);
@@ -141,5 +144,14 @@ public sealed class GraphSpoolTests : IAsyncDisposable
             Assert.Equal(expected.Layout.Rows[i].LaneIndex, actual.Layout.Rows[i].LaneIndex);
 
         diskSvc.Forget(diskCtx);
+    }
+
+    /// <summary>Open for the foreground spill of painted rows, never open for the background
+    /// full-history spill.</summary>
+    private sealed class PaintOnlyGate : IBackgroundWorkGate
+    {
+        public bool IsOpen => true;
+        public Task WaitUntilOpenAsync(CancellationToken ct = default) => Task.Delay(Timeout.Infinite, ct);
+        public void ReportGraphSettled(RepositoryContext context) { }
     }
 }

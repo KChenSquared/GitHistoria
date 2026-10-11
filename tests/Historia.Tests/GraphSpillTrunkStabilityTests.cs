@@ -17,23 +17,36 @@ public sealed class GraphSpillTrunkStabilityTests : IAsyncDisposable
             // main gets the bulk of history and the NEWEST tip; several feature branches fork off it
             // at earlier points, each with an older tip. SeedTipPriority must keep main (newest,
             // and checked out) on lane 0 — both on the first compute and on every re-layout after
-            // the spill stubs the resident metadata.
+            // the spill stubs the resident metadata. Each commit is a minute after the last, so the
+            // tips' order never depends on how many commits fit in one wall-clock second.
+            var when = new DateTimeOffset(2024, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            string Commit(string message)
+            {
+                when = when.AddMinutes(1);
+                return repo.Stage().CommitAt(message, when);
+            }
+
             void Trunk(int from, int to)
             {
                 for (var i = from; i < to; i++)
-                    repo.WriteFile("f.txt", $"{i}\n").Stage().Commit($"main {i:D3}");
+                {
+                    repo.WriteFile("f.txt", $"{i}\n");
+                    Commit($"main {i:D3}");
+                }
             }
 
             Trunk(0, 6);
             for (var b = 0; b < 6; b++)
             {
                 repo.Git("checkout", "-b", $"feat-{b}");
-                repo.WriteFile($"feat{b}.txt", "x").Stage().Commit($"feat {b} tip");
+                repo.WriteFile($"feat{b}.txt", "x");
+                Commit($"feat {b} tip");
                 repo.Git("checkout", "main");
                 Trunk(6 + b * 4, 10 + b * 4);
             }
             // main's final (newest) commit
-            repo.WriteFile("f.txt", "final\n").Stage().Commit("main HEAD newest");
+            repo.WriteFile("f.txt", "final\n");
+            Commit("main HEAD newest");
         });
     }
 
