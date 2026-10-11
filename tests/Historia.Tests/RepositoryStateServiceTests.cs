@@ -662,6 +662,38 @@ public class RepositoryStateServiceTests : IAsyncDisposable
         Assert.Equal(0, raises);
     }
 
+    [Fact]
+    public async Task RefreshRefs_raises_when_status_refresh_saw_head_move_first()
+    {
+        var gateway = new FakeGateway();
+        var headId1 = new GitObjectId("1111111111111111111111111111111111111111");
+        var headId2 = new GitObjectId("2222222222222222222222222222222222222222");
+        gateway.InfoToReturn = gateway.InfoToReturn with
+        {
+            IsHeadDetached = true,
+            HeadCommitId = headId1,
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        await state.RefreshRefsAsync();
+
+        var raises = 0;
+        state.RefsChanged += (_, _) => raises++;
+
+        gateway.InfoToReturn = gateway.InfoToReturn with
+        {
+            HeadCommitId = headId2,
+        };
+
+        await state.RefreshStatusAsync();
+        await state.RefreshRefsAsync();
+
+        Assert.Equal(1, raises);
+        Assert.Equal(headId2, state.Repository.HeadCommitId);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _host.DisposeAsync();
@@ -683,11 +715,10 @@ public class RepositoryStateServiceTests : IAsyncDisposable
             IsHeadUnborn = false,
             CurrentBranchName = "main",
         };
-        public IReadOnlyList<BranchInfo> BranchesToReturn { get; set; } = [];
 
         public Task<Historia.Models.RepositoryStatus> GetStatusAsync(CancellationToken ct = default) => Task.FromResult(StatusToReturn);
         public Task<RepositoryInfo> GetRepositoryInfoAsync(CancellationToken ct = default) => Task.FromResult(InfoToReturn);
-        public Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default) => Task.FromResult(BranchesToReturn);
+        public Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<BranchInfo>>([]);
         public Task<IReadOnlyList<TagInfo>> GetTagsAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<TagInfo>>([]);
         public Task<IReadOnlyList<RemoteInfo>> GetRemotesAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<RemoteInfo>>([]);
         public Task<AheadBehind?> GetDivergenceAsync(string local, string remote, CancellationToken ct = default) => Task.FromResult<AheadBehind?>(null);

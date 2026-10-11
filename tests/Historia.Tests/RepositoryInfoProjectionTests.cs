@@ -208,7 +208,6 @@ public sealed class RepositoryInfoProjectionTests : IAsyncDisposable
     {
         using var inner = TestRepositoryBuilder.Create();
         inner.WriteFile("sub.txt", "sub1").Stage().Commit("sub initial");
-        var subCommit = inner.HeadSha;
 
         using var super = TestRepositoryBuilder.Create();
         super.Git("config", "protocol.file.allow", "always");
@@ -219,24 +218,9 @@ public sealed class RepositoryInfoProjectionTests : IAsyncDisposable
         super.Stage().Commit("add submodule");
 
         var cloneDir = TestScratch.NewDirectory("historia-submodule-clone-");
-        var psi = new ProcessStartInfo("git")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add("protocol.file.allow=always");
-        psi.ArgumentList.Add("clone");
-        psi.ArgumentList.Add("--recurse-submodules");
-        psi.ArgumentList.Add(super.Path);
-        psi.ArgumentList.Add(cloneDir);
-        using (var proc = Process.Start(psi)!)
-        {
-            proc.WaitForExit();
-            Assert.Equal(0, proc.ExitCode);
-        }
+        super.Git(
+            new Dictionary<string, string> { ["GIT_ALLOW_PROTOCOL"] = "file" },
+            "-c", "protocol.file.allow=always", "clone", "--recurse-submodules", super.Path, cloneDir);
 
         var lsTree = super.Git("ls-tree", "HEAD", "mysub").Trim();
         var parts = lsTree.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
@@ -257,7 +241,6 @@ public sealed class RepositoryInfoProjectionTests : IAsyncDisposable
     {
         using var inner = TestRepositoryBuilder.Create();
         inner.WriteFile("sub.txt", "sub1").Stage().Commit("sub initial");
-        var subCommit = inner.HeadSha;
 
         using var super = TestRepositoryBuilder.Create();
         super.Git("config", "protocol.file.allow", "always");
@@ -269,25 +252,9 @@ public sealed class RepositoryInfoProjectionTests : IAsyncDisposable
 
         var wtDir = TestScratch.NewDirectory("historia-super-wt-");
         super.Git("worktree", "add", wtDir, "HEAD");
-
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = wtDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add("protocol.file.allow=always");
-        psi.ArgumentList.Add("submodule");
-        psi.ArgumentList.Add("update");
-        psi.ArgumentList.Add("--init");
-        using (var proc = Process.Start(psi)!)
-        {
-            proc.WaitForExit();
-            Assert.Equal(0, proc.ExitCode);
-        }
+        super.Git(
+            new Dictionary<string, string> { ["GIT_ALLOW_PROTOCOL"] = "file" },
+            "-C", wtDir, "-c", "protocol.file.allow=always", "submodule", "update", "--init");
 
         var lsTree = super.Git("ls-tree", "HEAD", "mysub").Trim();
         var parts = lsTree.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);

@@ -358,7 +358,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             if (repoInfo.IsHeadDetached && repoInfo.HeadCommitId is { } head)
             {
                 localBody.Children.Add(Leaf(
-                    $"HEAD (detached at {head.ToString()[..7]})",
+                    $"HEAD (detached at {head.ToShortString(7)})",
                     depth: 0,
                     fgKey: "ColorAccent",
                     select: () => Select(head),

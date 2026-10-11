@@ -31,7 +31,7 @@ public sealed class RefNavigatorHeadRowTests
         public RepoFixture(bool detach = false, bool twoCommits = false)
         {
             Path = TestScratch.NewDirectory("historia-headrow-");
-            RunGit("init");
+            RunGit("init", "-b", "main");
             RunGit("config", "user.name", "Test");
             RunGit("config", "user.email", "test@example.com");
             RunGit("config", "commit.gpgsign", "false");
@@ -46,7 +46,7 @@ public sealed class RefNavigatorHeadRowTests
                 RunGit("commit", "-m", "c2");
             }
 
-            RunGit("remote", "add", "origin", "https://example.com/repo.git");
+            RunGit("remote", "add", "origin", "https://githistoria.com/repo.git");
             RunGit("update-ref", "refs/remotes/origin/main", "HEAD");
             RunGit("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
 
@@ -56,28 +56,33 @@ public sealed class RefNavigatorHeadRowTests
             }
         }
 
-        public string RunGit(params string[] args)
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = Path,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            var stdout = p.StandardOutput.ReadToEnd();
-            p.StandardError.ReadToEnd();
-            p.WaitForExit();
-            return stdout;
-        }
+        public string RunGit(params string[] args) => RunGitIn(Path, args);
 
         public string HeadSha => RunGit("rev-parse", "HEAD").Trim();
 
         public void Dispose() => TestScratch.Delete(Path);
+    }
+
+    private static string RunGitIn(string dir, params string[] args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git")
+        {
+            WorkingDirectory = dir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+        p.WaitForExit(30_000);
+        Task.WaitAll(stdoutTask, stderrTask);
+        if (p.ExitCode != 0)
+            throw new InvalidOperationException($"git {string.Join(' ', args)} failed ({p.ExitCode}): {stderrTask.Result}");
+        return stdoutTask.Result;
     }
 
     private static ServiceProvider CreateServices()
@@ -179,7 +184,7 @@ public sealed class RefNavigatorHeadRowTests
         {
             var leafTexts = LeafRows(setup.View).Select(r => RowLabel(r).Text).ToList();
             Assert.DoesNotContain("HEAD", leafTexts);
-            Assert.Contains("main", leafTexts);
+            Assert.Equal(2, leafTexts.Count(t => t == "main"));
         }
         finally
         {
@@ -298,25 +303,7 @@ public sealed class RefNavigatorHeadRowTests
         var superDir = TestScratch.NewDirectory("historia-submodule-super-");
         var cloneDir = TestScratch.NewDirectory("historia-submodule-clone-");
 
-        void RunGitIn(string dir, params string[] args)
-        {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            p.StandardOutput.ReadToEnd();
-            p.StandardError.ReadToEnd();
-            p.WaitForExit();
-        }
-
-        RunGitIn(innerDir, "init");
+        RunGitIn(innerDir, "init", "-b", "main");
         RunGitIn(innerDir, "config", "user.name", "Test");
         RunGitIn(innerDir, "config", "user.email", "test@example.com");
         RunGitIn(innerDir, "config", "commit.gpgsign", "false");
@@ -324,7 +311,7 @@ public sealed class RefNavigatorHeadRowTests
         RunGitIn(innerDir, "add", ".");
         RunGitIn(innerDir, "commit", "-m", "sub c1");
 
-        RunGitIn(superDir, "init");
+        RunGitIn(superDir, "init", "-b", "main");
         RunGitIn(superDir, "config", "user.name", "Test");
         RunGitIn(superDir, "config", "user.email", "test@example.com");
         RunGitIn(superDir, "config", "commit.gpgsign", "false");
@@ -336,6 +323,9 @@ public sealed class RefNavigatorHeadRowTests
         RunGitIn(superDir, "commit", "-m", "add submodule");
 
         RunGitIn(superDir, "-c", "protocol.file.allow=always", "clone", "--recurse-submodules", superDir, cloneDir);
+
+        var registeredSha = RunGitIn(superDir, "ls-tree", "HEAD", "mysub")
+            .Split([' ', '	'], StringSplitOptions.RemoveEmptyEntries)[2];
 
         var subPath = System.IO.Path.Combine(cloneDir, "mysub");
         RunGitIn(subPath, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
@@ -351,13 +341,11 @@ public sealed class RefNavigatorHeadRowTests
         try
         {
             Assert.True(setup.Context.State.Repository.IsHeadDetached);
-            var headId = setup.Context.State.Repository.HeadCommitId;
-            Assert.NotNull(headId);
 
             var leaves = LeafRows(setup.View).ToList();
             var headRow = leaves.FirstOrDefault(r => RowLabel(r).Text?.StartsWith("HEAD (detached at ", StringComparison.Ordinal) == true);
             Assert.NotNull(headRow);
-            Assert.Equal($"HEAD (detached at {headId!.Value.ToString()[..7]})", RowLabel(headRow!).Text);
+            Assert.Equal($"HEAD (detached at {registeredSha[..7]})", RowLabel(headRow!).Text);
 
             var leafTexts = leaves.Select(r => RowLabel(r).Text).ToList();
             Assert.DoesNotContain("HEAD", leafTexts);
