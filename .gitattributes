@@ -6,3 +6,6 @@
 
 Historia.ScenarioLab/**/*.sh text eol=lf
 Historia.ScenarioLab/templates/** binary
+
+packaging/linux/** text eol=lf
+packaging/macos/** text eol=lf

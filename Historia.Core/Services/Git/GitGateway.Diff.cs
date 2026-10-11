@@ -58,81 +58,81 @@ public sealed partial class GitGateway
         switch (request.Source)
         {
             case DiffSource.UnstagedChanges:
-            {
-                args = ["diff", ..pinnedFlags, "--", path];
-                numstatArgs = ["diff", ..numstatFlags, "--", path];
-
-                var unstagedResult = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
-                if (!unstagedResult.OutputTruncated && string.IsNullOrEmpty(unstagedResult.StandardOutput))
                 {
-                    var fullPath = Path.Combine(context.RepositoryPath, path);
-                    if (File.Exists(fullPath))
-                    {
-                        var lsResult = await cli.RunAsync(new GitCliRequest
-                        {
-                            Arguments = ["ls-files", "-z", "--", path],
-                            WorkingDirectory = context.RepositoryPath,
-                            Timeout = TimeSpan.FromSeconds(10),
-                            ExtraEnvironment = LiteralPathspecEnv,
-                        }, ct).ConfigureAwait(false);
+                    args = ["diff", .. pinnedFlags, "--", path];
+                    numstatArgs = ["diff", .. numstatFlags, "--", path];
 
-                        if (lsResult.IsSuccess && string.IsNullOrEmpty(lsResult.StandardOutput))
+                    var unstagedResult = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
+                    if (!unstagedResult.OutputTruncated && string.IsNullOrEmpty(unstagedResult.StandardOutput))
+                    {
+                        var fullPath = Path.Combine(context.RepositoryPath, path);
+                        if (File.Exists(fullPath))
                         {
-                            isNoIndex = true;
-                            args = ["diff", ..pinnedFlags, "--no-index", "--", "/dev/null", path];
-                            numstatArgs = ["diff", ..numstatFlags, "--no-index", "--", "/dev/null", path];
-                            var untrackedResult = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
-                            return await MapDiffResultAsync(untrackedResult, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
+                            var lsResult = await cli.RunAsync(new GitCliRequest
+                            {
+                                Arguments = ["ls-files", "-z", "--", path],
+                                WorkingDirectory = context.RepositoryPath,
+                                Timeout = TimeSpan.FromSeconds(10),
+                                ExtraEnvironment = LiteralPathspecEnv,
+                            }, ct).ConfigureAwait(false);
+
+                            if (lsResult.IsSuccess && string.IsNullOrEmpty(lsResult.StandardOutput))
+                            {
+                                isNoIndex = true;
+                                args = ["diff", .. pinnedFlags, "--no-index", "--", "/dev/null", path];
+                                numstatArgs = ["diff", .. numstatFlags, "--no-index", "--", "/dev/null", path];
+                                var untrackedResult = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
+                                return await MapDiffResultAsync(untrackedResult, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
+                            }
                         }
                     }
-                }
 
-                return await MapDiffResultAsync(unstagedResult, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
-            }
+                    return await MapDiffResultAsync(unstagedResult, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
+                }
 
             case DiffSource.StagedChanges:
-            {
-                args = ["diff", "--cached", ..pinnedFlags, "--", path];
-                numstatArgs = ["diff", "--cached", ..numstatFlags, "--", path];
-                var result = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
-                return await MapDiffResultAsync(result, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
-            }
-
-            case DiffSource.Commit:
-            {
-                var commitId = request.CommitId
-                    ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, "No commit id supplied.");
-
-                // git's ^n is 1-based, selecting parent by index.
-                var sha = commitId.ToString();
-                var parent = $"{sha}^{Math.Max(1, request.ParentIndex)}";
-                args = ["diff", ..pinnedFlags, parent, sha, "--", path];
-                numstatArgs = ["diff", ..numstatFlags, parent, sha, "--", path];
-
-                var result = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
-                if (!result.IsSuccess && !result.OutputTruncated
-                    && await ParentIsMissingAsync(commitId, Math.Max(1, request.ParentIndex), ct).ConfigureAwait(false))
                 {
-                    // Root commit, or parent index past the parent count: diff against the empty tree.
-                    var emptyTree = await GetEmptyTreeIdAsync(ct).ConfigureAwait(false);
-                    args = ["diff", ..pinnedFlags, emptyTree, sha, "--", path];
-                    numstatArgs = ["diff", ..numstatFlags, emptyTree, sha, "--", path];
-                    result = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
+                    args = ["diff", "--cached", .. pinnedFlags, "--", path];
+                    numstatArgs = ["diff", "--cached", .. numstatFlags, "--", path];
+                    var result = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
+                    return await MapDiffResultAsync(result, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
                 }
 
-                return await MapDiffResultAsync(result, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
-            }
+            case DiffSource.Commit:
+                {
+                    var commitId = request.CommitId
+                        ?? throw new HistoriaGitException(GitErrorKind.RefNotFound, "No commit id supplied.");
+
+                    // git's ^n is 1-based, selecting parent by index.
+                    var sha = commitId.ToString();
+                    var parent = $"{sha}^{Math.Max(1, request.ParentIndex)}";
+                    args = ["diff", .. pinnedFlags, parent, sha, "--", path];
+                    numstatArgs = ["diff", .. numstatFlags, parent, sha, "--", path];
+
+                    var result = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
+                    if (!result.IsSuccess && !result.OutputTruncated
+                        && await ParentIsMissingAsync(commitId, Math.Max(1, request.ParentIndex), ct).ConfigureAwait(false))
+                    {
+                        // Root commit, or parent index past the parent count: diff against the empty tree.
+                        var emptyTree = await GetEmptyTreeIdAsync(ct).ConfigureAwait(false);
+                        args = ["diff", .. pinnedFlags, emptyTree, sha, "--", path];
+                        numstatArgs = ["diff", .. numstatFlags, emptyTree, sha, "--", path];
+                        result = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
+                    }
+
+                    return await MapDiffResultAsync(result, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
+                }
 
             case DiffSource.Comparison:
-            {
-                var left = request.CommitId?.ToString() ?? await GetEmptyTreeIdAsync(ct).ConfigureAwait(false);
-                var right = request.OtherCommitId?.ToString() ?? await GetEmptyTreeIdAsync(ct).ConfigureAwait(false);
+                {
+                    var left = request.CommitId?.ToString() ?? await GetEmptyTreeIdAsync(ct).ConfigureAwait(false);
+                    var right = request.OtherCommitId?.ToString() ?? await GetEmptyTreeIdAsync(ct).ConfigureAwait(false);
 
-                args = ["diff", ..pinnedFlags, left, right, "--", path];
-                numstatArgs = ["diff", ..numstatFlags, left, right, "--", path];
-                var result = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
-                return await MapDiffResultAsync(result, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
-            }
+                    args = ["diff", .. pinnedFlags, left, right, "--", path];
+                    numstatArgs = ["diff", .. numstatFlags, left, right, "--", path];
+                    var result = await RunDiffCliAsync(args, maxBytes, ct).ConfigureAwait(false);
+                    return await MapDiffResultAsync(result, path, isNoIndex, maxBytes, maxLines, numstatArgs, ct).ConfigureAwait(false);
+                }
 
             default:
                 throw new HistoriaGitException(GitErrorKind.Unknown, $"Unsupported diff source '{request.Source}'.");

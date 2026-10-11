@@ -1,4 +1,4 @@
-﻿namespace Historia.Services.Terminal;
+namespace Historia.Services.Terminal;
 
 /// <summary>
 /// The OS-facing seams <see cref="TerminalSessionService"/> uses to resolve a shell, a start
@@ -33,7 +33,7 @@ public sealed record TerminalHostEnvironment
         HomeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         CurrentDirectory = Environment.CurrentDirectory,
         ExecutablePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? "Historia",
-        Version = typeof(TerminalHostEnvironment).Assembly.GetName().Version?.ToString() ?? "0.0",
+        Version = AppVersion.Current,
     };
 
     private static IReadOnlyDictionary<string, string> SnapshotEnvironment()

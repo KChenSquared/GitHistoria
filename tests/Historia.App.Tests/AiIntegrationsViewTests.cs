@@ -52,8 +52,12 @@ internal static class AiTestSupport
         {
             var item = new Notification
             {
-                Id = Guid.NewGuid(), Severity = severity, Message = message, Details = details,
-                CreatedAt = DateTimeOffset.Now, Actions = actions ?? [],
+                Id = Guid.NewGuid(),
+                Severity = severity,
+                Message = message,
+                Details = details,
+                CreatedAt = DateTimeOffset.Now,
+                Actions = actions ?? [],
             };
             Published.Add(item);
             Changed?.Invoke(this, new NotificationsChangedEventArgs(Published));

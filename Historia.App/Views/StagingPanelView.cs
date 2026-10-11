@@ -1365,8 +1365,10 @@ public sealed class StagingPanelView : UserControl, IDisposable
             await _ctx.Gateway.CommitAsync(new CommitRequest
             {
                 Message = _message.Text!.Trim(),
-                AuthorName = name, AuthorEmail = email,
-                CommitterName = profile?.GitUserName ?? name, CommitterEmail = profile?.GitUserEmail ?? email,
+                AuthorName = name,
+                AuthorEmail = email,
+                CommitterName = profile?.GitUserName ?? name,
+                CommitterEmail = profile?.GitUserEmail ?? email,
                 AmendPreviousCommit = _amend.IsChecked == true,
                 Sign = sign,
             }, _ctx.Lifetime);

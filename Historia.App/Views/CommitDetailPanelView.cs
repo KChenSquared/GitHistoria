@@ -17,7 +17,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     private readonly ContentControl _messageHost = new();
     private readonly ContentControl _filesHost = new();
     private readonly StackPanel _filesToggleRow = new()
-        { Orientation = Orientation.Horizontal, Spacing = 2 };
+    { Orientation = Orientation.Horizontal, Spacing = 2 };
     private readonly TextBlock _statusMsg = Text("", "ColorTextMuted", 12);
     private CancellationTokenSource? _loadCts;
     private bool _disposed;

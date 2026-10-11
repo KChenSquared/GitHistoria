@@ -232,8 +232,11 @@ internal sealed class GraphWalkCache
                 ? new CommitMetadata
                 {
                     Id = id,
-                    MessageShort = "", AuthorName = "", AuthorEmail = "",
-                    AuthorWhen = c.AuthorWhen, CommitWhen = c.CommitWhen,
+                    MessageShort = "",
+                    AuthorName = "",
+                    AuthorEmail = "",
+                    AuthorWhen = c.AuthorWhen,
+                    CommitWhen = c.CommitWhen,
                     ParentCount = c.ParentCount,
                 }
                 : new CommitMetadata

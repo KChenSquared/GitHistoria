@@ -85,7 +85,8 @@ public sealed class CustomThemeServiceTests : IDisposable
     {
         var t = new CustomTheme
         {
-            Id = "u", Name = "U",
+            Id = "u",
+            Name = "U",
             Tokens = new Dictionary<string, string> { ["not-a-real-token"] = "#123456", ["bg"] = "#222222" },
         };
         var resolved = _svc.Compose(t);

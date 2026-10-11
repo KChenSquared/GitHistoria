@@ -30,7 +30,9 @@ public sealed class ThemeServiceSeamTests : IDisposable
     private static Task SaveDarkThemeAsync(CustomThemeService themes, string id = "c", string name = "C") =>
         themes.SaveAsync(new CustomTheme
         {
-            Id = id, Name = name, Base = "Dark",
+            Id = id,
+            Name = name,
+            Base = "Dark",
             Tokens = new Dictionary<string, string> { ["bg"] = "#101820" },
             Lane = ["#ABCDEF"],
         });

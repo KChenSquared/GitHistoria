@@ -484,39 +484,39 @@ internal sealed class GraphConcurrencyHarness : IAsyncDisposable
         switch (rng.Next(3))
         {
             case 0:
-            {
-                var branch = sides[rng.Next(sides.Count)];
-                var tip = _repo.Git("rev-parse", $"refs/heads/{branch}").Trim();
-                var tree = _repo.Git("rev-parse", $"{tip}^{{tree}}").Trim();
-                var when = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(++_commitCounter).ToString("O");
-                var sha = _repo.Git(new Dictionary<string, string> { ["GIT_AUTHOR_DATE"] = when, ["GIT_COMMITTER_DATE"] = when },
-                    "commit-tree", tree, "-p", tip, "-m", $"harness {_commitCounter}").Trim();
-                _repo.Git("update-ref", $"refs/heads/{branch}", sha, tip);
-                Log("refs", $"commit on {branch}");
-                break;
-            }
-            case 1:
-            {
-                var name = $"h{++_branchCounter}";
-                var back = rng.Next(0, 250);
-                var sha = _repo.Git("rev-parse", $"main~{back}").Trim();
-                _repo.Git("update-ref", $"refs/heads/{name}", sha);
-                _madeBranches.Add(name);
-                Log("refs", $"create {name} at main~{back}");
-                break;
-            }
-            default:
-            {
-                if (_madeBranches.Count == 0)
                 {
-                    goto case 1;
+                    var branch = sides[rng.Next(sides.Count)];
+                    var tip = _repo.Git("rev-parse", $"refs/heads/{branch}").Trim();
+                    var tree = _repo.Git("rev-parse", $"{tip}^{{tree}}").Trim();
+                    var when = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero).AddMinutes(++_commitCounter).ToString("O");
+                    var sha = _repo.Git(new Dictionary<string, string> { ["GIT_AUTHOR_DATE"] = when, ["GIT_COMMITTER_DATE"] = when },
+                        "commit-tree", tree, "-p", tip, "-m", $"harness {_commitCounter}").Trim();
+                    _repo.Git("update-ref", $"refs/heads/{branch}", sha, tip);
+                    Log("refs", $"commit on {branch}");
+                    break;
                 }
-                var name = _madeBranches[rng.Next(_madeBranches.Count)];
-                _repo.Git("update-ref", "-d", $"refs/heads/{name}");
-                _madeBranches.Remove(name);
-                Log("refs", $"delete {name}");
-                break;
-            }
+            case 1:
+                {
+                    var name = $"h{++_branchCounter}";
+                    var back = rng.Next(0, 250);
+                    var sha = _repo.Git("rev-parse", $"main~{back}").Trim();
+                    _repo.Git("update-ref", $"refs/heads/{name}", sha);
+                    _madeBranches.Add(name);
+                    Log("refs", $"create {name} at main~{back}");
+                    break;
+                }
+            default:
+                {
+                    if (_madeBranches.Count == 0)
+                    {
+                        goto case 1;
+                    }
+                    var name = _madeBranches[rng.Next(_madeBranches.Count)];
+                    _repo.Git("update-ref", "-d", $"refs/heads/{name}");
+                    _madeBranches.Remove(name);
+                    Log("refs", $"delete {name}");
+                    break;
+                }
         }
     }
 

@@ -801,8 +801,11 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         // click and context-menu target, not just the glyphs.
         var b = new Border
         {
-            Child = grid, Height = 24, Background = Brushes.Transparent,
-            Cursor = new Cursor(StandardCursorType.Hand), Padding = new Thickness(0, 0, RowRightGutter, 0),
+            Child = grid,
+            Height = 24,
+            Background = Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Padding = new Thickness(0, 0, RowRightGutter, 0),
         };
         ToolTip.SetTip(b, numbering?.TooltipOf(segment) ?? segment);
         // Trap: only a left press toggles. The context menu opens on the right button's release,

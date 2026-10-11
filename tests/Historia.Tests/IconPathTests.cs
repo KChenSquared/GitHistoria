@@ -278,26 +278,32 @@ public class IconPathTests
         var rxCs = new Regex("(?:IconPaths\\.Get|\\bIcon(?:Button|GlyphPath|TextButton)?|\\bArrowButton)\\(\"([a-z0-9_]+)\"");
 
         foreach (var pattern in new[] { "*.razor", "*.cs" })
-        foreach (var file in Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories))
-        {
-            var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
-            if (rel.Contains("/bin/") || rel.Contains("/obj/")
-                || rel.Contains("/tests/") || rel.StartsWith("tests/", StringComparison.Ordinal)
-                || rel.StartsWith(".claude/", StringComparison.OrdinalIgnoreCase))
-                continue;
-            var text = File.ReadAllText(file);
-            var rx = file.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ? rxRazor : rxCs;
-            foreach (Match m in rx.Matches(text))
-                names.Add(m.Groups[1].Value);
-        }
+            foreach (var file in Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories))
+            {
+                var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
+                if (rel.Contains("/bin/") || rel.Contains("/obj/")
+                    || rel.Contains("/tests/") || rel.StartsWith("tests/", StringComparison.Ordinal)
+                    || rel.StartsWith(".claude/", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var text = File.ReadAllText(file);
+                var rx = file.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) ? rxRazor : rxCs;
+                foreach (Match m in rx.Matches(text))
+                    names.Add(m.Groups[1].Value);
+            }
         return names;
     }
 
     private static string RepoRoot()
     {
+        // A worktree's top-level .git is a file, not a directory.
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        while (dir is not null)
+        {
+            var gitEntry = Path.Combine(dir.FullName, ".git");
+            if (Directory.Exists(gitEntry) || File.Exists(gitEntry))
+                break;
             dir = dir.Parent;
+        }
         Assert.NotNull(dir);
         return dir!.FullName;
     }

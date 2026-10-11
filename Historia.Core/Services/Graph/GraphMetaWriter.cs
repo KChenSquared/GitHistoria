@@ -244,7 +244,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             var parents = getParents(start + i);
             if (parents is not null)
             {
-                for (var p = 0; p < parents.Count; p++) 
+                for (var p = 0; p < parents.Count; p++)
                 {
                     var parent = parents[p];
                     if (!parent.IsEmpty && !parent.IsZero && parent.HashSize != _hashSize)

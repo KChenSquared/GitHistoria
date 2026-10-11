@@ -326,7 +326,10 @@ public class DiffDisplayModelTests
 
         var first = new DiffHunk
         {
-            OldStart = 1, OldLineCount = 2, NewStart = 1, NewLineCount = 2,
+            OldStart = 1,
+            OldLineCount = 2,
+            NewStart = 1,
+            NewLineCount = 2,
             Header = "@@ -1,2 +1,2 @@",
             Lines =
             [
@@ -337,7 +340,10 @@ public class DiffDisplayModelTests
         };
         var second = new DiffHunk
         {
-            OldStart = 20, OldLineCount = 3, NewStart = 20, NewLineCount = 2,
+            OldStart = 20,
+            OldLineCount = 3,
+            NewStart = 20,
+            NewLineCount = 2,
             Header = "@@ -20,3 +20,2 @@",
             Lines =
             [
@@ -349,8 +355,13 @@ public class DiffDisplayModelTests
 
         return new FileDiff
         {
-            Path = "two.txt", Kind = DiffKind.Modified, IsBinary = false, IsTruncated = false,
-            AddedLines = 1, DeletedLines = 2, Hunks = [first, second],
+            Path = "two.txt",
+            Kind = DiffKind.Modified,
+            IsBinary = false,
+            IsTruncated = false,
+            AddedLines = 1,
+            DeletedLines = 2,
+            Hunks = [first, second],
         };
     }
 
@@ -395,8 +406,12 @@ public class DiffDisplayModelTests
     {
         var deletionOnly = new FileDiff
         {
-            Path = "d.txt", Kind = DiffKind.Deleted, IsBinary = false, IsTruncated = false,
-            AddedLines = 0, DeletedLines = 1,
+            Path = "d.txt",
+            Kind = DiffKind.Deleted,
+            IsBinary = false,
+            IsTruncated = false,
+            AddedLines = 0,
+            DeletedLines = 1,
             Hunks =
             [
                 new DiffHunk
@@ -408,8 +423,13 @@ public class DiffDisplayModelTests
         };
         var empty = new FileDiff
         {
-            Path = "e.txt", Kind = DiffKind.Modified, IsBinary = false, IsTruncated = false,
-            AddedLines = 0, DeletedLines = 0, Hunks = [],
+            Path = "e.txt",
+            Kind = DiffKind.Modified,
+            IsBinary = false,
+            IsTruncated = false,
+            AddedLines = 0,
+            DeletedLines = 0,
+            Hunks = [],
         };
 
         Assert.Null(DiffDisplayModel.Create(deletionOnly).FindDisplayLineForNewLine(1, sideBySide: false));

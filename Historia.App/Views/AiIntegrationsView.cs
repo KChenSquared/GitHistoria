@@ -297,9 +297,19 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
 
         var e = new Editor(profile.Id)
         {
-            Template = template, Name = name, Server = server, Key = key, KeyFrame = keyFrame, EnvKey = envKey,
-            Model = model, ModelNote = modelNote, AutoFetch = autoFetch, Effort = effort, DiffLimit = diffLimit,
-            Prompt = prompt, Headers = headers,
+            Template = template,
+            Name = name,
+            Server = server,
+            Key = key,
+            KeyFrame = keyFrame,
+            EnvKey = envKey,
+            Model = model,
+            ModelNote = modelNote,
+            AutoFetch = autoFetch,
+            Effort = effort,
+            DiffLimit = diffLimit,
+            Prompt = prompt,
+            Headers = headers,
         };
         e.Snapshot = profile;
         _editor = e;

@@ -15,4 +15,20 @@
     <BaseIntermediateOutputPath>$(RepoRoot)obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
   </PropertyGroup>
 
+  <!-- The version comes from the nearest v* git tag. -->
+  <PropertyGroup>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MinVer" Version="8.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Stamps the resolved version into the assembly so a test can tell MinVer ran. -->
+  <Target Name="StampMinVerVersion" AfterTargets="MinVer" Condition="'$(MinVerVersion)' != ''">
+    <ItemGroup>
+      <AssemblyMetadata Include="MinVerVersion" Value="$(MinVerVersion)" />
+    </ItemGroup>
+  </Target>
+
 </Project>

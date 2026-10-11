@@ -1,0 +1,173 @@
+name: Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      win_x64:
+        description: 'Build win-x64 packages'
+        type: boolean
+        default: true
+      osx_arm64:
+        description: 'Build osx-arm64 packages'
+        type: boolean
+        default: true
+      osx_x64:
+        description: 'Build osx-x64 packages'
+        type: boolean
+        default: true
+      linux_x64:
+        description: 'Build linux-x64 packages'
+        type: boolean
+        default: true
+      archives:
+        description: 'Build archives (.zip / .tar.gz)'
+        type: boolean
+        default: true
+      installers:
+        description: 'Build installers (.exe / .dmg / .deb)'
+        type: boolean
+        default: true
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_DESKTOP_RUNTIME_VERSION: '10.0.6'
+  DOTNET_DESKTOP_RUNTIME_URL: 'https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/10.0.6/windowsdesktop-runtime-10.0.6-win-x64.exe'
+  DOTNET_DESKTOP_RUNTIME_SHA512: 'd4decabfb31ed54898637f01a0c38d5ef581e99926aa448f2378ac40c4362f93b403305e10d8c5e5e764f8ec9c04cf50ff5f3e70ac98f05da2651eb5c85a8cd3'
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build-plan.outputs.matrix }}
+      archives: ${{ steps.build-plan.outputs.archives }}
+      installers: ${{ steps.build-plan.outputs.installers }}
+    steps:
+      - name: Build packaging matrix
+        id: build-plan
+        shell: pwsh
+        run: |
+          $isTag = '${{ github.ref_type }}' -eq 'tag'
+          $archives = if ($isTag) { 'true' } else { '${{ inputs.archives }}' }
+          $installers = if ($isTag) { 'true' } else { '${{ inputs.installers }}' }
+
+          if ($archives -ne 'true' -and $installers -ne 'true') {
+              Write-Error "No package kind selected. At least one of archives or installers must be true."
+              exit 1
+          }
+
+          $entries = @()
+          if ($isTag -or '${{ inputs.win_x64 }}' -eq 'true') {
+              $entries += @{ rid = 'win-x64'; runner = 'windows-latest' }
+          }
+          if ($isTag -or '${{ inputs.osx_arm64 }}' -eq 'true') {
+              $entries += @{ rid = 'osx-arm64'; runner = 'macos-latest' }
+          }
+          if ($isTag -or '${{ inputs.osx_x64 }}' -eq 'true') {
+              $entries += @{ rid = 'osx-x64'; runner = 'macos-latest' }
+          }
+          if ($isTag -or '${{ inputs.linux_x64 }}' -eq 'true') {
+              $entries += @{ rid = 'linux-x64'; runner = 'ubuntu-latest' }
+          }
+
+          if ($entries.Count -eq 0) {
+              Write-Error "No operating system selected."
+              exit 1
+          }
+
+          $matrixJson = ConvertTo-Json -InputObject @($entries) -Compress
+          Write-Output "matrix=$matrixJson" >> $env:GITHUB_OUTPUT
+          Write-Output "archives=$archives" >> $env:GITHUB_OUTPUT
+          Write-Output "installers=$installers" >> $env:GITHUB_OUTPUT
+
+  package:
+    needs: plan
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@3951f0dfe7a07e2313ec93c75700083e2005cbab # v4.3.0
+        with:
+          global-json-file: global.json
+
+      - name: Prepare Windows installer dependencies
+        if: matrix.rid == 'win-x64' && needs.plan.outputs.installers == 'true'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command "ISCC.exe" -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+              choco install innosetup --version 6.3.3 -y
+              "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+          }
+
+          $runtimeDir = Join-Path $env:RUNNER_TEMP "dotnet-runtime"
+          New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
+          $installerPath = Join-Path $runtimeDir "dotnet-desktop-runtime-win-x64.exe"
+
+          Write-Host "Downloading .NET Desktop Runtime from $env:DOTNET_DESKTOP_RUNTIME_URL..."
+          Invoke-WebRequest -Uri $env:DOTNET_DESKTOP_RUNTIME_URL -OutFile $installerPath
+
+          $hash = (Get-FileHash -Path $installerPath -Algorithm SHA512).Hash.ToLowerInvariant()
+          if ($hash -ne $env:DOTNET_DESKTOP_RUNTIME_SHA512.ToLowerInvariant()) {
+              Write-Error "Runtime installer SHA-512 mismatch. Expected: $env:DOTNET_DESKTOP_RUNTIME_SHA512, got: $hash"
+              exit 1
+          }
+          Write-Host "Verified .NET Desktop Runtime SHA-512 successfully."
+          "RUNTIME_INSTALLER_PATH=$installerPath" >> $env:GITHUB_ENV
+
+      - name: Package artifacts
+        shell: pwsh
+        run: |
+          $pkgArgs = @("-Rid", "${{ matrix.rid }}")
+          if ('${{ needs.plan.outputs.archives }}' -eq 'true') { $pkgArgs += "-Archives" }
+          if ('${{ needs.plan.outputs.installers }}' -eq 'true') { $pkgArgs += "-Installers" }
+          if ($env:RUNTIME_INSTALLER_PATH) {
+              $pkgArgs += @("-RuntimeInstaller", $env:RUNTIME_INSTALLER_PATH)
+          }
+          & pwsh packaging/package.ps1 @pkgArgs
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: Historia-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download all packages
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA256 checksums
+        working-directory: dist
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes dist/*

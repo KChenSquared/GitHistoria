@@ -110,8 +110,16 @@ public sealed class ExternalControlHostTests : IAsyncLifetime
 
         public ControlRequest Build() => new()
         {
-            Verb = Verb, Repo = Repo, Cwd = Cwd, Rev = Rev, OtherRev = OtherRev, Path = Path,
-            Line = Line, Staged = Staged, Focus = Focus, CommitMessage = Message,
+            Verb = Verb,
+            Repo = Repo,
+            Cwd = Cwd,
+            Rev = Rev,
+            OtherRev = OtherRev,
+            Path = Path,
+            Line = Line,
+            Staged = Staged,
+            Focus = Focus,
+            CommitMessage = Message,
         };
     }
 

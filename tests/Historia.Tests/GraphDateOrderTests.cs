@@ -1,4 +1,5 @@
 namespace Historia.Tests;
+
 [Trait("tier", "git")]
 
 public sealed class GraphDateOrderTests : IAsyncDisposable

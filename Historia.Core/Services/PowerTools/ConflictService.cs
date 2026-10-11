@@ -372,88 +372,88 @@ public sealed partial class ConflictService(IGitCliService cli, ISettingsService
         switch (op)
         {
             case OperationState.Merging:
-            {
-                var mergeHeadFile = Path.Combine(gitDir, "MERGE_HEAD");
-                if (File.Exists(mergeHeadFile))
-                    opHeadSha = File.ReadAllText(mergeHeadFile).Trim();
+                {
+                    var mergeHeadFile = Path.Combine(gitDir, "MERGE_HEAD");
+                    if (File.Exists(mergeHeadFile))
+                        opHeadSha = File.ReadAllText(mergeHeadFile).Trim();
 
-                var mergeMsgFile = Path.Combine(gitDir, "MERGE_MSG");
-                var firstMsgLine = File.Exists(mergeMsgFile)
-                    ? (File.ReadLines(mergeMsgFile).FirstOrDefault() ?? string.Empty).Trim()
-                    : string.Empty;
+                    var mergeMsgFile = Path.Combine(gitDir, "MERGE_MSG");
+                    var firstMsgLine = File.Exists(mergeMsgFile)
+                        ? (File.ReadLines(mergeMsgFile).FirstOrDefault() ?? string.Empty).Trim()
+                        : string.Empty;
 
-                var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
-                theirsTitle = !string.IsNullOrEmpty(firstMsgLine) ? MergeSourceName(firstMsgLine) : (shortSha.Length > 0 ? shortSha : "Incoming merge");
-                break;
-            }
+                    var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+                    theirsTitle = !string.IsNullOrEmpty(firstMsgLine) ? MergeSourceName(firstMsgLine) : (shortSha.Length > 0 ? shortSha : "Incoming merge");
+                    break;
+                }
 
             case OperationState.Rebasing:
-            {
-                var rebaseMergeDir = Path.Combine(gitDir, "rebase-merge");
-                var rebaseApplyDir = Path.Combine(gitDir, "rebase-apply");
-                var rebaseDir = Directory.Exists(rebaseMergeDir) ? rebaseMergeDir : rebaseApplyDir;
-
-                var ontoPath = Path.Combine(rebaseDir, "onto");
-                ontoSha = File.Exists(ontoPath) ? File.ReadAllText(ontoPath).Trim() : string.Empty;
-
-                oursTitle = "the branch you are rebasing onto";
-
-                var headNamePath = Path.Combine(rebaseDir, "head-name");
-                var headName = File.Exists(headNamePath) ? File.ReadAllText(headNamePath).Trim() : string.Empty;
-                if (headName.StartsWith("refs/heads/", StringComparison.Ordinal))
-                    headName = headName[11..];
-
-                var stoppedShaPath = Path.Combine(rebaseDir, "stopped-sha");
-                var stoppedSha = File.Exists(stoppedShaPath) ? File.ReadAllText(stoppedShaPath).Trim() : string.Empty;
-                if (string.IsNullOrEmpty(stoppedSha))
                 {
-                    var rebaseHeadFile = Path.Combine(gitDir, "REBASE_HEAD");
-                    if (File.Exists(rebaseHeadFile))
-                        stoppedSha = File.ReadAllText(rebaseHeadFile).Trim();
-                }
-                opHeadSha = stoppedSha;
+                    var rebaseMergeDir = Path.Combine(gitDir, "rebase-merge");
+                    var rebaseApplyDir = Path.Combine(gitDir, "rebase-apply");
+                    var rebaseDir = Directory.Exists(rebaseMergeDir) ? rebaseMergeDir : rebaseApplyDir;
 
-                theirsTitle = !string.IsNullOrEmpty(headName) ? $"{headName} (replaying)" : "your commit being replayed";
+                    var ontoPath = Path.Combine(rebaseDir, "onto");
+                    ontoSha = File.Exists(ontoPath) ? File.ReadAllText(ontoPath).Trim() : string.Empty;
 
-                var msgNumFile = Path.Combine(rebaseMergeDir, "msgnum");
-                if (File.Exists(msgNumFile))
-                    msgNum = File.ReadAllText(msgNumFile).Trim();
-                else
-                {
-                    var nextFile = Path.Combine(rebaseApplyDir, "next");
-                    if (File.Exists(nextFile))
-                        msgNum = File.ReadAllText(nextFile).Trim();
+                    oursTitle = "the branch you are rebasing onto";
+
+                    var headNamePath = Path.Combine(rebaseDir, "head-name");
+                    var headName = File.Exists(headNamePath) ? File.ReadAllText(headNamePath).Trim() : string.Empty;
+                    if (headName.StartsWith("refs/heads/", StringComparison.Ordinal))
+                        headName = headName[11..];
+
+                    var stoppedShaPath = Path.Combine(rebaseDir, "stopped-sha");
+                    var stoppedSha = File.Exists(stoppedShaPath) ? File.ReadAllText(stoppedShaPath).Trim() : string.Empty;
+                    if (string.IsNullOrEmpty(stoppedSha))
+                    {
+                        var rebaseHeadFile = Path.Combine(gitDir, "REBASE_HEAD");
+                        if (File.Exists(rebaseHeadFile))
+                            stoppedSha = File.ReadAllText(rebaseHeadFile).Trim();
+                    }
+                    opHeadSha = stoppedSha;
+
+                    theirsTitle = !string.IsNullOrEmpty(headName) ? $"{headName} (replaying)" : "your commit being replayed";
+
+                    var msgNumFile = Path.Combine(rebaseMergeDir, "msgnum");
+                    if (File.Exists(msgNumFile))
+                        msgNum = File.ReadAllText(msgNumFile).Trim();
+                    else
+                    {
+                        var nextFile = Path.Combine(rebaseApplyDir, "next");
+                        if (File.Exists(nextFile))
+                            msgNum = File.ReadAllText(nextFile).Trim();
+                    }
+                    break;
                 }
-                break;
-            }
 
             case OperationState.CherryPicking:
-            {
-                var cherryHeadFile = Path.Combine(gitDir, "CHERRY_PICK_HEAD");
-                if (File.Exists(cherryHeadFile))
-                    opHeadSha = File.ReadAllText(cherryHeadFile).Trim();
+                {
+                    var cherryHeadFile = Path.Combine(gitDir, "CHERRY_PICK_HEAD");
+                    if (File.Exists(cherryHeadFile))
+                        opHeadSha = File.ReadAllText(cherryHeadFile).Trim();
 
-                var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
-                theirsTitle = $"Cherry-pick {shortSha}".Trim();
-                break;
-            }
+                    var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+                    theirsTitle = $"Cherry-pick {shortSha}".Trim();
+                    break;
+                }
 
             case OperationState.Reverting:
-            {
-                var revertHeadFile = Path.Combine(gitDir, "REVERT_HEAD");
-                if (File.Exists(revertHeadFile))
-                    opHeadSha = File.ReadAllText(revertHeadFile).Trim();
+                {
+                    var revertHeadFile = Path.Combine(gitDir, "REVERT_HEAD");
+                    if (File.Exists(revertHeadFile))
+                        opHeadSha = File.ReadAllText(revertHeadFile).Trim();
 
-                var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
-                theirsTitle = $"Revert {shortSha}".Trim();
-                break;
-            }
+                    var shortSha = opHeadSha.Length >= 7 ? opHeadSha[..7] : opHeadSha;
+                    theirsTitle = $"Revert {shortSha}".Trim();
+                    break;
+                }
 
             default:
-            {
-                theirsTitle = "Stashed / applied changes";
-                break;
-            }
+                {
+                    theirsTitle = "Stashed / applied changes";
+                    break;
+                }
         }
 
         var idsToLookup = new List<GitObjectId>();

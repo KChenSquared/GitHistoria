@@ -47,10 +47,10 @@ public static class GraphColumnDefaults
     public static double MinWidthFor(GraphColumnKind kind) => kind switch
     {
         GraphColumnKind.Refs => RefsStaticFloor,
-        GraphColumnKind.Sha  => 80,
+        GraphColumnKind.Sha => 80,
         // The Date cell carries a full "MM/DD/YYYY - HH:MM AM/PM (ago)" string.
         GraphColumnKind.Date => 200,
-        _                    => 150,
+        _ => 150,
     };
 
     public const double MaxWidth = 2000;

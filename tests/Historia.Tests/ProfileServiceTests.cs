@@ -1,4 +1,5 @@
 namespace Historia.Tests;
+
 [Trait("tier", "unit")]
 
 public class ProfileServiceTests : IDisposable
@@ -197,7 +198,9 @@ public class ProfileServiceTests : IDisposable
         var profiles = new ProfileService(_settings, vault, new NoGitCli());
         var p = await profiles.CreateProfileAsync(new GitProfileCreateRequest
         {
-            DisplayName = "Work", GitUserName = "Work", GitUserEmail = "w@example.com",
+            DisplayName = "Work",
+            GitUserName = "Work",
+            GitUserEmail = "w@example.com",
         });
 
         vault.Hold = true;
@@ -225,7 +228,10 @@ public class ProfileServiceTests : IDisposable
         var profiles = new ProfileService(_settings, vault, new NoGitCli());
         GitProfileCreateRequest Request() => new()
         {
-            DisplayName = "Same", GitUserName = "Same", GitUserEmail = "s@example.com", GitHubToken = "token",
+            DisplayName = "Same",
+            GitUserName = "Same",
+            GitUserEmail = "s@example.com",
+            GitHubToken = "token",
         };
 
         vault.Hold = true;

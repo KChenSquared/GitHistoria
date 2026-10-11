@@ -190,14 +190,19 @@ public sealed partial class CommitGraphControl
 
         var swatch = new Avalonia.Controls.Shapes.Rectangle
         {
-            Width = 4, Height = 14, RadiusX = 2, RadiusY = 2,
+            Width = 4,
+            Height = 14,
+            RadiusX = 2,
+            RadiusY = 2,
             Fill = new SolidColorBrush(ToColor(LaneRgb(colorIndex))),
             VerticalAlignment = VerticalAlignment.Center,
         };
         var kind = new TextBlock
         {
             Text = type == DecorationType.Tag ? "tag" : type == DecorationType.Head ? "head" : isLocal ? "local" : "remote",
-            FontSize = 10, Width = 44, VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 10,
+            Width = 44,
+            VerticalAlignment = VerticalAlignment.Center,
         };
         Dyn(kind, TextBlock.ForegroundProperty, "ColorTextMuted");
         var name = new TextBlock { Text = label, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
@@ -256,8 +261,12 @@ public sealed partial class CommitGraphControl
                 e.Handled = true;
                 ShowPillContextMenu(new GraphDecoration
                 {
-                    RowIndex = row, Type = type, Label = label,
-                    ColorIndex = colorIndex, IsLocal = isLocal, RemotesOrNull = remotes,
+                    RowIndex = row,
+                    Type = type,
+                    Label = label,
+                    ColorIndex = colorIndex,
+                    IsLocal = isLocal,
+                    RemotesOrNull = remotes,
                 });
                 return;
             }
