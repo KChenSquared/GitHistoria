@@ -483,22 +483,27 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
 
         // Prune and remote-branch delete are confirmed above, once; the same delegate serves the first
         // attempt and the Local-config retry so the retry never asks again.
-        Func<Task> execute = op switch
+        Func<Task> execute;
+        switch (op)
         {
-            RepoNetworkAction.Prune => async () =>
-            {
-                await repo.Gateway.PruneRemoteAsync(remote, progress, ct);
-                _notifications.Publish(NotificationSeverity.Success, $"Pruned {remote}.");
-            }
-            ,
-            RepoNetworkAction.DeleteRemoteBranch => async () =>
-            {
-                await repo.Gateway.DeleteRemoteBranchAsync(remote, request.RemoteBranch!, progress, ct);
-                _notifications.Publish(NotificationSeverity.Success, $"Deleted {remote}/{request.RemoteBranch}.");
-            }
-            ,
-            _ => () => ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct),
-        };
+            case RepoNetworkAction.Prune:
+                execute = async () =>
+                {
+                    await repo.Gateway.PruneRemoteAsync(remote, progress, ct);
+                    _notifications.Publish(NotificationSeverity.Success, $"Pruned {remote}.");
+                };
+                break;
+            case RepoNetworkAction.DeleteRemoteBranch:
+                execute = async () =>
+                {
+                    await repo.Gateway.DeleteRemoteBranchAsync(remote, request.RemoteBranch!, progress, ct);
+                    _notifications.Publish(NotificationSeverity.Success, $"Deleted {remote}/{request.RemoteBranch}.");
+                };
+                break;
+            default:
+                execute = () => ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct);
+                break;
+        }
         try
         {
             await EnsureActiveProfileFreshAsync(repo);
