@@ -13,6 +13,20 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Runs an external program with each argument passed as its own element, and throws on a
+# non-zero exit code. Native exit codes do not trip $ErrorActionPreference.
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @()
+    )
+
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FilePath exited with code $LASTEXITCODE"
+    }
+}
+
 if (-not $Archives -and -not $Installers) {
     Write-Error "At least one of -Archives or -Installers must be specified."
     exit 1
@@ -40,17 +54,22 @@ $publishArgs = @(
     "-o", $Staging
 )
 
-$publishProc = Start-Process -FilePath "dotnet" -ArgumentList $publishArgs -WorkingDirectory $RepoRoot -NoNewWindow -Wait -PassThru
-if ($publishProc.ExitCode -ne 0) {
-    Write-Error "dotnet publish failed with exit code $($publishProc.ExitCode)"
-    exit $publishProc.ExitCode
-}
+Invoke-Native -FilePath "dotnet" -Arguments $publishArgs
 
 # Resolve version via MinVer
-$rawVersion = (& dotnet msbuild (Join-Path $RepoRoot "Historia.App/Historia.App.csproj") -target:MinVer -getProperty:MinVerVersion -p:Configuration=Release)
+$appProject = Join-Path $RepoRoot "Historia.App/Historia.App.csproj"
+$rawVersion = (& dotnet msbuild $appProject -target:MinVer -getProperty:MinVerVersion -p:Configuration=Release)
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "dotnet msbuild failed with exit code $LASTEXITCODE while resolving MinVerVersion"
+    exit 1
+}
 $version = ($rawVersion -join "").Trim()
 if ([string]::IsNullOrWhiteSpace($version)) {
-    $rawVersion = (& dotnet msbuild (Join-Path $RepoRoot "Historia.App/Historia.App.csproj") -target:MinVer -getProperty:Version -p:Configuration=Release)
+    $rawVersion = (& dotnet msbuild $appProject -target:MinVer -getProperty:Version -p:Configuration=Release)
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "dotnet msbuild failed with exit code $LASTEXITCODE while resolving Version"
+        exit 1
+    }
     $version = ($rawVersion -join "").Trim()
 }
 if ([string]::IsNullOrWhiteSpace($version)) {
@@ -60,8 +79,8 @@ if ([string]::IsNullOrWhiteSpace($version)) {
 Write-Host "Packaging version: $version"
 
 # Assert staging invariants
-$isWindows = $Rid -eq 'win-x64'
-$cmdrExeName = if ($isWindows) { 'historia-cmdr.exe' } else { 'historia-cmdr' }
+$isWinRid = $Rid -eq 'win-x64'
+$cmdrExeName = if ($isWinRid) { 'historia-cmdr.exe' } else { 'historia-cmdr' }
 $cmdrPath = Join-Path $Staging $cmdrExeName
 $cmdrConfigPath = Join-Path $Staging 'historia-cmdr.runtimeconfig.json'
 $licensesPath = Join-Path $Staging 'third-party-licenses.md'
@@ -87,9 +106,11 @@ if (Test-Path $devModePath) {
 # Copy LICENSE into staging
 Copy-Item -Path (Join-Path $RepoRoot "LICENSE") -Destination $Staging -Force
 
+$expectedOutputs = @()
+
 # Create archives
 if ($Archives) {
-    if ($isWindows) {
+    if ($isWinRid) {
         $archivePath = Join-Path $ResolvedOutDir "Historia-$version-win-x64.zip"
         if (Test-Path $archivePath) { Remove-Item -Force $archivePath }
         Write-Host "Creating archive $archivePath..."
@@ -98,18 +119,14 @@ if ($Archives) {
         $archivePath = Join-Path $ResolvedOutDir "Historia-$version-$Rid.tar.gz"
         if (Test-Path $archivePath) { Remove-Item -Force $archivePath }
         Write-Host "Creating archive $archivePath..."
-        $tarArgs = @("-czf", $archivePath, "-C", $Staging, ".")
-        $tarProc = Start-Process -FilePath "tar" -ArgumentList $tarArgs -NoNewWindow -Wait -PassThru
-        if ($tarProc.ExitCode -ne 0) {
-            Write-Error "tar failed with exit code $($tarProc.ExitCode)"
-            exit $tarProc.ExitCode
-        }
+        Invoke-Native -FilePath "tar" -Arguments @("-czf", $archivePath, "-C", $Staging, ".")
     }
+    $expectedOutputs += $archivePath
 }
 
 # Create installers
 if ($Installers) {
-    if ($isWindows) {
+    if ($isWinRid) {
         $isccPath = $null
         $cmd = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
         if ($cmd) {
@@ -144,11 +161,8 @@ if ($Installers) {
 
         $isccArgs += $issFile
         Write-Host "Running Inno Setup compiler: $isccPath"
-        $isccProc = Start-Process -FilePath $isccPath -ArgumentList $isccArgs -NoNewWindow -Wait -PassThru
-        if ($isccProc.ExitCode -ne 0) {
-            Write-Error "Inno Setup compilation failed with exit code $($isccProc.ExitCode)"
-            exit $isccProc.ExitCode
-        }
+        Invoke-Native -FilePath $isccPath -Arguments $isccArgs
+        $expectedOutputs += (Join-Path $ResolvedOutDir "Historia-$version-win-x64-setup.exe")
     } elseif ($Rid -like 'osx-*') {
         $bundleStaging = Join-Path $RepoRoot "obj/packaging-bundle/$Rid"
         if (Test-Path $bundleStaging) { Remove-Item -Recurse -Force $bundleStaging }
@@ -159,7 +173,7 @@ if ($Installers) {
         New-Item -ItemType Directory -Path $resDir -Force | Out-Null
 
         Copy-Item -Path "$Staging/*" -Destination $macOSDir -Recurse -Force
-        & chmod +x (Join-Path $macOSDir "Historia") (Join-Path $macOSDir "historia-cmdr")
+        Invoke-Native -FilePath "chmod" -Arguments @("+x", (Join-Path $macOSDir "Historia"), (Join-Path $macOSDir "historia-cmdr"))
 
         $plistContent = Get-Content (Join-Path $RepoRoot "packaging/macos/Info.plist") -Raw
         $plistContent = $plistContent -replace '__VERSION__', $version
@@ -182,26 +196,27 @@ if ($Installers) {
             @{ Name = "icon_512x512@2x.png"; Size = 1024 }
         )
         foreach ($entry in $iconSizes) {
-            $sz = $entry.Size
+            $sz = [string]$entry.Size
             $outIcon = Join-Path $iconsetDir $entry.Name
-            & sips -z $sz $sz $masterIcon --out $outIcon | Out-Null
+            Invoke-Native -FilePath "sips" -Arguments @("-z", $sz, $sz, $masterIcon, "--out", $outIcon) | Out-Null
         }
-        & iconutil -c icns $iconsetDir -o (Join-Path $resDir "Historia.icns")
+        Invoke-Native -FilePath "iconutil" -Arguments @("-c", "icns", $iconsetDir, "-o", (Join-Path $resDir "Historia.icns"))
 
         # Ad-hoc sign app bundle
         Write-Host "Ad-hoc signing Historia.app..."
-        & codesign --force --deep --sign - $appDir
+        Invoke-Native -FilePath "codesign" -Arguments @("--force", "--deep", "--sign", "-", $appDir)
 
         # Create Applications symlink
         $dmgFolder = Join-Path $bundleStaging "dmg-root"
         New-Item -ItemType Directory -Path $dmgFolder -Force | Out-Null
         Move-Item -Path $appDir -Destination $dmgFolder
-        & ln -s /Applications (Join-Path $dmgFolder "Applications")
+        Invoke-Native -FilePath "ln" -Arguments @("-s", "/Applications", (Join-Path $dmgFolder "Applications"))
 
         $dmgPath = Join-Path $ResolvedOutDir "Historia-$version-$Rid.dmg"
         if (Test-Path $dmgPath) { Remove-Item -Force $dmgPath }
         Write-Host "Creating DMG $dmgPath..."
-        & hdiutil create -volname Historia -srcfolder $dmgFolder -ov -format UDZO $dmgPath
+        Invoke-Native -FilePath "hdiutil" -Arguments @("create", "-volname", "Historia", "-srcfolder", $dmgFolder, "-ov", "-format", "UDZO", $dmgPath)
+        $expectedOutputs += $dmgPath
     } elseif ($Rid -eq 'linux-x64') {
         $debVer = $version -replace '-', '~'
         $debStaging = Join-Path $RepoRoot "obj/packaging-deb"
@@ -218,10 +233,10 @@ if ($Installers) {
         New-Item -ItemType Directory -Path $debianDir -Force | Out-Null
 
         Copy-Item -Path "$Staging/*" -Destination $optDir -Recurse -Force
-        & chmod +x (Join-Path $optDir "Historia") (Join-Path $optDir "historia-cmdr")
+        Invoke-Native -FilePath "chmod" -Arguments @("+x", (Join-Path $optDir "Historia"), (Join-Path $optDir "historia-cmdr"))
 
-        & ln -s /opt/historia/Historia (Join-Path $binDir "historia")
-        & ln -s /opt/historia/historia-cmdr (Join-Path $binDir "historia-cmdr")
+        Invoke-Native -FilePath "ln" -Arguments @("-s", "/opt/historia/Historia", (Join-Path $binDir "historia"))
+        Invoke-Native -FilePath "ln" -Arguments @("-s", "/opt/historia/historia-cmdr", (Join-Path $binDir "historia-cmdr"))
 
         Copy-Item -Path (Join-Path $RepoRoot "packaging/linux/historia.desktop") -Destination (Join-Path $appsDir "historia.desktop") -Force
 
@@ -242,8 +257,15 @@ if ($Installers) {
         $debPath = Join-Path $ResolvedOutDir "historia_${debVer}_amd64.deb"
         if (Test-Path $debPath) { Remove-Item -Force $debPath }
         Write-Host "Building Debian package $debPath..."
-        & dpkg-deb --build --root-owner-group $debStaging $debPath
+        Invoke-Native -FilePath "dpkg-deb" -Arguments @("--build", "--root-owner-group", $debStaging, $debPath)
+        $expectedOutputs += $debPath
     }
+}
+
+$missingOutputs = @($expectedOutputs | Where-Object { -not (Test-Path $_) })
+if ($missingOutputs.Count -gt 0) {
+    Write-Error ("Packaging did not produce: " + ($missingOutputs -join ", "))
+    exit 1
 }
 
 Write-Host "Packaging complete for $Rid."
