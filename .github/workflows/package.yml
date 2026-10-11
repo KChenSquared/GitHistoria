@@ -79,7 +79,7 @@ jobs:
               exit 1
           }
 
-          $matrixJson = $entries | ConvertTo-Json -Compress
+          $matrixJson = ConvertTo-Json -InputObject @($entries) -Compress
           Write-Output "matrix=$matrixJson" >> $env:GITHUB_OUTPUT
           Write-Output "archives=$archives" >> $env:GITHUB_OUTPUT
           Write-Output "installers=$installers" >> $env:GITHUB_OUTPUT
@@ -113,7 +113,7 @@ jobs:
 
           $runtimeDir = Join-Path $env:RUNNER_TEMP "dotnet-runtime"
           New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
-          $installerPath = Join-Path $runtimeDir "windowsdesktop-runtime-win-x64.exe"
+          $installerPath = Join-Path $runtimeDir "dotnet-desktop-runtime-win-x64.exe"
 
           Write-Host "Downloading .NET Desktop Runtime from $env:DOTNET_DESKTOP_RUNTIME_URL..."
           Invoke-WebRequest -Uri $env:DOTNET_DESKTOP_RUNTIME_URL -OutFile $installerPath
@@ -129,13 +129,13 @@ jobs:
       - name: Package artifacts
         shell: pwsh
         run: |
-          $args = @("-Rid", "${{ matrix.rid }}")
-          if ('${{ needs.plan.outputs.archives }}' -eq 'true') { $args += "-Archives" }
-          if ('${{ needs.plan.outputs.installers }}' -eq 'true') { $args += "-Installers" }
+          $pkgArgs = @("-Rid", "${{ matrix.rid }}")
+          if ('${{ needs.plan.outputs.archives }}' -eq 'true') { $pkgArgs += "-Archives" }
+          if ('${{ needs.plan.outputs.installers }}' -eq 'true') { $pkgArgs += "-Installers" }
           if ($env:RUNTIME_INSTALLER_PATH) {
-              $args += @("-RuntimeInstaller", $env:RUNTIME_INSTALLER_PATH)
+              $pkgArgs += @("-RuntimeInstaller", $env:RUNTIME_INSTALLER_PATH)
           }
-          & pwsh packaging/package.ps1 @args
+          & pwsh packaging/package.ps1 @pkgArgs
 
       - name: Upload artifacts
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
