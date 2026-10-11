@@ -44,8 +44,13 @@ milestones that own disjoint files, automated gates, and design docs updated las
 
 ## Commits
 
-Conventional Commits, subject under 72 characters, one commit per milestone. Never push; the
-maintainer pushes.
+Conventional Commits, subject under 72 characters, one commit per milestone. Local sessions never
+push; the maintainer pushes.
+
+Cloud sessions (`CLAUDE_CODE_REMOTE=true`) may push, but only to a new branch they create for their
+own work. Never push to, merge into, rebase or force-push the default branch (`main`), and never
+merge a pull request or enable auto-merge. Opening a pull request from that branch is fine; the
+maintainer merges.
 
 ## Reviewing your work
 
