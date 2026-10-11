@@ -154,4 +154,120 @@ public sealed class RepositoryInfoProjectionTests : IAsyncDisposable
         var info = await ctx.Gateway.GetRepositoryInfoAsync();
         Assert.True(info.HasCommitHooks);
     }
+
+    [Fact]
+    public async Task Detached_head_reports_head_commit_id()
+    {
+        string headSha = "";
+        using var builder = TestRepositoryBuilder.FromTemplate("repoinfo-detached-commit-id", b =>
+        {
+            b.WriteFile("f.txt", "1").Stage().Commit("initial");
+            b.WriteFile("f.txt", "2").Stage().Commit("second");
+            b.Git("checkout", "HEAD~1");
+            headSha = b.HeadSha;
+        });
+
+        await using var ctx = _host.Open(builder.Path);
+        var info = await ctx.Gateway.GetRepositoryInfoAsync();
+
+        Assert.True(info.IsHeadDetached);
+        Assert.Equal(new GitObjectId(headSha), info.HeadCommitId);
+    }
+
+    [Fact]
+    public async Task Attached_head_reports_head_commit_id()
+    {
+        string headSha = "";
+        using var builder = TestRepositoryBuilder.FromTemplate("repoinfo-attached-commit-id", b =>
+        {
+            b.WriteFile("f.txt", "1").Stage().Commit("initial");
+            headSha = b.HeadSha;
+        });
+
+        await using var ctx = _host.Open(builder.Path);
+        var info = await ctx.Gateway.GetRepositoryInfoAsync();
+
+        Assert.False(info.IsHeadDetached);
+        Assert.Equal(new GitObjectId(headSha), info.HeadCommitId);
+    }
+
+    [Fact]
+    public async Task Unborn_head_has_no_head_commit_id()
+    {
+        using var builder = TestRepositoryBuilder.Create();
+
+        await using var ctx = _host.Open(builder.Path);
+        var info = await ctx.Gateway.GetRepositoryInfoAsync();
+
+        Assert.True(info.IsHeadUnborn);
+        Assert.Null(info.HeadCommitId);
+    }
+
+    [Fact]
+    public async Task Submodule_after_update_is_detached()
+    {
+        using var inner = TestRepositoryBuilder.Create();
+        inner.WriteFile("sub.txt", "sub1").Stage().Commit("sub initial");
+
+        using var super = TestRepositoryBuilder.Create();
+        super.Git("config", "protocol.file.allow", "always");
+        super.WriteFile("readme.txt", "super").Stage().Commit("super initial");
+        super.Git(
+            new Dictionary<string, string> { ["GIT_ALLOW_PROTOCOL"] = "file" },
+            "-c", "protocol.file.allow=always", "submodule", "add", inner.Path.Replace('\\', '/'), "mysub");
+        super.Stage().Commit("add submodule");
+
+        var cloneDir = TestScratch.NewDirectory("historia-submodule-clone-");
+        super.Git(
+            new Dictionary<string, string> { ["GIT_ALLOW_PROTOCOL"] = "file" },
+            "-c", "protocol.file.allow=always", "clone", "--recurse-submodules", super.Path, cloneDir);
+
+        var lsTree = super.Git("ls-tree", "HEAD", "mysub").Trim();
+        var parts = lsTree.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        var registeredSha = parts[2];
+
+        var subPath = Path.Combine(cloneDir, "mysub");
+        await using var subCtx = _host.Open(subPath);
+        var info = await subCtx.Gateway.GetRepositoryInfoAsync();
+
+        Assert.True(info.IsHeadDetached);
+        Assert.Equal(new GitObjectId(registeredSha), info.HeadCommitId);
+        var normGitDir = info.GitDirectory.Replace('\\', '/');
+        Assert.EndsWith(".git/modules/mysub", normGitDir, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Submodule_in_linked_worktree_is_detached()
+    {
+        using var inner = TestRepositoryBuilder.Create();
+        inner.WriteFile("sub.txt", "sub1").Stage().Commit("sub initial");
+
+        using var super = TestRepositoryBuilder.Create();
+        super.Git("config", "protocol.file.allow", "always");
+        super.WriteFile("readme.txt", "super").Stage().Commit("super initial");
+        super.Git(
+            new Dictionary<string, string> { ["GIT_ALLOW_PROTOCOL"] = "file" },
+            "-c", "protocol.file.allow=always", "submodule", "add", inner.Path.Replace('\\', '/'), "mysub");
+        super.Stage().Commit("add submodule");
+
+        var wtDir = TestScratch.NewDirectory("historia-super-wt-");
+        super.Git("worktree", "add", wtDir, "HEAD");
+        super.Git(
+            new Dictionary<string, string> { ["GIT_ALLOW_PROTOCOL"] = "file" },
+            "-C", wtDir, "-c", "protocol.file.allow=always", "submodule", "update", "--init");
+
+        var lsTree = super.Git("ls-tree", "HEAD", "mysub").Trim();
+        var parts = lsTree.Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+        var registeredSha = parts[2];
+
+        var subPath = Path.Combine(wtDir, "mysub");
+        await using var subCtx = _host.Open(subPath);
+        var info = await subCtx.Gateway.GetRepositoryInfoAsync();
+
+        Assert.True(info.IsHeadDetached);
+        Assert.Equal(new GitObjectId(registeredSha), info.HeadCommitId);
+        var normGitDir = info.GitDirectory.Replace('\\', '/');
+        Assert.Contains("/worktrees/", normGitDir, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith("/modules/mysub", normGitDir, StringComparison.OrdinalIgnoreCase);
+    }
 }

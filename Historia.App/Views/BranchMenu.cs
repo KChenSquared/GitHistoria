@@ -193,7 +193,7 @@ internal static class BranchMenu
             }));
         }
 
-        if (!t.IsLocal && t.RemoteAlias is { Length: > 0 } alias && t.Name != "HEAD")
+        if (!t.IsLocal && t.RemoteAlias is { Length: > 0 } alias)
         {
             items.Add(MenuLeaf("Delete…", () =>
             {

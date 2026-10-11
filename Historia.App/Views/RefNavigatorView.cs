@@ -339,6 +339,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
         var currentCanonical = repo.State.CurrentBranch?.CanonicalName;
 
         // ── Local branches ──
+        var repoInfo = repo.State.Repository;
         var localBody = Section($"Local Branches ({local.Count})", _localOpen,
             () => { _localOpen = !_localOpen; Rebuild(); },
             filter: () =>
@@ -352,6 +353,18 @@ public sealed class RefNavigatorView : UserControl, IDisposable
             filterBox: _localFilterBox);
         if (localBody is not null)
         {
+            if (repoInfo.IsHeadDetached && repoInfo.HeadCommitId is { } head)
+            {
+                localBody.Children.Add(Leaf(
+                    $"HEAD (detached at {head.ToShortString(7)})",
+                    depth: 0,
+                    fgKey: "ColorAccent",
+                    select: () => Select(head),
+                    action: null,
+                    current: true,
+                    tooltip: head.ToString()));
+            }
+
             if (_localFilterOpen && !string.IsNullOrWhiteSpace(_localFilterBox?.Text))
             {
                 var query = FuzzyScorer.PrepareQuery(_localFilterBox.Text);

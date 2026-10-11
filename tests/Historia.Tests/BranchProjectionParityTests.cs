@@ -29,7 +29,9 @@ public sealed class BranchProjectionParityTests : IAsyncDisposable
         var actual = await ctx.Gateway.GetBranchesAsync();
 
         using var repo = new Repository(builder.Path);
+        // Historia deliberately omits the remote HEAD pointer that LibGit2Sharp lists.
         var expected = repo.Branches
+            .Where(b => !(b.IsRemote && b.CanonicalName.EndsWith("/HEAD", StringComparison.Ordinal)))
             .Select(b => new BranchInfo
             {
                 Name = b.FriendlyName,
@@ -141,7 +143,9 @@ public sealed class BranchProjectionParityTests : IAsyncDisposable
         var actual = await ctx.Gateway.GetBranchesAsync();
 
         using var repo = new Repository(builder.Path);
+        // Historia deliberately omits the remote HEAD pointer that LibGit2Sharp lists.
         var expected = repo.Branches
+            .Where(b => !(b.IsRemote && b.CanonicalName.EndsWith("/HEAD", StringComparison.Ordinal)))
             .Select(b => new BranchInfo
             {
                 Name = b.FriendlyName,
@@ -180,6 +184,58 @@ public sealed class BranchProjectionParityTests : IAsyncDisposable
         var after = await ctx.Gateway.GetBranchesAsync();
         var mainAfter = Assert.Single(after, b => b.Name == "main" && !b.IsRemote);
         Assert.Equal("origin/main", mainAfter.UpstreamName);
+    }
+
+    [Fact]
+    public async Task Remote_HEAD_symref_is_not_a_branch()
+    {
+        using var builder = TestRepositoryBuilder.FromTemplate("branch-parity-remote-head", b =>
+        {
+            b.WriteFile("f.txt", "1").Stage().Commit("initial");
+            b.Git("remote", "add", "origin", b.Path);
+            b.Git("fetch", "origin");
+            b.Git("remote", "set-head", "origin", "main");
+        });
+
+        await using var ctx = _host.Open(builder.Path);
+        var branches = await ctx.Gateway.GetBranchesAsync();
+
+        Assert.DoesNotContain(branches, b => b.CanonicalName == "refs/remotes/origin/HEAD");
+        Assert.Contains(branches, b => b.CanonicalName == "refs/remotes/origin/main");
+    }
+
+    [Fact]
+    public async Task Remote_HEAD_under_slashed_remote_is_not_a_branch()
+    {
+        using var builder = TestRepositoryBuilder.FromTemplate("branch-parity-remote-head-slash", b =>
+        {
+            b.WriteFile("f.txt", "1").Stage().Commit("initial");
+            b.Git("remote", "add", "team/infra", b.Path);
+            b.Git("fetch", "team/infra");
+            b.Git("remote", "set-head", "team/infra", "main");
+        });
+
+        await using var ctx = _host.Open(builder.Path);
+        var branches = await ctx.Gateway.GetBranchesAsync();
+
+        Assert.DoesNotContain(branches, b => b.CanonicalName == "refs/remotes/team/infra/HEAD");
+        Assert.DoesNotContain(branches, b => b.Name == "team/infra/HEAD");
+        Assert.Contains(branches, b => b.CanonicalName == "refs/remotes/team/infra/main");
+    }
+
+    [Fact]
+    public async Task Orphan_remote_HEAD_is_not_a_branch()
+    {
+        using var builder = TestRepositoryBuilder.FromTemplate("branch-parity-orphan-remote-head", b =>
+        {
+            b.WriteFile("f.txt", "1").Stage().Commit("initial");
+            b.Git("update-ref", "refs/remotes/orphan/HEAD", "HEAD");
+        });
+
+        await using var ctx = _host.Open(builder.Path);
+        var branches = await ctx.Gateway.GetBranchesAsync();
+
+        Assert.DoesNotContain(branches, b => b.CanonicalName == "refs/remotes/orphan/HEAD");
     }
 
     private static string? SafeRemoteName(Branch branch)

@@ -3,7 +3,7 @@ namespace HistoriaApp.Tests;
 /// <summary>
 /// The sidebar's REMOTES context menu: remote branch rows offer Delete… between Merge and Copy branch name,
 /// clicking it requests a targeted DeleteRemoteBranch network action on the bus, slash-named remotes pass
-/// the short branch name, origin/HEAD and unknown aliases have no Delete…, and local rows are unchanged.
+/// the short branch name, unknown aliases have no Delete…, and local rows are unchanged.
 /// </summary>
 [Trait("tier", "ui")]
 public sealed class SidebarRemoteBranchMenuTests
@@ -234,27 +234,6 @@ public sealed class SidebarRemoteBranchMenuTests
         Assert.Null(req.Branch);
         Assert.Equal("feat", req.RemoteBranch);
         Assert.Same(ctx, req.Repo);
-    }
-
-    [AvaloniaFact]
-    public async Task Remote_HEAD_row_has_no_delete()
-    {
-        using var fixture = new RepoFixture();
-        await using var h = new Harness();
-        var ctx = await h.OpenAsync(fixture.Path);
-
-        var target = new BranchMenu.Target(
-            Name: "HEAD",
-            CopyName: "origin/HEAD",
-            TrackingRef: "origin/HEAD",
-            IsLocal: false,
-            TipSha: "1234567890abcdef",
-            CurrentBranch: "main",
-            CounterpartRef: null,
-            RemoteAlias: "origin");
-
-        var items = BranchMenu.Build(target, ctx, h.Dialogs, h.Notify, h.Stash, h.Bus, _ => { });
-        Assert.DoesNotContain(items.OfType<MenuItem>(), m => m.Header?.ToString() == "Delete…");
     }
 
     [AvaloniaFact]

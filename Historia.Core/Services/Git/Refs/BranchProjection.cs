@@ -6,6 +6,9 @@ namespace Historia.Services.Git;
 /// </summary>
 public static class BranchProjection
 {
+    public static bool IsRemoteHead(BranchInfo b) =>
+        b.IsRemote && b.RemoteName is { } r && string.Equals(b.Name, r + "/HEAD", StringComparison.Ordinal);
+
     public static IReadOnlyList<BranchInfo> Project(RefSnapshot snapshot, IReadOnlyList<RemoteInfo> remotes)
     {
         var remoteNames = remotes
@@ -36,12 +39,24 @@ public static class BranchProjection
             {
                 var rest = name["refs/remotes/".Length..];
                 var remote = Array.Find(remoteNames, rn => rest.StartsWith(rn + "/", StringComparison.Ordinal));
-                if (remote is null)
+                string? shortName = null;
+                if (remote is not null)
+                {
+                    shortName = rest[(remote.Length + 1)..];
+                }
+                else
                 {
                     var slash = rest.IndexOf('/');
                     if (slash >= 0)
+                    {
                         remote = rest[..slash];
+                        shortName = rest[(slash + 1)..];
+                    }
                 }
+
+                // refs/remotes/<remote>/HEAD is a symbolic pointer to the remote's default branch, not a branch.
+                if (string.Equals(shortName, "HEAD", StringComparison.Ordinal))
+                    continue;
 
                 result.Add(new BranchInfo
                 {

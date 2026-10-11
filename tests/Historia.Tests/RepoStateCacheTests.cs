@@ -357,4 +357,55 @@ public sealed class RepoStateCacheTests : IDisposable
         var snapshot = cache.TryLoad(repoPath);
         Assert.Null(snapshot);
     }
+
+    [Fact]
+    public void Cached_remote_HEAD_entry_is_dropped_on_load()
+    {
+        var settings = new FakeSettingsService(new AppSettings { PersistRepoCache = true });
+        var cache = new RepoStateCache(settings);
+        const string repoPath = "C:/test-repo-cached-remote-head";
+
+        var oid1 = new GitObjectId("1111111111111111111111111111111111111111");
+        var oid2 = new GitObjectId("2222222222222222222222222222222222222222");
+
+        var branches = new List<BranchInfo>
+        {
+            new()
+            {
+                Name = "main",
+                CanonicalName = "refs/heads/main",
+                IsRemote = false,
+                IsCurrent = true,
+                TipCommitId = oid1,
+            },
+            new()
+            {
+                Name = "origin/HEAD",
+                CanonicalName = "refs/remotes/origin/HEAD",
+                IsRemote = true,
+                IsCurrent = false,
+                RemoteName = "origin",
+                TipCommitId = oid1,
+            },
+            new()
+            {
+                Name = "origin/main",
+                CanonicalName = "refs/remotes/origin/main",
+                IsRemote = true,
+                IsCurrent = false,
+                RemoteName = "origin",
+                TipCommitId = oid2,
+            },
+        };
+
+        cache.SaveRefs(repoPath, branches, [], []);
+
+        var snapshot = cache.TryLoad(repoPath);
+        Assert.NotNull(snapshot);
+        Assert.NotNull(snapshot.Branches);
+        Assert.Equal(2, snapshot.Branches.Count);
+        Assert.DoesNotContain(snapshot.Branches, b => b.CanonicalName == "refs/remotes/origin/HEAD");
+        Assert.Contains(snapshot.Branches, b => b.CanonicalName == "refs/heads/main");
+        Assert.Contains(snapshot.Branches, b => b.CanonicalName == "refs/remotes/origin/main");
+    }
 }

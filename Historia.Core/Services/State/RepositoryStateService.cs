@@ -17,6 +17,9 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     private IReadOnlyList<TagInfo> _tags = [];
     private IReadOnlyList<RemoteInfo> _remotes = [];
     private long _stashStamp;
+    // The HEAD identity the last refs raise was computed against. The status refresh also writes
+    // _repository, so comparing against that would hide a HEAD move it saw first.
+    private (bool Detached, bool Unborn, GitObjectId? Id) _refsHead;
     private GitObjectId? _selectedCommitId;
     private IReadOnlyList<string> _selectedPaths = [];
     private GitProfile? _activeProfile;
@@ -363,11 +366,13 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         var stamp = RefStateToken.StashStamp(_context.GitDirectory);
         var branches = await _gateway.GetBranchesAsync(ct).ConfigureAwait(false);
         var remotes = await _gateway.GetRemotesAsync(ct).ConfigureAwait(false);
+        var info = await _gateway.GetRepositoryInfoAsync(ct).ConfigureAwait(false);
 
         markDataRead();
 
         bool branchesOrRemotesChanged;
         bool stashChanged;
+        bool headChanged;
         IReadOnlyList<TagInfo> existingTags;
         lock (_sync)
         {
@@ -378,12 +383,18 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             _stashStamp = stamp;
             _branches = branches;
             _remotes = remotes;
+
+            var head = (info.IsHeadDetached, info.IsHeadUnborn, info.HeadCommitId);
+            headChanged = head != _refsHead;
+            _refsHead = head;
+            _repository = info;
+
             existingTags = _tags;
         }
 
         // publish branches and remotes first so the sidebar populates in ~57ms rather than waiting
         // seconds on thousands of tags to project.
-        if (branchesOrRemotesChanged || stashChanged)
+        if (branchesOrRemotesChanged || stashChanged || headChanged)
             Raise(() => RefsChanged?.Invoke(this, new RefsChangedEventArgs(branches, existingTags, remotes) { StashStamp = stamp }));
 
         var tags = await _gateway.GetTagsAsync(ct).ConfigureAwait(false);

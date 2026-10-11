@@ -58,6 +58,9 @@ public sealed record RepositoryInfo
     public required bool IsHeadUnborn { get; init; }
     public required string? CurrentBranchName { get; init; }
 
+    /// <summary>The commit HEAD points at; null when unborn.</summary>
+    public GitObjectId? HeadCommitId { get; init; }
+
     /// <summary>
     /// True when an executable <c>pre-commit</c> or <c>commit-msg</c> hook is present, so the
     /// commit must route through the CLI. Checked per status refresh and cached.
