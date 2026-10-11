@@ -73,7 +73,7 @@ public class GitExecutableLocatorTests
     [Fact]
     public void FindOnPath_returns_the_first_directory_holding_the_executable()
     {
-        var root = Path.Combine(Path.GetTempPath(), "historia-locator-" + Guid.NewGuid().ToString("N"));
+        var root = TestScratch.NewDirectory("historia-locator-");
         var empty = Path.Combine(root, "empty");
         var first = Path.Combine(root, "first");
         var second = Path.Combine(root, "second");
@@ -92,7 +92,7 @@ public class GitExecutableLocatorTests
         }
         finally
         {
-            Directory.Delete(root, recursive: true);
+            TestScratch.Delete(root);
         }
     }
 
