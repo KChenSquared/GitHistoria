@@ -49,7 +49,7 @@ public sealed class CmdrPathServiceTests
         public void WriteProcessPath(string value) => ProcessPath = value;
     }
 
-    [Fact]
+    [WindowsFact]
     public void Status_is_Unavailable_when_our_folder_has_no_exe()
     {
         var store = new FakeEnvironmentStore();
@@ -68,7 +68,7 @@ public sealed class CmdrPathServiceTests
         Assert.IsType<CmdrPathStatus.Unavailable>(status);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Status_is_Current_when_ours_is_the_only_cmdr_entry()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -94,7 +94,7 @@ public sealed class CmdrPathServiceTests
         Assert.IsType<CmdrPathStatus.Current>(status);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Apply_writes_ExpandString_back_as_ExpandString_and_String_as_String()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -145,7 +145,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal($@"C:\Tools;{ourFolder}", storeString.UserPath);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Missing_value_is_created_as_ExpandString()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -175,7 +175,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal(RegistryValueKind.ExpandString, store.UserKind);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Broadcast_once_per_write()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -203,7 +203,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal(1, store.BroadcastCount);
     }
 
-    [Fact]
+    [WindowsFact]
     public void No_write_and_Changed_when_store_value_changed_after_preview()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -235,7 +235,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal(0, store.BroadcastCount);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Failed_no_throw_when_store_throws_UnauthorizedAccessException()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -264,7 +264,7 @@ public sealed class CmdrPathServiceTests
         Assert.Contains("denied", failed.Message);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Machine_copies_listed_and_never_written()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -295,7 +295,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal($@"C:\Windows;{machineCmdrFolder}", store.MachinePath);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Backup_is_saved_before_write_and_holds_pre_write_value()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -335,7 +335,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal(RegistryValueKind.ExpandString, kind);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Throwing_saveBackup_returns_Failed_and_no_registry_write()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -365,7 +365,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal(0, store.BroadcastCount);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Written_carries_backup_path()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -394,7 +394,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal(expectedPath, written.BackupPath);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Status_is_Unavailable_when_user_path_read_throws()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -419,7 +419,7 @@ public sealed class CmdrPathServiceTests
         Assert.IsType<CmdrPathStatus.Unavailable>(status);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Machine_path_read_failure_gives_no_machine_copies()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -445,7 +445,7 @@ public sealed class CmdrPathServiceTests
         Assert.Empty(status.MachineCopies);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Apply_returns_Failed_when_user_path_read_throws()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -475,7 +475,7 @@ public sealed class CmdrPathServiceTests
         Assert.Contains("Registry read denied", failed.Message);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Apply_twice_with_the_same_preview_writes_once_and_then_reports_AlreadyCurrent()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -516,7 +516,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal(1, store.BroadcastCount);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Trailing_separator_on_our_folder_is_not_written()
     {
         var ourFolder = @"C:\HistoriaApp\";
@@ -541,7 +541,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal(@"C:\Tools;C:\HistoriaApp", preview.NewValue);
     }
 
-    [Fact]
+    [WindowsFact]
     public void NeedsUpdate_carries_our_folder_and_backup_folder()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -568,7 +568,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal(backupFolder, update.BackupFolder);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Apply_gives_the_process_path_the_same_replacement()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -599,7 +599,7 @@ public sealed class CmdrPathServiceTests
         Assert.Equal(@"C:\Windows;C:\HistoriaApp;C:\Tools", store.ProcessPath);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Apply_reports_Changed_when_an_entry_appears_that_the_same_result_would_remove()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -633,7 +633,7 @@ public sealed class CmdrPathServiceTests
         Assert.Empty(store.Writes);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Apply_reports_Changed_when_a_folder_gains_historia_cmdr_after_preview()
     {
         var ourFolder = @"C:\HistoriaApp";
@@ -664,7 +664,7 @@ public sealed class CmdrPathServiceTests
         Assert.Empty(store.Writes);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Our_own_folder_on_the_machine_path_is_not_a_machine_copy()
     {
         var ourFolder = @"C:\HistoriaApp";

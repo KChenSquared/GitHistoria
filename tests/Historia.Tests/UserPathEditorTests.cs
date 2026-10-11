@@ -2,7 +2,7 @@ namespace Historia.Tests;
 
 public sealed class UserPathEditorTests
 {
-    [Fact]
+    [WindowsFact]
     public void Appends_when_no_cmdr_entry()
     {
         var raw = @"C:\Tools;C:\Bin";
@@ -16,7 +16,7 @@ public sealed class UserPathEditorTests
         Assert.False(plan.TooLong);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Replaces_old_cmdr_folder_in_place_and_keeps_neighbours_order()
     {
         var raw = @"C:\Tools;C:\OldCmdr;C:\Bin";
@@ -29,7 +29,7 @@ public sealed class UserPathEditorTests
         Assert.False(plan.IsNoOp);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Removes_second_cmdr_folder_and_duplicate_of_our_folder()
     {
         var raw = @"C:\Old1;C:\Tools;C:\Old2;C:\NewCmdr;C:\Bin";
@@ -42,7 +42,7 @@ public sealed class UserPathEditorTests
         Assert.False(plan.IsNoOp);
     }
 
-    [Fact]
+    [WindowsFact]
     public void NoOp_when_ours_is_the_only_one()
     {
         var raw = @"C:\Tools;C:\NewCmdr;C:\Bin";
@@ -55,7 +55,7 @@ public sealed class UserPathEditorTests
         Assert.True(plan.IsNoOp);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Folder_holding_cmdr_without_historia_is_left_in_place()
     {
         var raw = @"C:\StandaloneCmdr;C:\Bin";
@@ -69,7 +69,7 @@ public sealed class UserPathEditorTests
         Assert.Empty(plan.Removed);
     }
 
-    [Fact]
+    [WindowsFact]
     public void LocalAppData_variable_survives_verbatim()
     {
         var raw = @"%LOCALAPPDATA%\Foo;C:\OldCmdr;%USERPROFILE%\Bar";
@@ -81,7 +81,7 @@ public sealed class UserPathEditorTests
         Assert.Equal([@"C:\OldCmdr"], plan.Removed);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Quoted_entry_and_trailing_slash_compare_equal()
     {
         var a = "\"C:\\Tools\\\"";
@@ -91,7 +91,7 @@ public sealed class UserPathEditorTests
         Assert.True(UserPathEditor.SameFolder(b, a));
     }
 
-    [Fact]
+    [WindowsFact]
     public void Empty_segments_dropped()
     {
         var raw = @";;C:\Tools;;C:\Bin;;;";
@@ -103,7 +103,7 @@ public sealed class UserPathEditorTests
         Assert.Equal(@"C:\Tools;C:\Bin;C:\NewCmdr", plan.NewValue);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Entry_with_invalid_path_characters_is_copied_never_matched()
     {
         var raw = @"C:\Tools;>invalid<|path;C:\Bin";
@@ -115,7 +115,7 @@ public sealed class UserPathEditorTests
         Assert.Equal(@"C:\Tools;>invalid<|path;C:\Bin;C:\NewCmdr", plan.NewValue);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Over_length_value_reports_TooLong()
     {
         var repeated = string.Join(';', Enumerable.Range(0, 1500).Select(i => $@"C:\VeryLongPathSegmentNumber{i:D4}\SubFolder"));
@@ -125,7 +125,7 @@ public sealed class UserPathEditorTests
         Assert.True(plan.TooLong);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Our_folder_written_as_a_variable_keeps_its_text_when_another_cmdr_entry_is_removed()
     {
         var raw = @"%LOCALAPPDATA%\HistoriaX;C:\Old";
@@ -138,7 +138,7 @@ public sealed class UserPathEditorTests
         Assert.False(plan.IsNoOp);
     }
 
-    [Fact]
+    [WindowsFact]
     public void Relative_and_unresolved_entries_are_copied_never_matched()
     {
         var raw = @".;bin;%HISTORIA_UNDEFINED_VAR%\x";
@@ -153,7 +153,7 @@ public sealed class UserPathEditorTests
         Assert.Empty(plan.Removed);
     }
 
-    [Fact]
+    [WindowsFact]
     public void ExpandEntry_returns_null_for_relative_and_unquoted_full_path_for_quoted()
     {
         Assert.Null(UserPathEditor.ExpandEntry("."));

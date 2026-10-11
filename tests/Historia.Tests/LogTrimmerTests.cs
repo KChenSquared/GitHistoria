@@ -28,7 +28,7 @@ public sealed class LogTrimmerTests : IDisposable
         public override TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Third_failure_in_a_row_unticks_the_setting()
     {
         var logsDir = AppPaths.LogsDirectory;
@@ -78,7 +78,7 @@ public sealed class LogTrimmerTests : IDisposable
         Assert.Contains("Trimming logs older than 48 hours failed 3 rounds in a row; the Enable logging setting was turned off.", logContent);
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Count_persists_across_instances()
     {
         var logsDir = AppPaths.LogsDirectory;
@@ -111,7 +111,7 @@ public sealed class LogTrimmerTests : IDisposable
         }
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Success_resets_the_count()
     {
         var logsDir = AppPaths.LogsDirectory;
@@ -157,7 +157,7 @@ public sealed class LogTrimmerTests : IDisposable
         Assert.Equal(1, store.Load());
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Env_forced_logging_still_unticks_after_three()
     {
         var logsDir = AppPaths.LogsDirectory;
@@ -236,7 +236,7 @@ public sealed class LogTrimmerTests : IDisposable
         Assert.False(changedFired);
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Entry_is_written_before_the_setting_flips()
     {
         var logsDir = AppPaths.LogsDirectory;

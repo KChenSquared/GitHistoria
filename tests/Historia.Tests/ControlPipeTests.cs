@@ -3,7 +3,7 @@ namespace Historia.Tests;
 [Trait("tier", "unit")]
 public sealed class ControlPipeTests
 {
-    private static string NewPipeName() => "Historia.Test." + Guid.NewGuid().ToString("N");
+    private static string NewPipeName() => "Historia.Test." + Guid.NewGuid().ToString("N")[..8];
 
     private static NamedPipeServerStream NewServer(string name, PipeDirection direction = PipeDirection.InOut) =>
         new(name, direction, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);

@@ -177,6 +177,8 @@ public sealed class GitGatewayWorkingTreeTests : IAsyncDisposable
         Directory.CreateDirectory(hooksDir);
         var preCommitHook = Path.Combine(hooksDir, "pre-commit");
         await File.WriteAllTextAsync(preCommitHook, "#!/bin/sh\necho \"pre-commit hook declined\" >&2\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(preCommitHook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 
         await _host.Cli.RunAsync(new GitCliRequest
         {

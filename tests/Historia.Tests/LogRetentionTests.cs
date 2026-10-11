@@ -44,7 +44,7 @@ public sealed class LogRetentionTests : IDisposable
         Assert.True(File.Exists(other));
     }
 
-    [Fact]
+    [WindowsFact]
     public void TrimDevLogs_throws_when_stale_file_is_locked()
     {
         var cutoff = DateTime.Now.AddHours(-48);

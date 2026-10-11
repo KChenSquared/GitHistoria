@@ -520,7 +520,7 @@ public class ConflictServiceTests
         Assert.Empty(await svc.GetConflictsAsync(ctx));
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task External_tool_named_with_extension_preserves_bom_and_leaves_no_artifacts()
     {
         await using var host = new MiniHost();
@@ -643,7 +643,7 @@ public class ConflictServiceTests
     public void Tokenize_of_blank_input_yields_no_tokens()
         => Assert.Empty(ConflictService.Tokenize("   "));
 
-    [Fact]
+    [WindowsFact]
     public async Task LaunchExternalMergeTool_passes_a_metacharacter_laden_path_as_one_literal_argument()
     {
         const string conflictedName = "pwn&calc&file.txt";
@@ -689,7 +689,7 @@ public class ConflictServiceTests
         }
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task LaunchExternalMergeToolAsync_runs_the_configured_tool_directly_not_via_a_wrapping_shell()
     {
         await using var host = new MiniHost();

@@ -111,7 +111,7 @@ public class CloneValidationTests
         }
     }
 
-    [Fact]
+    [WindowsFact]
     public void DescribeDestinationProblem_rejects_a_segment_with_an_invalid_path_character()
     {
         // Verified live against .NET on Windows: '"' is one of Path.GetInvalidPathChars().

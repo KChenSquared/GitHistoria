@@ -9,7 +9,7 @@ public sealed class RepoStateCacheCompatTests : IDisposable
 
     private static void WriteGzJson(string repoPath, string kind, string json)
     {
-        var norm = repoPath.Replace('\\', '/').TrimEnd('/');
+        var norm = Path.GetFullPath(repoPath).Replace('\\', '/').TrimEnd('/');
         if (OperatingSystem.IsWindows())
             norm = norm.ToLowerInvariant();
         var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(norm)));

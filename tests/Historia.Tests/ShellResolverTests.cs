@@ -51,7 +51,7 @@ public class ShellResolverTests
     [Fact]
     public void WindowsChain_FallsBackToWindowsPowerShell()
     {
-        var wp = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+        var wp = Path.Combine(@"C:\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
         var r = Resolve(platform: OSPlatformKind.Windows,
             fileExists: p => p == wp,
             env: n => n == "SystemRoot" ? @"C:\Windows" : null);

@@ -46,7 +46,7 @@ public class RepoLayoutServiceTests : IDisposable
         Assert.True(reloaded.Get(Repo).SshOnly);
     }
 
-    [Fact]
+    [WindowsFact]
     public void V1_file_migrates_global_visibility_to_defaults_and_keeps_sshOnly()
     {
         // A schema-v1 file: per-repo column lists + sshOnly, no `global` block.
@@ -112,7 +112,7 @@ public class RepoLayoutServiceTests : IDisposable
         Assert.True(reloaded.GlobalColumns.Single(c => c.Kind == GraphColumnKind.Author).Visible);
     }
 
-    [Fact]
+    [WindowsFact]
     public async Task Key_is_path_normalised()
     {
         var svc = new RepoLayoutService();

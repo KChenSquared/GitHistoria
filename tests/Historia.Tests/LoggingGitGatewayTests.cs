@@ -4,6 +4,8 @@ namespace Historia.Tests;
 
 public sealed class LoggingGitGatewayTests : IDisposable
 {
+    private const string DemoRepo = "repos/demo";
+
     private readonly StateDir _dir = new();
     private AppLog.AppLogSession? _session;
 
@@ -32,7 +34,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
         {
             Branches = [Branch("main"), Branch("dev")],
         };
-        var gw = new LoggingGitGateway(inner, @"C:\repos\demo");
+        var gw = new LoggingGitGateway(inner, DemoRepo);
 
         var result = await gw.GetBranchesAsync();
 
@@ -44,7 +46,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     public async Task Propagates_exceptions_unchanged()
     {
         var boom = new InvalidOperationException("detached HEAD");
-        var gw = new LoggingGitGateway(new FakeGateway { CheckoutThrows = boom }, @"C:\repos\demo");
+        var gw = new LoggingGitGateway(new FakeGateway { CheckoutThrows = boom }, DemoRepo);
 
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
             () => gw.CheckoutAsync("main", new GitCheckoutOptions()));
@@ -55,7 +57,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     public async Task Logs_the_operation_with_arguments_and_outcome()
     {
         StartLogging();
-        var gw = new LoggingGitGateway(new FakeGateway { Branches = [Branch("main")] }, @"C:\repos\demo");
+        var gw = new LoggingGitGateway(new FakeGateway { Branches = [Branch("main")] }, DemoRepo);
 
         await gw.GetBranchesAsync();
 
@@ -69,7 +71,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     {
         StartLogging();
         var gw = new LoggingGitGateway(
-            new FakeGateway { CheckoutThrows = new InvalidOperationException("nope") }, @"C:\repos\demo");
+            new FakeGateway { CheckoutThrows = new InvalidOperationException("nope") }, DemoRepo);
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => gw.CheckoutAsync("main", new GitCheckoutOptions()));
@@ -83,7 +85,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     public async Task CountCommitsLeavingAsync_delegates_and_logs_the_count()
     {
         StartLogging();
-        var gw = new LoggingGitGateway(new FakeGateway { CountCommitsLeavingResult = 3 }, @"C:\repos\demo");
+        var gw = new LoggingGitGateway(new FakeGateway { CountCommitsLeavingResult = 3 }, DemoRepo);
 
         var n = await gw.CountCommitsLeavingAsync("origin/main");
 
@@ -97,7 +99,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     public async Task GetDivergenceAsync_logs_arguments_and_outcome()
     {
         StartLogging();
-        var gw = new LoggingGitGateway(new FakeGateway { DivergenceResult = new AheadBehind(2, 1) }, @"C:\repos\demo");
+        var gw = new LoggingGitGateway(new FakeGateway { DivergenceResult = new AheadBehind(2, 1) }, DemoRepo);
 
         var ab = await gw.GetDivergenceAsync("refs/heads/main", "refs/remotes/origin/main");
 
@@ -111,7 +113,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     public async Task RenameRemoteAsync_logs_arguments_and_outcome()
     {
         StartLogging();
-        var gw = new LoggingGitGateway(new FakeGateway { RenameRemoteResult = ["+refs/heads/*:refs/custom/*"] }, @"C:\repos\demo");
+        var gw = new LoggingGitGateway(new FakeGateway { RenameRemoteResult = ["+refs/heads/*:refs/custom/*"] }, DemoRepo);
 
         var untouched = await gw.RenameRemoteAsync("origin", "upstream");
 
@@ -125,7 +127,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     public async Task SetRemotePushUrlAsync_logs_arguments()
     {
         StartLogging();
-        var gw = new LoggingGitGateway(new FakeGateway(), @"C:\repos\demo");
+        var gw = new LoggingGitGateway(new FakeGateway(), DemoRepo);
 
         await gw.SetRemotePushUrlAsync("origin", "ssh://push.example/o/r.git");
         await gw.SetRemotePushUrlAsync("origin", null);
@@ -139,7 +141,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     public async Task PruneRemoteAsync_logs_outcome()
     {
         StartLogging();
-        var gw = new LoggingGitGateway(new FakeGateway(), @"C:\repos\demo");
+        var gw = new LoggingGitGateway(new FakeGateway(), DemoRepo);
 
         await gw.PruneRemoteAsync("origin", progress: null);
 
@@ -151,7 +153,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
     public async Task Pure_passthrough_when_logging_is_disabled()
     {
         var inner = new FakeGateway { Branches = [Branch("main")] };
-        var gw = new LoggingGitGateway(inner, @"C:\repos\demo");
+        var gw = new LoggingGitGateway(inner, DemoRepo);
 
         await gw.GetBranchesAsync();
 
@@ -175,7 +177,7 @@ public sealed class LoggingGitGatewayTests : IDisposable
         public Exception? CheckoutThrows { get; set; }
         public int GetBranchesCalls { get; private set; }
 
-        public string RepositoryPath => @"C:\repos\demo";
+        public string RepositoryPath => DemoRepo;
 
         public Task<IReadOnlyList<BranchInfo>> GetBranchesAsync(CancellationToken ct = default)
         {
