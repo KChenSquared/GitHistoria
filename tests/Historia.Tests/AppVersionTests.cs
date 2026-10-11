@@ -25,12 +25,14 @@ public class AppVersionTests
     }
 
     [Fact]
-    public void Current_MatchesCoreInformationalVersion()
+    public void Current_ComesFromMinVer()
     {
-        var raw = typeof(AppVersion).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-            ?.InformationalVersion;
+        var stamped = typeof(AppVersion).Assembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == "MinVerVersion")
+            ?.Value;
 
-        Assert.Equal(AppVersion.Display(raw), AppVersion.Current);
+        Assert.False(string.IsNullOrWhiteSpace(stamped), "Core was built without MinVer.");
+        Assert.Equal(AppVersion.Display(stamped), AppVersion.Current);
     }
 }
