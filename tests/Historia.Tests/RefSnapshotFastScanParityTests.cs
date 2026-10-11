@@ -74,7 +74,7 @@ public sealed class RefSnapshotFastScanParityTests : IDisposable
 
     /// <summary>Every shape at once: branches, a remote branch and its symbolic <c>origin/HEAD</c>,
     /// a configured upstream, lightweight and annotated tags, a tag of a tag, tags of a tree and of
-    /// a blob, a branch set to a blob; a commit-graph written before the last commit (stale), then
+    /// a blob, a branch set to a blob (packed by hand); a commit-graph written before the last commit (stale), then
     /// everything packed; then loose refs written over it, one shadowing a stale packed entry.</summary>
     internal static void BuildShapes(TestRepositoryBuilder b)
     {
@@ -92,15 +92,25 @@ public sealed class RefSnapshotFastScanParityTests : IDisposable
         var blob = b.Git("rev-parse", "HEAD:f.txt").Trim();
         b.Git("tag", "-a", "-m", "tag of a blob", "blob-tag", blob);
         b.Git("tag", "light-blob", blob);
-        // Written as a file: update-ref refuses a non-commit on a branch.
-        File.WriteAllText(Path.Combine(b.Path, ".git", "refs", "heads", "blob-branch"), blob + "\n");
         b.Git("commit-graph", "write", "--reachable");
         b.WriteFile("g.txt", "after the graph\n").Stage().Commit("after the graph");
         b.Git("tag", "-a", "-m", "tags a commit the graph doesn't have", "after-graph");
         b.Git("pack-refs", "--all");
+        AddPackedBlobBranch(b, blob);
         b.Git("tag", "loose-light", "HEAD~5");
         b.Git("tag", "-a", "-m", "a loose annotated tag", "loose-annotated", "HEAD~5");
         b.Git("update-ref", "refs/heads/feature", "HEAD~1"); // loose, over a stale packed entry
+    }
+
+    /// <summary>Adds <c>refs/heads/blob-branch</c> to packed-refs by hand, in sort order: update-ref
+    /// and pack-refs both refuse a non-commit on a branch.</summary>
+    private static void AddPackedBlobBranch(TestRepositoryBuilder b, string blob)
+    {
+        var packed = Path.Combine(b.Path, ".git", "packed-refs");
+        var lines = File.ReadAllLines(packed).ToList();
+        var at = lines.FindIndex(l => l.EndsWith(" refs/heads/feature", StringComparison.Ordinal));
+        lines.Insert(at, $"{blob} refs/heads/blob-branch");
+        File.WriteAllText(packed, string.Join('\n', lines) + "\n");
     }
 
     private static async Task AssertParity(RefSnapshotProvider provider, string expectedKind = "fast")

@@ -64,7 +64,7 @@ public sealed class GitCliService : IGitCliService
         if (!git.Found || git.Path is null)
         {
             return new GitCliResult(-1, string.Empty,
-                git.NotFoundReason ?? "git.exe was not found. Set its location in Settings.",
+                git.NotFoundReason ?? "Git was not found. Set its location in Settings.",
                 GitErrorKind.Unknown, TimeSpan.Zero);
         }
 

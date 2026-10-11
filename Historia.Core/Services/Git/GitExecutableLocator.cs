@@ -53,7 +53,7 @@ public sealed partial class GitExecutableLocator : IGitExecutableLocator
             if (version is null || version < GitExecutableInfo.MinimumVersion)
             {
                 var reason = version is null
-                    ? $"git.exe at '{path}' did not report a valid version."
+                    ? $"Git at '{path}' did not report a valid version."
                     : $"Git {version} was found at '{path}', but Git {GitExecutableInfo.MinimumVersion} or newer is required.";
                 info = new GitExecutableInfo
                 {
@@ -83,31 +83,13 @@ public sealed partial class GitExecutableLocator : IGitExecutableLocator
             return userOverridePath;
 
         // 2. PATH.
-        var pathVar = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        foreach (var dir in pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            try
-            {
-                var candidate = Path.Combine(dir, "git.exe");
-                if (File.Exists(candidate))
-                    return candidate;
-            }
-            catch (ArgumentException)
-            {
-                // Malformed PATH segment; skip.
-            }
-        }
+        var onPath = FindOnPath(Environment.GetEnvironmentVariable("PATH"));
+        if (onPath is not null)
+            return onPath;
 
         // 3. Well-known install locations.
-        foreach (var root in new[]
-                 {
-                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                     Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                 })
+        foreach (var candidate in WellKnownLocations())
         {
-            if (string.IsNullOrEmpty(root))
-                continue;
-            var candidate = Path.Combine(root, "Git", "cmd", "git.exe");
             if (File.Exists(candidate))
                 return candidate;
         }
@@ -117,6 +99,54 @@ public sealed partial class GitExecutableLocator : IGitExecutableLocator
             return DiscoverFromWindowsRegistry();
 
         return null;
+    }
+
+    /// <summary>The git binary's file name: <c>git.exe</c> on Windows, <c>git</c> elsewhere.</summary>
+    internal static string ExecutableName => OperatingSystem.IsWindows() ? "git.exe" : "git";
+
+    /// <summary>The first <see cref="ExecutableName"/> in the directories of a PATH-style value.</summary>
+    internal static string? FindOnPath(string? pathVar)
+    {
+        foreach (var dir in (pathVar ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            try
+            {
+                var candidate = Path.Combine(dir, ExecutableName);
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+            catch (ArgumentException)
+            {
+                // Malformed PATH segment; skip.
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> WellKnownLocations()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            foreach (var root in new[]
+                     {
+                         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                     })
+            {
+                if (!string.IsNullOrEmpty(root))
+                    yield return Path.Combine(root, "Git", "cmd", "git.exe");
+            }
+
+            yield break;
+        }
+
+        // A desktop launch on macOS does not inherit the shell's PATH, so Homebrew and MacPorts
+        // installs are not on it.
+        yield return "/usr/bin/git";
+        yield return "/usr/local/bin/git";
+        yield return "/opt/homebrew/bin/git";
+        yield return "/opt/local/bin/git";
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]

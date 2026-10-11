@@ -65,6 +65,38 @@ public class GitExecutableLocatorTests
     }
 
     [Fact]
+    public void Executable_name_matches_the_platform()
+    {
+        Assert.Equal(OperatingSystem.IsWindows() ? "git.exe" : "git", GitExecutableLocator.ExecutableName);
+    }
+
+    [Fact]
+    public void FindOnPath_returns_the_first_directory_holding_the_executable()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "historia-locator-" + Guid.NewGuid().ToString("N"));
+        var empty = Path.Combine(root, "empty");
+        var first = Path.Combine(root, "first");
+        var second = Path.Combine(root, "second");
+        Directory.CreateDirectory(empty);
+        Directory.CreateDirectory(first);
+        Directory.CreateDirectory(second);
+        try
+        {
+            File.WriteAllText(Path.Combine(first, GitExecutableLocator.ExecutableName), "");
+            File.WriteAllText(Path.Combine(second, GitExecutableLocator.ExecutableName), "");
+            var pathVar = string.Join(Path.PathSeparator, empty, first, second);
+
+            Assert.Equal(Path.Combine(first, GitExecutableLocator.ExecutableName), GitExecutableLocator.FindOnPath(pathVar));
+            Assert.Null(GitExecutableLocator.FindOnPath(empty));
+            Assert.Null(GitExecutableLocator.FindOnPath(null));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task WhenResolvedAsync_completes_upon_resolution()
     {
         var locator = new GitExecutableLocator();
