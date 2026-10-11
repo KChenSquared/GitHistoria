@@ -140,14 +140,14 @@ the graph at 30k commits for lower memory use is available in settings.
 
 ## 📦 Install
 
-Download pre-built packages from [GitHub Releases](https://github.com/KChenSquared/GitHistoria/releases).
+Download pre-built packages from [GitHub Releases](https://github.com/KChenSquared/GitHistoria/releases). Windows is the supported platform; macOS and Linux packages are experimental and carry `-experimental` in their file names.
 
 ### Windows
 - **Installer (`Historia-<version>-win-x64-setup.exe`):** Recommended. Provides a Start Menu shortcut and an **Add to PATH** option (enabled by default) for `Historia` and `historia-cmdr`. If the .NET 10 Desktop Runtime is not installed, the installer bundles and installs it during setup.
 - **Archive (`Historia-<version>-win-x64.zip`):** Extract and run. Requires [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download) and Git 2.46+.
 
-### macOS
-- **Disk Image (`Historia-<version>-<rid>.dmg`):** Open the `.dmg` and drag `Historia.app` to `Applications`. Builds are ad-hoc signed, so clear the quarantine attribute before first launch:
+### macOS (experimental)
+- **Disk Image (`Historia-<version>-<rid>-experimental.dmg`):** Open the `.dmg` and drag `Historia.app` to `Applications`. Builds are ad-hoc signed, so clear the quarantine attribute before first launch:
   ```bash
   xattr -dr com.apple.quarantine /Applications/Historia.app
   ```
@@ -155,15 +155,15 @@ Download pre-built packages from [GitHub Releases](https://github.com/KChenSquar
   ```bash
   ln -s /Applications/Historia.app/Contents/MacOS/historia-cmdr /usr/local/bin/historia-cmdr
   ```
-- **Archive (`Historia-<version>-<rid>.tar.gz`):** Extract and run. Requires [.NET 10 Runtime](https://dotnet.microsoft.com/download) and Git 2.46+.
+- **Archive (`Historia-<version>-<rid>-experimental.tar.gz`):** Extract and run. Requires [.NET 10 Runtime](https://dotnet.microsoft.com/download) and Git 2.46+.
 
-### Linux
-- **Debian / Ubuntu Package (`historia_<debver>_amd64.deb`):** Install via `apt`:
+### Linux (experimental)
+- **Debian / Ubuntu Package (`historia_<debver>_amd64-experimental.deb`):** Install via `apt`:
   ```bash
-  sudo apt install ./historia_<debver>_amd64.deb
+  sudo apt install ./historia_<debver>_amd64-experimental.deb
   ```
   Configures desktop application menus, hicolor icons, and puts `historia` and `historia-cmdr` on `PATH` under `/usr/bin`. Depends on `dotnet-runtime-10.0` and `git` (Git 2.46+ is verified at launch).
-- **Archive (`Historia-<version>-linux-x64.tar.gz`):** Extract and run. Requires `dotnet-runtime-10.0` and Git 2.46+.
+- **Archive (`Historia-<version>-linux-x64-experimental.tar.gz`):** Extract and run. Requires `dotnet-runtime-10.0` and Git 2.46+.
 
 ---
 

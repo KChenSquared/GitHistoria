@@ -80,6 +80,8 @@ Write-Host "Packaging version: $version"
 
 # Assert staging invariants
 $isWinRid = $Rid -eq 'win-x64'
+# Only Windows packages are supported; every other platform is marked experimental in its file name.
+$platformTag = if ($isWinRid) { '' } else { '-experimental' }
 $cmdrExeName = if ($isWinRid) { 'historia-cmdr.exe' } else { 'historia-cmdr' }
 $cmdrPath = Join-Path $Staging $cmdrExeName
 $cmdrConfigPath = Join-Path $Staging 'historia-cmdr.runtimeconfig.json'
@@ -116,7 +118,7 @@ if ($Archives) {
         Write-Host "Creating archive $archivePath..."
         Compress-Archive -Path "$Staging\*" -DestinationPath $archivePath -CompressionLevel Optimal
     } else {
-        $archivePath = Join-Path $ResolvedOutDir "Historia-$version-$Rid.tar.gz"
+        $archivePath = Join-Path $ResolvedOutDir "Historia-$version-$Rid$platformTag.tar.gz"
         if (Test-Path $archivePath) { Remove-Item -Force $archivePath }
         Write-Host "Creating archive $archivePath..."
         Invoke-Native -FilePath "tar" -Arguments @("-czf", $archivePath, "-C", $Staging, ".")
@@ -212,7 +214,7 @@ if ($Installers) {
         Move-Item -Path $appDir -Destination $dmgFolder
         Invoke-Native -FilePath "ln" -Arguments @("-s", "/Applications", (Join-Path $dmgFolder "Applications"))
 
-        $dmgPath = Join-Path $ResolvedOutDir "Historia-$version-$Rid.dmg"
+        $dmgPath = Join-Path $ResolvedOutDir "Historia-$version-$Rid$platformTag.dmg"
         if (Test-Path $dmgPath) { Remove-Item -Force $dmgPath }
         Write-Host "Creating DMG $dmgPath..."
         Invoke-Native -FilePath "hdiutil" -Arguments @("create", "-volname", "Historia", "-srcfolder", $dmgFolder, "-ov", "-format", "UDZO", $dmgPath)
@@ -254,7 +256,7 @@ if ($Installers) {
             }
         }
 
-        $debPath = Join-Path $ResolvedOutDir "historia_${debVer}_amd64.deb"
+        $debPath = Join-Path $ResolvedOutDir "historia_${debVer}_amd64$platformTag.deb"
         if (Test-Path $debPath) { Remove-Item -Force $debPath }
         Write-Host "Building Debian package $debPath..."
         Invoke-Native -FilePath "dpkg-deb" -Arguments @("--build", "--root-owner-group", $debStaging, $debPath)
