@@ -31,6 +31,8 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 MinVersion=10.0.17763
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
 OutputBaseFilename=Historia-{#AppVersion}-win-x64-setup
 SetupIconFile=..\..\Historia.ico
@@ -49,28 +51,36 @@ Name: "addtopath"; Description: "Add Historia and historia-cmdr to PATH"; GroupD
 Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Files]
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 #if Defined(RuntimeInstaller) && RuntimeInstaller != ""
-Source: "{#RuntimeInstaller}"; DestDir: "{tmp}"; DestName: "dotnet-desktop-runtime-win-x64.exe"; Flags: deleteafterinstall; Check: not IsDesktopRuntime10Installed
+Source: "{#RuntimeInstaller}"; DestDir: "{tmp}"; DestName: "dotnet-desktop-runtime-win-x64.exe"; Flags: dontcopy noencryption
 #endif
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+
+[Registry]
+Root: HKA; Subkey: "Software\{#AppName}"; ValueType: string; ValueName: "SetupAddedPath"; ValueData: "{app}"; Tasks: addtopath; Flags: uninsdeletevalue uninsdeletekeyifempty
 
 [Code]
 const
   EnvironmentKeyUser = 'Environment';
   EnvironmentKeySystem = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
   DesktopRuntimeSubKey = 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App';
+  SetupAddedPathKey = 'Software\Historia';
+  SetupAddedPathValue = 'SetupAddedPath';
 
-function IsDesktopRuntime10Installed: Boolean;
+var
+  AddedPathAtUninstall: String;
+
+function HasDesktopRuntime10(RootKey: Integer): Boolean;
 var
   VersionNames: TArrayOfString;
   I: Integer;
 begin
   Result := False;
-  if RegGetValueNames(HKLM64, DesktopRuntimeSubKey, VersionNames) then
+  if RegGetValueNames(RootKey, DesktopRuntimeSubKey, VersionNames) then
   begin
     for I := 0 to GetArrayLength(VersionNames) - 1 do
     begin
@@ -81,18 +91,11 @@ begin
       end;
     end;
   end;
+end;
 
-  if (not Result) and RegGetValueNames(HKLM, DesktopRuntimeSubKey, VersionNames) then
-  begin
-    for I := 0 to GetArrayLength(VersionNames) - 1 do
-    begin
-      if Pos('10.', VersionNames[I]) = 1 then
-      begin
-        Result := True;
-        Exit;
-      end;
-    end;
-  end;
+function IsDesktopRuntime10Installed: Boolean;
+begin
+  Result := HasDesktopRuntime10(HKLM32) or HasDesktopRuntime10(HKLM64);
 end;
 
 function NormalizePathEntry(P: String): String;
@@ -173,6 +176,7 @@ var
   P, NextP: Integer;
   RootKey: Integer;
   SubKey: String;
+  Removed: Boolean;
 begin
   NormalizedAppPath := NormalizePathEntry(AppPath);
   RootKey := GetEnvironmentRootKey;
@@ -181,6 +185,7 @@ begin
   if not RegQueryStringValue(RootKey, SubKey, 'Path', OrigPath) then
     Exit;
 
+  Removed := False;
   NewPath := '';
   P := 1;
   while P <= Length(OrigPath) do
@@ -195,30 +200,41 @@ begin
         NewPath := NewPath + ';' + Entry
       else
         NewPath := Entry;
-    end;
+    end
+    else
+      Removed := True;
     P := P + NextP;
   end;
 
-  RegWriteExpandStringValue(RootKey, SubKey, 'Path', NewPath);
+  if Removed then
+    RegWriteExpandStringValue(RootKey, SubKey, 'Path', NewPath);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   RuntimePath: String;
   ResultCode: Integer;
+  RuntimeInstalled: Boolean;
 begin
   Result := '';
   #if Defined(RuntimeInstaller) && RuntimeInstaller != ""
   if not IsDesktopRuntime10Installed then
   begin
-    RuntimePath := ExpandConstant('{tmp}\dotnet-desktop-runtime-win-x64.exe');
-    if FileExists(RuntimePath) then
+    RuntimeInstalled := False;
+    try
+      ExtractTemporaryFile('dotnet-desktop-runtime-win-x64.exe');
+      RuntimePath := ExpandConstant('{tmp}\dotnet-desktop-runtime-win-x64.exe');
+      // 1641 and 3010 report success with a restart pending.
+      if ShellExec('runas', RuntimePath, '/install /passive /norestart', '', SW_SHOW, ewWaitUntilTerminated, ResultCode) then
+        RuntimeInstalled := (ResultCode = 0) or (ResultCode = 1641) or (ResultCode = 3010);
+    except
+      RuntimeInstalled := False;
+    end;
+
+    if not RuntimeInstalled then
     begin
-      if not ShellExec('runas', RuntimePath, '/install /passive /norestart', '', SW_SHOW, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
-      begin
-        SuppressibleMsgBox('The Microsoft .NET Desktop Runtime 10.x (x64) is required by Historia but was not installed.' + #13#10 +
-          'Setup will continue, but Historia requires the runtime before it can launch.', mbInformation, MB_OK);
-      end;
+      SuppressibleMsgBox('The Microsoft .NET Desktop Runtime 10.x (x64) is required by Historia but was not installed.' + #13#10 +
+        'Setup will continue, but Historia requires the runtime before it can launch.', mbInformation, MB_OK);
     end;
   end;
   #endif
@@ -235,8 +251,16 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  // The recorded value is read before the uninstaller deletes its registry entries.
+  if CurUninstallStep = usUninstall then
+  begin
+    if not RegQueryStringValue(HKA, SetupAddedPathKey, SetupAddedPathValue, AddedPathAtUninstall) then
+      AddedPathAtUninstall := '';
+  end;
+
   if CurUninstallStep = usPostUninstall then
   begin
-    RemovePathFromEnvironment(ExpandConstant('{app}'));
+    if AddedPathAtUninstall <> '' then
+      RemovePathFromEnvironment(AddedPathAtUninstall);
   end;
 end;
