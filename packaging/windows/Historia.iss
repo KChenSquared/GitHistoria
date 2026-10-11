@@ -61,7 +61,7 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Registry]
-Root: HKA; Subkey: "Software\{#AppName}"; ValueType: string; ValueName: "SetupAddedPath"; ValueData: "{app}"; Tasks: addtopath; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\{#AppName}"; ValueType: string; ValueName: "SetupAddedPath"; ValueData: "{app}"; Tasks: addtopath; Check: SetupWillAddPath; Flags: uninsdeletevalue uninsdeletekeyifempty
 
 [Code]
 const
@@ -149,6 +149,12 @@ begin
   end;
 end;
 
+// Runs before ssPostInstall appends the entry, so it sees Path as it was before this install.
+function SetupWillAddPath: Boolean;
+begin
+  Result := NeedsAddPath(ExpandConstant('{app}'));
+end;
+
 procedure AddPathToEnvironment(AppPath: String);
 var
   OrigPath, NewPath: String;
@@ -211,10 +217,12 @@ begin
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+#if Defined(RuntimeInstaller) && RuntimeInstaller != ""
 var
   RuntimePath: String;
   ResultCode: Integer;
   RuntimeInstalled: Boolean;
+#endif
 begin
   Result := '';
   #if Defined(RuntimeInstaller) && RuntimeInstaller != ""
