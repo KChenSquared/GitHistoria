@@ -55,6 +55,7 @@ global using CommunityToolkit.Mvvm.Input;
 global using Microsoft.Extensions.DependencyInjection;
 global using LibGit2Sharp;
 global using System.Collections.Concurrent;
+global using System.Collections.ObjectModel;
 global using System.Diagnostics;
 global using System.IO.Pipes;
 global using System.Reflection;

@@ -32,6 +32,7 @@ global using LibGit2Sharp;
 global using Microsoft.Extensions.DependencyInjection;
 global using Microsoft.Win32;
 global using System.Collections.Concurrent;
+global using System.Collections.ObjectModel;
 global using System.Collections.Immutable;
 global using System.Diagnostics;
 global using System.IO.Compression;

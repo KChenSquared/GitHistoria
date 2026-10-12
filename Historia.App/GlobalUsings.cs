@@ -66,6 +66,7 @@ global using CommunityToolkit.Mvvm.ComponentModel;
 global using CommunityToolkit.Mvvm.Input;
 global using Microsoft.Extensions.DependencyInjection;
 global using System.Collections.Concurrent;
+global using System.Collections.ObjectModel;
 global using System.Diagnostics;
 global using System.Globalization;
 global using System.IO.Pipes;

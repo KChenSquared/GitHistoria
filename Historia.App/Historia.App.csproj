@@ -7,6 +7,8 @@
     <!-- Executable name: compiled binary ships as Historia.exe (Historia on macOS/Linux).
          RootNamespace is Historia. avares:// assembly authority matches this name. -->
     <AssemblyName>Historia</AssemblyName>
+    <!-- Views take their services through constructors and are created from code, never by the runtime loader. -->
+    <NoWarn>$(NoWarn);AVLN3001</NoWarn>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>

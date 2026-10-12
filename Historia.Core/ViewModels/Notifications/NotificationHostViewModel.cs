@@ -42,7 +42,7 @@ public sealed class NotificationHostViewModel : ViewModelBase
 
     /// <summary>The toasts on screen, oldest first. At most a handful exist, and an update keeps a
     /// toast's view model, so the list is synced in place rather than replaced.</summary>
-    public System.Collections.ObjectModel.ObservableCollection<NotificationItemViewModel> Items { get; } = [];
+    public ObservableCollection<NotificationItemViewModel> Items { get; } = [];
 
     /// <summary>Notices with an armed auto-hide timer.</summary>
     public int ArmedAutoHideCount => _autoHideTimers.Count;
