@@ -431,27 +431,7 @@ public class ConflictServiceTests
         // Set up index conflict: AddedByUs (stage 2 present, stage 3 absent)
         repoDir.WriteFile("added.txt", "content\n");
         var sha = repoDir.Git("hash-object", "-w", "added.txt").Trim();
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = repoDir.Path,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("update-index");
-        psi.ArgumentList.Add("--index-info");
-        using (var p = Process.Start(psi)!)
-        {
-            using (var sw = new StreamWriter(p.StandardInput.BaseStream, new UTF8Encoding(false)))
-            {
-                sw.Write($"100644 {sha} 2\tadded.txt\n");
-            }
-            var err = p.StandardError.ReadToEnd();
-            p.WaitForExit();
-            if (p.ExitCode != 0) throw new InvalidOperationException($"update-index failed ({p.ExitCode}): {err}");
-        }
+        TestGit.RunChecked(repoDir.Path, ["update-index", "--index-info"], $"100644 {sha} 2\tadded.txt\n", testIdentity: false);
 
         await using var ctx = host.Open(repoDir.Path);
         var svc = Make(host);
@@ -724,26 +704,7 @@ public class ConflictServiceTests
         // Now CLI updates the index directly, introducing a conflict stage without notifying LibGit2.
         repoDir.WriteFile("added.txt", "content\n");
         var sha = repoDir.Git("hash-object", "-w", "added.txt").Trim();
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = repoDir.Path,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("update-index");
-        psi.ArgumentList.Add("--index-info");
-        using (var p = Process.Start(psi)!)
-        {
-            using (var sw = new StreamWriter(p.StandardInput.BaseStream, new UTF8Encoding(false)))
-            {
-                sw.Write($"100644 {sha} 2\tadded.txt\n");
-            }
-            p.WaitForExit();
-            Assert.Equal(0, p.ExitCode);
-        }
+        Assert.Equal(0, TestGit.Run(repoDir.Path, ["update-index", "--index-info"], $"100644 {sha} 2\tadded.txt\n", testIdentity: false).ExitCode);
 
         // ResolveWithSideAsync must reload status via RetrieveStatus() rather than reading stale cached conflicts.
         await svc.ResolveWithSideAsync(ctx, "added.txt", ConflictSide.Theirs);

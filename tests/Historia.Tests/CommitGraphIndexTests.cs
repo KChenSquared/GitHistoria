@@ -611,14 +611,7 @@ public sealed class CommitGraphIndexTests(ITestOutputHelper output) : IDisposabl
     {
         public string Run(params string[] args)
         {
-            var psi = new ProcessStartInfo("git") { WorkingDirectory = path, RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
-            psi.ArgumentList.Add("--no-optional-locks");
-            foreach (var a in args)
-                psi.ArgumentList.Add(a);
-            using var p = Process.Start(psi)!;
-            var output = p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-            return output;
+            return TestGit.Run(path, ["--no-optional-locks", .. args], testIdentity: false).Stdout;
         }
     }
 }

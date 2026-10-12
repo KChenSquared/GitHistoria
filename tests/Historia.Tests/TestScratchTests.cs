@@ -158,8 +158,6 @@ public sealed class TestScratchTests
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
             };
             foreach (var arg in new[] { "/c", "mklink", "/J", link, target })
                 psi.ArgumentList.Add(arg);
@@ -225,23 +223,7 @@ public sealed class TestScratchTests
 
     private static int Git(string dir, params string[] args)
     {
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = dir,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-
-        using var process = Process.Start(psi)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        process.WaitForExit();
-        Task.WaitAll(stdout, stderr);
-        return process.ExitCode;
+        return TestGit.Run(dir, args, testIdentity: false).ExitCode;
     }
 
     private static string BackDated(string dir, int minutes)
