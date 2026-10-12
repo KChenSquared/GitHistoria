@@ -1,0 +1,412 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:m="clr-namespace:Historia.Models;assembly=Historia.Core"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             xmlns:local="clr-namespace:Historia.Views"
+             x:Class="Historia.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel"
+             Background="{DynamicResource ColorChrome}">
+    <UserControl.Styles>
+        <!-- The body of a collapsible section. -->
+        <Style Selector="StackPanel.body">
+            <Setter Property="Spacing" Value="8" />
+            <Setter Property="Margin" Value="0,10,0,0" />
+        </Style>
+
+        <!-- A label with its control beside it. -->
+        <Style Selector="StackPanel.row">
+            <Setter Property="Orientation" Value="Horizontal" />
+            <Setter Property="Spacing" Value="10" />
+        </Style>
+
+        <!-- A setting with a help badge docked to its right. The badge is measured first and the
+             setting gets what is left, so a setting wider than the column is cut short rather
+             than pushing the badge out of it, and the badge is raised so a fixed-width box that
+             overruns its slot never covers it. A horizontal StackPanel would measure its children
+             with unbounded width and lose the badge past the column's edge in a narrow window. -->
+        <Style Selector="DockPanel.hinted">
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="HorizontalSpacing" Value="6" />
+        </Style>
+        <Style Selector="DockPanel.hinted > :is(Control)">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="DockPanel.hinted > ctl|HelpHint">
+            <Setter Property="DockPanel.Dock" Value="Right" />
+            <Setter Property="ZIndex" Value="1" />
+        </Style>
+
+        <Style Selector="NumericUpDown">
+            <Setter Property="FormatString" Value="0" />
+            <Setter Property="Width" Value="120" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
+        <Style Selector="NumericUpDown.wide">
+            <Setter Property="Width" Value="140" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid>
+        <ScrollViewer>
+            <StackPanel x:Name="PageRoot" Spacing="18" Margin="32" MaxWidth="640">
+                <TextBlock Classes="pane-title" Text="Settings" />
+
+                <!-- General -->
+                <local:SettingsSectionHeader DataContext="{Binding General}" />
+                <StackPanel Classes="body" IsVisible="{Binding General.IsExpanded}">
+                    <StackPanel Classes="row">
+                        <TextBlock Classes="text" Text="Theme" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Light"
+                                    Classes.primary="{Binding IsLightMode}"
+                                    Classes.secondary="{Binding !IsLightMode}"
+                                    Command="{Binding SetThemeModeCommand}"
+                                    CommandParameter="{x:Static m:ThemeMode.Light}"
+                                    Cursor="Hand" />
+                            <Button Content="Dark"
+                                    Classes.primary="{Binding IsDarkMode}"
+                                    Classes.secondary="{Binding !IsDarkMode}"
+                                    Command="{Binding SetThemeModeCommand}"
+                                    CommandParameter="{x:Static m:ThemeMode.Dark}"
+                                    Cursor="Hand" />
+                            <Button Content="System"
+                                    Classes.primary="{Binding IsSystemMode}"
+                                    Classes.secondary="{Binding !IsSystemMode}"
+                                    Command="{Binding SetThemeModeCommand}"
+                                    CommandParameter="{x:Static m:ThemeMode.System}"
+                                    Cursor="Hand" />
+                        </StackPanel>
+                    </StackPanel>
+                    <DockPanel Classes="hinted" IsVisible="{Binding ShowCommandLine}">
+                        <ctl:HelpHint Text="Lets terminals and coding agents run historia-cmdr by name. Puts Historia's folder on your user PATH, replacing any other historia-cmdr folder there. Open a new terminal to use it." />
+                        <StackPanel Classes="row">
+                            <TextBlock Classes="text" Text="Command line" />
+                            <Button Classes="secondary"
+                                    Content="{Binding CommandLineButtonText}"
+                                    Command="{Binding AddToPathCommand}"
+                                    Cursor="Hand" />
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="A custom theme uses its own splash instead." />
+                        <CheckBox Content="Show splash screen" IsChecked="{Binding ShowSplashScreen}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Overrides every other theme. Also turns on when Windows high contrast is on." />
+                        <CheckBox Content="High contrast" IsChecked="{Binding HighContrast}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="When tabs don't fit, they wrap to a new row instead of scrolling." />
+                        <CheckBox Content="Wrap tabs onto more rows" IsChecked="{Binding EnableMultiLineTabs}" />
+                    </DockPanel>
+                    <StackPanel Classes="row" IsVisible="{Binding EnableMultiLineTabs}">
+                        <TextBlock Classes="text" Text="Maximum rows" />
+                        <NumericUpDown x:DataType="vm:NumericSettingViewModel"
+                                       DataContext="{Binding MaxTabRows}"
+                                       Minimum="{Binding Minimum}"
+                                       Maximum="{Binding Maximum}"
+                                       Increment="{Binding Increment}"
+                                       Value="{Binding Value}"
+                                       LostFocus="OnNumericLostFocus" />
+                    </StackPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="When off, each tab fits its name, up to about 25 characters." />
+                        <CheckBox Content="Fixed tab width" IsChecked="{Binding UseFixedTabWidth}" />
+                    </DockPanel>
+                    <StackPanel Classes="row" IsVisible="{Binding UseFixedTabWidth}">
+                        <TextBlock Classes="text" Text="Tab width (px)" />
+                        <NumericUpDown x:DataType="vm:NumericSettingViewModel"
+                                       DataContext="{Binding FixedTabWidth}"
+                                       Minimum="{Binding Minimum}"
+                                       Maximum="{Binding Maximum}"
+                                       Increment="{Binding Increment}"
+                                       Value="{Binding Value}"
+                                       LostFocus="OnNumericLostFocus" />
+                    </StackPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Shows when a commit was written, not when it was committed. The graph stays sorted by commit date." />
+                        <CheckBox Content="Show author date" IsChecked="{Binding ShowAuthorDate}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Applies to the graph and the tab strip. On Windows, Match system is always Standard." />
+                        <StackPanel Classes="row">
+                            <TextBlock Classes="text" Text="Scroll direction" />
+                            <ComboBox Width="220" SelectedIndex="{Binding WheelScrollDirectionIndex}">
+                                <ComboBoxItem Content="Match system" />
+                                <ComboBoxItem Content="Standard" />
+                                <ComboBoxItem Content="Inverted" />
+                            </ComboBox>
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Saves each repository's branches, tags, stashes and more so the sidebar appears instantly, then refreshes from Git. Turning it off deletes the cache." />
+                        <CheckBox Content="Cache sidebar between launches" IsChecked="{Binding PersistRepoCache}" />
+                    </DockPanel>
+                </StackPanel>
+
+                <!-- Privacy and network -->
+                <local:SettingsSectionHeader DataContext="{Binding Network}" />
+                <StackPanel Classes="body" IsVisible="{Binding Network.IsExpanded}">
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Fetches each open repository in turn: a 5-minute pause, then one repository a minute. Turn off to stop all background network traffic." />
+                        <CheckBox Content="Auto-fetch open repositories" IsChecked="{Binding AutoFetchEnabled}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Lets local tools and coding agents open Historia on a commit or diff, or hand you staged changes with a proposed commit message. They can't stage, commit or change your repository." />
+                        <CheckBox Content="Allow command-line control (historia-cmdr)" IsChecked="{Binding ExternalControlEnabled}" />
+                    </DockPanel>
+                </StackPanel>
+
+                <!-- Diff viewer -->
+                <local:SettingsSectionHeader DataContext="{Binding Diff}" />
+                <StackPanel Classes="body" IsVisible="{Binding Diff.IsExpanded}">
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Also changes when you switch layout in the diff viewer." />
+                        <StackPanel Classes="row">
+                            <TextBlock Classes="text" Text="Layout" />
+                            <ComboBox Width="160" SelectedIndex="{Binding DefaultDiffViewIndex}">
+                                <ComboBoxItem Content="Unified" />
+                                <ComboBoxItem Content="Side by side" />
+                            </ComboBox>
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Unchanged lines shown around each change." />
+                        <StackPanel Classes="row">
+                            <TextBlock Classes="text" Text="Context lines" />
+                            <NumericUpDown x:DataType="vm:NumericSettingViewModel"
+                                           DataContext="{Binding DiffContextLines}"
+                                           Minimum="{Binding Minimum}"
+                                           Maximum="{Binding Maximum}"
+                                           Increment="{Binding Increment}"
+                                           Value="{Binding Value}"
+                                           LostFocus="OnNumericLostFocus" />
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Unified layout only." />
+                        <CheckBox Content="Wrap long lines" IsChecked="{Binding DiffWordWrap}" />
+                    </DockPanel>
+                </StackPanel>
+
+                <!-- Git -->
+                <local:SettingsSectionHeader DataContext="{Binding Git}" />
+                <StackPanel Classes="body" IsVisible="{Binding Git.IsExpanded}">
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="On fetch and pull, removes remote branches that no longer exist on the server. Your local branches aren't touched." />
+                        <CheckBox Content="Prune deleted remote branches on fetch" IsChecked="{Binding PruneOnFetch}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Puts your local commits on top of the remote ones instead of creating a merge commit." />
+                        <CheckBox Content="Pull with rebase" IsChecked="{Binding PullWithRebase}" />
+                    </DockPanel>
+                    <CheckBox Content="Reopen tabs on launch" IsChecked="{Binding RestoreSessionTabs}" />
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="When off, the Stash button names the stash &quot;Stash of &lt;branch&gt;&quot;." />
+                        <CheckBox Content="Ask for a stash message" IsChecked="{Binding UseCustomStashNames}" />
+                    </DockPanel>
+                </StackPanel>
+
+                <!-- Terminal -->
+                <local:SettingsSectionHeader DataContext="{Binding Terminal}" />
+                <StackPanel Classes="body" IsVisible="{Binding Terminal.IsExpanded}">
+                    <StackPanel Classes="row">
+                        <TextBlock Classes="text" Text="Shell" />
+                        <TextBox Text="{Binding TerminalShellPath, UpdateSourceTrigger=LostFocus}"
+                                 Watermark="Platform default (pwsh / zsh / bash)"
+                                 Width="360"
+                                 HorizontalAlignment="Left" />
+                        <Button Classes="secondary"
+                                Content="Browse…"
+                                Command="{Binding BrowseShellCommand}"
+                                Cursor="Hand" />
+                    </StackPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Quotes aren't supported — each space starts a new argument." />
+                        <StackPanel Classes="row">
+                            <TextBlock Classes="text" Text="Shell arguments" />
+                            <TextBox Text="{Binding TerminalShellArgs, UpdateSourceTrigger=LostFocus}"
+                                     Watermark="Separated by spaces"
+                                     Width="360"
+                                     HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </DockPanel>
+                    <StackPanel Classes="row">
+                        <TextBlock Classes="text" Text="Font family" />
+                        <TextBox Text="{Binding TerminalFontFamily, UpdateSourceTrigger=LostFocus}"
+                                 Watermark="{Binding TerminalFontFamilyWatermark}"
+                                 Width="280"
+                                 HorizontalAlignment="Left" />
+                    </StackPanel>
+                    <StackPanel Classes="row">
+                        <TextBlock Classes="text" Text="Font size" />
+                        <NumericUpDown x:DataType="vm:NumericSettingViewModel"
+                                       DataContext="{Binding TerminalFontSize}"
+                                       Minimum="{Binding Minimum}"
+                                       Maximum="{Binding Maximum}"
+                                       Increment="{Binding Increment}"
+                                       Value="{Binding Value}"
+                                       LostFocus="OnNumericLostFocus" />
+                    </StackPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Lines kept above the screen. 5,000 lines take about 5 MB per open terminal." />
+                        <StackPanel Classes="row">
+                            <TextBlock Classes="text" Text="Scrollback (lines)" />
+                            <NumericUpDown Classes="wide"
+                                           x:DataType="vm:NumericSettingViewModel"
+                                           DataContext="{Binding TerminalScrollbackLines}"
+                                           Minimum="{Binding Minimum}"
+                                           Maximum="{Binding Maximum}"
+                                           Increment="{Binding Increment}"
+                                           Value="{Binding Value}"
+                                           LostFocus="OnNumericLostFocus" />
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Lets editors such as Neovim and Helix tell apart keys like Ctrl+Enter and Shift+Enter. Applies to new terminals." />
+                        <CheckBox Content="Enhanced keyboard (Kitty protocol)" IsChecked="{Binding TerminalKittyKeyboard}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Lets copy in Vim or tmux reach the system clipboard, including over SSH. Programs can never read the clipboard." />
+                        <CheckBox Content="Allow programs to copy to the clipboard (OSC 52)" IsChecked="{Binding TerminalAllowClipboardWrite}" />
+                    </DockPanel>
+                    <StackPanel Classes="row">
+                        <TextBlock Classes="text" Text="Cursor style" />
+                        <ComboBox Width="160" SelectedIndex="{Binding TerminalCursorStyleIndex}">
+                            <ComboBoxItem Content="Block" />
+                            <ComboBoxItem Content="Underline" />
+                            <ComboBoxItem Content="Bar" />
+                        </ComboBox>
+                    </StackPanel>
+                    <CheckBox Content="Blinking cursor" IsChecked="{Binding TerminalCursorBlink}" />
+                </StackPanel>
+
+                <!-- Advanced -->
+                <local:SettingsSectionHeader DataContext="{Binding Advanced}" />
+                <StackPanel Classes="body" IsVisible="{Binding Advanced.IsExpanded}">
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Records errors, every Git command and its result, repository open/close and startup timings, to the logs folder; terminal input/output isn't logged; logs older than 48 hours are deleted each auto-fetch round, and if that fails three rounds in a row, this setting turns itself off; HISTORIA_LOG keeps logging on regardless." />
+                        <CheckBox Content="Enable logging" IsChecked="{Binding LoggingEnabled}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Closes notices in the bottom-right corner after 10 seconds. Turn off to keep them until you close them." />
+                        <CheckBox Content="Auto hide notices" IsChecked="{Binding AutoHideNotices}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Reads commit messages, authors and dates from a disk cache to save memory on large repositories. Takes effect after restart." />
+                        <CheckBox Content="Keep commit details on disk" IsChecked="{Binding GraphMetadataFromDisk}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="On large repositories, adds new commits to the saved graph instead of rebuilding it. Takes effect after restart." />
+                        <CheckBox Content="Fast graph updates (experimental)" IsChecked="{Binding EnableGraphSplice}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Lightweight mode restricts max rows in memory to 30,000 commits. Takes effect after restart." />
+                        <CheckBox Content="Lightweight mode" IsChecked="{Binding LightweightMode}" />
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Rows loaded in the background after the graph opens, and again each time you scroll past them. 0 = no limit. Takes effect after restart." />
+                        <StackPanel Classes="row" IsEnabled="{Binding RowCapsEnabled}">
+                            <TextBlock Classes="text"
+                                       Classes.muted="{Binding LightweightMode}"
+                                       Text="Background preload (rows)" />
+                            <NumericUpDown Classes="wide"
+                                           x:DataType="vm:NumericSettingViewModel"
+                                           DataContext="{Binding SilentCrawlRowCap}"
+                                           Minimum="{Binding Minimum}"
+                                           Maximum="{Binding Maximum}"
+                                           Increment="{Binding Increment}"
+                                           Value="{Binding Value}"
+                                           LostFocus="OnNumericLostFocus" />
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Most rows the graph keeps loaded per repository. Only used when commit details are on disk; otherwise 500,000. Takes effect after restart." />
+                        <StackPanel Classes="row" IsEnabled="{Binding RowCapsEnabled}">
+                            <TextBlock Classes="text"
+                                       Classes.muted="{Binding LightweightMode}"
+                                       Text="Max rows in memory" />
+                            <NumericUpDown Classes="wide"
+                                           x:DataType="vm:NumericSettingViewModel"
+                                           DataContext="{Binding ResidentRowCap}"
+                                           Minimum="{Binding Minimum}"
+                                           Maximum="{Binding Maximum}"
+                                           Increment="{Binding Increment}"
+                                           Value="{Binding Value}"
+                                           LostFocus="OnNumericLostFocus" />
+                        </StackPanel>
+                    </DockPanel>
+                    <DockPanel Classes="hinted" Margin="0,8,0,0">
+                        <ctl:HelpHint Text="Turns issue keys in commit messages into links. In the URL, $1, $2… insert the pattern's capture groups.&#10;&#10;Example: pattern #(\d+) with URL https://GitHistoria.com/autolink?issue=$1 turns #42 into a link." />
+                        <TextBlock Classes="section" Text="Issue autolinks" />
+                    </DockPanel>
+                    <ItemsControl ItemsSource="{Binding IssueAutolinks}"
+                                  IsVisible="{Binding HasIssueAutolinks}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Spacing="8" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:IssueAutolinkRuleViewModel">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBox Text="{Binding Pattern, UpdateSourceTrigger=LostFocus}"
+                                             Watermark="Pattern (regex)"
+                                             Width="200" />
+                                    <TextBox Text="{Binding UrlTemplate, UpdateSourceTrigger=LostFocus}"
+                                             Watermark="Link URL ($1 = first group)"
+                                             Width="300" />
+                                    <Button Classes="secondary"
+                                            Content="Remove"
+                                            Command="{Binding RemoveCommand}"
+                                            Cursor="Hand" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <Button Classes="secondary"
+                            Content="Add rule"
+                            Command="{Binding AddRuleCommand}"
+                            HorizontalAlignment="Left"
+                            Cursor="Hand" />
+                    <DockPanel Classes="hinted">
+                        <ctl:HelpHint Text="Adds a Developer entry to the app menu with testing and cleanup tools. Takes effect after restart." />
+                        <CheckBox Content="Enable developer panel" IsChecked="{Binding DeveloperPanelEnabled}" />
+                    </DockPanel>
+                </StackPanel>
+
+                <!-- AI integration: expanded exactly while the AI Integrations window is open. The
+                     section exists only when the window service does. -->
+                <ContentControl Content="{Binding Ai}"
+                                IsVisible="{Binding Ai, Converter={x:Static ObjectConverters.IsNotNull}}">
+                    <ContentControl.ContentTemplate>
+                        <DataTemplate x:DataType="vm:SettingsSectionViewModel">
+                            <StackPanel Spacing="18">
+                                <local:SettingsSectionHeader />
+                                <StackPanel Classes="body" IsVisible="{Binding IsExpanded}">
+                                    <TextBlock Classes="text muted"
+                                               FontSize="12"
+                                               Text="AI services open in the centre pane." />
+                                </StackPanel>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ContentControl.ContentTemplate>
+                </ContentControl>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Button Command="{Binding CloseCommand}"
+                ToolTip.Tip="Close"
+                Padding="4"
+                Margin="0,6,6,0"
+                Background="Transparent"
+                BorderThickness="0"
+                Cursor="Hand"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                ZIndex="1">
+            <ctl:IconGlyph Icon="close" Size="12" ForegroundKey="ColorTextMuted" />
+        </Button>
+    </Grid>
+</UserControl>

@@ -2,10 +2,9 @@ namespace HistoriaApp.Tests;
 
 /// <summary>
 /// Every explanatory note on the App Settings page is a <c>?</c> hover hint carrying its whole
-/// text, never a visible caption under the control, and the labels read as approved. A private
-/// caption helper shadowing <see cref="ViewKit.WithHint"/> would silently turn every hint back
-/// into a caption — these tests pin the exact anchor → hint map so that cannot happen
-/// unnoticed.
+/// text, never a visible caption under the control, and the labels read as approved. These tests
+/// pin the exact anchor → hint map, so a hint turning back into a caption, or losing its text,
+/// cannot happen unnoticed.
 /// </summary>
 [Trait("tier", "ui")]
 public sealed class SettingsHelpHintTests
@@ -154,19 +153,17 @@ public sealed class SettingsHelpHintTests
         return sc.BuildServiceProvider();
     }
 
-    private static void SetPrivate(SettingsView view, string field, object value)
-        => (typeof(SettingsView).GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException($"SettingsView.{field} not found — renamed?"))
-            .SetValue(view, value);
-
-    private static void Rebuild(SettingsView view)
-        => (typeof(SettingsView).GetMethod("Rebuild", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("SettingsView.Rebuild not found — renamed?"))
-            .Invoke(view, null);
-
     private static StackPanel Root(SettingsView view)
-        => (StackPanel)(typeof(SettingsView).GetField("_root", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("SettingsView._root not found — renamed?")).GetValue(view)!;
+        => view.FindControl<StackPanel>("PageRoot") ?? throw new InvalidOperationException("SettingsView.PageRoot not found — renamed?");
+
+    /// <summary>Hosts the view in a shown window so templated content (the autolink rows) exists.</summary>
+    private static Window Show(SettingsView view, double width = 800, double height = 600)
+    {
+        var window = new Window { Width = width, Height = height, Content = view };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        return window;
+    }
 
     /// <summary>Runs <paramref name="body"/> with the settings changed by
     /// <paramref name="mutate"/>, then restores what was there — the settings file is shared by
@@ -229,12 +226,15 @@ public sealed class SettingsHelpHintTests
         }, () =>
         {
             var view = new SettingsView(sp);
+            view.ViewModel.Advanced.Toggle(); // the autolink rows are laid out only while shown
+            var window = Show(view);
             var labels = VisibleLabels(view);
 
             foreach (var label in ApprovedLabels)
                 Assert.True(labels.Contains(label), $"Missing label: {label}");
             foreach (var label in RetiredLabels)
                 Assert.False(labels.Contains(label), $"Retired label still shown: {label}");
+            window.Close();
             view.Dispose();
         });
     }
@@ -267,7 +267,7 @@ public sealed class SettingsHelpHintTests
             foreach (var mode in new[] { TabWidthMode.Fixed, TabWidthMode.Dynamic })
             {
                 cfg.UpdateAsync(s => s with { TabWidthMode = mode }).GetAwaiter().GetResult();
-                Rebuild(view);
+                Dispatcher.UIThread.RunJobs();
 
                 var map = HelpHintMap.Of(view);
                 Assert.True(map.TryGetValue("Fixed tab width", out var hint), $"No Fixed tab width hint in {mode} mode.");
@@ -292,18 +292,13 @@ public sealed class SettingsHelpHintTests
     {
         var sp = CreateServices();
         var view = new SettingsView(sp);
-        view.EnsureCmdrStatusLoadedForTesting();
-        SetPrivate(view, "_generalExpanded", true);
-        SetPrivate(view, "_networkExpanded", true);
-        SetPrivate(view, "_diffExpanded", true);
-        SetPrivate(view, "_gitExpanded", true);
-        SetPrivate(view, "_terminalExpanded", true);
-        SetPrivate(view, "_advExpanded", true);
-        Rebuild(view);
+        EnsureCmdrStatusLoaded(view);
+        var vm = view.ViewModel;
+        foreach (var section in new[] { vm.General, vm.Network, vm.Diff, vm.Git, vm.Terminal, vm.Advanced })
+            section.Toggle();
 
-        var window = new Window { Width = windowWidth, Height = 600, Content = view };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
+        // Tall enough for every row: a point outside the window cannot be hit-tested.
+        var window = Show(view, windowWidth, 2400);
 
         var root = Root(view);
         Assert.True(root.Bounds.Width > 0 && root.Bounds.Width <= windowWidth);
@@ -391,9 +386,7 @@ public sealed class SettingsHelpHintTests
     {
         var sp = CreateServices();
         var view = new SettingsView(sp);
-        var window = new Window { Width = 800, Height = 600, Content = view };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
+        var window = Show(view);
 
         var body = SectionBody(view, title);
         Assert.False(body.IsVisible, $"{title} should start collapsed.");
@@ -439,6 +432,8 @@ public sealed class SettingsHelpHintTests
         }, () =>
         {
             var view = new SettingsView(sp);
+            view.ViewModel.Advanced.Toggle(); // the autolink rows are laid out only while shown
+            var window = Show(view);
             var advBody = SectionBody(view, "Advanced");
             var children = advBody.Children.ToList();
 
@@ -466,6 +461,7 @@ public sealed class SettingsHelpHintTests
             Assert.DoesNotContain(root.Children, c => !ReferenceEquals(c, advBody) && c.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "Issue autolinks"));
             Assert.DoesNotContain(root.Children, c => c is Button b && (b.Content as string) == "Add rule");
 
+            window.Close();
             view.Dispose();
         });
     }
@@ -641,15 +637,22 @@ public sealed class SettingsHelpHintTests
         });
     }
 
+    /// <summary>Waits for the PATH status check the view starts and lets its result land.</summary>
+    internal static void EnsureCmdrStatusLoaded(SettingsView view)
+    {
+        view.ViewModel.CmdrStatusTask.GetAwaiter().GetResult();
+        Dispatcher.UIThread.RunJobs();
+    }
+
     /// <summary>The clickable header of a collapsible section.</summary>
-    private static Border SectionHeader(SettingsView view, string title)
-        => Root(view).Children.OfType<Border>().Single(b =>
-            b.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == title));
+    private static SettingsSectionHeader SectionHeader(SettingsView view, string title)
+        => Root(view).Children.OfType<SettingsSectionHeader>().Single(h =>
+            h.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == title));
 
     /// <summary>The body a collapsible section's header shows and hides.</summary>
     private static StackPanel SectionBody(SettingsView view, string title)
     {
-        view.EnsureCmdrStatusLoadedForTesting();
+        EnsureCmdrStatusLoaded(view);
         var root = Root(view);
         return (StackPanel)root.Children[root.Children.IndexOf(SectionHeader(view, title)) + 1];
     }
@@ -670,9 +673,9 @@ public sealed class SettingsHelpHintTests
     private static HashSet<string> VisibleLabels(Control view)
     {
         if (view is SettingsView sv)
-            sv.EnsureCmdrStatusLoadedForTesting();
+            EnsureCmdrStatusLoaded(sv);
         var labels = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var c in view.GetLogicalDescendants())
+        foreach (var c in view.GetLogicalDescendants().Cast<object>().Concat(view.GetVisualDescendants()).Distinct())
         {
             switch (c)
             {
@@ -697,15 +700,16 @@ public sealed class SettingsHelpHintTests
     }
 }
 
-/// <summary>Reads the <c>?</c> hints off a hand-built settings view: each badge, the label of
-/// the setting it sits beside, and its tooltip text.</summary>
+/// <summary>Reads the <c>?</c> hints off a settings view: each badge, the label of the setting it
+/// sits beside, and its tooltip text. A badge that is switched off (a section header without a
+/// hint) is not a hint.</summary>
 internal static class HelpHintMap
 {
     public static IEnumerable<Control> Badges(Control view)
     {
         if (view is SettingsView sv)
-            sv.EnsureCmdrStatusLoadedForTesting();
-        return view.GetLogicalDescendants().OfType<Control>().Where(c => c.Classes.Contains(ViewKit.HelpHintClass));
+            SettingsHelpHintTests.EnsureCmdrStatusLoaded(sv);
+        return view.GetLogicalDescendants().OfType<Control>().Where(c => c.IsVisible && c.Classes.Contains(ViewKit.HelpHintClass));
     }
 
     public static string TipText(Control badge)

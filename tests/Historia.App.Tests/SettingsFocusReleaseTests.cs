@@ -78,22 +78,13 @@ public sealed class SettingsFocusReleaseTests
     }
 
     /// <summary>The terminal shell-path TextBox and the Add rule button live in the "Terminal"
-    /// and "Advanced" sections, which start collapsed (<c>_terminalExpanded = false</c>,
-    /// <c>_advExpanded = false</c>) — their content is IsVisible=false and neither focusable
-    /// nor hit-testable until expanded. Flip the private fields and re-run the private
-    /// Rebuild() directly, the same reflection approach <c>SettingsNumericCommitTests</c> uses
-    /// for other private members, rather than simulating a click on the section header.</summary>
+    /// and "Advanced" sections, which start collapsed — their content is IsVisible=false and
+    /// neither focusable nor hit-testable until expanded. Expand them through the view model
+    /// rather than simulating a click on the section header.</summary>
     private static void ExpandSections(SettingsView view)
     {
-        var termField = typeof(SettingsView).GetField("_terminalExpanded", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("SettingsView._terminalExpanded not found — renamed?");
-        termField.SetValue(view, true);
-        var advField = typeof(SettingsView).GetField("_advExpanded", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("SettingsView._advExpanded not found — renamed?");
-        advField.SetValue(view, true);
-        var rebuild = typeof(SettingsView).GetMethod("Rebuild", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("SettingsView.Rebuild not found — renamed?");
-        rebuild.Invoke(view, null);
+        view.ViewModel.Terminal.Toggle();
+        view.ViewModel.Advanced.Toggle();
     }
 
     private static (SettingsView View, Window Window, TextBox ShellPath) CreateView()
