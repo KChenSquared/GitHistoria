@@ -237,18 +237,31 @@ public sealed partial class CommitGraphControl
     private (GraphColumnKind Kind, int Slot)? HeaderIconAt(double x, double y)
         => GraphColumnInteraction.HeaderIconAt(_resolvedColumns, x, y, _hScrollOffset, HeaderHeight, HeaderIconSize, HeaderIconInset, HeaderIconCandidates);
 
-    /// <summary>Returns the graph to the left-most horizontal position — both the whole
-    /// column band (<see cref="_hScrollOffset"/>) and the lane pan inside the Graph column
-    /// (<see cref="_graphPanOffset"/>). Vertical scroll, column widths and column order are
-    /// untouched. A no-op when already left-most.</summary>
-    private void ResetGraphScroll()
+    /// <summary>Returns the graph to the left-most horizontal position and the default
+    /// zoom, keeping the top visible row in place; column widths and order untouched; a
+    /// no-op when already left-most at default zoom.</summary>
+    private void ResetGraphView()
     {
-        if (_hScrollOffset == 0 && _graphPanOffset == 0)
+        if (_hScrollOffset == 0 && _graphPanOffset == 0
+            && _rowHeight == DefaultRowHeight && _laneWidth == DefaultLaneWidth)
+        {
             return;
+        }
+
+        if (_rowHeight != DefaultRowHeight || _laneWidth != DefaultLaneWidth)
+        {
+            var topRow = _scrollOffset / _rowHeight;
+            _rowHeight = DefaultRowHeight;
+            _laneWidth = DefaultLaneWidth;
+            _scrollOffset = topRow * DefaultRowHeight;
+            _zoomOverridesPin = false;
+            _elbowGeometryCache.Clear();
+        }
 
         _hScrollOffset = 0;
         _graphPanOffset = 0;
         _hScrollBar.Value = 0;
+        InvalidateArrange();
         InvalidateVisual();
     }
 
