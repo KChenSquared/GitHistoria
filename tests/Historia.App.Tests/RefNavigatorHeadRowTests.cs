@@ -159,7 +159,8 @@ public sealed class RefNavigatorHeadRowTests
 
     private static IEnumerable<Border> LeafRows(RefNavigatorView view) =>
         view.GetVisualDescendants().OfType<Border>()
-            .Where(b => b.Child is Grid { ColumnDefinitions.Count: 4 } && b.Height == 24);
+            .Where(b => b.Classes.Contains("ref-row") && b.DataContext is RefLeafRowViewModel)
+            .OrderBy(b => b.TranslatePoint(default, view)?.Y ?? 0);
 
     private static TextBlock RowLabel(Border row) =>
         row.GetVisualDescendants().OfType<TextBlock>().First(t => Grid.GetColumn(t) == 2);

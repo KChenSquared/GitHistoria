@@ -157,22 +157,16 @@ public sealed class RefNavigatorStashTests
         try { setup.Fixture.Dispose(); } catch { }
     }
 
-    private static List<Border> GetSectionHeaders(RefNavigatorView view)
-    {
-        var headers = new List<Border>();
-        foreach (var child in view._root.Children)
-        {
-            if (child is Border b && b.Child is Grid g && g.ColumnDefinitions.Count >= 3)
-                headers.Add(b);
-        }
-        return headers;
-    }
+    private static List<Border> GetSectionHeaders(RefNavigatorView view) =>
+        view.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("section-header")).ToList();
 
-    private static Button? GetFilterButton(Border header)
-    {
-        if (header.Child is not Grid g) return null;
-        return g.Children.OfType<Button>().FirstOrDefault(b => ToolTip.GetTip(b)?.ToString() == "Filter this section");
-    }
+    private static Button? GetFilterButton(Border header) =>
+        header.GetVisualDescendants().OfType<Button>()
+            .FirstOrDefault(b => b.IsVisible && ToolTip.GetTip(b)?.ToString() == "Filter this section");
+
+    private static TextBox FilterBox(RefNavigatorView view, int sectionIndex) =>
+        GetSectionHeaders(view)[sectionIndex].GetVisualAncestors().OfType<StackPanel>().First()
+            .Children.OfType<TextBox>().Single();
 
     private static void ExpandSection(Border header)
     {
@@ -192,35 +186,22 @@ public sealed class RefNavigatorStashTests
         Dispatcher.UIThread.RunJobs();
     }
 
-    private static StackPanel GetSectionBody(RefNavigatorView view, int sectionIndex)
-    {
-        var headers = GetSectionHeaders(view);
-        var header = headers[sectionIndex];
-        var headerIdx = view._root.Children.IndexOf(header);
-        for (int i = headerIdx + 1; i < view._root.Children.Count; i++)
-        {
-            if (view._root.Children[i] is ScrollViewer sv && sv.Content is StackPanel sp)
-                return sp;
-            if (headers.Contains(view._root.Children[i]))
-                break;
-        }
-        throw new InvalidOperationException($"Body for section {sectionIndex} not found");
-    }
+    private static ListBox GetSectionBody(RefNavigatorView view, int sectionIndex) =>
+        GetSectionHeaders(view)[sectionIndex].GetVisualAncestors().OfType<StackPanel>().First()
+            .Children.OfType<ListBox>().Single();
 
-    private static List<string> GetRowTexts(StackPanel body)
-    {
-        var texts = new List<string>();
-        foreach (var child in body.Children)
-        {
-            if (child is Border b)
-            {
-                var tb = b.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Text != "⋯" && t.Text != "▾" && t.Text != "▸");
-                if (tb?.Text is not null)
-                    texts.Add(tb.Text);
-            }
-        }
-        return texts;
-    }
+    private static List<Border> RowBorders(ListBox body) =>
+        body.GetVisualDescendants().OfType<ListBoxItem>()
+            .OrderBy(i => i.Bounds.Y)
+            .Select(i => (Border)i.Presenter!.Child!)
+            .ToList();
+
+    private static string? RowText(Border row) =>
+        row.GetVisualDescendants().OfType<TextBlock>()
+            .FirstOrDefault(t => t.Text != "⋯" && t.Text != "▾" && t.Text != "▸")?.Text;
+
+    private static List<string> GetRowTexts(ListBox body) =>
+        RowBorders(body).Select(RowText).OfType<string>().ToList();
 
     private static (GitObjectId Id1, GitObjectId Id2, List<StashEntry> Entries) CreateSampleStashes()
     {
@@ -285,9 +266,10 @@ public sealed class RefNavigatorStashTests
 
             var filterBtn = GetFilterButton(headers[3]);
             Assert.NotNull(filterBtn);
-            SimulateClick(filterBtn!);
+            filterBtn!.Command!.Execute(null);
+            Dispatcher.UIThread.RunJobs();
 
-            setup.View._stashesFilterBox.Text = "2. On";
+            FilterBox(setup.View, 3).Text = "2. On";
             Dispatcher.UIThread.RunJobs();
 
             var rows = GetRowTexts(GetSectionBody(setup.View, 3));
@@ -323,11 +305,7 @@ public sealed class RefNavigatorStashTests
             setup.Context.State.RevealCommitRequested += (_, _) => revealRaised = true;
 
             var body = GetSectionBody(setup.View, 3);
-            var firstRow = body.Children.OfType<Border>().First(b =>
-            {
-                var tb = b.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Text != "⋯" && t.Text != "▾" && t.Text != "▸");
-                return tb?.Text == "1. On a: x";
-            });
+            var firstRow = RowBorders(body).First(b => RowText(b) == "1. On a: x");
 
             SimulateClick(firstRow);
             Dispatcher.UIThread.RunJobs();

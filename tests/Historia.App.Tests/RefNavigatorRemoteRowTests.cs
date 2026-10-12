@@ -16,6 +16,21 @@ public sealed class RefNavigatorRemoteRowTests
 #pragma warning restore CS0067
     }
 
+    /// <summary>Answers "cancelled" to every dialog and reports that the Add remote dialog was asked for.</summary>
+    private sealed class CountingRemoteDialogs : IRemoteDialogs
+    {
+        public Action? OnShowAdd { get; set; }
+
+        public Task<AddRemoteResult?> ShowAddAsync(IReadOnlyList<RemoteInfo> existing)
+        {
+            OnShowAdd?.Invoke();
+            return Task.FromResult<AddRemoteResult?>(null);
+        }
+
+        public Task<EditRemoteResult?> ShowEditAsync(RemoteInfo remote, IReadOnlyCollection<string> otherNames,
+            IReadOnlyDictionary<string, string> urlOwners) => Task.FromResult<EditRemoteResult?>(null);
+    }
+
     private sealed class FakeVault : ICredentialVaultService
     {
         public Task StoreTokenAsync(string key, string token, CancellationToken ct = default) => Task.CompletedTask;
@@ -114,6 +129,7 @@ public sealed class RefNavigatorRemoteRowTests
         sc.AddSingleton<IRepoIdentityService, RepoIdentityService>();
         sc.AddSingleton<ICredentialVaultService, FakeVault>();
         sc.AddSingleton<IExternalLauncher, ExternalLauncher>();
+        sc.AddSingleton<IRemoteDialogs, CountingRemoteDialogs>();
         return sc.BuildServiceProvider();
     }
 
@@ -143,10 +159,11 @@ public sealed class RefNavigatorRemoteRowTests
         try { s.Fixture.Dispose(); } catch { }
     }
 
-    // Folder rows: a caret and a name, plus a cloud on a remote root. Leaves have four columns.
+    // Folder rows: a caret and a name, plus a cloud on a remote root.
     private static IEnumerable<Border> FolderRows(RefNavigatorView view) =>
         view.GetVisualDescendants().OfType<Border>()
-            .Where(b => b.Child is Grid { ColumnDefinitions.Count: 2 or 3 } && b.Height == 24);
+            .Where(b => b.Classes.Contains("ref-row") && b.DataContext is RefFolderRowViewModel)
+            .OrderBy(b => b.TranslatePoint(default, view)?.Y ?? 0);
 
     private static TextBlock RowName(Border row) =>
         row.GetVisualDescendants().OfType<TextBlock>().Last(t => t.Parent is Grid);
@@ -157,10 +174,11 @@ public sealed class RefNavigatorRemoteRowTests
     /// <summary>The digit on a remote root row's cloud, "" for a plain cloud, null for no cloud.</summary>
     private static string? CloudDigit(Border row)
     {
-        if (row.Child is not Grid { ColumnDefinitions.Count: 3 } grid)
+        var cloud = row.GetVisualDescendants().OfType<Panel>().First(c => c.Parent is Grid && Grid.GetColumn(c) == 2);
+        if (!cloud.IsEffectivelyVisible)
             return null;
-        var cloud = grid.Children.OfType<Panel>().Single(c => Grid.GetColumn(c) == 1);
-        return cloud.GetVisualDescendants().OfType<TextBlock>().SingleOrDefault()?.Text ?? "";
+        var digit = cloud.GetVisualDescendants().OfType<TextBlock>().Single();
+        return digit.IsEffectivelyVisible ? digit.Text : "";
     }
 
     private static List<string> RemoteRowOrder(RefNavigatorView view) =>
@@ -300,10 +318,10 @@ public sealed class RefNavigatorRemoteRowTests
         try
         {
             var requested = 0;
-            setup.View.AddRemoteOverrideForTesting = () => requested++;
+            ((CountingRemoteDialogs)setup.Sp.GetRequiredService<IRemoteDialogs>()).OnShowAdd = () => requested++;
             var button = setup.View.GetVisualDescendants().OfType<Button>()
-                .Single(b => ToolTip.GetTip(b)?.ToString() == "Add remote…");
-            Assert.True(setup.View.RemotesOpen);
+                .Single(b => b.IsVisible && ToolTip.GetTip(b)?.ToString() == "Add remote…");
+            Assert.True(setup.View.ViewModel.Remotes.IsOpen);
 
             AvaloniaHeadlessPlatform.ForceRenderTimerTick();
             Dispatcher.UIThread.RunJobs();
@@ -314,7 +332,7 @@ public sealed class RefNavigatorRemoteRowTests
             Dispatcher.UIThread.RunJobs();
 
             Assert.Equal(1, requested);
-            Assert.True(setup.View.RemotesOpen);
+            Assert.True(setup.View.ViewModel.Remotes.IsOpen);
         }
         finally
         {
@@ -383,7 +401,7 @@ public sealed class RefNavigatorRemoteRowTests
             var feature = FolderRowNamed(setup.View, "feature");
             Assert.NotNull(feature);
             Assert.Null(CloudDigit(feature!));
-            Assert.DoesNotContain(feature!.GetVisualDescendants(), v => v is Avalonia.Controls.Shapes.Path);
+            Assert.DoesNotContain(feature!.GetVisualDescendants(), v => v is Avalonia.Controls.Shapes.Path { IsEffectivelyVisible: true });
         }
         finally
         {
