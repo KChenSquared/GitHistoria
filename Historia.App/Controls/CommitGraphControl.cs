@@ -1027,6 +1027,11 @@ public sealed partial class CommitGraphControl : Control
             ? $"History is capped at {cap:N0} rows by Lightweight mode. Turn it off in Settings → Advanced to load more, or use Find (Ctrl+F) to jump straight to it."
             : $"History is capped at {cap:N0} rows to preserve memory. Use Find (Ctrl+F) to jump straight to it.";
 
+    internal static string ResidentCapReachedNotice(int rowCount, bool lightweight) =>
+        lightweight
+            ? $"Loaded {rowCount:N0} commits. Lightweight mode caps history; turn it off in Settings → Advanced to load more."
+            : $"Loaded {rowCount:N0} commits. Further history is capped to preserve system memory.";
+
     private void ClearReveal()
     {
         _revealTarget = null;
@@ -1335,7 +1340,7 @@ public sealed partial class CommitGraphControl : Control
             return;
         _notifications.Publish(NotificationSeverity.Info,
             "Graph capped at resident limit.",
-            $"Loaded {rowCount:N0} commits. Further history is capped to preserve system memory.");
+            ResidentCapReachedNotice(rowCount, _lightweightMode));
     }
 
     private async Task RunExtendPumpAsync(ChannelReader<ExtendRequest> reader, CancellationToken ct)

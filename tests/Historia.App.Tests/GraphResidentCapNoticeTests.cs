@@ -27,4 +27,20 @@ public class GraphResidentCapNoticeTests
         Assert.Contains("Find (Ctrl+F)", notice);
         Assert.Equal("History is capped at 30,000 rows by Lightweight mode. Turn it off in Settings → Advanced to load more, or use Find (Ctrl+F) to jump straight to it.", notice);
     }
+
+    [Fact]
+    public void Cap_reached_notice_without_lightweight_is_unchanged()
+    {
+        var notice = CommitGraphControl.ResidentCapReachedNotice(2_500_000, lightweight: false);
+
+        Assert.Equal("Loaded 2,500,000 commits. Further history is capped to preserve system memory.", notice);
+    }
+
+    [Fact]
+    public void Cap_reached_notice_with_lightweight_says_how_to_lift_the_cap()
+    {
+        var notice = CommitGraphControl.ResidentCapReachedNotice(30_000, lightweight: true);
+
+        Assert.Equal("Loaded 30,000 commits. Lightweight mode caps history; turn it off in Settings → Advanced to load more.", notice);
+    }
 }
