@@ -362,6 +362,9 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
     public void Handle_is_hit_at_the_border_line()
     {
         var (_, view, window) = CreateView();
+        // Hit testing reads the last rendered scene; render the current layout first.
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
         var messageSection = view.MessageSectionForTesting!;
         var sectionTop = messageSection.TranslatePoint(new Point(0, 0), window)!.Value.Y;
         var x = window.Bounds.Width / 2;
