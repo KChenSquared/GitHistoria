@@ -29,7 +29,7 @@ public sealed partial class RepositoryView : UserControl, IDisposable
     {
         _sp = sp;
         InitializeComponent();
-        ViewModel = ActivatorUtilities.CreateInstance<RepositoryViewModel>(sp, new UiDispatcher());
+        ViewModel = ActivatorUtilities.CreateInstance<RepositoryViewModel>(sp, ViewServices.Dispatcher(sp));
         ViewModel.DetailChanged += OnDetailChanged;
         DataContext = ViewModel;
         ApplyDetail();

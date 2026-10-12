@@ -20,7 +20,7 @@ public sealed partial class HomeView : UserControl, IDisposable
             return r is null ? null : new CloneDialogChoice(r.Url, r.TargetDirectory, r.Shallow, r.Sparse, r.ProfileId);
         };
         ViewModel = ActivatorUtilities.CreateInstance<HomeViewModel>(
-            sp, intent, showCloneDialog, sp.GetService<IUiDispatcher>() ?? new UiDispatcher());
+            sp, intent, showCloneDialog, ViewServices.Dispatcher(sp));
         DataContext = ViewModel;
 
         ViewKit.BindThemedMark(MarkImage, sp.GetRequiredService<Historia.Services.Theming.IThemeService>());

@@ -38,7 +38,7 @@ public sealed class CenterPaneController : IDisposable
         _viewModel = new CenterPaneViewModel(
             workspace,
             services.GetService<IAiIntegrationsPanel>(),
-            services.GetService<IUiDispatcher>() ?? new UiDispatcher(),
+            ViewServices.Dispatcher(services),
             ctx => _conflictHost.TryGet(ctx)?.HasUnsavedWork == true);
         _viewModel.RepositoryLeft += OnRepositoryLeft;
         _viewModel.Changed += OnViewModelChanged;

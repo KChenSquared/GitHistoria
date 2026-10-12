@@ -72,7 +72,7 @@ public sealed partial class AppBandView : UserControl, IDisposable
         ViewKit.BindThemedMark(BrandMark, theme);
 
         var viewModel = ActivatorUtilities.CreateInstance<AppBandViewModel>(
-            services, new UiDispatcher(), new ClipboardService(), new HostPlatform(theme));
+            services, ViewServices.Dispatcher(services), ViewServices.Clipboard(services), new HostPlatform(theme));
         viewModel.TabsRebuilt += OnTabsRebuilt;
         viewModel.TabSettingsChanged += OnTabSettingsChanged;
         ViewModel = viewModel;

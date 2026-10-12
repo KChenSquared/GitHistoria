@@ -23,7 +23,7 @@ public sealed partial class DetailRouter : UserControl, IDisposable
         // FirstRunPrompt is app-modal and hosted at the window root (MainWindow.ModalOverlayHost)
         // so it dims and centres over the whole window, not just this detail pane.
 
-        ViewModel = ActivatorUtilities.CreateInstance<DetailRouterViewModel>(sp, new UiDispatcher());
+        ViewModel = ActivatorUtilities.CreateInstance<DetailRouterViewModel>(sp, ViewServices.Dispatcher(sp));
         DataContext = ViewModel;
         ViewModel.Navigated += OnNavigated;
         Show(ViewModel.Current);

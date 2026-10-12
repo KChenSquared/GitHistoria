@@ -12,7 +12,7 @@ public sealed partial class CommitDetailPanelView : UserControl, IDisposable
     {
         InitializeComponent();
         ViewModel = ActivatorUtilities.CreateInstance<CommitDetailViewModel>(
-            sp, ctx.Gateway, ctx.State, ctx.Id, id, new UiDispatcher(), new ClipboardService());
+            sp, ctx.Gateway, ctx.State, ctx.Id, id, ViewServices.Dispatcher(sp), ViewServices.Clipboard(sp));
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         DataContext = ViewModel;
         ApplyMessage();

@@ -19,7 +19,7 @@ public sealed partial class DiffView : UserControl, IDisposable
         _sp = sp;
         InitializeComponent();
 
-        var ui = new UiDispatcher();
+        var ui = ViewServices.Dispatcher(sp);
         if (sp is null)
         {
             ViewModel = new DiffViewModel(ctx, request, ui, settings);

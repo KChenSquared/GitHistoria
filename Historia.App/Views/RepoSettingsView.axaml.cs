@@ -18,7 +18,7 @@ public sealed partial class RepoSettingsView : UserControl, IDisposable
     public RepoSettingsView(IServiceProvider sp)
     {
         InitializeComponent();
-        ViewModel = ActivatorUtilities.CreateInstance<RepoSettingsViewModel>(sp, new UiDispatcher());
+        ViewModel = ActivatorUtilities.CreateInstance<RepoSettingsViewModel>(sp, ViewServices.Dispatcher(sp));
         DataContext = ViewModel;
 
         ColumnList.AddHandler(PointerPressedEvent, OnColumnsPointerPressed, RoutingStrategies.Bubble);

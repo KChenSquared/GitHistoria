@@ -12,7 +12,7 @@ public sealed partial class AiIntegrationsView : UserControl, IDisposable
     public AiIntegrationsView(IServiceProvider sp)
     {
         InitializeComponent();
-        ViewModel = ActivatorUtilities.CreateInstance<AiIntegrationsViewModel>(sp, new UiDispatcher());
+        ViewModel = ActivatorUtilities.CreateInstance<AiIntegrationsViewModel>(sp, ViewServices.Dispatcher(sp));
         DataContext = ViewModel;
 
         this.AddHandler(PointerPressedEvent, SettingsView.OnRootPointerPressedTunnel, RoutingStrategies.Tunnel);

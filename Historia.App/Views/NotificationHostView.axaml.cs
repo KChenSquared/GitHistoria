@@ -15,7 +15,7 @@ public sealed partial class NotificationHostView : UserControl, IDisposable
     internal NotificationHostView(INotificationService notifications, ISettingsService settings, Func<TimeSpan, Action, IDisposable> schedule)
     {
         InitializeComponent();
-        ViewModel = new NotificationHostViewModel(notifications, settings, new UiDispatcher(), schedule, new ClipboardService());
+        ViewModel = new NotificationHostViewModel(notifications, settings, ViewServices.Dispatcher(null), schedule, ViewServices.Clipboard(null));
         DataContext = ViewModel;
     }
 

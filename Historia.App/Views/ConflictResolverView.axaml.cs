@@ -51,7 +51,7 @@ public sealed partial class ConflictResolverView : UserControl, IDisposable, ICo
     public ConflictResolverView(IServiceProvider sp, RepositoryContext ctx)
     {
         InitializeComponent();
-        ViewModel = ActivatorUtilities.CreateInstance<ConflictResolverViewModel>(sp, ctx, new UiDispatcher());
+        ViewModel = ActivatorUtilities.CreateInstance<ConflictResolverViewModel>(sp, ctx, ViewServices.Dispatcher(sp));
         DataContext = ViewModel;
         ViewModel.BusyChanged += OnViewModelBusyChanged;
 

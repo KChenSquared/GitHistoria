@@ -19,7 +19,7 @@ public sealed partial class StagingPanelView : UserControl, IDisposable
     {
         InitializeComponent();
         ViewModel = ActivatorUtilities.CreateInstance<StagingPanelViewModel>(
-            sp, ctx, new UiDispatcher(), new ClipboardService());
+            sp, ctx, ViewServices.Dispatcher(sp), ViewServices.Clipboard(sp));
         DataContext = ViewModel;
 
         MessageInput.Height = SectionFrame.GetBoxHeight(ctx.Id, MessageMinHeight);

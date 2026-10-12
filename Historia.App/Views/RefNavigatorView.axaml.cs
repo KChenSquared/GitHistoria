@@ -52,7 +52,7 @@ public sealed partial class RefNavigatorView : UserControl, IDisposable
                 UpdateNestedMargin();
         };
 
-        ViewModel = ActivatorUtilities.CreateInstance<RefNavigatorViewModel>(sp, new UiDispatcher());
+        ViewModel = ActivatorUtilities.CreateInstance<RefNavigatorViewModel>(sp, ViewServices.Dispatcher(sp));
         DataContext = ViewModel;
 
         // A click on empty sidebar space returns the detail panel to the repo. Rows that do

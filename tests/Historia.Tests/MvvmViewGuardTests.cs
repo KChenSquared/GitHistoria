@@ -6,7 +6,8 @@ namespace Historia.Tests;
 /// <c>Window</c> subclass has a sibling <c>.axaml</c>; no <c>new Window</c> is built in code outside
 /// <c>AvaloniaDialogService.cs</c>, which builds its plain dialogs from a title, a message and a set
 /// of buttons; and no method named <c>Rebuild…</c> is declared or called, because a view that
-/// rebuilds its tree by hand has stopped binding.
+/// rebuilds its tree by hand has stopped binding. Under <c>Historia.App/Views</c> only, a view takes
+/// its dispatcher and clipboard from <c>ViewServices</c> instead of constructing them.
 /// </summary>
 [Trait("tier", "unit")]
 public class MvvmViewGuardTests
@@ -36,6 +37,13 @@ public class MvvmViewGuardTests
 
     private static readonly Regex NewWindow = new(
         @"\bnew\s+(?:Avalonia\.Controls\.)?Window\b",
+        RegexOptions.Compiled);
+
+    /// <summary>The one view file that may construct the dispatcher and clipboard.</summary>
+    private const string ViewServicesFile = "Historia.App/Views/ViewServices.cs";
+
+    private static readonly Regex ServiceConstruction = new(
+        @"\bnew\s+(?:UiDispatcher|ClipboardService)\s*\(",
         RegexOptions.Compiled);
 
     private static readonly Regex RebuildMember = new(
@@ -189,6 +197,43 @@ public class MvvmViewGuardTests
         Assert.Empty(FindViolations("Historia.App/Views/Strip.axaml.cs", "// RebuildTabs() was removed", _ => true));
     }
 
+    [Theory]
+    [InlineData("var ui = new UiDispatcher();")]
+    [InlineData("var clip = new ClipboardService();")]
+    [InlineData("var ui = new UiDispatcher ( );")]
+    public void A_view_that_constructs_a_service_is_reported(string source)
+    {
+        var violations = FindViolations("Historia.App/Views/Page.axaml.cs", source, _ => true);
+
+        Assert.Single(violations);
+        Assert.Contains("ViewServices", violations[0]);
+    }
+
+    [Theory]
+    [InlineData(ViewServicesFile, "return new UiDispatcher();")]
+    [InlineData("Historia.App/Platform/Host.cs", "var ui = new UiDispatcher();")]
+    [InlineData("Historia.App/Views/Page.axaml.cs", "// var ui = new UiDispatcher();")]
+    [InlineData("Historia.App/Views/Page.axaml.cs", "var ui = ViewServices.Dispatcher(sp);")]
+    public void Other_text_is_not_mistaken_for_a_constructed_service(string rel, string source)
+    {
+        Assert.Empty(FindViolations(rel, source, _ => true));
+    }
+
+    [Fact]
+    public void Only_ViewServices_constructs_the_dispatcher_and_clipboard_in_views()
+    {
+        var root = RepoRoot();
+        var constructing = new List<string>();
+        foreach (var file in ViewSourceFiles(root))
+        {
+            var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
+            if (ServiceConstruction.IsMatch(StripComments(File.ReadAllText(file))))
+                constructing.Add(rel);
+        }
+
+        Assert.Equal([ViewServicesFile], constructing.Where(r => r.StartsWith("Historia.App/Views/", StringComparison.Ordinal)));
+    }
+
     /// <summary>Every rule broken by the source in <paramref name="text"/>, as readable lines.</summary>
     private static List<string> FindViolations(string rel, string text, Func<string, bool> axamlExists)
     {
@@ -207,6 +252,12 @@ public class MvvmViewGuardTests
         {
             foreach (Match m in NewWindow.Matches(code))
                 violations.Add($"{rel}:{LineOf(code, m.Index)}: new Window — a dialog is an AXAML window bound to a view model.");
+        }
+
+        if (rel.StartsWith("Historia.App/Views/", StringComparison.Ordinal) && rel != ViewServicesFile)
+        {
+            foreach (Match m in ServiceConstruction.Matches(code))
+                violations.Add($"{rel}:{LineOf(code, m.Index)}: {m.Value.TrimEnd('(', ' ')} — a view resolves the dispatcher and clipboard through ViewServices.");
         }
 
         foreach (Match m in RebuildMember.Matches(code))

@@ -84,7 +84,7 @@ internal sealed partial class ShortcutsBarView : UserControl, IDisposable
     public event EventHandler? NaturalWidthChanged;
 
     private static ShortcutsBarViewModel CreateViewModel(IServiceProvider? sp) => new(
-        sp?.GetService<IUiDispatcher>() ?? new UiDispatcher(),
+        ViewServices.Dispatcher(sp),
         sp?.GetService<IWorkspaceService>(),
         sp?.GetService<IRepoActionBus>(),
         sp?.GetService<ISettingsService>(),
