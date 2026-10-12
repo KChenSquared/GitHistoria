@@ -124,10 +124,12 @@ public sealed class PerfLogWriterTests : IDisposable
             PerfLog.Mark("first");
             Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "the writer thread never reached the file");
 
+            // The stall holds until release, so a mark waiting on it would never return; the
+            // budget only has to clear a slow runner's cost for the loop itself.
             var sw = Stopwatch.StartNew();
             for (var i = 0; i < 200; i++)
                 PerfLog.Mark($"behind a stalled write {i}");
-            Assert.True(sw.ElapsedMilliseconds < 50, $"a mark waited on the stalled write: {sw.ElapsedMilliseconds} ms");
+            Assert.True(sw.ElapsedMilliseconds < 2000, $"a mark waited on the stalled write: {sw.ElapsedMilliseconds} ms");
         }
         finally
         {
