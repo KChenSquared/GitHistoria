@@ -51,9 +51,10 @@ public sealed class CenterPaneViewModelTests : IAsyncDisposable
     }
 
     // A merge stopped before its commit with the resolver kept open: a live conflict session.
+    // A refresh that sees no operation in progress clears the keep-open flag, so it is set only
+    // once the merge is visible to the state.
     private async Task StartSessionAsync()
     {
-        _ctx.State.SetKeepConflictResolverOpen(true);
         _repo.Git("checkout", "-b", "feature");
         _repo.WriteFile("g.txt", "feature\n").Stage();
         _repo.Commit("feature work");
@@ -61,12 +62,17 @@ public sealed class CenterPaneViewModelTests : IAsyncDisposable
         _repo.Git("merge", "--no-ff", "--no-commit", "feature");
 
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (!_ctx.State.IsConflictSessionActive)
+        while (true)
         {
             await _ctx.State.RefreshStatusAsync();
-            Assert.True(DateTime.UtcNow < deadline, "Timed out waiting for the conflict session.");
+            if (_ctx.State.PendingOperation == OperationState.Merging)
+                break;
+            Assert.True(DateTime.UtcNow < deadline, "Timed out waiting for the merge.");
             await Task.Delay(50);
         }
+
+        _ctx.State.SetKeepConflictResolverOpen(true);
+        Assert.True(_ctx.State.IsConflictSessionActive, "The conflict session did not start.");
     }
 
     [Fact]

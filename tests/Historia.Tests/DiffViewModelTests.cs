@@ -71,10 +71,13 @@ public sealed class DiffViewModelTests : IAsyncDisposable
 
     private static async Task<DiffViewModel> Loaded(DiffViewModel vm)
     {
-        for (var i = 0; i < 250 && !(vm.ShowsDiff || vm.HasMessage); i++)
+        // A slow read shows the loading message first, which is not the loaded state.
+        static bool Settled(DiffViewModel v) => v.ShowsDiff || (v.HasMessage && v.Message != DiffViewModel.LoadingMessage);
+
+        for (var i = 0; i < 250 && !Settled(vm); i++)
             await Task.Delay(20);
 
-        Assert.True(vm.ShowsDiff || vm.HasMessage, "the diff never loaded");
+        Assert.True(Settled(vm), "the diff never loaded");
         return vm;
     }
 
@@ -244,7 +247,7 @@ public sealed class DiffViewModelTests : IAsyncDisposable
         Assert.Null(vm.Message);
 
         ui.DrainPosted();
-        Assert.Equal("Loading diff...", vm.Message);
+        Assert.Equal(DiffViewModel.LoadingMessage, vm.Message);
         Assert.False(vm.IsMessageError);
 
         cli.Release.SetResult();

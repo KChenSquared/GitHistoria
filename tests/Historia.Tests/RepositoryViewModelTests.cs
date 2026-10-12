@@ -308,15 +308,15 @@ public sealed class RepositoryViewModelTests : IAsyncDisposable
     public async Task A_resolver_the_user_has_not_closed_hides_the_banner_until_it_is_closed()
     {
         var vm = Create();
-        _ctx.State.SetKeepConflictResolverOpen(true);
 
         await StartMergeWithoutConflictsAsync();
+        _ctx.State.SetKeepConflictResolverOpen(true);
         Assert.True(_ctx.State.IsConflictSessionActive);
-        Assert.False(vm.IsOpBannerVisible);
+        await WaitUntilAsync(() => !vm.IsOpBannerVisible);
 
         _ctx.State.SetConflictResolverClosed(true);
 
-        Assert.True(vm.IsOpBannerVisible);
+        await WaitUntilAsync(() => vm.IsOpBannerVisible);
     }
 
     [Fact]

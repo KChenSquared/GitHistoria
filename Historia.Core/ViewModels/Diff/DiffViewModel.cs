@@ -34,6 +34,9 @@ public sealed partial class DiffViewModel : ViewModelBase
     /// <summary>How long a load runs before "Loading diff..." appears.</summary>
     public static readonly TimeSpan LoadingDelay = TimeSpan.FromMilliseconds(200);
 
+    /// <summary>The message shown while a load outlasts <see cref="LoadingDelay"/>.</summary>
+    public const string LoadingMessage = "Loading diff...";
+
     private const int MaxFocusLineAttempts = 20;
 
     private readonly RepositoryContext _ctx;
@@ -177,7 +180,7 @@ public sealed partial class DiffViewModel : ViewModelBase
                 _ui.Post(() =>
                 {
                     if (!IsDisposed && Diff is null && Message is null)
-                        Message = "Loading diff...";
+                        Message = LoadingMessage;
                 });
             }
             catch (OperationCanceledException) { }

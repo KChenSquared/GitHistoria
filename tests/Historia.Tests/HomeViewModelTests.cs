@@ -422,7 +422,7 @@ public sealed class HomeViewModelTests : IAsyncDisposable
         await rig.Home.CloneCommand.ExecuteAsync(null);
 
         var call = Assert.Single(rig.DialogCalls);
-        Assert.Equal("/src/projects", call.DefaultRoot);
+        Assert.Equal(Path.GetDirectoryName("/src/projects/a"), call.DefaultRoot);
         Assert.Equal("repo", call.Guessed);
         Assert.Empty(rig.Clone.Started);
     }
