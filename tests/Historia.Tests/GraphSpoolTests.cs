@@ -54,6 +54,14 @@ public sealed class GraphSpoolTests : IAsyncDisposable
         return new GraphLayoutService(_host.Settings, _host.Locator);
     }
 
+    /// <summary>A disk-backed service whose gate lets the foreground spill write and holds the
+    /// background spool, which would otherwise race assertions on what is still resident.</summary>
+    private async Task<GraphLayoutService> ForegroundOnlyServiceAsync()
+    {
+        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
+        return new GraphLayoutService(_host.Settings, _host.Locator, _host.Cli, new PaintOnlyGate());
+    }
+
     [Fact]
     public async Task Foreground_spill_trims_only_the_confirmed_prefix_leaving_the_rest_resident()
     {
@@ -61,10 +69,7 @@ public sealed class GraphSpoolTests : IAsyncDisposable
         const int window = 10;
         SeedCommits(total);
 
-        // The gate lets the foreground spill write and holds the background spool, which would
-        // otherwise race these assertions and spill the rest of the history first.
-        await _host.Settings.UpdateAsync(s => s with { GraphMetadataFromDisk = true });
-        var svc = new GraphLayoutService(_host.Settings, _host.Locator, _host.Cli, new PaintOnlyGate());
+        var svc = await ForegroundOnlyServiceAsync();
         await using var ctx = _host.Open(_repo.Path);
 
         var result = await svc.ComputeLayoutAsync(ctx, new GraphQuery { RefScope = GraphRefScope.AllRefs }, maxRows: window);
@@ -127,7 +132,7 @@ public sealed class GraphSpoolTests : IAsyncDisposable
         // resident buffer — see the test above), the rest of the history stays resident. A
         // second, wider compute must stitch both sources back into the SAME row order and
         // content — this is exactly GraphLayoutService.ReadWindow's job.
-        var diskSvc = await DiskBackedServiceAsync();
+        var diskSvc = await ForegroundOnlyServiceAsync();
         await using var diskCtx = _host.Open(_repo.Path);
         await diskSvc.ComputeLayoutAsync(diskCtx, new GraphQuery { RefScope = GraphRefScope.AllRefs }, maxRows: window);
 
