@@ -50,9 +50,10 @@ public sealed partial class CommitGraphControl : Control
     // (AppSettings.ResidentRowCap, floored at 500k) while metadata is still fully resident
     // (the 500k memory limit exists precisely to bound that allocation).
     private bool _graphMetaFromDisk;
+    private bool _lightweightMode;
     private bool _showAuthorDate;
     private int _residentRowCapSetting;
-    private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk, _residentRowCapSetting);
+    private int ResidentRowCap => GraphLimits.GetMaxResidentRows(_graphMetaFromDisk, _residentRowCapSetting, _lightweightMode);
 
     // the silent background crawler pre-loads only this many rows into the
     // resident layout after first paint, advancing in discrete threshold steps as the user
@@ -60,8 +61,9 @@ public sealed partial class CommitGraphControl : Control
     // regardless of this cap. Crawling all the way to ResidentRowCap (2,500,000 on a big
     // repo) built a multi-GB GraphRow[] and consumed CPU/memory for minutes right after first paint.
     // Configurable (AppSettings.SilentCrawlRowCap, default 500,000); 0 means uncapped, i.e. the
-    // crawler runs to ResidentRowCap same as an explicit scroll would. Snapshotted at
-    // construction like _graphMetaFromDisk — a mid-session change takes effect on next launch.
+    // crawler runs to ResidentRowCap same as an explicit scroll would. Lightweight mode fixes it
+    // at 10,000. Snapshotted at construction like _graphMetaFromDisk — a mid-session change takes
+    // effect on next launch.
     private int _silentCrawlRowCap;
     private GraphCrawlThreshold _crawl = new(0, 0);
     private int _crawlTarget;
@@ -642,9 +644,10 @@ public sealed partial class CommitGraphControl : Control
         _actionBus = services.GetRequiredService<Historia.Services.UI.IRepoActionBus>();
         _scrollProbe = services.GetRequiredService<Historia.Services.UI.IScrollDirectionProbe>();
         _graphMetaFromDisk = _settings.Current.GraphMetadataFromDisk;
+        _lightweightMode = _settings.Current.LightweightMode;
         _showAuthorDate = _settings.Current.ShowAuthorDate;
         _residentRowCapSetting = _settings.Current.ResidentRowCap;
-        _silentCrawlRowCap = _settings.Current.SilentCrawlRowCap;
+        _silentCrawlRowCap = GraphLimits.GetSilentCrawlRowCap(_settings.Current.SilentCrawlRowCap, _lightweightMode);
         _crawl = new GraphCrawlThreshold(_silentCrawlRowCap, ResidentRowCap);
         _crawlTarget = _crawl.Target;
         Volatile.Write(ref _crawlRunning, 0);
@@ -1010,7 +1013,7 @@ public sealed partial class CommitGraphControl : Control
                 // the user on the blanked placeholder with no explanation.
                 _notifications.Publish(NotificationSeverity.Info,
                     "That commit is beyond the loaded graph.",
-                    $"History is capped at {ResidentRowCap:N0} rows to preserve memory. Use Find (Ctrl+F) to jump straight to it.");
+                    ResidentCapNotice(ResidentRowCap, _lightweightMode));
                 break;
             }
         }
@@ -1023,6 +1026,16 @@ public sealed partial class CommitGraphControl : Control
             InvalidateVisual();
         }
     }
+
+    internal static string ResidentCapNotice(int cap, bool lightweight) =>
+        lightweight
+            ? $"History is capped at {cap:N0} rows by Lightweight mode. Turn it off in Settings → Advanced to load more, or use Find (Ctrl+F) to jump straight to it."
+            : $"History is capped at {cap:N0} rows to preserve memory. Use Find (Ctrl+F) to jump straight to it.";
+
+    internal static string ResidentCapReachedNotice(int rowCount, bool lightweight) =>
+        lightweight
+            ? $"Loaded {rowCount:N0} commits. Lightweight mode caps history; turn it off in Settings → Advanced to load more."
+            : $"Loaded {rowCount:N0} commits. Further history is capped to preserve system memory.";
 
     private void ClearReveal()
     {
@@ -1332,7 +1345,7 @@ public sealed partial class CommitGraphControl : Control
             return;
         _notifications.Publish(NotificationSeverity.Info,
             "Graph capped at resident limit.",
-            $"Loaded {rowCount:N0} commits. Further history is capped to preserve system memory.");
+            ResidentCapReachedNotice(rowCount, _lightweightMode));
     }
 
     private async Task RunExtendPumpAsync(ChannelReader<ExtendRequest> reader, CancellationToken ct)
