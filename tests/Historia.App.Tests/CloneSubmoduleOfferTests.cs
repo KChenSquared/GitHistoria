@@ -22,7 +22,7 @@ public sealed class CloneSubmoduleOfferTests
         public Task DeleteTokenAsync(string key, CancellationToken ct = default) => Task.CompletedTask;
     }
 
-    private static ServiceProvider CreateServices()
+    internal static ServiceProvider CreateServices()
     {
         var sc = new ServiceCollection();
         var settings = SettingsService.Load();
@@ -69,7 +69,7 @@ public sealed class CloneSubmoduleOfferTests
         return sc.BuildServiceProvider();
     }
 
-    private static string CreateTestRepo(string name)
+    internal static string CreateTestRepo(string name)
     {
         var path = TestScratch.NewDirectory($"historia-clonetest-{name}-");
         var psi = new System.Diagnostics.ProcessStartInfo("git")
@@ -145,15 +145,15 @@ public sealed class CloneSubmoduleOfferTests
     [Fact]
     public void PathsEqual_handles_trailing_separators()
     {
-        Assert.True(HomeView.PathsEqual(@"C:\src\repo\", @"C:\src\repo"));
-        Assert.True(HomeView.PathsEqual(@"C:/src/repo/", @"C:/src/repo"));
+        Assert.True(HomeViewModel.PathsEqual(@"C:\src\repo\", @"C:\src\repo"));
+        Assert.True(HomeViewModel.PathsEqual(@"C:/src/repo/", @"C:/src/repo"));
     }
 
     [Fact]
     public void PathsEqual_handles_mixed_separators()
     {
-        Assert.True(HomeView.PathsEqual(@"C:\src\repo", "C:/src/repo"));
-        Assert.True(HomeView.PathsEqual(@"C:\src/repo\sub", "C:/src/repo/sub"));
+        Assert.True(HomeViewModel.PathsEqual(@"C:\src\repo", "C:/src/repo"));
+        Assert.True(HomeViewModel.PathsEqual(@"C:\src/repo\sub", "C:/src/repo/sub"));
     }
 
     [Fact]
@@ -161,15 +161,15 @@ public sealed class CloneSubmoduleOfferTests
     {
         if (OperatingSystem.IsWindows())
         {
-            Assert.True(HomeView.PathsEqual(@"C:\Src\Repo", @"C:\src\repo"));
+            Assert.True(HomeViewModel.PathsEqual(@"C:\Src\Repo", @"C:\src\repo"));
         }
     }
 
     [Fact]
     public void PathsEqual_rejects_sibling_paths()
     {
-        Assert.False(HomeView.PathsEqual(@"C:\src\repo2", @"C:\src\repo"));
-        Assert.False(HomeView.PathsEqual("C:/src/repo2", "C:/src/repo"));
+        Assert.False(HomeViewModel.PathsEqual(@"C:\src\repo2", @"C:\src\repo"));
+        Assert.False(HomeViewModel.PathsEqual("C:/src/repo2", "C:/src/repo"));
     }
 
     [Fact]
@@ -189,10 +189,10 @@ public sealed class CloneSubmoduleOfferTests
             ws.Focus(ctx1);
             Assert.Same(ctx1, ws.Focused);
 
-            var found = HomeView.FindClonedRepository(ws.OpenRepositories, repoPath2);
+            var found = HomeViewModel.FindClonedRepository(ws.OpenRepositories, repoPath2);
             Assert.Same(ctx2, found);
 
-            var notFound = HomeView.FindClonedRepository(ws.OpenRepositories, TestScratch.NewPath("nonexistent-target-"));
+            var notFound = HomeViewModel.FindClonedRepository(ws.OpenRepositories, TestScratch.NewPath("nonexistent-target-"));
             Assert.Null(notFound);
 
             await ws.CloseAsync(ctx1);
