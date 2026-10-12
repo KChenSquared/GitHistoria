@@ -2,7 +2,7 @@ namespace HistoriaApp.Tests;
 
 /// <summary>
 /// Characterization tripwire for the Tier 3 extractions from <see cref="CommitGraphControl"/>
-/// and <see cref="AppBandControl"/>. These do not exercise the
+/// and <see cref="AppBandView"/>. These do not exercise the
 /// data-bound render pass — they pin the invariant that the controls still <em>construct</em>
 /// (their field initializers + ctor build a large child-control tree) and survive a
 /// service-less measure/arrange without throwing. A botched rewire of an extracted helper that
@@ -25,9 +25,9 @@ public class GraphControlConstructionTests
     }
 
     [AvaloniaFact]
-    public void AppBandControl_constructs_and_lays_out_without_services()
+    public void AppBandView_constructs_and_lays_out_without_services()
     {
-        var band = new AppBandControl();
+        var band = new AppBandView();
 
         band.Measure(new Size(900, 64));
         band.Arrange(new Rect(0, 0, 900, 64));

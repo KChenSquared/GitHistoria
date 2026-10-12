@@ -77,10 +77,16 @@ public sealed class CloneTabTests
         return sc.BuildServiceProvider();
     }
 
-    private static (AppBandControl Band, ServiceProvider Sp, Window Window) CreateBand(StubCloneService clone)
+    private static List<Border> TabShells(AppBandView band)
+        => band.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("tabShell")).ToList();
+
+    private static Border PendingShell(AppBandView band)
+        => TabShells(band).Single(b => b.DataContext is CloneTabViewModel);
+
+    private static (AppBandView Band, ServiceProvider Sp, Window Window) CreateBand(StubCloneService clone)
     {
         var sp = CreateServices(clone);
-        var band = new AppBandControl();
+        var band = new AppBandView();
         band.Initialize(sp);
         var window = new Window { Width = 1200, Height = 60, Content = band };
         window.Show();
@@ -93,13 +99,13 @@ public sealed class CloneTabTests
     {
         var clone = new StubCloneService();
         var (band, sp, window) = CreateBand(clone);
-        var baselineCount = band.TabViewsForTesting.Count;
+        var baselineCount = TabShells(band).Count;
 
         clone.Current = new CloneStatus("https://example.com/r.git", "/tmp/my-repo", null, false);
         clone.RaiseChanged();
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(baselineCount + 1, band.TabViewsForTesting.Count);
+        Assert.Equal(baselineCount + 1, TabShells(band).Count);
 
         window.Close();
         await sp.DisposeAsync();
@@ -115,7 +121,7 @@ public sealed class CloneTabTests
         clone.RaiseChanged();
         Dispatcher.UIThread.RunJobs();
 
-        var pending = band.TabViewsForTesting.Single(v => v.Tag is not RepositoryContext);
+        var pending = PendingShell(band);
         var texts = pending.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToList();
 
         Assert.Contains("my-repo", texts);
@@ -131,13 +137,13 @@ public sealed class CloneTabTests
         var clone = new StubCloneService { Current = new CloneStatus("https://example.com/r.git", "/tmp/my-repo", null, false) };
         var (band, sp, window) = CreateBand(clone);
 
-        var before = band.TabViewsForTesting.Single(v => v.Tag is not RepositoryContext);
+        var before = PendingShell(band);
 
         clone.Current = clone.Current with { Progress = new GitProgress { Phase = "Receiving objects", Percent = 42 } };
         clone.RaiseChanged();
         Dispatcher.UIThread.RunJobs();
 
-        var after = band.TabViewsForTesting.Single(v => v.Tag is not RepositoryContext);
+        var after = PendingShell(band);
         Assert.Same(before, after); // same Border instance — no strip rebuild for a progress tick
         var texts = after.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToList();
         Assert.Contains(clone.Current.Describe(), texts);
@@ -151,26 +157,27 @@ public sealed class CloneTabTests
     {
         var clone = new StubCloneService { Current = new CloneStatus("https://example.com/r.git", "/tmp/my-repo", null, false) };
         var (band, sp, window) = CreateBand(clone);
-        Assert.Contains(band.TabViewsForTesting, v => v.Tag is not RepositoryContext);
+        Assert.Contains(TabShells(band), v => v.DataContext is CloneTabViewModel);
 
         clone.Current = null;
         clone.RaiseChanged();
         Dispatcher.UIThread.RunJobs();
 
-        Assert.DoesNotContain(band.TabViewsForTesting, v => v.Tag is not RepositoryContext);
+        Assert.DoesNotContain(TabShells(band), v => v.DataContext is CloneTabViewModel);
 
         window.Close();
         await sp.DisposeAsync();
     }
 
     [AvaloniaFact]
-    public async Task The_pending_tab_has_no_repository_context_tag_so_drag_reorder_ignores_it()
+    public async Task The_pending_tab_is_not_a_repository_tab_so_drag_reorder_ignores_it()
     {
         var clone = new StubCloneService { Current = new CloneStatus("https://example.com/r.git", "/tmp/my-repo", null, false) };
         var (band, sp, window) = CreateBand(clone);
 
-        var pending = band.TabViewsForTesting.Single(v => v.Tag is not RepositoryContext);
-        Assert.Null(pending.Tag);
+        var pending = PendingShell(band);
+        Assert.IsNotType<RepoTabViewModel>(pending.DataContext);
+        Assert.False(band.ViewModel!.BeginDrag((AppBandItemViewModel)pending.DataContext!));
 
         window.Close();
         await sp.DisposeAsync();

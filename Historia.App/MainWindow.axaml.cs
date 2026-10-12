@@ -12,7 +12,7 @@ public partial class MainWindow : Window
     private readonly IKeyboardCommandRouter? _keyboard;
     private readonly IScrollDirectionProbe? _scrollProbe;
     private readonly AtomicFileWriter? _placementWriter;
-    private readonly AppBandControl? _appBand;
+    private readonly AppBandView? _appBand;
     private readonly ShortcutsBarView? _leftShortcuts;
     private readonly ShortcutsBarView? _rightShortcuts;
     private readonly CommitGraphControl? _graph;
@@ -38,7 +38,7 @@ public partial class MainWindow : Window
             if (_theme is not null)
                 _theme.ThemeChanged += OnThemeChanged;
 
-            _appBand = new AppBandControl();
+            _appBand = new AppBandView();
             AppBandHost.Content = _appBand;
             _appBand.Initialize(services);
 

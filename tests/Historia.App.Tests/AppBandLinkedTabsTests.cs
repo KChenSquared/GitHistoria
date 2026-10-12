@@ -87,7 +87,7 @@ public sealed class AppBandLinkedTabsTests : IAsyncDisposable
         var sub = new SubmoduleInfo { Name = "vendor/lib", Path = "vendor/lib", Url = _childDir, Status = SubmoduleStatus.Clean };
         var child = await workspace.OpenSubmoduleAsync(owner, sub);
 
-        var band = new AppBandControl();
+        var band = new AppBandView();
         band.Initialize(_sp);
 
         var window = new Window { Width = 1280, Height = 40, Content = band };
@@ -95,11 +95,11 @@ public sealed class AppBandLinkedTabsTests : IAsyncDisposable
         Dispatcher.UIThread.RunJobs();
 
         var shells = band.GetVisualDescendants().OfType<Border>()
-            .Where(b => b.Tag is RepositoryContext)
+            .Where(b => b.Classes.Contains("tabShell") && b.DataContext is RepoTabViewModel)
             .ToList();
 
-        var ownerShell = shells.Single(b => ReferenceEquals(b.Tag, owner));
-        var childShell = shells.Single(b => ReferenceEquals(b.Tag, child));
+        var ownerShell = shells.Single(b => ReferenceEquals(((RepoTabViewModel)b.DataContext!).Context, owner));
+        var childShell = shells.Single(b => ReferenceEquals(((RepoTabViewModel)b.DataContext!).Context, child));
 
         Assert.Equal(RowHeight, ownerShell.Height);
         Assert.Equal(RowHeight - 3, childShell.Height);

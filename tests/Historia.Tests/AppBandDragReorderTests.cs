@@ -1,7 +1,6 @@
 namespace Historia.Tests;
 
-/// <summary>The app-band tab drag geometry lifted out of
-/// <c>AppBandControl</c>.</summary>
+/// <summary>The app-band tab drag geometry that <c>AppBandViewModel</c> reorders the tabs with.</summary>
 [Trait("tier", "unit")]
 public class AppBandDragReorderTests
 {

@@ -1,0 +1,298 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.AppBandView"
+             x:DataType="vm:AppBandViewModel"
+             Height="32"
+             Background="{DynamicResource ColorChrome}">
+    <!-- The window's app band (row 0): the branded Historia menu button plus the repository tab
+         strip. A native control, so the menu drops over the sidebar and the graph. The tabs are
+         markup bound to an AppBandViewModel; the code here is view mechanics: the overflow and
+         multi-row layout, the add button's placement, the tab drag with its edge-scroll timer and
+         ghost, and the menu flyouts. -->
+    <UserControl.Styles>
+        <Style Selector="Border.tabShell">
+            <Setter Property="Height" Value="31" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+        </Style>
+        <Style Selector="Border.tabShell.separator">
+            <Setter Property="BorderThickness" Value="1,0,0,0" />
+        </Style>
+        <!-- A linked tab renders 3 px shorter, flush with the strip's bottom edge. -->
+        <Style Selector="Border.tabShell.linked">
+            <Setter Property="Height" Value="28" />
+            <Setter Property="VerticalAlignment" Value="Bottom" />
+        </Style>
+        <Style Selector="Border.tabShell.dragging">
+            <Setter Property="Opacity" Value="0.3" />
+        </Style>
+        <Style Selector="Border.tabBody">
+            <Setter Property="Padding" Value="12,0,5,0" />
+            <Setter Property="BorderThickness" Value="0,2,0,0" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Background" Value="{DynamicResource ColorChrome}" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="Border.tabBody.active">
+            <Setter Property="Background" Value="{DynamicResource ColorBg}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorPrimary}" />
+        </Style>
+        <Style Selector="Border.pendingBody">
+            <Setter Property="Padding" Value="12,0,5,0" />
+            <Setter Property="BorderThickness" Value="0,2,0,0" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Background" Value="{DynamicResource ColorChrome}" />
+        </Style>
+        <Style Selector="TextBlock.tabName">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+        </Style>
+        <Style Selector="TextBlock.tabName.active">
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+        </Style>
+        <!-- The developer auto-fetch bar: red until the loop starts, yellow while this repository
+             awaits its fetch, green once fetched this cycle. -->
+        <Style Selector="Border.fetchBar">
+            <Setter Property="Width" Value="4" />
+            <Setter Property="Background" Value="{DynamicResource ColorDanger}" />
+        </Style>
+        <Style Selector="Border.fetchBar.pending">
+            <Setter Property="Background" Value="{DynamicResource ColorWarning}" />
+        </Style>
+        <Style Selector="Border.fetchBar.fetched">
+            <Setter Property="Background" Value="{DynamicResource ColorSuccess}" />
+        </Style>
+        <Style Selector="Button.tabButton">
+            <Setter Property="Width" Value="18" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="Button.glyphButton">
+            <Setter Property="Width" Value="24" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="RepeatButton.arrow">
+            <Setter Property="Width" Value="18" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="FontSize" Value="8" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="1,0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+    </UserControl.Styles>
+
+    <Border BorderThickness="0,0,0,1" BorderBrush="{DynamicResource ColorBorder}">
+        <DockPanel x:Name="BandDock" LastChildFill="True">
+            <Border x:Name="Brand" DockPanel.Dock="Left" Height="31" VerticalAlignment="Top">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,6,0">
+                    <Button x:Name="Hamburger"
+                            Classes="flat glyphButton"
+                            Content="☰"
+                            ToolTip.Tip="Menu"
+                            Click="OnHamburgerClick" />
+                    <Border Width="1" Margin="6,4,0,4" Background="{DynamicResource ColorBorder}" />
+                    <!-- The mark and wordmark are their own click target, separate from the
+                         hamburger: they open the Home panel without popping the app menu. -->
+                    <StackPanel Orientation="Horizontal"
+                                Background="Transparent"
+                                Cursor="Hand"
+                                ToolTip.Tip="Home"
+                                PointerPressed="OnBrandPressed">
+                        <Image x:Name="BrandMark"
+                               Width="24"
+                               Height="24"
+                               Margin="6,0,0,0"
+                               VerticalAlignment="Center" />
+                        <TextBlock Text="Historia"
+                                   FontWeight="SemiBold"
+                                   Margin="8,0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{DynamicResource ColorText}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <Border DockPanel.Dock="Left" Width="1" Background="{DynamicResource ColorBorder}" />
+
+            <RepeatButton x:Name="RightArrow"
+                          Classes="flat arrow"
+                          DockPanel.Dock="Right"
+                          Opacity="0"
+                          IsHitTestVisible="False"
+                          Content="▶"
+                          Click="OnRightArrowClick" />
+            <RepeatButton x:Name="LeftArrow"
+                          Classes="flat arrow"
+                          DockPanel.Dock="Right"
+                          Opacity="0"
+                          IsHitTestVisible="False"
+                          Content="◀"
+                          Click="OnLeftArrowClick" />
+
+            <!-- Beside the arrows while the strip overflows; otherwise the "+" at the end of the
+                 strip stands in for it, so it follows the last tab and wraps with the tabs. -->
+            <Button x:Name="AddButton"
+                    x:DataType="vm:AddTabViewModel"
+                    DataContext="{Binding AddTab}"
+                    Classes="flat glyphButton"
+                    DockPanel.Dock="Right"
+                    IsVisible="False"
+                    Content="＋"
+                    ToolTip.Tip="Open or clone a repository">
+                <Button.Flyout>
+                    <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                        <MenuItem Header="Open…" Command="{Binding OpenCommand}" />
+                        <MenuItem Header="Clone…" Command="{Binding CloneCommand}" />
+                        <MenuItem Header="Initialize…" Command="{Binding InitializeCommand}" />
+                    </MenuFlyout>
+                </Button.Flyout>
+            </Button>
+
+            <ScrollViewer x:Name="Scroller"
+                          HorizontalScrollBarVisibility="Hidden"
+                          VerticalScrollBarVisibility="Disabled"
+                          ScrollChanged="OnScrollerScrollChanged">
+                <ItemsControl x:Name="TabStrip"
+                              ItemsSource="{Binding StripItems}"
+                              ContainerPrepared="OnContainerPrepared">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.DataTemplates>
+                        <DataTemplate DataType="vm:RepoTabViewModel" x:DataType="vm:RepoTabViewModel">
+                            <Border Classes="tabShell"
+                                    Classes.separator="{Binding ShowLeadingSeparator}"
+                                    Classes.linked="{Binding IsLinked}"
+                                    Classes.dragging="{Binding IsDragging}">
+                                <Grid ColumnDefinitions="Auto,*">
+                                    <Border Classes="fetchBar"
+                                            Classes.pending="{Binding IsPendingThisCycle}"
+                                            Classes.fetched="{Binding IsFetchedThisCycle}"
+                                            IsVisible="{Binding ShowAutoFetchBar}" />
+                                    <Border Grid.Column="1"
+                                            Classes="tabBody"
+                                            Classes.active="{Binding IsActive}"
+                                            Width="{Binding BodyWidth}"
+                                            PointerReleased="OnTabReleased">
+                                        <Border.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="Open repository location"
+                                                          IsVisible="{Binding HasLocation}"
+                                                          Command="{Binding RevealCommand}" />
+                                                <MenuItem Header="Copy path"
+                                                          IsVisible="{Binding HasLocation}"
+                                                          Command="{Binding CopyPathCommand}" />
+                                                <Separator IsVisible="{Binding HasLocation}" />
+                                                <MenuItem Header="Close" Command="{Binding CloseCommand}" />
+                                            </ContextMenu>
+                                        </Border.ContextMenu>
+                                        <DockPanel>
+                                            <!-- The glyph buttons sit in one row, flush against each other,
+                                                 5 px inset from the name. -->
+                                            <StackPanel DockPanel.Dock="Right"
+                                                        Orientation="Horizontal"
+                                                        Margin="5,0,0,0"
+                                                        VerticalAlignment="Center">
+                                                <Button Classes="tabButton"
+                                                        Width="24"
+                                                        ToolTip.Tip="Open terminal here"
+                                                        Command="{Binding OpenTerminalCommand}">
+                                                    <ctl:IconGlyph Icon="terminal"
+                                                                   Size="15"
+                                                                   ForegroundKey="ColorTextMuted"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center" />
+                                                </Button>
+                                                <Button Classes="tabButton"
+                                                        ToolTip.Tip="Close repository"
+                                                        Command="{Binding CloseCommand}">
+                                                    <ctl:IconGlyph Icon="close"
+                                                                   Size="10"
+                                                                   ForegroundKey="ColorTextMuted"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center" />
+                                                </Button>
+                                            </StackPanel>
+                                            <TextBlock Classes="tabName"
+                                                       Classes.active="{Binding IsActive}"
+                                                       Text="{Binding Title}"
+                                                       MaxWidth="{Binding NameMaxWidth}"
+                                                       ToolTip.Tip="{Binding RepositoryPath}"
+                                                       ToolTip.ShowDelay="75" />
+                                        </DockPanel>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+
+                        <!-- The tab shown for the duration of a clone. Its button cancels the clone. -->
+                        <DataTemplate DataType="vm:CloneTabViewModel" x:DataType="vm:CloneTabViewModel">
+                            <Border Classes="tabShell" Classes.separator="{Binding ShowLeadingSeparator}">
+                                <Border Classes="pendingBody">
+                                    <Grid ColumnDefinitions="Auto,Auto">
+                                        <StackPanel VerticalAlignment="Center" Spacing="1">
+                                            <TextBlock Classes="tabName"
+                                                       Text="{Binding Name}"
+                                                       MaxWidth="180"
+                                                       ToolTip.Tip="{Binding TargetDirectory}"
+                                                       ToolTip.ShowDelay="75" />
+                                            <TextBlock Classes="tabName"
+                                                       FontSize="10"
+                                                       Text="{Binding StatusText}"
+                                                       MaxWidth="180" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                                Classes="tabButton"
+                                                Margin="5,0,0,0"
+                                                ToolTip.Tip="Cancel clone"
+                                                IsEnabled="{Binding CanCancel}"
+                                                Command="{Binding CancelCommand}">
+                                            <ctl:IconGlyph Icon="close"
+                                                           Size="10"
+                                                           ForegroundKey="ColorTextMuted"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center" />
+                                        </Button>
+                                    </Grid>
+                                </Border>
+                            </Border>
+                        </DataTemplate>
+
+                        <!-- The "+" that ends the strip. -->
+                        <DataTemplate DataType="vm:AddTabViewModel" x:DataType="vm:AddTabViewModel">
+                            <Button Classes="flat glyphButton"
+                                    Content="＋"
+                                    ToolTip.Tip="Open or clone a repository">
+                                <Button.Flyout>
+                                    <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                                        <MenuItem Header="Open…" Command="{Binding OpenCommand}" />
+                                        <MenuItem Header="Clone…" Command="{Binding CloneCommand}" />
+                                        <MenuItem Header="Initialize…" Command="{Binding InitializeCommand}" />
+                                    </MenuFlyout>
+                                </Button.Flyout>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.DataTemplates>
+                </ItemsControl>
+            </ScrollViewer>
+        </DockPanel>
+    </Border>
+</UserControl>
