@@ -948,7 +948,9 @@ public class ConflictResolverViewTests : IDisposable
         await view.LoadAsync();
         Dispatcher.UIThread.RunJobs();
 
-        int countAfterLoad = ConflictPaneBuilder.BuildCallCount;
+        // The counter is process-wide: let builds still in flight from the load, or from earlier
+        // tests, land before taking the baseline the renders are measured against.
+        int countAfterLoad = await SettledBuildCountAsync();
         Assert.True(countAfterLoad > 0);
 
         // Render twice
@@ -2394,6 +2396,28 @@ public class ConflictResolverViewTests : IDisposable
     /// <summary>Runs posted UI work until <paramref name="condition"/> holds, for at most 10 seconds.
     /// Status changes reach the view through a 50 ms debounce and then its own reload, so a fixed
     /// sleep can end before either has run on a busy machine.</summary>
+    /// <summary>Runs posted UI work until <see cref="ConflictPaneBuilder.BuildCallCount"/> holds
+    /// still for 300 ms, for at most 10 seconds, and returns it.</summary>
+    private static async Task<int> SettledBuildCountAsync()
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var count = ConflictPaneBuilder.BuildCallCount;
+        var stableSince = DateTime.UtcNow;
+        while (DateTime.UtcNow - stableSince < TimeSpan.FromMilliseconds(300))
+        {
+            Assert.True(DateTime.UtcNow < deadline, "Timed out waiting for pane builds to settle.");
+            await Task.Delay(20);
+            Dispatcher.UIThread.RunJobs();
+            var now = ConflictPaneBuilder.BuildCallCount;
+            if (now != count)
+            {
+                count = now;
+                stableSince = DateTime.UtcNow;
+            }
+        }
+        return count;
+    }
+
     private static async Task PumpUntilAsync(Func<bool> condition, string what)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
