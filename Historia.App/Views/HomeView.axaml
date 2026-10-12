@@ -1,0 +1,135 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:views="clr-namespace:Historia.Views"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.HomeView"
+             x:DataType="vm:HomeViewModel"
+             Background="{DynamicResource ColorChrome}">
+    <UserControl.Styles>
+        <!-- Transparent fill and a grey outline at rest, the list-hover fill under the pointer
+             (as Button.secondary does). A missing folder is dimmed and takes no hover. -->
+        <Style Selector="Border.recent-row">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="Border.recent-row:pointerover">
+            <Setter Property="Background" Value="{DynamicResource ColorListHover}" />
+        </Style>
+        <Style Selector="Border.recent-row.stale">
+            <Setter Property="Opacity" Value="0.5" />
+            <Setter Property="Cursor" Value="Arrow" />
+        </Style>
+        <Style Selector="Border.recent-row.stale:pointerover">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+        <!-- Clone progress reads green like the "Stage all" pill (border and status text);
+             Cancel reads red like "Unstage all" (Button.danger chrome). -->
+        <Style Selector="Border.clone-box">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorSuccess}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="10,6" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid>
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="16" Margin="32" MaxWidth="640">
+                <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                    <Image x:Name="MarkImage" Width="60" Height="60" VerticalAlignment="Center" />
+                    <TextBlock Classes="text" Text="Historia" FontSize="28" FontWeight="SemiBold" />
+                </StackPanel>
+                <TextBlock Classes="text muted"
+                           Text="The commit graph you love: every commit, no lag, no subscriptions." />
+
+                <WrapPanel x:Name="ActionRow" Orientation="Horizontal" ItemSpacing="8" LineSpacing="8">
+                    <Button Classes="primary" Content="Open repository…" Command="{Binding OpenCommand}" Cursor="Hand" />
+                    <Button Classes="secondary" Content="Clone…" Command="{Binding CloneCommand}" Cursor="Hand" />
+                    <Button Classes="secondary" Content="New repository…" Command="{Binding InitCommand}" Cursor="Hand" />
+                </WrapPanel>
+
+                <Border Classes="clone-box" IsVisible="{Binding IsCloneVisible}">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Classes="text"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource ColorSuccess}"
+                                   Text="{Binding CloneStatusText}" />
+                        <Button Classes="danger"
+                                Content="Cancel"
+                                Command="{Binding CancelCloneCommand}"
+                                Cursor="Hand" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Classes="section" Text="Recent" FontSize="12" />
+                <!-- The right padding keeps the scrollbar clear of the recent folder boxes and
+                     their remove buttons, whether minimized or expanded on hover. -->
+                <ScrollViewer x:Name="RecentScroller"
+                              MaxHeight="380"
+                              HorizontalScrollBarVisibility="Disabled"
+                              Padding="0,0,4,0">
+                    <StackPanel>
+                        <TextBlock Classes="text muted"
+                                   Text="No repositories opened yet."
+                                   IsVisible="{Binding HasNoRecents}" />
+                        <ItemsControl x:Name="RecentList" ItemsSource="{Binding Recents}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <views:UniformWidthStackPanel Spacing="4" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:RecentRepoViewModel">
+                                    <Border Classes="recent-row"
+                                            Classes.stale="{Binding IsStale}"
+                                            PointerPressed="OnRecentPressed">
+                                        <Border.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="Open repository location" Command="{Binding RevealCommand}" />
+                                                <MenuItem Header="Copy path" Command="{Binding CopyPathCommand}" />
+                                            </ContextMenu>
+                                        </Border.ContextMenu>
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <StackPanel Margin="10,6">
+                                                <TextBlock Classes="text" Text="{Binding Title}" />
+                                                <TextBlock Classes="text faint" FontSize="11" Text="{Binding Path}" />
+                                            </StackPanel>
+                                            <Button Grid.Column="1"
+                                                    Command="{Binding RemoveCommand}"
+                                                    ToolTip.Tip="Remove"
+                                                    Padding="4"
+                                                    Background="Transparent"
+                                                    BorderThickness="0"
+                                                    Cursor="Hand">
+                                                <ctl:IconGlyph Icon="close" Size="14" ForegroundKey="ColorTextMuted" />
+                                            </Button>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ScrollViewer>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Button IsVisible="{Binding ShowClose}"
+                Command="{Binding CloseCommand}"
+                ToolTip.Tip="Close"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="0,6,6,0"
+                Padding="4"
+                Background="Transparent"
+                BorderThickness="0"
+                Cursor="Hand">
+            <ctl:IconGlyph Icon="close" Size="12" ForegroundKey="ColorTextMuted" />
+        </Button>
+    </Grid>
+</UserControl>
