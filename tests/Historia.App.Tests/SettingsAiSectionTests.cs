@@ -28,11 +28,15 @@ public sealed class SettingsAiSectionTests
     private static ServiceProvider CreateServices(IAiIntegrationsPanel? panel)
     {
         var sc = new ServiceCollection();
-        sc.AddSingleton<ISettingsService>(new InMemorySettingsService());
-        sc.AddSingleton<IAiProfileService, AiProfileService>();
+        var settings = new InMemorySettingsService();
+        var profiles = new AiProfileService(settings);
+        var clientFactory = new AiTestSupport.Factory(new AiTestSupport.Client());
+        sc.AddSingleton<ISettingsService>(settings);
+        sc.AddSingleton<IAiProfileService>(profiles);
         if (panel is not null)
             sc.AddSingleton<IAiIntegrationsPanel>(panel);
-        sc.AddSingleton<IAiClientFactory>(new AiTestSupport.Factory(new AiTestSupport.Client()));
+        sc.AddSingleton<IAiClientFactory>(clientFactory);
+        sc.AddSingleton<IAiModelCatalog>(new AiModelCatalog(profiles, clientFactory));
         sc.AddSingleton<IUiDispatcher, Historia.Platform.UiDispatcher>();
         sc.AddSingleton<IDialogService, AiTestSupport.Dialogs>();
         sc.AddSingleton<IScrollDirectionProbe, Historia.Platform.ScrollDirectionProbe>();

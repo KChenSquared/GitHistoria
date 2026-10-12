@@ -1,7 +1,10 @@
 namespace Historia.Services.Ai;
 
 /// <inheritdoc cref="ICommitMessageGenerator"/>
-public sealed class CommitMessageGenerator(IAiProfileService profiles, IAiClientFactory clients) : ICommitMessageGenerator
+public sealed class CommitMessageGenerator(
+    IAiProfileService profiles,
+    IAiClientFactory clients,
+    IAiModelCatalog? catalog = null) : ICommitMessageGenerator
 {
     public Task<CommitMessageResult> GenerateAsync(RepositoryContext ctx, bool amend, CancellationToken ct)
     {
@@ -106,6 +109,8 @@ public sealed class CommitMessageGenerator(IAiProfileService profiles, IAiClient
         {
             throw Unavailable(oldModel, ex.Details ?? ex.Message);
         }
+
+        catalog?.Remember(profile, ids);
 
         var picked = GeminiModelSelector.PickReplacement(ids, string.IsNullOrWhiteSpace(oldModel) ? null : oldModel);
         if (picked is null)

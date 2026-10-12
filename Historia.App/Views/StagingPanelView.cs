@@ -32,8 +32,16 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private readonly IAiProfileService? _aiProfiles;
     private readonly IAiIntegrationsPanel? _aiPanel;
     private readonly ICommitMessageGenerator? _aiGenerator;
+    private readonly IAiModelCatalog? _catalog;
     private Button? _wand;
     private Button? _aiSettings;
+    private ComboBox? _modelPicker;
+    private Border? _amendDivider;
+    private CancellationTokenSource? _modelLoadCts;
+    private Task _modelLoad = Task.CompletedTask;
+    private bool _syncingPicker;
+    private bool _loadingModels;
+    private EventHandler<string>? _onCatalogChanged;
     private EventHandler? _onAiChanged;
     private CancellationTokenSource? _generateCts;
     private bool _disposed;
@@ -98,6 +106,10 @@ public sealed class StagingPanelView : UserControl, IDisposable
     internal CheckBox AmendForTesting => _amend;
     internal Button? WandForTesting => _wand;
     internal Button? AiSettingsForTesting => _aiSettings;
+    internal ComboBox? ModelPickerForTesting => _modelPicker;
+    internal Border? AmendDividerForTesting => _amendDivider;
+    internal Task ModelLoadForTesting => _modelLoad;
+    internal void OpenModelPickerForTesting() => OnModelPickerOpened();
     internal Panel? MessageCellForTesting { get; private set; }
     internal Grid? CommitOptionsRowForTesting { get; private set; }
     internal Control? MessageResizeHandleForTesting { get; private set; }
@@ -139,6 +151,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _aiProfiles = sp.GetService<IAiProfileService>();
         _aiPanel = sp.GetService<IAiIntegrationsPanel>();
         _aiGenerator = sp.GetService<ICommitMessageGenerator>();
+        _catalog = sp.GetService<IAiModelCatalog>();
 
         _conflicts = sp.GetRequiredService<IConflictService>();
         _unsavedWork = sp.GetService<IUnsavedWorkRegistry>();
@@ -215,15 +228,16 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
         var optionsRow = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+            ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto,Auto"),
         };
-        if (_aiProfiles is not null && _aiPanel is not null && _aiGenerator is not null)
+        if (_aiProfiles is not null && _aiPanel is not null && _aiGenerator is not null && _catalog is not null)
         {
+            BuildModelPickerAndDivider(optionsRow);
             var aiStrip = BuildAiButtons();
             Grid.SetColumn(aiStrip, 0);
             optionsRow.Children.Add(aiStrip);
         }
-        Grid.SetColumn(_amend, 2);
+        Grid.SetColumn(_amend, 4);
         optionsRow.Children.Add(_amend);
         CommitOptionsRowForTesting = optionsRow;
 
@@ -678,6 +692,176 @@ public sealed class StagingPanelView : UserControl, IDisposable
         };
     }
 
+    // Fills the row at the narrowest right column (360 px window).
+    private const double ModelPickerWidth = 184;
+
+    private void BuildModelPickerAndDivider(Grid optionsRow)
+    {
+        _modelPicker = new ComboBox
+        {
+            IsEditable = false,
+            Width = ModelPickerWidth,
+            PlaceholderText = "Select a Model",
+            FontSize = 13,
+            MinHeight = 0,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(6, 0, 0, 0),
+        };
+        ToolTip.SetShowOnDisabled(_modelPicker, true);
+        _modelPicker.SelectionChanged += (_, _) => OnModelPickerSelectionChanged();
+        _modelPicker.DropDownOpened += (_, _) => OnModelPickerOpened();
+
+        _amendDivider = new Border
+        {
+            Width = 1,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Margin = new Thickness(8, 2),
+        };
+        _amendDivider.Dyn(Border.BackgroundProperty, "ColorBorder");
+
+        Grid.SetColumn(_modelPicker, 1);
+        Grid.SetColumn(_amendDivider, 3);
+        optionsRow.Children.Add(_modelPicker);
+        optionsRow.Children.Add(_amendDivider);
+
+        _onCatalogChanged = (_, _) => Dispatcher.UIThread.Post(RefreshModelPicker);
+        _catalog!.Changed += _onCatalogChanged;
+    }
+
+    private void RefreshModelPicker()
+    {
+        if (_disposed || _modelPicker is null || _aiProfiles is null)
+            return;
+
+        _syncingPicker = true;
+        try
+        {
+            var active = _aiProfiles.ActiveProfile;
+            if (active is null)
+            {
+                _modelPicker.IsEnabled = false;
+                _modelPicker.ItemsSource = null;
+                _modelPicker.SelectedItem = null;
+                ToolTip.SetTip(_modelPicker, "Set up an AI integration to choose a model");
+                return;
+            }
+
+            _modelPicker.IsEnabled = true;
+            var cached = _catalog?.Get(active);
+            IReadOnlyList<string> items;
+            if (cached is not null)
+            {
+                items = cached;
+            }
+            else if (!string.IsNullOrWhiteSpace(active.Model))
+            {
+                items = [active.Model];
+            }
+            else
+            {
+                items = [];
+            }
+
+            var current = (_modelPicker.ItemsSource as IEnumerable<string>)?.ToList() ?? [];
+            if (!current.SequenceEqual(items))
+            {
+                _modelPicker.ItemsSource = items;
+            }
+
+            var target = items.Contains(active.Model) ? active.Model : null;
+            if (!string.Equals(_modelPicker.SelectedItem as string, target, StringComparison.Ordinal))
+            {
+                _modelPicker.SelectedItem = target;
+            }
+
+            var label = _aiProfiles.DisplayLabel(active);
+            var tip = $"Model for {label}";
+            if (_loadingModels)
+            {
+                tip += "\nLoading models…";
+            }
+            else if (!active.AutoFetchModels && cached is null)
+            {
+                tip += "\nPress refresh in AI Integrations to load models";
+            }
+            ToolTip.SetTip(_modelPicker, tip);
+        }
+        finally
+        {
+            _syncingPicker = false;
+        }
+    }
+
+    private void OnModelPickerSelectionChanged()
+    {
+        if (_syncingPicker || _disposed || _aiProfiles?.ActiveProfile is not { } active)
+            return;
+
+        if (_modelPicker?.SelectedItem is string picked && picked != active.Model)
+        {
+            _ = _aiProfiles.UpdateAsync(active.Id, p => p with { Model = picked });
+        }
+    }
+
+    private void OnModelPickerOpened()
+    {
+        if (_disposed || _aiProfiles?.ActiveProfile is not { } active)
+            return;
+
+        if (!active.AutoFetchModels || _catalog?.Get(active) is not null || !_modelLoad.IsCompleted)
+            return;
+
+        if (string.IsNullOrWhiteSpace(active.Server))
+        {
+            _notifications.Publish(NotificationSeverity.Warning, "Set the Server before loading models.");
+            return;
+        }
+
+        _modelLoad = LoadModelsAsync(active);
+    }
+
+    private async Task LoadModelsAsync(AiServiceProfile profile)
+    {
+        _modelLoadCts?.Cancel();
+        _modelLoadCts?.Dispose();
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_ctx.Lifetime);
+        _modelLoadCts = cts;
+
+        // The placeholder shows only while no model is selected; the tooltip covers the rest.
+        _loadingModels = true;
+        if (_modelPicker is not null)
+            _modelPicker.PlaceholderText = "Loading…";
+        RefreshModelPicker();
+
+        try
+        {
+            if (_catalog is not null)
+                await _catalog.LoadAsync(profile, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (AiException ex)
+        {
+            if (!_disposed)
+                AiIntegrationsView.PublishError(_notifications, ex, "Couldn't load the model list");
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed)
+                _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Couldn't load the model list"), ex.NotificationDetails());
+        }
+        finally
+        {
+            if (!_disposed && _modelPicker is not null && ReferenceEquals(_modelLoadCts, cts))
+            {
+                _loadingModels = false;
+                _modelPicker.PlaceholderText = "Select a Model";
+                RefreshModelPicker();
+            }
+        }
+    }
+
     private void RefreshAiButtons()
     {
         if (_disposed || _wand is null || _aiProfiles is null)
@@ -689,6 +873,8 @@ public sealed class StagingPanelView : UserControl, IDisposable
         _wand.Content = IconGlyphPath("wand_stars", AiGlyphSize, enabled ? "ColorSuccess" : "ColorTextFaint");
         _wand.Dyn(Button.BorderBrushProperty, enabled ? "ColorSuccess" : "ColorBorder");
         ToolTip.SetTip(_wand, generating ? "Generating… click to cancel" : WandTip);
+
+        RefreshModelPicker();
     }
 
     /// <summary>Writes a commit message for the staged changes into the box. A second click while
@@ -740,7 +926,6 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
             _message.Text = result.Message;
             var label = _aiProfiles.DisplayLabel(_aiProfiles.ActiveProfile ?? profile);
-            _notifications.Publish(NotificationSeverity.Info, $"Commit message generated by {label}.");
             if (result.ReplacedModel is not null && result.NewModel is not null)
                 _notifications.Publish(NotificationSeverity.Warning,
                     $"'{result.ReplacedModel}' is no longer available. '{label}' now uses '{result.NewModel}'.");
@@ -1462,6 +1647,10 @@ public sealed class StagingPanelView : UserControl, IDisposable
         // Cancelled before the draft is saved: the generated text would otherwise land in a dead
         // view while the draft cache kept the old text.
         _generateCts?.Cancel();
+        if (_catalog is not null && _onCatalogChanged is not null)
+            _catalog.Changed -= _onCatalogChanged;
+        _modelLoadCts?.Cancel();
+        _modelLoadCts?.Dispose();
         if (_aiProfiles is not null && _onAiChanged is not null)
             _aiProfiles.Changed -= _onAiChanged;
         _ctx.State.StatusChanged -= OnStatusChanged;

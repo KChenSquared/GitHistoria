@@ -16,7 +16,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
     private readonly IAiProfileService _profiles;
     private readonly IAiIntegrationsPanel _panel;
     private readonly IDialogService _dialogs;
-    private readonly IAiClientFactory _clients;
+    private readonly IAiModelCatalog _catalog;
     private readonly INotificationService? _notifications;
     private readonly StackPanel _list = new() { Spacing = 2 };
     private readonly ContentControl _editorHost = new();
@@ -26,6 +26,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
     private readonly List<ProfileRow> _rows = [];
     private readonly EventHandler _onProfilesChanged;
     private readonly EventHandler _onPanelChanged;
+    private readonly EventHandler<string> _onCatalogChanged;
     private string? _selectedId;
     private Editor? _editor;
     private CancellationTokenSource? _modelsCts;
@@ -38,9 +39,9 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
         public string Id { get; } = id;
         public AiServiceProfile Snapshot { get; set; } = new();
         public bool Syncing { get; set; }
-        public bool ModelsLoaded { get; set; }
         public List<Action<AiServiceProfile>> Syncs { get; } = [];
 
+        public Button Active { get; init; } = null!;
         public ComboBox Template { get; init; } = null!;
         public TextBox Name { get; init; } = null!;
         public TextBox Server { get; init; } = null!;
@@ -72,7 +73,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
         _profiles = sp.GetRequiredService<IAiProfileService>();
         _panel = sp.GetRequiredService<IAiIntegrationsPanel>();
         _dialogs = sp.GetRequiredService<IDialogService>();
-        _clients = sp.GetRequiredService<IAiClientFactory>();
+        _catalog = sp.GetRequiredService<IAiModelCatalog>();
         _notifications = sp.GetService<INotificationService>();
 
         this.Dyn(BackgroundProperty, "ColorBg");
@@ -123,8 +124,10 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
 
         _onProfilesChanged = (_, _) => Dispatcher.UIThread.Post(OnProfilesChanged);
         _onPanelChanged = (_, _) => Dispatcher.UIThread.Post(OnPanelChanged);
+        _onCatalogChanged = (_, id) => Dispatcher.UIThread.Post(() => OnCatalogChanged(id));
         _profiles.Changed += _onProfilesChanged;
         _panel.OpenChanged += _onPanelChanged;
+        _catalog.Changed += _onCatalogChanged;
     }
 
     // ── Profile list ──
@@ -178,6 +181,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
         }
 
         _deleteButton.IsEnabled = Find(_selectedId) is not null;
+        RefreshActiveButton();
     }
 
     private void Select(string? id)
@@ -261,6 +265,21 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
 
         var panel = new StackPanel { Spacing = 10, Margin = new Thickness(24, 12), MaxWidth = 560, HorizontalAlignment = HorizontalAlignment.Left };
 
+        var activeBtn = new Button
+        {
+            Content = "Active",
+            FontSize = 13,
+            Padding = new Thickness(8, 2),
+            BorderThickness = new Thickness(1),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        activeBtn.Click += (_, _) => _ = ToggleActiveAsync(profile.Id);
+
+        var topRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        Grid.SetColumn(activeBtn, 1);
+        topRow.Children.Add(activeBtn);
+
         var template = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
         template.Items.Add("Custom (default)");
         template.Items.Add("Gemini");
@@ -297,6 +316,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
 
         var e = new Editor(profile.Id)
         {
+            Active = activeBtn,
             Template = template,
             Name = name,
             Server = server,
@@ -361,11 +381,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
             if (typed != e.Snapshot.Model)
                 _ = Commit(e, p => p with { Model = typed });
         };
-        model.DropDownOpened += (_, _) =>
-        {
-            if (e.Snapshot.AutoFetchModels && !e.ModelsLoaded && _editor == e)
-                ModelFetchForTesting = FetchModelsAsync(e);
-        };
+        model.DropDownOpened += (_, _) => OnModelListOpened(e);
         var refresh = IconButton("refresh", "Refresh the model list", () => ModelFetchForTesting = FetchModelsAsync(e), 16);
         e.ModelRefresh = refresh;
 
@@ -374,6 +390,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
         Grid.SetColumn(refresh, 1);
         modelRow.Children.Add(refresh);
 
+        panel.Children.Add(topRow);
         panel.Children.Add(Field("Template", template));
         panel.Children.Add(Field("Name", name));
         panel.Children.Add(Field("Server", server));
@@ -388,9 +405,18 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
         panel.Children.Add(Field("Extra Headers", headers));
         panel.Children.Add(Text("Your staged changes are sent to this service only when you click Generate.", "ColorTextMuted", 12));
 
+        var cached = _catalog.Get(profile);
+        if (cached is not null)
+        {
+            e.Syncing = true;
+            model.ItemsSource = cached;
+            e.Syncing = false;
+        }
+
         foreach (var sync in e.Syncs)
             sync(profile);
 
+        RefreshActiveButton();
         _editorHost.Content = new ScrollViewer { Content = panel };
     }
 
@@ -524,7 +550,6 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
         if (_editor != e)
             return;
 
-        e.ModelsLoaded = false;
         await Commit(e, p => kind == AiServiceKind.Gemini ? AiServiceTemplates.ApplyGemini(p) : AiServiceTemplates.ApplyCustom(p));
         SyncEditor(e);
     }
@@ -536,6 +561,67 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
     }
 
     // ── Models ──
+
+    private void OnModelListOpened(Editor e)
+    {
+        if (_editor != e)
+            return;
+        var cached = _catalog.Get(e.Snapshot);
+        if (cached is not null)
+        {
+            ModelFetchForTesting = SwitchMissingGeminiModelAsync(e, cached);
+        }
+        else if (e.Snapshot.AutoFetchModels)
+        {
+            ModelFetchForTesting = FetchModelsAsync(e);
+        }
+    }
+
+    internal void OpenModelListForTesting() => OnModelListOpened(_editor!);
+
+    private void RefreshActiveButton()
+    {
+        if (_editor is not { } e)
+            return;
+        var active = _profiles.ActiveProfile?.Id == e.Id;
+        var b = e.Active;
+        if (active)
+        {
+            b.ClearValue(Button.ForegroundProperty);
+            b.ClearValue(Button.BorderBrushProperty);
+            b.ClearValue(Button.BackgroundProperty);
+            if (!b.Classes.Contains("success"))
+                b.Classes.Add("success");
+        }
+        else
+        {
+            b.Classes.Remove("success");
+            b.Dyn(Button.ForegroundProperty, "ColorTextFaint");
+            b.Dyn(Button.BorderBrushProperty, "ColorBorder");
+            b.Background = Brushes.Transparent;
+        }
+
+        var tip = active ? "Active" : "Make active";
+        ToolTip.SetTip(b, tip);
+        Avalonia.Automation.AutomationProperties.SetName(b, tip);
+    }
+
+    private void OnCatalogChanged(string id)
+    {
+        if (_disposed || _editor is not { } e || e.Id != id)
+            return;
+        var list = _catalog.Get(e.Snapshot);
+        if (list is not null && !ItemsEqual(e.Model.ItemsSource as IEnumerable<string>, list))
+        {
+            e.Syncing = true;
+            e.Model.ItemsSource = list;
+            e.Syncing = false;
+            SetModelText(e, e.Snapshot.Model);
+        }
+    }
+
+    private static bool ItemsEqual(IEnumerable<string>? current, IReadOnlyList<string> next) =>
+        current is not null && current.SequenceEqual(next);
 
     private Task FetchModelsAsync(Editor e)
     {
@@ -557,14 +643,10 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
         e.Model.PlaceholderText = "Loading…";
         try
         {
-            var client = _clients.For(profile.Kind);
-            var request = new AiChatRequest(profile.Server, _profiles.ResolveApiKey(profile), profile.Model,
-                profile.ReasoningEffort, profile.ExtraHeaders, "");
-            var ids = await Task.Run(() => client.ListModelsAsync(request, cts.Token), cts.Token);
+            var ids = await _catalog.LoadAsync(profile, cts.Token);
             if (cts.IsCancellationRequested || _disposed || _editor != e)
                 return;
 
-            e.ModelsLoaded = true;
             e.Syncing = true;
             e.Model.ItemsSource = ids;
             e.Syncing = false;
@@ -595,7 +677,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
     }
 
     /// <summary>A Gemini profile whose saved model isn't in the list (or has none) takes the best
-    /// replacement; Custom profiles never switch on their own.</summary>
+    /// replacement, at most once every five minutes; Custom profiles never switch on their own.</summary>
     private async Task SwitchMissingGeminiModelAsync(Editor e, IReadOnlyList<string> ids)
     {
         var profile = e.Snapshot;
@@ -608,10 +690,11 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
             return;
 
         var pick = GeminiModelSelector.PickReplacement(ids, blank ? null : saved);
-        if (pick is null)
+        if (pick is null || !_catalog.TryClaimAutoSwitch(profile.Id))
             return;
 
         await Commit(e, p => p with { Model = pick });
+        SetModelText(e, pick);
         if (!blank)
         {
             e.ModelNote.Text = $"'{saved}' is no longer available — switched to '{pick}'.";
@@ -663,6 +746,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
         _disposed = true;
         _profiles.Changed -= _onProfilesChanged;
         _panel.OpenChanged -= _onPanelChanged;
+        _catalog.Changed -= _onCatalogChanged;
         _modelsCts?.Cancel();
         _modelsCts = null;
     }

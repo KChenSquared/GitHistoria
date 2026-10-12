@@ -419,4 +419,22 @@ public class CommitMessageGeneratorTests
         Assert.Equal(AiErrorKind.ModelNotFound, ex.Kind);
         Assert.Empty(rig.Client.Lists);
     }
+
+    [Fact]
+    public async Task A_model_switch_remembers_the_fetched_list_in_the_catalog()
+    {
+        var rig = new Rig();
+        var catalog = new AiModelCatalog(rig.Profiles, rig.Factory);
+        var generator = new CommitMessageGenerator(rig.Profiles, rig.Factory, catalog);
+        await rig.ActivateGemini(model: "gemini-1.0-pro");
+        rig.Client.ListResult = () => ["gemini-1.0-pro", "gemini-2.5-flash", "gemini-3-flash-preview"];
+        rig.Client.CompleteScript.Enqueue(_ => throw ModelGone());
+        rig.Client.CompleteScript.Enqueue(_ => "feat: after switch");
+
+        await generator.GenerateAsync(rig.GatewayInterface, Status("a.txt"), "main", false, default);
+
+        var cached = catalog.Get(rig.Profiles.ActiveProfile!);
+        Assert.NotNull(cached);
+        Assert.Equal(["gemini-1.0-pro", "gemini-2.5-flash", "gemini-3-flash-preview"], cached);
+    }
 }

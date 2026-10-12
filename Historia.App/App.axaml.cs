@@ -291,6 +291,7 @@ public sealed class App : Application
         services.AddSingleton<IAiProfileService, AiProfileService>();
         services.AddSingleton<IAiIntegrationsPanel, AiIntegrationsPanel>();
         services.AddSingleton<IAiClientFactory, AiClientFactory>();
+        services.AddSingleton<IAiModelCatalog, AiModelCatalog>();
         services.AddSingleton<ICommitMessageGenerator, CommitMessageGenerator>();
 
         // ── Terminal. Singletons — never AddScoped. ──
