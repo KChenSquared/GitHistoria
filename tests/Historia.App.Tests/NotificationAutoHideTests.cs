@@ -35,12 +35,12 @@ public sealed class NotificationAutoHideTests
         notifications.Publish(NotificationSeverity.Success, "s");
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(4, host.ArmedAutoHideCount);
+        Assert.Equal(4, host.ViewModel.ArmedAutoHideCount);
         Assert.All(scheduler.Pending, p => Assert.Equal(TimeSpan.FromSeconds(10), p.Delay));
 
         scheduler.FireAll();
         Assert.Empty(notifications.Current);
-        Assert.Equal(0, host.ArmedAutoHideCount);
+        Assert.Equal(0, host.ViewModel.ArmedAutoHideCount);
     }
 
     [AvaloniaFact]
@@ -69,17 +69,17 @@ public sealed class NotificationAutoHideTests
 
         notifications.Publish(NotificationSeverity.Error, "Fetch failed.");
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal(1, host.ArmedAutoHideCount);
+        Assert.Equal(1, host.ViewModel.ArmedAutoHideCount);
 
         settings.Set(new AppSettings { AutoHideNotices = false });
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal(0, host.ArmedAutoHideCount);
+        Assert.Equal(0, host.ViewModel.ArmedAutoHideCount);
         Assert.True(scheduler.Pending.All(p => p.Cancelled));
         Assert.Single(notifications.Current);
 
         settings.Set(new AppSettings { AutoHideNotices = true });
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal(1, host.ArmedAutoHideCount);
+        Assert.Equal(1, host.ViewModel.ArmedAutoHideCount);
 
         scheduler.FireAll();
         Assert.Empty(notifications.Current);
