@@ -42,6 +42,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
     internal ContentControl ParentsHostForTesting => _parentsHost;
     internal ContentControl MessageHostForTesting => _messageHost;
     internal ContentControl FilesHostForTesting => _filesHost;
+    internal ScrollViewer FilesScrollViewerForTesting { get; }
     internal Border TopSectionForTesting { get; }
     internal Control FilesSectionForTesting { get; }
     internal Control FilesDividerHandleForTesting { get; }
@@ -106,9 +107,11 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
             body: _filesHost,
             border: new Thickness(1),
             minHeight: SectionFrame.BottomMinHeight,
-            out var filesDividerHandle);
+            out var filesDividerHandle,
+            horizontalScroll: true);
         FilesSectionForTesting = filesSection;
         FilesDividerHandleForTesting = filesDividerHandle;
+        FilesScrollViewerForTesting = (ScrollViewer)(_filesHost.Parent ?? ((DockPanel)filesSection.Child!).Children[2]);
 
         var topRow = new RowDefinition(new GridLength(SectionFrame.GetSplitHeight(_ctx.Id), GridUnitType.Pixel))
         {
