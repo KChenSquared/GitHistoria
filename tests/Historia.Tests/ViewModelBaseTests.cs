@@ -145,24 +145,40 @@ public class ViewModelBaseTests
     }
 
     [Fact]
-    public void A_dispose_inside_track_still_disposes()
+    public void Track_racing_dispose_on_another_thread_disposes_every_item_exactly_once()
     {
-        var vm = new Probe();
-        var tracked = new DisposeOnConstruct(vm);
+        // An item tracked just before Dispose takes its snapshot is released by Dispose; one
+        // tracked just after is released at once. Neither path may lose or repeat an item.
+        for (var round = 0; round < 500; round++)
+        {
+            var vm = new Probe();
+            var items = Enumerable.Range(0, 64).Select(_ => new CountingDisposable()).ToArray();
+            using var start = new Barrier(2);
 
-        vm.Own(tracked);
-        vm.Dispose();
+            var tracker = Task.Run(() =>
+            {
+                start.SignalAndWait();
+                foreach (var item in items)
+                    vm.Own(item);
+            });
+            var disposer = Task.Run(() =>
+            {
+                start.SignalAndWait();
+                vm.Dispose();
+            });
+            Task.WaitAll(tracker, disposer);
 
-        Assert.Equal(1, tracked.Disposals);
+            Assert.All(items, item => Assert.Equal(1, item.Disposals));
+        }
     }
 
-    private sealed class DisposeOnConstruct : IDisposable
+    private sealed class CountingDisposable : IDisposable
     {
-        public DisposeOnConstruct(ViewModelBase owner) => owner.Dispose();
+        private int _disposals;
 
-        public int Disposals { get; private set; }
+        public int Disposals => Volatile.Read(ref _disposals);
 
-        public void Dispose() => Disposals++;
+        public void Dispose() => Interlocked.Increment(ref _disposals);
     }
 
     [Fact]
