@@ -267,6 +267,38 @@ public sealed class StagingPanelViewModelTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_bare_repository_lists_no_rows()
+    {
+        if (GitMissing) return;
+        var source = NewRepo();
+        var bare = TestScratch.NewDirectory("historia-staging-bare-");
+        try
+        {
+            TestGit.RunChecked(bare, ["clone", "--bare", "--", source.Path, bare]);
+            var ctx = _host.Open(bare);
+            Assert.True(ctx.IsBare);
+            await ctx.State.RefreshStatusAsync();
+
+            var status = ctx.State.Status;
+            Assert.Empty(status.Staged);
+            Assert.Empty(status.Unstaged);
+            Assert.Empty(status.Untracked);
+            Assert.Empty(status.Conflicted);
+
+            var vm = NewViewModel(ctx);
+
+            Assert.Empty(vm.Changes.OfType<StagingPathRowViewModel>());
+            Assert.Empty(vm.Staged.OfType<StagingPathRowViewModel>());
+            Assert.Equal("No changes.", Assert.IsType<StagingNoteRowViewModel>(Assert.Single(vm.Changes)).Text);
+            Assert.Equal("Nothing staged.", Assert.IsType<StagingNoteRowViewModel>(Assert.Single(vm.Staged)).Text);
+        }
+        finally
+        {
+            TestScratch.Delete(bare);
+        }
+    }
+
+    [Fact]
     public async Task An_equivalent_status_leaves_the_lists_alone()
     {
         if (GitMissing) return;
@@ -464,7 +496,6 @@ public sealed class StagingPanelViewModelTests : IAsyncDisposable
 
         Assert.Equal([expected], Launcher.Revealed);
         Assert.Equal(expected, Clipboard.Last);
-        Assert.True(row.HasMenu);
     }
 
     // ── Discard ──

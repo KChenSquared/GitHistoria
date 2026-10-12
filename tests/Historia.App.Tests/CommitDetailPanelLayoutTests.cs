@@ -751,11 +751,37 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             Dispatcher.UIThread.RunJobs();
 
-            var changesScroll = stagingView.ChangesRowsForTesting.FindAncestorOfType<ScrollViewer>();
-            var stagedScroll = stagingView.StagedRowsForTesting.FindAncestorOfType<ScrollViewer>();
+            var changesScroll = stagingView.ChangesList.ItemsPanelRoot.FindAncestorOfType<ScrollViewer>();
+            var stagedScroll = stagingView.StagedList.ItemsPanelRoot.FindAncestorOfType<ScrollViewer>();
 
             Assert.Equal(ScrollBarVisibility.Disabled, changesScroll!.HorizontalScrollBarVisibility);
             Assert.Equal(ScrollBarVisibility.Disabled, stagedScroll!.HorizontalScrollBarVisibility);
+        }
+        finally
+        {
+            stagingView.Dispose();
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Staging_footnotes_are_smaller_than_the_other_notes()
+    {
+        var stagingView = new StagingPanelView(_sp, _context);
+        var window = new Window { Width = 800, Height = 900, Content = stagingView };
+        window.Show();
+        try
+        {
+            stagingView.ChangesList.ItemsSource = new StagingListItem[]
+            {
+                new StagingNoteRowViewModel("No changes."),
+                new StagingNoteRowViewModel("1 case-collision file hidden", isFootnote: true),
+            };
+            Dispatcher.UIThread.RunJobs();
+
+            var notes = stagingView.ChangesList.GetVisualDescendants().OfType<TextBlock>().ToList();
+            Assert.Equal(12, notes.Single(t => t.Text == "No changes.").FontSize);
+            Assert.Equal(11, notes.Single(t => t.Text == "1 case-collision file hidden").FontSize);
         }
         finally
         {
