@@ -172,24 +172,7 @@ internal sealed class RefNavigatorTestHost : IDisposable
 
     private static string RunGit(string dir, string[] args)
     {
-        var psi = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = dir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var a in args) psi.ArgumentList.Add(a);
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        using var p = System.Diagnostics.Process.Start(psi)!;
-        var stdout = p.StandardOutput.ReadToEndAsync();
-        var stderr = p.StandardError.ReadToEndAsync();
-        p.WaitForExit(30_000);
-        Task.WaitAll(stdout, stderr);
-        if (p.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed ({p.ExitCode}): {stderr.Result}");
-        return stdout.Result;
+        return TestGit.RunChecked(dir, args, timeout: TimeSpan.FromSeconds(30), testIdentity: false);
     }
 
     private static void AddServices(IServiceCollection sc)

@@ -65,24 +65,7 @@ public sealed class RefNavigatorHeadRowTests
 
     private static string RunGitIn(string dir, params string[] args)
     {
-        var psi = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = dir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var a in args) psi.ArgumentList.Add(a);
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        using var p = System.Diagnostics.Process.Start(psi)!;
-        var stdoutTask = p.StandardOutput.ReadToEndAsync();
-        var stderrTask = p.StandardError.ReadToEndAsync();
-        p.WaitForExit(30_000);
-        Task.WaitAll(stdoutTask, stderrTask);
-        if (p.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed ({p.ExitCode}): {stderrTask.Result}");
-        return stdoutTask.Result;
+        return TestGit.RunChecked(dir, args, timeout: TimeSpan.FromSeconds(30), testIdentity: false);
     }
 
     private static ServiceProvider CreateServices()

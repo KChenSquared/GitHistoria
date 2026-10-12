@@ -65,18 +65,7 @@ public sealed class RefNavigatorStashTests
 
         public void RunGit(params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = Path,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            p.WaitForExit();
-            if (p.ExitCode != 0)
-                throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {p.StandardError.ReadToEnd()}");
+            TestGit.RunChecked(Path, args, testIdentity: false);
         }
 
         public void Dispose() => TestScratch.Delete(Path);

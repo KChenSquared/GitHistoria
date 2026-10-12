@@ -83,27 +83,7 @@ public sealed class CheckoutStashRecoveryTests
 
         private static string RunGit(string dir, params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            psi.Environment["GIT_AUTHOR_NAME"] = "Test";
-            psi.Environment["GIT_AUTHOR_EMAIL"] = "test@example.com";
-            psi.Environment["GIT_COMMITTER_NAME"] = "Test";
-            psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            var stdout = p.StandardOutput.ReadToEnd();
-            var stderr = p.StandardError.ReadToEnd();
-            p.WaitForExit(30_000);
-            if (p.ExitCode != 0)
-                throw new InvalidOperationException($"git failed ({p.ExitCode}): {stderr}");
-            return stdout;
+            return TestGit.RunChecked(dir, args, timeout: TimeSpan.FromSeconds(30));
         }
 
         public void Dispose() => TestScratch.Delete(Path);

@@ -72,72 +72,13 @@ public sealed class CloneSubmoduleOfferTests
     internal static string CreateTestRepo(string name)
     {
         var path = TestScratch.NewDirectory($"historia-clonetest-{name}-");
-        var psi = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("init");
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        using var p = System.Diagnostics.Process.Start(psi)!;
-        p.WaitForExit();
+        TestGit.Run(path, ["init"], testIdentity: false);
 
         File.WriteAllText(Path.Combine(path, "init.txt"), "hello\n");
-        var psiAdd = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psiAdd.ArgumentList.Add("add");
-        psiAdd.ArgumentList.Add("init.txt");
-        using var pAdd = System.Diagnostics.Process.Start(psiAdd)!;
-        pAdd.WaitForExit();
-
-        var psiCommit = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psiCommit.ArgumentList.Add("config");
-        psiCommit.ArgumentList.Add("user.name");
-        psiCommit.ArgumentList.Add("Test");
-        using (var pc = System.Diagnostics.Process.Start(psiCommit)!) pc.WaitForExit();
-
-        var psiEmail = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psiEmail.ArgumentList.Add("config");
-        psiEmail.ArgumentList.Add("user.email");
-        psiEmail.ArgumentList.Add("test@example.com");
-        using (var pe = System.Diagnostics.Process.Start(psiEmail)!) pe.WaitForExit();
-
-        var psiC = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psiC.ArgumentList.Add("commit");
-        psiC.ArgumentList.Add("-m");
-        psiC.ArgumentList.Add("init");
-        psiC.ArgumentList.Add("--no-gpg-sign");
-        using (var pCommit = System.Diagnostics.Process.Start(psiC)!) pCommit.WaitForExit();
+        TestGit.Run(path, ["add", "init.txt"], testIdentity: false);
+        TestGit.Run(path, ["config", "user.name", "Test"], testIdentity: false);
+        TestGit.Run(path, ["config", "user.email", "test@example.com"], testIdentity: false);
+        TestGit.Run(path, ["commit", "-m", "init", "--no-gpg-sign"], testIdentity: false);
 
         return path;
     }

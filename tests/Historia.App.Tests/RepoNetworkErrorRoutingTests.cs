@@ -202,20 +202,7 @@ public sealed class RepoNetworkErrorRoutingTests
 
         private bool RemoteLists(string kind, string name)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = RemotePath,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            psi.ArgumentList.Add(kind);
-            psi.ArgumentList.Add("--list");
-            psi.ArgumentList.Add(name);
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            var stdout = p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
+            var stdout = TestGit.Run(RemotePath, [kind, "--list", name], testIdentity: false).Stdout;
             return !string.IsNullOrWhiteSpace(stdout);
         }
 
@@ -228,25 +215,7 @@ public sealed class RepoNetworkErrorRoutingTests
 
         private static void RunGit(string dir, params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            psi.Environment["GIT_AUTHOR_NAME"] = "Test";
-            psi.Environment["GIT_AUTHOR_EMAIL"] = "test@example.com";
-            psi.Environment["GIT_COMMITTER_NAME"] = "Test";
-            psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            var stdout = p.StandardOutput.ReadToEndAsync();
-            var stderr = p.StandardError.ReadToEndAsync();
-            Task.WaitAll(stdout, stderr);
-            p.WaitForExit();
+            TestGit.Run(dir, args);
         }
 
         public void Dispose() => TestScratch.Delete(_root);
