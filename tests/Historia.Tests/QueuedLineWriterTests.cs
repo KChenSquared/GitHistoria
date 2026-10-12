@@ -88,10 +88,12 @@ public sealed class QueuedLineWriterTests : IDisposable
             writer.Flush(TimeSpan.Zero); // nudge: the write happens at the latest on flush
             Assert.True(entered.Wait(TimeSpan.FromSeconds(10)), "the writer thread never reached the sink");
 
+            // The stall holds until release, so an Enqueue blocked behind it would never return;
+            // the budget only has to clear a slow runner's cost for the loop itself.
             var sw = Stopwatch.StartNew();
             for (var i = 0; i < 1000; i++)
                 writer.Enqueue(path, $"queued {i}");
-            Assert.True(sw.ElapsedMilliseconds < 50, $"Enqueue blocked behind a stalled write: {sw.ElapsedMilliseconds} ms");
+            Assert.True(sw.ElapsedMilliseconds < 2000, $"Enqueue blocked behind a stalled write: {sw.ElapsedMilliseconds} ms");
 
             Assert.False(writer.Flush(TimeSpan.FromMilliseconds(100)), "Flush must time out while the sink is stalled");
         }

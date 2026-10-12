@@ -71,6 +71,14 @@ jobs:
               exit 1
           }
 
+      # Every repository a test opens holds an inotify instance, and parallel tests outrun
+      # Ubuntu's default of 128 per user.
+      - name: Raise inotify limits
+        if: runner.os == 'Linux'
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=8192
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+
       - name: Build solution
         run: dotnet build Historia.slnx -c Release
 
@@ -79,6 +87,17 @@ jobs:
 
       - name: Run App tests
         run: dotnet test tests/Historia.App.Tests -c Release --no-build --logger "trx;LogFileName=app.trx" --blame-hang-timeout 15m
+
+      - name: Annotate failed tests
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          results=(tests/*/TestResults/*.trx)
+          if [ ${#results[@]} -gt 0 ]; then
+            if [ "$RUNNER_OS" = Windows ]; then py=python; else py=python3; fi
+            "$py" -I .github/scripts/annotate-test-failures.py "${results[@]}"
+          fi
 
       - name: Upload test results and crash dumps
         if: failure()

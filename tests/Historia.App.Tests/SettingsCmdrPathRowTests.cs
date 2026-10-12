@@ -396,7 +396,7 @@ public sealed class SettingsCmdrPathRowTests
         view.Dispose();
     }
 
-    [AvaloniaFact]
+    [WindowsAvaloniaFact]
     public async Task Effect_says_keeps_when_nothing_is_added_and_lists_duplicates_separately()
     {
         var preview = new PathChange(null, @"C:\NewCmdr", null, [@"C:\Old", @"C:\NewCmdr"], false);

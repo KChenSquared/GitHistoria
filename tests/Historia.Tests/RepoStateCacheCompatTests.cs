@@ -7,13 +7,18 @@ public sealed class RepoStateCacheCompatTests : IDisposable
 
     public void Dispose() => _state.Dispose();
 
-    private static void WriteGzJson(string repoPath, string kind, string json)
+    private static string CacheFileFor(string repoPath, string kind)
     {
         var norm = Path.GetFullPath(repoPath).Replace('\\', '/').TrimEnd('/');
         if (OperatingSystem.IsWindows())
             norm = norm.ToLowerInvariant();
         var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(norm)));
-        var path = Path.Combine(AppPaths.CacheDirectory, $"repo-{kind}-{hash}.json.gz");
+        return Path.Combine(AppPaths.CacheDirectory, $"repo-{kind}-{hash}.json.gz");
+    }
+
+    private static void WriteGzJson(string repoPath, string kind, string json)
+    {
+        var path = CacheFileFor(repoPath, kind);
 
         Directory.CreateDirectory(AppPaths.CacheDirectory);
         using var fs = File.Create(path);
@@ -175,9 +180,11 @@ public sealed class RepoStateCacheCompatTests : IDisposable
 
         var fixtureDir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "repo-state-cache-pre-gitobjectid");
         Directory.CreateDirectory(AppPaths.CacheDirectory);
+        // The fixture names carry the Windows key; copy each under this platform's key for repoPath.
         foreach (var file in Directory.GetFiles(fixtureDir, "*.json.gz"))
         {
-            File.Copy(file, Path.Combine(AppPaths.CacheDirectory, Path.GetFileName(file)), overwrite: true);
+            var kind = Path.GetFileName(file).Split('-')[1];
+            File.Copy(file, CacheFileFor(repoPath, kind), overwrite: true);
         }
 
         var snapshot = cache.TryLoad(repoPath);

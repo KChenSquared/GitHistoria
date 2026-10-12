@@ -176,6 +176,11 @@ internal static class SingleInstance
         pipeName ??= ControlPipe.PipeName;
         var ioTimeout = clientIoTimeout ?? ClientIoTimeout;
         using var slots = new SemaphoreSlim(MaxConnections, MaxConnections);
+        // Off Windows every instance of a pipe name shares one listening socket, closed when the
+        // last instance is disposed. Clients waiting in its backlog while all slots are busy would
+        // be reset when the busy connections finish together; this idle instance never accepts
+        // and keeps the socket open for the life of the listener.
+        using var keepListening = OperatingSystem.IsWindows() ? null : TryCreateServer(pipeName);
         var consecutiveFailures = 0;
         while (!ct.IsCancellationRequested)
         {
@@ -323,8 +328,22 @@ internal static class SingleInstance
                 inBufferSize: 0, outBufferSize: 0, pipeSecurity: security);
         }
 
+        // One more instance than connections: the listener's idle keep-alive instance.
         return new NamedPipeServerStream(
-            pipeName, PipeDirection.InOut, MaxConnections, PipeTransmissionMode.Byte,
+            pipeName, PipeDirection.InOut, MaxConnections + 1, PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+    }
+
+    private static NamedPipeServerStream? TryCreateServer(string pipeName)
+    {
+        try
+        {
+            return CreateServer(pipeName);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The accept loop's own bind retries and degrade policy cover a name that is taken.
+            return null;
+        }
     }
 }

@@ -122,6 +122,11 @@ public class PtyIoPumpTests
         sw.Stop();
 
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), $"Dispose blocked for {sw.Elapsed}");
+
+        // Dispose waits only briefly; on a loaded machine a thread can still be on its way out.
+        var deadline = DateTime.UtcNow + Timeout;
+        while (pump.LiveThreadCount > 0 && DateTime.UtcNow < deadline)
+            Thread.Sleep(10);
         Assert.Equal(0, pump.LiveThreadCount);
     }
 

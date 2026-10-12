@@ -137,6 +137,8 @@ public sealed class RepoNetworkErrorRoutingTests
                 "#!/bin/sh\n"
                 + "echo 'error: File big.bin is 361.72 MB; this exceeds the file size limit of 100.00 MB' >&2\n"
                 + "exit 1\n");
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             return this;
         }
 
@@ -687,10 +689,15 @@ public sealed class RepoNetworkErrorRoutingTests
         var repo = await h.OpenAsync(fixture.LocalPath);
         var host = h.Services.GetRequiredService<IAutoFetchHost>();
 
-        await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
+        var failure = await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
         await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
         var warning = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Warning);
-        Assert.Equal($"Auto-fetch of {repo.DisplayName} failed: lock files left by a stopped git process are in the way.", warning.Message);
+        // git reports the held ref lock either as "reference already exists" or, on some
+        // platforms, with its "another git process" text, which classifies as LockedIndex.
+        var why = failure.Kind == GitErrorKind.LockedIndex
+            ? "another git process is using the repository"
+            : "lock files left by a stopped git process are in the way";
+        Assert.Equal($"Auto-fetch of {repo.DisplayName} failed: {why}.", warning.Message);
         Assert.Equal("Remove stale lock files…", Assert.Single(warning.Actions).Label);
 
         File.Delete(lockFile);
