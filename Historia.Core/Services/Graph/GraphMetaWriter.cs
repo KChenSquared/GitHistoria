@@ -16,6 +16,10 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     private readonly string _tips = GraphCachePaths.File(repoPath, GraphMetaStore.TipsExt);
     private int _hashSize;
 
+    // Records this writer's reorder has appended past the header's RecordCount, so each batch
+    // lands right after the previous one. Guarded by this repo's GraphCacheLocks lock.
+    private int _reorderRecordsAppended;
+
     // The incarnation this writer last wrote or saw on disk; written into every header. Guarded by
     // this repo's GraphCacheLocks lock.
     private string _generation = "";
@@ -191,14 +195,15 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// <c>.dat</c>/<c>.idx</c>/<c>.search</c>. No real parent SHAs are available from a bare
     /// <see cref="CommitMetadata"/> list — each parent slot is written as a zero SHA
     /// (<see cref="ReadRaw"/> only ever reads real spill data via the <see cref="RawCommit"/>
-    /// overload below, so this is harmless; for callers and tests that hold only metadata).</summary>
-    public void Append(IReadOnlyList<CommitMetadata> rows, int start, int count)
+    /// overload below, so this is harmless; for callers and tests that hold only metadata).
+    /// False when the write failed.</summary>
+    public bool Append(IReadOnlyList<CommitMetadata> rows, int start, int count)
         => Append(i => rows[i], _ => null, start, count);
 
     /// <summary>Overload that reads metadata + real parent SHAs straight off the walk records
     /// (no projection copy) — this is what the spill uses, and what makes the store usable
-    /// as an optimistic-snapshot source.</summary>
-    public void Append(IReadOnlyList<RawCommit> rows, int start, int count)
+    /// as an optimistic-snapshot source. False when the write failed.</summary>
+    public bool Append(IReadOnlyList<RawCommit> rows, int start, int count)
         => Append(i => rows[i].Metadata, i => rows[i].ParentIds, start, count);
 
     private int EnsureHashSize()
@@ -218,10 +223,10 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
         return _hashSize;
     }
 
-    private void Append(Func<int, CommitMetadata> get, Func<int, IReadOnlyList<GitObjectId>?> getParents, int start, int count)
+    private bool Append(Func<int, CommitMetadata> get, Func<int, IReadOnlyList<GitObjectId>?> getParents, int start, int count)
     {
         if (count <= 0)
-            return;
+            return true;
 
         EnsureHashSize();
 
@@ -296,12 +301,95 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 search.Write('\n');
             }
             bw.Flush();
+            return true;
         }
         catch (StoreInvalidException)
         {
             throw;
         }
-        catch { }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Cuts <c>.idx</c>, <c>.dat</c> and <c>.search</c> back to their first
+    /// <paramref name="records"/> records, so the next append lands at record index
+    /// <paramref name="records"/>. Records past the header's count were never committed (a header
+    /// write that failed, an abandoned reorder) and nothing references them.
+    /// <para>Trap: appending after such records gave every new record an index past the one the
+    /// header assigns it, so an identity-order store read the uncommitted batch as its rows and
+    /// the rewritten batch after them: rows <c>[n, n + batch)</c> appeared twice.</para>
+    /// False when the files hold fewer records than that, or can't be cut. Caller holds this
+    /// repo's <see cref="GraphCacheLocks"/> lock.</summary>
+    private bool TrimRecordsTo(int records)
+    {
+        try
+        {
+            // The common case, every append: the length alone, read without opening the file.
+            var idxInfo = new FileInfo(_idx);
+            if (!idxInfo.Exists)
+                return records == 0;
+            var idxBytes = (long)records * 8;
+            if (idxInfo.Length == idxBytes)
+                return true;
+
+            const FileShare share = FileShare.ReadWrite | FileShare.Delete;
+            using var idx = new FileStream(_idx, FileMode.Open, FileAccess.ReadWrite, share);
+            if (idx.Length == idxBytes)
+                return true;
+            if (idx.Length < idxBytes)
+                return false;
+
+            if (idx.Length - idxBytes >= 8)
+            {
+                Span<byte> offset = stackalloc byte[8];
+                idx.Position = idxBytes;
+                idx.ReadExactly(offset);
+                var datEnd = BitConverter.ToInt64(offset);
+                using var dat = new FileStream(_dat, FileMode.Open, FileAccess.Write, share);
+                if (datEnd >= 0 && datEnd < dat.Length)
+                    dat.SetLength(datEnd);
+            }
+            TrimSearchTo(records);
+            idx.SetLength(idxBytes);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Cuts <c>.search</c> after its first <paramref name="lines"/> lines, one per record.
+    /// Left alone when it holds no more than that.</summary>
+    private void TrimSearchTo(int lines)
+    {
+        if (!File.Exists(_search))
+            return;
+        using var search = new FileStream(_search, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+        if (lines == 0)
+        {
+            search.SetLength(0);
+            return;
+        }
+        var buf = new byte[1 << 16];
+        long pos = 0;
+        var seen = 0;
+        int n;
+        while ((n = search.Read(buf, 0, buf.Length)) > 0)
+        {
+            for (var i = 0; i < n; i++)
+            {
+                if (buf[i] != (byte)'\n' || ++seen < lines)
+                    continue;
+                var end = pos + i + 1;
+                if (end < search.Length)
+                    search.SetLength(end);
+                return;
+            }
+            pos += n;
+        }
     }
 
     /// <summary>Rewrites the header for the IDENTITY order — row <c>i</c> is record <c>i</c>,
@@ -311,7 +399,7 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// started at row 0 and just reached <paramref name="exhausted"/> — recorded as the header's
     /// <c>LastFullWalkMs</c>. <c>null</c> (every other call — a mid-walk batch, or a resumed
     /// partial walk) leaves whatever value is already on disk untouched.</summary>
-    public void Commit(int rowCount, bool exhausted, TimeSpan? fullWalkElapsed = null) =>
+    public bool Commit(int rowCount, bool exhausted, TimeSpan? fullWalkElapsed = null) =>
         WriteHeader(rowCount, recordCount: rowCount, orderVersion: 0, exhausted, fullWalkElapsed);
 
     /// <summary>Rewrites the header to point at a new order version, after
@@ -326,11 +414,14 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// <c>LastFullWalkMs</c> the OLD header already had forward unchanged (via
     /// <see cref="WriteHeader"/>'s <c>fullWalkElapsed: null</c>), so a store's guard-4 baseline
     /// survives every reorder until a fresh from-row-0 spool times a real one.</summary>
-    public void CommitReorder(int rowCount, int recordCount, int orderVersion, bool exhausted) =>
+    public bool CommitReorder(int rowCount, int recordCount, int orderVersion, bool exhausted) =>
         WriteHeader(rowCount, recordCount, orderVersion, exhausted, fullWalkElapsed: null);
 
-    private void WriteHeader(int rowCount, int recordCount, int orderVersion, bool exhausted, TimeSpan? fullWalkElapsed)
+    /// <summary>False when the header could not be replaced. A reader holding it open blocks the
+    /// replace on Windows for a moment, so it is retried briefly.</summary>
+    private bool WriteHeader(int rowCount, int recordCount, int orderVersion, bool exhausted, TimeSpan? fullWalkElapsed)
     {
+        string? tmp = null;
         try
         {
             var lastFullWalkMs = fullWalkElapsed is { } elapsed && elapsed > TimeSpan.Zero
@@ -353,11 +444,27 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
                 HashSize = hashSize,
                 Generation = _generation,
             };
-            var tmp = $"{_hdr}.{Guid.NewGuid():N}.tmp";
+            tmp = $"{_hdr}.{Guid.NewGuid():N}.tmp";
             File.WriteAllBytes(tmp, JsonSerializer.SerializeToUtf8Bytes(hdr, GraphMetaStore.Json));
-            File.Move(tmp, _hdr, overwrite: true);
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    File.Move(tmp, _hdr, overwrite: true);
+                    return true;
+                }
+                catch (Exception ex) when (attempt < 2 && ex is IOException or UnauthorizedAccessException)
+                {
+                    Thread.Sleep(20);
+                }
+            }
         }
-        catch { }
+        catch
+        {
+            if (tmp is not null)
+                try { File.Delete(tmp); } catch { /* best effort */ }
+            return false;
+        }
     }
 
     /// <summary>Reads <c>LastFullWalkMs</c> off whatever header is currently on disk for THIS
@@ -481,7 +588,8 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// another writer already durably wrote this exact range (the same deterministic walk) —
     /// <see cref="SpillOutcome.Adopted"/>, caller adopts the existing rows instead of appending.</item>
     /// <item>Header matches but its <c>RowCount</c> falls strictly between <paramref name="from"/>
-    /// and <paramref name="to"/>: a gap — <see cref="SpillOutcome.Conflict"/>.</item>
+    /// and <paramref name="to"/>: a gap — <see cref="SpillOutcome.Conflict"/>. So is a reordered
+    /// store (<c>RecordCount</c> past <c>RowCount</c>), which an identity append would corrupt.</item>
     /// </list>
     /// </summary>
     public (SpillOutcome Outcome, int RowCount) AppendSpillBatch(
@@ -513,20 +621,28 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             {
                 return (SpillOutcome.Adopted, existing.RowCount);
             }
-            else if (existing.RowCount != from)
+            else if (existing.RowCount != from || existing.RecordCount != from)
             {
+                // A gap, or a reordered store whose records no longer line up with its rows: an
+                // identity append would cut records its order still names.
                 return (SpillOutcome.Conflict, existing.RowCount);
             }
 
+            // Identity order: row `from` is record `from`. A write that fails below leaves the
+            // header where it was, and the next append cuts its records off again.
+            if (!TrimRecordsTo(from))
+                return (SpillOutcome.Conflict, existing.RowCount);
             try
             {
-                Append(rows, 0, to - from);
+                if (!Append(rows, 0, to - from))
+                    return (SpillOutcome.Conflict, existing.RowCount);
             }
             catch (StoreInvalidException)
             {
                 return (SpillOutcome.Conflict, existing.RowCount);
             }
-            Commit(to, exhausted, fullWalkElapsed);
+            if (!Commit(to, exhausted, fullWalkElapsed))
+                return (SpillOutcome.Conflict, existing.RowCount);
             // Without this, a store's tips are only ever written by
             // a REORDER (TryCommitReorder) — a never-reordered store (the common case for a repo
             // opened once and never re-walked since) would have no `.meta.tips` at all, so guard 1
@@ -543,8 +659,8 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// the on-disk header's walk key is still <paramref name="expectedWalkKey"/> — the key the
     /// reorder is building on top of. These records are not yet referenced by any RowCount/
     /// OrderVersion (only <see cref="TryCommitReorder"/>'s final header write makes them count),
-    /// so if the reorder is later abandoned they simply become harmless dead records for the next
-    /// compaction pass to clean up. Returns false (and appends nothing) if the header moved —
+    /// so if the reorder is later abandoned the next append cuts them off. Each batch lands right
+    /// after this reorder's previous one. Returns false (and appends nothing) if the header moved —
     /// the caller must abandon the whole reorder.</summary>
     public bool AppendReorderBatch(IReadOnlyList<RawCommit> newRecords, long expectedWalkKey)
     {
@@ -555,9 +671,15 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             var existing = GraphMetaStore.ProbeExisting(repoPath, includeRemoteBranches);
             if (!existing.Ok || existing.WalkKey != expectedWalkKey)
                 return false;
+            // The reorder numbers this batch's records from the old RecordCount plus every record
+            // it appended before this batch.
+            if (!TrimRecordsTo(existing.RecordCount + _reorderRecordsAppended))
+                return false;
             try
             {
-                Append(newRecords, 0, newRecords.Count);
+                if (!Append(newRecords, 0, newRecords.Count))
+                    return false;
+                _reorderRecordsAppended += newRecords.Count;
                 return true;
             }
             catch (StoreInvalidException)
@@ -575,9 +697,8 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
     /// counts was already durably appended by <see cref="AppendReorderBatch"/> batch by batch, off
     /// this lock, so another writer (a live foreground open of this same repo, or a second
     /// headless job) could have moved the header in the meantime. Any mismatch abandons the whole
-    /// attempt; the old order stays authoritative and the already-appended records become dead
-    /// (harmless — the next compaction pass reclaims them). Returns whether the commit actually
-    /// happened.</summary>
+    /// attempt; the old order stays authoritative and the next append cuts off the records this
+    /// attempt appended. Returns whether the commit actually happened.</summary>
     public bool TryCommitReorder(
         long expectedOldWalkKey, bool expectedOldExhausted, int expectedOldOrderVersion, int expectedOldRecordCount,
         int newRecordCount, int[] order, IReadOnlyList<GitObjectId> sortedTips)
@@ -603,12 +724,11 @@ internal sealed class GraphMetaWriter(string repoPath, long fingerprint, bool in
             {
                 return false;
             }
-            CommitReorder(
+            return CommitReorder(
                 rowCount: order.Length,
                 recordCount: expectedOldRecordCount + newRecordCount,
                 orderVersion: newOrderVersion,
                 exhausted: true);
-            return true;
         }
     }
 }

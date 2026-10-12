@@ -377,10 +377,10 @@ public sealed partial class GraphLayoutService
     /// until the walk is exhausted (a partial reorder has no valid order to write), so only the
     /// FINAL atomic <see cref="GraphMetaWriter.TryCommitReorder"/> switches the header over; every
     /// batch's new records were already durably appended via <see cref="GraphMetaWriter.AppendReorderBatch"/>,
-    /// off that lock, so a mismatch there just means this whole attempt is abandoned — those
-    /// records stay on disk, unreferenced, as harmless dead records for compaction to
-    /// reclaim later. Cancelling <paramref name="ct"/> at any point before that final commit
-    /// discards the whole attempt; the old order stays authoritative until it.</summary>
+    /// off that lock, so a mismatch there just means this whole attempt is abandoned — nothing
+    /// references those records, and the store's next append cuts them off. Cancelling
+    /// <paramref name="ct"/> at any point before that final commit discards the whole attempt;
+    /// the old order stays authoritative until it.</summary>
     private async Task RunHeadlessReorderAsync(
         RepositoryContext context, GraphQuery query, string repoPath, string[] sortedTips, long newWalkKey,
         CancellationToken ct)
