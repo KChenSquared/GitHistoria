@@ -36,6 +36,7 @@
 
   <ItemGroup>
     <Compile Include="..\Historia.Tests\TestScratch.cs" Link="TestScratch.cs" />
+    <Compile Include="..\Historia.Tests\TestGit.cs" Link="TestGit.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -103,31 +103,9 @@ public sealed class TestRepositoryBuilder : IDisposable
 
     public void FastImport(string streamText)
     {
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = Path,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("fast-import");
-        psi.ArgumentList.Add("--quiet");
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-
-        using var p = Process.Start(psi)!;
-        var stdoutTask = p.StandardOutput.ReadToEndAsync();
-        var stderrTask = p.StandardError.ReadToEndAsync();
-        using (var writer = new StreamWriter(p.StandardInput.BaseStream, new UTF8Encoding(false)))
-        {
-            writer.Write(streamText);
-        }
-
-        p.WaitForExit(30_000);
-        Task.WaitAll(stdoutTask, stderrTask);
-        if (p.ExitCode != 0)
-            throw new InvalidOperationException($"git fast-import failed ({p.ExitCode}): {stderrTask.Result}");
+        var result = TestGit.Run(Path, ["fast-import", "--quiet"], stdin: streamText, testIdentity: false);
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException($"git fast-import failed ({result.ExitCode}): {result.Stderr}");
     }
 
     public TestRepositoryBuilder WriteFile(string relativePath, string content)
@@ -230,33 +208,8 @@ public sealed class TestRepositoryBuilder : IDisposable
 
     public string Git(params string[] args) => Git(extraEnvironment: null, args);
 
-    public string Git(IReadOnlyDictionary<string, string>? extraEnvironment, params string[] args)
-    {
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = Path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var a in args) psi.ArgumentList.Add(a);
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        if (extraEnvironment is not null)
-        {
-            foreach (var (k, v) in extraEnvironment)
-                psi.Environment[k] = v;
-        }
-
-        using var p = Process.Start(psi)!;
-        var stdoutTask = p.StandardOutput.ReadToEndAsync();
-        var stderrTask = p.StandardError.ReadToEndAsync();
-        p.WaitForExit(30_000);
-        Task.WaitAll(stdoutTask, stderrTask);
-        if (p.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed ({p.ExitCode}): {stderrTask.Result}");
-        return stdoutTask.Result;
-    }
+    public string Git(IReadOnlyDictionary<string, string>? extraEnvironment, params string[] args) =>
+        TestGit.RunChecked(Path, args, env: extraEnvironment, testIdentity: false);
 
     private static string Sanitize(string key) =>
         string.Concat(key.Select(c => char.IsLetterOrDigit(c) || c == '-' || c == '_' ? c : '_'));

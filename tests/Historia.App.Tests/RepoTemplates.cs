@@ -70,24 +70,7 @@ internal static class RepoTemplates
     /// <summary>Deletes <paramref name="dir"/>, including the read-only objects git writes. Best effort.</summary>
     public static void Delete(string dir) => TestScratch.Delete(dir);
 
-    /// <summary>Runs git in <paramref name="dir"/> as the test identity and waits for it.</summary>
-    public static void Git(string dir, params string[] args)
-    {
-        var psi = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = dir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var a in args) psi.ArgumentList.Add(a);
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        psi.Environment["GIT_AUTHOR_NAME"] = "Test";
-        psi.Environment["GIT_AUTHOR_EMAIL"] = "test@example.com";
-        psi.Environment["GIT_COMMITTER_NAME"] = "Test";
-        psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
-        using var p = System.Diagnostics.Process.Start(psi)!;
-        p.WaitForExit();
-    }
+    /// <summary>Runs git in <paramref name="dir"/> as the test identity and waits for it. The exit
+    /// code is ignored: fixtures run commands that stop with conflicts on purpose.</summary>
+    public static void Git(string dir, params string[] args) => TestGit.Run(dir, args);
 }
