@@ -70,11 +70,11 @@ public class RepoSettingsIdentityTests : IDisposable
         view.Arrange(new Rect(0, 0, 800, 600));
 
         var toggle = view.GetLogicalDescendants().OfType<ToggleSwitch>().FirstOrDefault();
-        Assert.Null(toggle);
+        Assert.False(toggle is { IsEffectivelyVisible: true });
 
         var identityBtn = view.GetLogicalDescendants().OfType<Button>()
             .FirstOrDefault(b => b.Content is string s && s.Contains("▾"));
-        Assert.Null(identityBtn);
+        Assert.False(identityBtn is { IsEffectivelyVisible: true });
 
         view.Dispose();
     }
@@ -169,17 +169,167 @@ public class RepoSettingsIdentityTests : IDisposable
         view.Measure(new Size(800, 600));
         view.Arrange(new Rect(0, 0, 800, 600));
 
-        var map = HelpHintMap.Of(view);
-        Assert.Equal(new Dictionary<string, string> { ["Graph columns"] = GraphColumnsHint }, map);
+        var shown = HelpHintMap.Badges(view).Where(b => b.IsEffectivelyVisible)
+            .ToDictionary(HelpHintMap.AnchorLabel, HelpHintMap.TipText);
+        Assert.Equal(new Dictionary<string, string> { ["Graph columns"] = GraphColumnsHint }, shown);
 
         view.Dispose();
+    }
+
+    private static Window Host(RepoSettingsView view)
+    {
+        var window = new Window { Width = 800, Height = 700, Content = view };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        return window;
+    }
+
+    private static List<CheckBox> ColumnBoxes(RepoSettingsView view)
+        => view.GetLogicalDescendants().OfType<CheckBox>().ToList();
+
+    [AvaloniaFact]
+    public void Column_rows_follow_the_global_order_and_visibility()
+    {
+        _workspaceService.ChangeFocus(null);
+
+        var view = new RepoSettingsView(_sp);
+        var window = Host(view);
+
+        var boxes = ColumnBoxes(view);
+        Assert.Equal(GraphColumnDefaults.All.Select(c => c.Kind.ToString()), boxes.Select(b => (string)b.Content!));
+        Assert.Equal(GraphColumnDefaults.All.Select(c => c.Visible), boxes.Select(b => b.IsChecked == true));
+
+        view.Dispose();
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Dragging_a_handle_reorders_the_columns_and_saves_the_order()
+    {
+        _workspaceService.ChangeFocus(null);
+
+        var view = new RepoSettingsView(_sp);
+        var window = Host(view);
+
+        var handle = view.GetLogicalDescendants().OfType<Border>().First(b => b.Classes.Contains("column-handle"));
+        var start = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, start, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(start.X, start.Y + 90), RawInputModifiers.LeftMouseButton);
+        Dispatcher.UIThread.RunJobs();
+
+        // The preview moves the row in the editor but nothing is saved before the drop.
+        Assert.Equal(GraphColumnKind.Refs, _layoutService.GlobalColumns[0].Kind);
+        Assert.Equal(GraphColumnKind.Refs, view.ViewModel.Columns[3].Kind);
+        Assert.True(view.ViewModel.Columns[3].IsDragging);
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(start.X, start.Y + 90), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(
+            [GraphColumnKind.Graph, GraphColumnKind.Message, GraphColumnKind.Author, GraphColumnKind.Refs],
+            _layoutService.GlobalColumns.Take(4).Select(c => c.Kind));
+        Assert.Equal(_layoutService.GlobalColumns.Select(c => c.Kind), view.ViewModel.Columns.Select(c => c.Kind));
+        Assert.DoesNotContain(view.ViewModel.Columns, c => c.IsDragging);
+
+        view.Dispose();
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_press_on_a_checkbox_does_not_start_a_drag()
+    {
+        _workspaceService.ChangeFocus(null);
+
+        var view = new RepoSettingsView(_sp);
+        var window = Host(view);
+
+        var box = ColumnBoxes(view)[3];
+        var start = box.TranslatePoint(new Point(4, box.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, start, MouseButton.Left);
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(start.X, start.Y - 90), RawInputModifiers.LeftMouseButton);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.DoesNotContain(view.ViewModel.Columns, c => c.IsDragging);
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(start.X, start.Y - 90), MouseButton.Left);
+        Assert.Equal(GraphColumnDefaults.All.Select(c => c.Kind), _layoutService.GlobalColumns.Select(c => c.Kind));
+
+        view.Dispose();
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Showing_a_column_saves_it_and_a_refused_hide_puts_the_box_back()
+    {
+        _workspaceService.ChangeFocus(null);
+
+        var view = new RepoSettingsView(_sp);
+        var window = Host(view);
+
+        var author = ColumnBoxes(view).Single(b => (string)b.Content! == "Author");
+        author.IsChecked = true;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(_layoutService.GlobalColumns.Single(c => c.Kind == GraphColumnKind.Author).Visible);
+
+        // The flex column cannot be hidden: the layout keeps it and the box reverts.
+        var message = ColumnBoxes(view).Single(b => (string)b.Content! == "Message");
+        message.IsChecked = false;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(_layoutService.GlobalColumns.Single(c => c.Kind == GraphColumnKind.Message).Visible);
+        Assert.True(ColumnBoxes(view).Single(b => (string)b.Content! == "Message").IsChecked);
+
+        view.Dispose();
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task Reset_to_defaults_restores_the_stock_column_set()
+    {
+        _workspaceService.ChangeFocus(null);
+
+        var view = new RepoSettingsView(_sp);
+        var window = Host(view);
+
+        view.ViewModel.PreviewMoveColumn(view.ViewModel.Columns[0], 2);
+        await view.ViewModel.CommitColumnOrderAsync();
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotEqual(GraphColumnKind.Refs, _layoutService.GlobalColumns[0].Kind);
+
+        var reset = view.GetLogicalDescendants().OfType<Button>().Single(b => b.Content is "Reset to defaults");
+        reset.Command!.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(GraphColumnDefaults.All.Select(c => c.Kind), _layoutService.GlobalColumns.Select(c => c.Kind));
+        Assert.Equal(GraphColumnDefaults.All.Select(c => c.Kind), view.ViewModel.Columns.Select(c => c.Kind));
+
+        view.Dispose();
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Disposing_the_view_stops_it_following_the_workspace()
+    {
+        _workspaceService.ChangeFocus(_context);
+
+        var view = new RepoSettingsView(_sp);
+        var window = Host(view);
+        var vm = view.ViewModel;
+        Assert.Equal(_context.DisplayName, vm.Title);
+
+        view.Dispose();
+        _workspaceService.ChangeFocus(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(_context.DisplayName, vm.Title);
+        window.Close();
     }
 
     private sealed class FakeLayoutService : IRepoLayoutService
     {
         private readonly Dictionary<string, RepoLayout> _layouts = new(StringComparer.OrdinalIgnoreCase);
 
-        public IReadOnlyList<GraphColumn> GlobalColumns => GraphColumnDefaults.All;
+        public IReadOnlyList<GraphColumn> GlobalColumns { get; private set; } = GraphColumnDefaults.All;
 
         public event EventHandler<RepoLayoutChangedEventArgs>? Changed;
 
@@ -200,7 +350,11 @@ public class RepoSettingsIdentityTests : IDisposable
         }
 
         public Task UpdateGlobalAsync(Func<IReadOnlyList<GraphColumn>, IReadOnlyList<GraphColumn>> mutate)
-            => Task.CompletedTask;
+        {
+            GlobalColumns = mutate(GlobalColumns);
+            Changed?.Invoke(this, new RepoLayoutChangedEventArgs(IRepoLayoutService.GlobalKey, new RepoLayout()));
+            return Task.CompletedTask;
+        }
 
         public Task FlushAsync(CancellationToken ct = default) => Task.CompletedTask;
     }

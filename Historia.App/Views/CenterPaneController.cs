@@ -1,32 +1,24 @@
 namespace Historia.Views;
 
 /// <summary>
-/// Controls the content displayed in the center panel of the main window.
-/// Manages content precedence: AI Integrations window while it is open; else OpenDiff -> DiffView; else conflict
-/// session the user has not closed, or unsaved resolver work after the session ended -> ConflictResolverView; else
-/// CommitGraphControl. A new diff or a selected conflict path closes the AI window so the click is not lost behind it.
-/// Ensures proper lifecycle management, view disposal, and resolver session state retention. A closed resolver
-/// stays cached with its edits, so reopening it shows the same view.
+/// Controls the content displayed in the center panel of the main window. A
+/// <see cref="CenterPaneViewModel"/> decides the mode (AI Integrations window while it is open; else
+/// the open diff; else the conflict resolver; else the commit graph); this class maps that mode to
+/// the long-lived instances: the graph control, the cached resolver of each repository, and the diff
+/// and AI views it creates and disposes. A closed resolver stays cached with its edits, so reopening
+/// it shows the same view.
 /// </summary>
 public sealed class CenterPaneController : IDisposable
 {
     private readonly ContentControl _centerHost;
     private readonly Control _graph;
     private readonly ConflictResolverHost _conflictHost;
-    private readonly IWorkspaceService? _workspace;
     private readonly IServiceProvider _services;
-    private readonly IAiIntegrationsPanel? _aiPanel;
+    private readonly CenterPaneViewModel _viewModel;
     private AiIntegrationsView? _aiView;
-    private RepositoryContext? _activeCtx;
     private DiffRequest? _activeDiffRequest;
     private DiffView? _activeDiffView;
     private bool _disposed;
-
-    // Requests (by instance) whose focus line a view has already scrolled to. The state keeps the
-    // same instance while the diff stays open, so a view rebuilt after the AI window closes or the
-    // tab is revisited leaves the scroll alone; a new request for the same line is a new instance.
-    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<DiffRequest, object> _focusLineShown = new();
-    private static readonly object FocusLineShownMarker = new();
 
     internal DiffView? ActiveDiffViewForTesting => _activeDiffView;
     internal AiIntegrationsView? ActiveAiViewForTesting => _aiView;
@@ -41,23 +33,16 @@ public sealed class CenterPaneController : IDisposable
         _centerHost = centerHost ?? throw new ArgumentNullException(nameof(centerHost));
         _graph = graph ?? throw new ArgumentNullException(nameof(graph));
         _conflictHost = conflictHost ?? throw new ArgumentNullException(nameof(conflictHost));
-        _workspace = workspace;
         _services = services ?? throw new ArgumentNullException(nameof(services));
-        _aiPanel = services.GetService<IAiIntegrationsPanel>();
-        if (_aiPanel != null)
-        {
-            _aiPanel.OpenChanged += OnAiPanelChanged;
-        }
 
-        if (_workspace != null)
-        {
-            _workspace.FocusedRepositoryChanged += OnFocusedRepositoryChanged;
-            Bind(_workspace.Focused);
-        }
-        else
-        {
-            UpdateContent();
-        }
+        _viewModel = new CenterPaneViewModel(
+            workspace,
+            services.GetService<IAiIntegrationsPanel>(),
+            ViewServices.Dispatcher(services),
+            ctx => _conflictHost.TryGet(ctx)?.HasUnsavedWork == true);
+        _viewModel.RepositoryLeft += OnRepositoryLeft;
+        _viewModel.Changed += OnViewModelChanged;
+        ApplyContent(refocusDiffLine: false);
     }
 
     public CenterPaneController(
@@ -73,11 +58,6 @@ public sealed class CenterPaneController : IDisposable
     {
     }
 
-    private void OnFocusedRepositoryChanged(object? sender, FocusedRepositoryChangedEventArgs e)
-    {
-        Dispatcher.UIThread.Post(() => Bind(e.New));
-    }
-
     public void Bind(RepositoryContext? ctx)
     {
         if (_disposed)
@@ -85,80 +65,8 @@ public sealed class CenterPaneController : IDisposable
             return;
         }
 
-        if (ReferenceEquals(ctx, _activeCtx))
-        {
-            UpdateContent();
-            return;
-        }
-
-        if (_activeCtx != null)
-        {
-            _activeCtx.State.OpenDiffChanged -= OnOpenDiffChanged;
-            _activeCtx.State.StatusChanged -= OnStatusChanged;
-            _activeCtx.State.ConflictSessionChanged -= OnConflictSessionChanged;
-            _activeCtx.State.ConflictResolverClosedChanged -= OnConflictResolverClosedChanged;
-            _activeCtx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
-
-            var existing = _conflictHost.TryGet(_activeCtx);
-            if (!_activeCtx.State.IsConflictSessionActive && existing?.HasUnsavedWork != true)
-            {
-                _conflictHost.Release(_activeCtx);
-            }
-        }
-
-        _activeCtx = ctx;
-
-        if (_activeCtx != null)
-        {
-            _activeCtx.State.OpenDiffChanged += OnOpenDiffChanged;
-            _activeCtx.State.StatusChanged += OnStatusChanged;
-            _activeCtx.State.ConflictSessionChanged += OnConflictSessionChanged;
-            _activeCtx.State.ConflictResolverClosedChanged += OnConflictResolverClosedChanged;
-            _activeCtx.State.SelectedConflictPathChanged += OnSelectedConflictPathChanged;
-        }
-
-        UpdateContent();
+        _viewModel.Bind(ctx);
     }
-
-    private void OnAiPanelChanged(object? sender, EventArgs e)
-        => Dispatcher.UIThread.Post(UpdateContent);
-
-    private void OnOpenDiffChanged(object? sender, OpenDiffChangedEventArgs e)
-        => Dispatcher.UIThread.Post(() =>
-        {
-            if (_activeCtx?.State.OpenDiff != null)
-            {
-                _aiPanel?.Close();
-            }
-            var previous = _activeDiffView;
-            UpdateContent();
-
-            // A repeated request for the open diff keeps its view; only the line focus is replayed.
-            if (previous != null && ReferenceEquals(previous, _activeDiffView) && e.Request?.FocusLine != null)
-            {
-                _focusLineShown.AddOrUpdate(e.Request, FocusLineShownMarker);
-                previous.RefocusLine();
-            }
-        });
-
-    private void OnSelectedConflictPathChanged(object? sender, SelectedConflictPathChangedEventArgs e)
-        => Dispatcher.UIThread.Post(() =>
-        {
-            if (e.Path != null)
-            {
-                _aiPanel?.Close();
-            }
-            UpdateContent();
-        });
-
-    private void OnStatusChanged(object? sender, StatusChangedEventArgs e)
-        => Dispatcher.UIThread.Post(UpdateContent);
-
-    private void OnConflictSessionChanged(object? sender, EventArgs e)
-        => Dispatcher.UIThread.Post(UpdateContent);
-
-    private void OnConflictResolverClosedChanged(object? sender, EventArgs e)
-        => Dispatcher.UIThread.Post(UpdateContent);
 
     public void UpdateContent()
     {
@@ -167,90 +75,95 @@ public sealed class CenterPaneController : IDisposable
             return;
         }
 
-        if (_aiPanel?.IsOpen == true)
+        _viewModel.Refresh();
+    }
+
+    private void OnRepositoryLeft(object? sender, RepositoryContext previous) => ReleaseResolverIfIdle(previous);
+
+    private void OnViewModelChanged(object? sender, CenterPaneChangedEventArgs e) => ApplyContent(e.RefocusDiffLine);
+
+    // A resolver is kept for a repository only while its session is active or it holds unsaved edits.
+    private void ReleaseResolverIfIdle(RepositoryContext ctx)
+    {
+        var existing = _conflictHost.TryGet(ctx);
+        if (!ctx.State.IsConflictSessionActive && existing?.HasUnsavedWork != true)
         {
-            // A diff is re-created from OpenDiff when the window closes; a resolver keeps its
-            // own cached view, so its edits are untouched.
-            DisposeActiveDiffView();
-            _aiView ??= new AiIntegrationsView(_services);
-            if (!ReferenceEquals(_centerHost.Content, _aiView))
-            {
-                _centerHost.Content = _aiView;
-            }
+            _conflictHost.Release(ctx);
+        }
+    }
+
+    private void ApplyContent(bool refocusDiffLine)
+    {
+        if (_disposed)
+        {
             return;
+        }
+
+        var ctx = _viewModel.ActiveRepo;
+        switch (_viewModel.Mode)
+        {
+            case CenterPaneMode.AiIntegrations:
+                // A diff is re-created from OpenDiff when the window closes; a resolver keeps its
+                // own cached view, so its edits are untouched.
+                DisposeActiveDiffView();
+                _aiView ??= new AiIntegrationsView(_services);
+                if (!ReferenceEquals(_centerHost.Content, _aiView))
+                {
+                    _centerHost.Content = _aiView;
+                }
+                return;
+
+            case CenterPaneMode.Diff when ctx is not null && _viewModel.OpenDiff is { } openDiff:
+                DisposeAiView();
+                ShowDiff(ctx, openDiff);
+                if (refocusDiffLine)
+                {
+                    _activeDiffView?.RefocusLine();
+                }
+                return;
+
+            case CenterPaneMode.Conflict when ctx is not null:
+                DisposeAiView();
+                DisposeActiveDiffView();
+                var resolver = _conflictHost.GetOrCreate(ctx);
+                // A null resolver means the tab has closed; there is nothing to resolve in it.
+                ShowCentre(resolver ?? _graph);
+                return;
         }
 
         DisposeAiView();
-
-        if (_activeCtx == null)
+        DisposeActiveDiffView();
+        if (ctx is not null && !ctx.State.IsConflictSessionActive && _conflictHost.TryGet(ctx) is not null)
         {
-            DisposeActiveDiffView();
-            _centerHost.Content = _graph;
-            return;
+            _conflictHost.Release(ctx);
         }
 
-        var openDiff = _activeCtx.State.OpenDiff;
-        if (openDiff != null)
+        ShowCentre(_graph);
+    }
+
+    private void ShowDiff(RepositoryContext ctx, DiffRequest openDiff)
+    {
+        if (_activeDiffView != null && _activeDiffRequest == openDiff)
         {
-            if (_activeDiffView == null || _activeDiffRequest != openDiff)
-            {
-                DisposeActiveDiffView();
-                _activeDiffRequest = openDiff;
-                _activeDiffView = new DiffView(_activeCtx, openDiff, _services.GetService<ISettingsService>(), _services);
-                if (openDiff.FocusLine != null && _focusLineShown.TryGetValue(openDiff, out _))
-                {
-                    _activeDiffView.SkipInitialFocusLine();
-                }
-                else if (openDiff.FocusLine != null)
-                {
-                    _focusLineShown.Add(openDiff, FocusLineShownMarker);
-                }
-                _centerHost.Content = _activeDiffView;
-            }
             return;
         }
 
         DisposeActiveDiffView();
-
-        var existing = _conflictHost.TryGet(_activeCtx);
-        bool isSessionActive = _activeCtx.State.IsConflictSessionActive;
-        bool hasUnsaved = existing?.HasUnsavedWork == true;
-
-        // Only a live session can be closed: with no conflicts or operation left, nothing would
-        // bring back a hidden resolver holding edits.
-        if (isSessionActive && _activeCtx.State.IsConflictResolverClosed)
+        _activeDiffRequest = openDiff;
+        _activeDiffView = new DiffView(ctx, openDiff, _services.GetService<ISettingsService>(), _services);
+        if (_viewModel.ClaimFocusLine(openDiff))
         {
-            if (!ReferenceEquals(_centerHost.Content, _graph))
-            {
-                _centerHost.Content = _graph;
-            }
+            _activeDiffView.SkipInitialFocusLine();
         }
-        else if (isSessionActive || hasUnsaved)
+
+        _centerHost.Content = _activeDiffView;
+    }
+
+    private void ShowCentre(Control content)
+    {
+        if (!ReferenceEquals(_centerHost.Content, content))
         {
-            var resolver = _conflictHost.GetOrCreate(_activeCtx);
-            if (resolver is null)
-            {
-                // The tab has closed; there is nothing to resolve in it.
-                if (!ReferenceEquals(_centerHost.Content, _graph))
-                {
-                    _centerHost.Content = _graph;
-                }
-            }
-            else if (!ReferenceEquals(_centerHost.Content, resolver))
-            {
-                _centerHost.Content = resolver;
-            }
-        }
-        else
-        {
-            if (existing != null)
-            {
-                _conflictHost.Release(_activeCtx);
-            }
-            if (!ReferenceEquals(_centerHost.Content, _graph))
-            {
-                _centerHost.Content = _graph;
-            }
+            _centerHost.Content = content;
         }
     }
 
@@ -292,31 +205,13 @@ public sealed class CenterPaneController : IDisposable
 
         _disposed = true;
 
-        if (_aiPanel != null)
+        _viewModel.RepositoryLeft -= OnRepositoryLeft;
+        _viewModel.Changed -= OnViewModelChanged;
+        if (_viewModel.ActiveRepo is { } active)
         {
-            _aiPanel.OpenChanged -= OnAiPanelChanged;
+            ReleaseResolverIfIdle(active);
         }
-
-        if (_workspace != null)
-        {
-            _workspace.FocusedRepositoryChanged -= OnFocusedRepositoryChanged;
-        }
-
-        if (_activeCtx != null)
-        {
-            _activeCtx.State.OpenDiffChanged -= OnOpenDiffChanged;
-            _activeCtx.State.StatusChanged -= OnStatusChanged;
-            _activeCtx.State.ConflictSessionChanged -= OnConflictSessionChanged;
-            _activeCtx.State.ConflictResolverClosedChanged -= OnConflictResolverClosedChanged;
-            _activeCtx.State.SelectedConflictPathChanged -= OnSelectedConflictPathChanged;
-
-            var existing = _conflictHost.TryGet(_activeCtx);
-            if (!_activeCtx.State.IsConflictSessionActive && existing?.HasUnsavedWork != true)
-            {
-                _conflictHost.Release(_activeCtx);
-            }
-            _activeCtx = null;
-        }
+        _viewModel.Dispose();
 
         DisposeActiveDiffView();
         DisposeAiView();

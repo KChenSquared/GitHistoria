@@ -1,0 +1,123 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.DeveloperView"
+             x:DataType="vm:DeveloperViewModel"
+             Background="{DynamicResource ColorChrome}">
+    <UserControl.Styles>
+        <!-- Each setting sits in a left-aligned dock row with its help badge docked right: the
+             badge is measured first, so a setting wider than the column is cut short instead of
+             pushing the badge out of it. The badge is raised so a fixed-width box that overruns its
+             slot cannot cover it. -->
+        <Style Selector="DockPanel.setting">
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="HorizontalSpacing" Value="6" />
+        </Style>
+        <Style Selector="DockPanel.setting > ctl|HelpHint">
+            <Setter Property="DockPanel.Dock" Value="Right" />
+            <Setter Property="ZIndex" Value="1" />
+        </Style>
+        <Style Selector="DockPanel.setting > :is(Control)">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid>
+        <ScrollViewer>
+            <StackPanel Spacing="18" Margin="32" MaxWidth="640">
+                <DockPanel Classes="setting">
+                    <ctl:HelpHint Text="Shown when developer mode is on in Settings → Advanced, or an enableDevMode file is next to Historia.exe." />
+                    <TextBlock Classes="pane-title" Text="Developer" />
+                </DockPanel>
+
+                <DockPanel Classes="setting">
+                    <ctl:HelpHint Text="Replaces the Light / Dark / System choice while a theme is selected. High Contrast still wins. Turned off when Historia starts without developer mode." />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <CheckBox Content="Use custom theme"
+                                  IsChecked="{Binding UseCustomTheme}"
+                                  VerticalAlignment="Center" />
+                        <ComboBox Width="220"
+                                  IsVisible="{Binding HasSavedThemes}"
+                                  ItemsSource="{Binding ThemeNames}"
+                                  SelectedIndex="{Binding SelectedThemeIndex}" />
+                        <Button Classes="secondary"
+                                Content="Manage themes"
+                                Command="{Binding ManageThemesCommand}" />
+                    </StackPanel>
+                </DockPanel>
+
+                <DockPanel Classes="setting">
+                    <ctl:HelpHint Text="Throws an unhandled error to test crash handling." />
+                    <Button Classes="secondary"
+                            Content="Throw test exception"
+                            Command="{Binding ThrowTestExceptionCommand}" />
+                </DockPanel>
+
+                <DockPanel Classes="setting">
+                    <ctl:HelpHint Text="Shows a success toast. It closes after 2 s and has no Copy button." />
+                    <Button Classes="secondary"
+                            Content="Show sample toast"
+                            Command="{Binding ShowSampleToastCommand}" />
+                </DockPanel>
+
+                <DockPanel Classes="setting">
+                    <ctl:HelpHint Text="Opens the red confirm dialog shown before deleting a branch. Neither button changes anything." />
+                    <Button Classes="secondary"
+                            Content="Show sample alert"
+                            Command="{Binding ShowSampleAlertCommand}" />
+                </DockPanel>
+
+                <DockPanel Classes="setting">
+                    <ctl:HelpHint Text="{Binding LogsFolderHint}" />
+                    <Button Classes="secondary"
+                            Content="Open logs folder"
+                            Command="{Binding OpenLogsFolderCommand}" />
+                </DockPanel>
+
+                <DockPanel Classes="setting">
+                    <ctl:HelpHint Text="Adds a colour bar to each tab: red = auto-fetch not running, yellow = not fetched yet this round, green = fetched this round." />
+                    <CheckBox Content="Show auto-fetch status on tabs"
+                              IsChecked="{Binding ShowAutoFetchStatus}" />
+                </DockPanel>
+
+                <DockPanel Classes="setting">
+                    <ctl:HelpHint Text="Deletes saved graph layouts. Each repository rebuilds its graph next time it opens." />
+                    <Button Classes="secondary"
+                            Content="Clear graph cache"
+                            Command="{Binding ClearGraphCacheCommand}" />
+                </DockPanel>
+
+                <DockPanel Classes="setting">
+                    <ctl:HelpHint Text="Deletes saved sidebar data (branches, tags, stashes, submodules, worktrees). It's rebuilt from Git next time." />
+                    <Button Classes="secondary"
+                            Content="Clear sidebar cache"
+                            Command="{Binding ClearSidebarCacheCommand}" />
+                </DockPanel>
+
+                <DockPanel Classes="setting" Margin="0,8,0,0">
+                    <ctl:HelpHint Text="Deletes all settings, profiles, themes, sessions, caches and logs. Can't be undone. Restart Historia afterwards." />
+                    <Button Classes="secondary"
+                            Content="Delete all Historia data"
+                            Command="{Binding DeleteAllCommand}" />
+                </DockPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Button Command="{Binding CloseCommand}"
+                ToolTip.Tip="Close"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="0,6,6,0"
+                Padding="4"
+                ZIndex="1"
+                Background="Transparent"
+                BorderThickness="0"
+                Cursor="Hand">
+            <ctl:IconGlyph Icon="close" Size="12" ForegroundKey="ColorTextMuted" />
+        </Button>
+    </Grid>
+</UserControl>

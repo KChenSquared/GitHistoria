@@ -505,7 +505,9 @@ public class ConflictResolverViewTests : IDisposable
         await view.LoadAsync();
         Dispatcher.UIThread.RunJobs();
 
-        Assert.IsType<StackPanel>(view.EditorAreaForTesting.Content);
+        Assert.True(view.FileCardForTesting.IsVisible);
+        Assert.False(view.AllResolvedCardForTesting.IsVisible);
+        Assert.False(view.SplitGridForTesting.IsVisible);
     }
 
     [AvaloniaFact]
@@ -789,8 +791,9 @@ public class ConflictResolverViewTests : IDisposable
 
         Assert.Null(view.CurrentFileForTesting);
         Assert.Null(_context.State.SelectedConflictPath);
-        Assert.IsType<StackPanel>(view.EditorAreaForTesting.Content);
-        var card = (StackPanel)view.EditorAreaForTesting.Content;
+        Assert.True(view.AllResolvedCardForTesting.IsVisible);
+        Assert.False(view.SplitGridForTesting.IsVisible);
+        var card = view.AllResolvedCardForTesting;
         Assert.Contains(card.Children.OfType<TextBlock>(), tb => tb.Text?.Contains("All conflicts resolved") == true);
     }
 
@@ -1453,23 +1456,32 @@ public class ConflictResolverViewTests : IDisposable
             return Task.FromResult(_conflicts.Conflicts);
         };
 
-        // Fire status change 1 and wait for it to pass the coalesce timer (50ms)
-        await _context.State.RefreshStatusAsync();
-        await PumpUntilAsync(() => callCount >= 1, "the first conflict refresh");
+        // Status changes reach the view through a coalescing timer; counting the raised events
+        // makes each step wait for delivery instead of for a fixed delay.
+        var raised = 0;
+        EventHandler<StatusChangedEventArgs> countRaised = (_, _) => raised++;
+        _context.State.StatusChanged += countRaised;
+        try
+        {
+            // Fire status change 1 and wait for it to be delivered
+            await _context.State.RefreshStatusAsync();
+            await PumpUntilAsync(() => raised >= 1 && callCount >= 1, "the first conflict refresh");
 
-        // Refresh 1 is now in-flight, awaiting tcs.Task in GetConflictsAsync
-        Assert.Equal(1, callCount);
+            // Refresh 1 is now in-flight, awaiting tcs.Task in GetConflictsAsync
+            Assert.Equal(1, callCount);
 
-        // Fire status changes 2 and 3 while 1 is in-flight
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+            // Fire status changes 2 and 3 while 1 is in-flight, each delivered before the next
+            await _context.State.RefreshStatusAsync();
+            await PumpUntilAsync(() => raised >= 2, "the second status change");
 
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+            await _context.State.RefreshStatusAsync();
+            await PumpUntilAsync(() => raised >= 3, "the third status change");
+            Dispatcher.UIThread.RunJobs();
+        }
+        finally
+        {
+            _context.State.StatusChanged -= countRaised;
+        }
 
         // Still only 1 call to GetConflictsAsync because refresh is in flight and extra ones folded into pending
         Assert.Equal(1, callCount);
@@ -2390,7 +2402,17 @@ public class ConflictResolverViewTests : IDisposable
     private static void ClickMenuItem(ConflictResolverView view, string header)
     {
         var item = view.ResolveFileMenuItemsForTesting.Single(m => m.Header as string == header);
-        item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        // The flyout sits outside the view's tree, so the view's code-behind assigns these commands.
+        var expected = header switch
+        {
+            "Take ours (whole file)" => view.ViewModel.TakeOursCurrentCommand,
+            "Take theirs (whole file)" => view.ViewModel.TakeTheirsCurrentCommand,
+            "Reset file to conflicted" => view.ViewModel.ResetFileCommand,
+            "Open in external tool" => view.ViewModel.LaunchExternalToolCommand,
+            _ => throw new ArgumentException($"No view-model command is known for the menu item '{header}'.", nameof(header)),
+        };
+        Assert.Same(expected, item.Command);
+        item.Command!.Execute(null);
     }
 
     /// <summary>Runs posted UI work until <paramref name="condition"/> holds, for at most 10 seconds.
@@ -3198,7 +3220,8 @@ public class ConflictResolverViewTests : IDisposable
         Assert.True(view.HasUnsavedWork);
         Assert.False(_context.State.IsConflictResolverClosed);
 
-        view.CloseButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Same(view.ViewModel.CloseCommand, view.CloseButtonForTesting.Command);
+        view.CloseButtonForTesting.Command!.Execute(null);
 
         Assert.True(_context.State.IsConflictResolverClosed);
         Assert.Empty(_conflicts.SaveResolutionCalls);

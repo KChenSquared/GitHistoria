@@ -6,31 +6,31 @@ public class TerminalDockAutoHideTests
     [Fact]
     public void ShouldAutoHide_OpenAndEmpty_True()
     {
-        Assert.True(TerminalDockControl.ShouldAutoHide(open: true, sessionCount: 0));
+        Assert.True(TerminalDockViewModel.ShouldAutoHide(open: true, sessionCount: 0));
     }
 
     [Fact]
     public void ShouldAutoHide_ClosedOrNonEmpty_False()
     {
-        Assert.False(TerminalDockControl.ShouldAutoHide(open: false, sessionCount: 0));
-        Assert.False(TerminalDockControl.ShouldAutoHide(open: true, sessionCount: 1));
-        Assert.False(TerminalDockControl.ShouldAutoHide(open: true, sessionCount: 3));
-        Assert.False(TerminalDockControl.ShouldAutoHide(open: false, sessionCount: 2));
+        Assert.False(TerminalDockViewModel.ShouldAutoHide(open: false, sessionCount: 0));
+        Assert.False(TerminalDockViewModel.ShouldAutoHide(open: true, sessionCount: 1));
+        Assert.False(TerminalDockViewModel.ShouldAutoHide(open: true, sessionCount: 3));
+        Assert.False(TerminalDockViewModel.ShouldAutoHide(open: false, sessionCount: 2));
     }
 
     [AvaloniaFact]
     public void Vertical_bar_is_lane_wide()
     {
-        var dock = new TerminalDockControl();
+        var dock = new TerminalDockView();
         var window = new Window { Width = 600, Height = 400, Content = dock };
         dock.IsVisible = true;
         dock.Height = 200;
-        dock.VerticalScrollBarForTesting.IsVisible = true;
+        dock.VScroll.IsVisible = true;
         window.Show();
         Dispatcher.UIThread.RunJobs();
         try
         {
-            var bar = dock.VerticalScrollBarForTesting;
+            var bar = dock.VScroll;
             Assert.True(bar.IsVisible);
             Assert.Equal(ScrollBarMetrics.Lane, bar.Bounds.Width);
         }

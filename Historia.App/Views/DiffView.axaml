@@ -1,0 +1,70 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.DiffView"
+             x:DataType="vm:DiffViewModel"
+             Background="{DynamicResource ColorBg}">
+    <UserControl.Styles>
+        <!-- The text shown in place of the diff; a failure is smaller and in the danger colour. -->
+        <Style Selector="TextBlock.diff-message">
+            <Setter Property="Margin" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+        </Style>
+        <Style Selector="TextBlock.diff-message.error">
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorDanger}" />
+        </Style>
+    </UserControl.Styles>
+
+    <DockPanel LastChildFill="True">
+        <Grid DockPanel.Dock="Top"
+              ColumnDefinitions="*,Auto,Auto,Auto,Auto"
+              Height="30"
+              Margin="12,4">
+            <TextBlock Classes="text"
+                       Text="{Binding Path}"
+                       FontSize="12"
+                       FontWeight="SemiBold" />
+            <Button Grid.Column="1"
+                    Classes="secondary"
+                    Content="Prev change"
+                    Command="{Binding PreviousChangeCommand}"
+                    Cursor="Hand" />
+            <Button Grid.Column="2"
+                    Classes="secondary"
+                    Content="Next change"
+                    Command="{Binding NextChangeCommand}"
+                    Cursor="Hand" />
+            <Button Grid.Column="3"
+                    Classes="secondary"
+                    Content="{Binding ToggleLabel}"
+                    Command="{Binding ToggleModeCommand}"
+                    Cursor="Hand" />
+            <Button x:Name="CloseButton"
+                    Grid.Column="4"
+                    Classes="secondary"
+                    Content="X"
+                    Command="{Binding CloseCommand}"
+                    Cursor="Hand"
+                    ToolTip.Tip="Close"
+                    AutomationProperties.Name="Close" />
+        </Grid>
+
+        <Grid ColumnDefinitions="*,Auto">
+            <ContentControl x:Name="PresenterHost" />
+            <TextBlock x:Name="MessageText"
+                       Classes="diff-message"
+                       Classes.error="{Binding IsMessageError}"
+                       IsVisible="{Binding HasMessage}"
+                       Text="{Binding Message}" />
+            <ctl:DiffMinimap x:Name="Minimap"
+                             Grid.Column="1"
+                             Width="12"
+                             IsVisible="False" />
+        </Grid>
+    </DockPanel>
+</UserControl>

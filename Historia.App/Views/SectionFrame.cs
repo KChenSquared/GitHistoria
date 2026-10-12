@@ -17,8 +17,18 @@ internal static class SectionFrame
     public const double SplitAreaMinHeight = TopMinHeight + HandleHeight + BottomMinHeight;
     public const double DefaultTopHeight = 260;
 
+    /// <summary>The height of the repository top bar: one header row of content plus the header gap above and below.</summary>
+    public const double TopBarHeight = 30 + 2 * HeaderGap;
+
+    /// <summary>The margin of the branch label and ahead/behind count inside the top bar.</summary>
+    public static readonly Thickness TopBarBranchMargin = new(12, HeaderGap);
+
+    /// <summary>The inner margin of the commit detail panel's top section, which sits a little lower than a section frame's own.</summary>
+    public static readonly Thickness DetailTopInnerMargin = new(InnerSide, HeaderGap + 4, InnerSide, InnerBottom);
+
     // UI-thread only.
     private static readonly Dictionary<string, double> SplitHeightByRepo = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, double> BoxHeightByRepo = new(StringComparer.Ordinal);
 
     public static double GetSplitHeight(string repoId)
     {
@@ -28,6 +38,18 @@ internal static class SectionFrame
     public static void SetSplitHeight(string repoId, double h)
     {
         SplitHeightByRepo[repoId] = h;
+    }
+
+    /// <summary>The height the staging commit-message box was last given for a repository, or
+    /// <paramref name="fallback"/> when it was never resized.</summary>
+    public static double GetBoxHeight(string repoId, double fallback)
+    {
+        return BoxHeightByRepo.TryGetValue(repoId, out var h) ? h : fallback;
+    }
+
+    public static void SetBoxHeight(string repoId, double h)
+    {
+        BoxHeightByRepo[repoId] = h;
     }
 
     public static void ApplySplitHeight(Grid grid, RowDefinition topRow, string repoId)
@@ -189,7 +211,7 @@ internal static class SectionFrame
     }
 
     public static Border Build(Control left, Control? center, Control? right, Control body,
-        Thickness border, double minHeight, out Control dividerHandle, bool horizontalScroll = false)
+        Thickness border, double minHeight, out Control dividerHandle, bool horizontalScroll = false, bool scrollBody = true)
     {
         var head = new Grid
         {
@@ -232,11 +254,15 @@ internal static class SectionFrame
         strip.Child = line;
         dividerHandle = strip;
 
-        var scroll = new ScrollViewer
-        {
-            Content = body,
-            HorizontalScrollBarVisibility = horizontalScroll ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled
-        };
+        // A body that scrolls and virtualizes itself (a list) goes in unwrapped; an outer scroller
+        // would measure it at unbounded height and realize every item.
+        Control scroll = scrollBody
+            ? new ScrollViewer
+            {
+                Content = body,
+                HorizontalScrollBarVisibility = horizontalScroll ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled
+            }
+            : body;
 
         var inner = new DockPanel
         {

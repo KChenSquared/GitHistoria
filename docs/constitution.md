@@ -65,17 +65,19 @@ the current example.
 per-session and per-operation-class, it is never the default, and it never persists to disk.
 There is no global "turn off confirmations" setting.
 
-**00.4 — Guard it with a test.** `DestructiveConfirmationTests` runs two checks: that no call
-site hand-rolls the destructive treatment on the plain `ConfirmAsync` overload (`destructive:
-true`, `defaultToCancel:`, `DialogIcon.Warning` outside the one entry point's own
-implementation), and a call-site guard scanning every listed destructive service call (submodule
+**00.4 — Guard it with a test.** `DestructiveConfirmationTests` runs two checks, scanning all of
+`Historia.App` and `Historia.Core/ViewModels`: that no call site hand-rolls the destructive
+treatment on the plain `ConfirmAsync` overload (`destructive: true`, `defaultToCancel:`,
+`DialogIcon.Warning` outside the one entry point's own implementation), and a call-site guard scanning every listed destructive service call (submodule
 `RemoveAsync`, rebase `StartAsync`, `DiscardAsync`, `DeleteBranchAsync`, `DeleteRemoteBranchAsync`, `DeleteTagAsync`, stash
 `DropAsync`/`ClearAsync`, worktree `RemoveAsync`, hard `ResetAsync`, `ResolveWithSideAsync`,
 `RecreateConflictAsync`, `AbortOperationAsync`, `SkipCurrentAsync`, `DeleteAiServiceAsync`, force `PushAsync`) so it must
 sit in a method that also calls `ConfirmDestructiveAsync`, or be on an explicit, commented
 allowlist. `HistoriaApp.Tests.DestructiveConfirmDialogTests` guards the dialog builder itself —
-that Cancel gets the primary class while staying rightmost. A destructive call site with no
-confirm at all, or one that regresses to a bare confirm, fails the build. *(Rule 36.)*
+that Cancel gets the primary class while staying rightmost. Each field-anchored pattern (such as
+`_stashes.DropAsync`) must match a call site in the scanned files, so renaming the field fails the
+build instead of dropping the call from the scan. A destructive call site with no confirm at all,
+or one that regresses to a bare confirm, fails the build. *(Rule 36.)*
 The call-site inventory is the allowlist in `DestructiveConfirmationTests`.
 
 ---
@@ -274,6 +276,15 @@ crashes, the app just quietly reaches out. Everything below it is subordinate to
       sibling overflow chips revealing detail on hover or click (§7.2).
     - **Settings:** Advanced toggles and terminal preferences sit in collapsible sections, keeping
       the initial settings view focused (§16).
+
+30.2. **Views are AXAML bound to view models.** Every view and form dialog is an `.axaml` file whose
+    state and commands live in a view model under `Historia.Core/ViewModels`; the code-behind wires
+    the view model and handles what binding cannot (pointer capture, focus, divider drags). Custom
+    drawn surfaces (the commit graph, the terminal, the diff and conflict editors) are custom
+    controls placed from markup. A view never rebuilds its tree by hand, and `new Window` appears
+    only in `AvaloniaDialogService`. `MvvmViewGuardTests` enforces the sibling `.axaml`, the
+    `new Window` limit and the absence of `Rebuild…` methods under `Historia.App/Views` and
+    `Historia.App/Platform`; `ViewMarkupGuardTests` keeps the markup on palette keys.
 
 ---
 

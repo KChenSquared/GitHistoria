@@ -1,0 +1,116 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.ShortcutsBarView"
+             x:DataType="vm:ShortcutsBarViewModel">
+    <!-- Both side layouts are declared here; the constructor keeps the one for its side. -->
+    <Border x:Name="Bar"
+            BorderThickness="0,0,0,1"
+            Padding="6,0"
+            Background="{DynamicResource ColorChrome}"
+            BorderBrush="{DynamicResource ColorBorder}">
+        <Panel x:Name="Layouts">
+            <Grid x:Name="LeftLayout" ColumnDefinitions="Auto,*,Auto">
+                <StackPanel x:Name="LeadGroup"
+                            Grid.Column="0"
+                            Orientation="Horizontal"
+                            Spacing="6"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Center">
+                    <Button Classes="flat"
+                            Command="{Binding CreateBranchCommand}"
+                            ToolTip.Tip="Create a branch at the selected commit"
+                            Padding="7,2"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            VerticalAlignment="Center"
+                            Cursor="Hand">
+                        <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                            <ctl:IconGlyph Icon="graph_8" Size="18" ForegroundKey="ColorTextMuted" />
+                            <TextBlock Text="Branch" FontSize="14" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+                <StackPanel x:Name="TrailGroup"
+                            Grid.Column="2"
+                            Orientation="Horizontal"
+                            Spacing="6"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Button Classes="flat"
+                            Command="{Binding OpenTerminalCommand}"
+                            ToolTip.Tip="Open terminal in this repository"
+                            Padding="7,2"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            VerticalAlignment="Center"
+                            Cursor="Hand">
+                        <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                            <ctl:IconGlyph Icon="terminal" Size="18" ForegroundKey="ColorTextMuted" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <StackPanel x:Name="RightLayout"
+                        Orientation="Horizontal"
+                        Spacing="6"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                <Button Classes="flat"
+                        Command="{Binding FetchCommand}"
+                        ToolTip.Tip="Fetch from the remote"
+                        Padding="7,2"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        VerticalAlignment="Center"
+                        Cursor="Hand">
+                    <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                        <ctl:IconGlyph Icon="sync" Size="18" ForegroundKey="ColorTextMuted" />
+                        <TextBlock Text="Fetch" FontSize="14" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button Classes="flat"
+                        Command="{Binding PullCommand}"
+                        ToolTip.Tip="Pull from the remote"
+                        Padding="7,2"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        VerticalAlignment="Center"
+                        Cursor="Hand">
+                    <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                        <ctl:IconGlyph Icon="cloud_download" Size="18" ForegroundKey="ColorTextMuted" />
+                        <TextBlock Text="Pull" FontSize="14" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button Classes="flat"
+                        Command="{Binding PushCommand}"
+                        ToolTip.Tip="Push to the remote"
+                        Padding="7,2"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        VerticalAlignment="Center"
+                        Cursor="Hand">
+                    <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                        <ctl:IconGlyph Icon="cloud_upload" Size="18" ForegroundKey="ColorTextMuted" />
+                        <TextBlock Text="Push" FontSize="14" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button Classes="flat"
+                        Command="{Binding StashAllCommand}"
+                        ToolTip.Tip="Stash all changes"
+                        Padding="7,2"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        VerticalAlignment="Center"
+                        Cursor="Hand">
+                    <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                        <ctl:IconGlyph Icon="save" Size="18" ForegroundKey="ColorTextMuted" />
+                        <TextBlock Text="Stash" FontSize="14" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Panel>
+    </Border>
+</UserControl>

@@ -33,6 +33,8 @@ One line each; the constitution has the full text.
 - Global usings only: every `using` directive lives in the project's `GlobalUsings.cs` (Rule 37).
 - Comments describe the present: no transition comments and no references to documents or rule
   numbers (Rule 39).
+- Views are AXAML bound to a view model in `Historia.Core/ViewModels`; no code-built views, no
+  `new Window`, no `Rebuild*` methods (Rule 30.2).
 - Agent-facing surfaces navigate and propose only; they never stage, commit or change anything
   (Rule 40).
 

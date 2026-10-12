@@ -84,9 +84,13 @@ public class StagingPanelConflictAbortTests : IDisposable
         return (panel, window);
     }
 
-    private static void Click(Button button)
+    private static Button AbortButton(StagingPanelView panel) =>
+        panel.ChangesList.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "ConflictAbort");
+
+    private static void Click(StagingPanelView panel, Button button)
     {
-        button.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Assert.Same(panel.ViewModel.AbortOperationCommand, button.Command);
+        button.Command!.Execute(button.CommandParameter);
         Dispatcher.UIThread.RunJobs();
     }
 
@@ -98,8 +102,8 @@ public class StagingPanelConflictAbortTests : IDisposable
         try
         {
             Assert.Equal(OperationState.Merging, _context.State.PendingOperation);
-            var abort = panel.ConflictAbortButtonForTesting;
-            var grid = panel.ConflictHeaderForTesting;
+            var abort = AbortButton(panel);
+            var grid = Assert.IsType<Grid>(abort.Parent);
 
             Assert.True(abort.IsVisible);
             Assert.Equal(1, Grid.GetColumn(abort));
@@ -120,8 +124,8 @@ public class StagingPanelConflictAbortTests : IDisposable
         var (panel, window) = await ShowPanelAsync();
         try
         {
-            var abort = panel.ConflictAbortButtonForTesting;
-            var grid = panel.ConflictHeaderForTesting;
+            var abort = AbortButton(panel);
+            var grid = Assert.IsType<Grid>(abort.Parent);
             var text = grid.Children.OfType<TextBlock>().Single();
 
             Assert.Equal(text.FontSize, abort.FontSize);
@@ -143,7 +147,7 @@ public class StagingPanelConflictAbortTests : IDisposable
         try
         {
             Assert.Equal(OperationState.Bisecting, _context.State.PendingOperation);
-            Assert.False(panel.ConflictAbortButtonForTesting.IsVisible);
+            Assert.False(AbortButton(panel).IsVisible);
         }
         finally
         {
@@ -160,7 +164,7 @@ public class StagingPanelConflictAbortTests : IDisposable
             _context.State.SetConflictResolverClosed(true);
             Dispatcher.UIThread.RunJobs();
 
-            Assert.True(panel.ConflictAbortButtonForTesting.IsVisible);
+            Assert.True(AbortButton(panel).IsVisible);
         }
         finally
         {
@@ -177,14 +181,14 @@ public class StagingPanelConflictAbortTests : IDisposable
         try
         {
             _dialogs.ConfirmDestructiveResult = false;
-            Click(panel.ConflictAbortButtonForTesting);
+            Click(panel, AbortButton(panel));
 
             Assert.Single(_dialogs.ConfirmDestructiveCalls);
             Assert.Equal(0, _conflicts.AbortCalls);
             Assert.Equal(0, work.DiscardCalls);
 
             _dialogs.ConfirmDestructiveResult = true;
-            Click(panel.ConflictAbortButtonForTesting);
+            Click(panel, AbortButton(panel));
 
             Assert.Equal(2, _dialogs.ConfirmDestructiveCalls.Count);
             Assert.Equal(1, _conflicts.AbortCalls);
@@ -205,17 +209,20 @@ public class StagingPanelConflictAbortTests : IDisposable
             var tcs = new TaskCompletionSource<bool>();
             _conflicts.AbortTcs = tcs;
 
-            Click(panel.ConflictAbortButtonForTesting);
+            Assert.True(panel.ViewModel.AbortOperationCommand.CanExecute(null));
+            Click(panel, AbortButton(panel));
             Assert.Equal(1, _conflicts.AbortCalls);
-            Assert.False(panel.ConflictAbortButtonForTesting.IsEnabled);
+            Assert.False(panel.ViewModel.AbortOperationCommand.CanExecute(null));
+            Assert.False(AbortButton(panel).IsEffectivelyEnabled);
 
-            Click(panel.ConflictAbortButtonForTesting);
+            Click(panel, AbortButton(panel));
             Assert.Equal(1, _conflicts.AbortCalls);
             Assert.Single(_dialogs.ConfirmDestructiveCalls);
 
             tcs.SetResult(true);
             Dispatcher.UIThread.RunJobs();
-            Assert.True(panel.ConflictAbortButtonForTesting.IsEnabled);
+            Assert.True(panel.ViewModel.AbortOperationCommand.CanExecute(null));
+            Assert.True(AbortButton(panel).IsEffectivelyEnabled);
         }
         finally
         {

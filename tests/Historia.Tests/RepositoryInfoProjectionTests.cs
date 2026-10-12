@@ -45,18 +45,7 @@ public sealed class RepositoryInfoProjectionTests : IAsyncDisposable
     public async Task Bare_repository_sets_is_bare_and_uses_git_dir_as_working_dir()
     {
         var dir = TestScratch.NewDirectory("historia-bare-");
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = dir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("init");
-        psi.ArgumentList.Add("--bare");
-        using var proc = Process.Start(psi)!;
-        proc.WaitForExit();
+        TestGit.Run(dir, ["init", "--bare"], testIdentity: false);
 
         await using var ctx = _host.Open(dir);
         var info = await ctx.Gateway.GetRepositoryInfoAsync();

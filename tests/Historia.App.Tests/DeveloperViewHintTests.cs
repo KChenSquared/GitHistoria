@@ -49,6 +49,33 @@ public sealed class DeveloperViewHintTests
     }
 
     [AvaloniaFact]
+    public void Every_hint_badge_sits_to_the_right_of_its_setting()
+    {
+        var (view, _) = CreateView();
+        var window = new Window { Width = 900, Height = 900, Content = view };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        window.UpdateLayout();
+
+        try
+        {
+            var badges = HelpHintMap.Badges(view).ToList();
+            Assert.Equal(ExpectedHints().Count, badges.Count);
+            foreach (var badge in badges)
+            {
+                var row = (Panel)badge.Parent!;
+                var setting = row.Children.Single(c => !ReferenceEquals(c, badge));
+                Assert.True(badge.Bounds.Width > 0 && setting.Bounds.Width > 0);
+                Assert.True(badge.Bounds.X >= setting.Bounds.Right, $"The badge for '{HelpHintMap.AnchorLabel(badge)}' is not right of its setting.");
+            }
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Delete_all_confirm_uses_the_delete_verb()
     {
         var (view, dialogs) = CreateView();
@@ -56,7 +83,7 @@ public sealed class DeveloperViewHintTests
             .Single(b => (b.Content as string) == "Delete all Historia data");
 
         // The fake declines, so nothing is deleted.
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        button.Command!.Execute(button.CommandParameter);
         Dispatcher.UIThread.RunJobs();
 
         var call = Assert.Single(dialogs.DestructiveCalls);
@@ -76,7 +103,7 @@ public sealed class DeveloperViewHintTests
         var button = view.GetLogicalDescendants().OfType<Button>()
             .Single(b => (b.Content as string) == "Show sample alert");
 
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        button.Command!.Execute(button.CommandParameter);
         Dispatcher.UIThread.RunJobs();
 
         var call = Assert.Single(dialogs.DestructiveCalls);

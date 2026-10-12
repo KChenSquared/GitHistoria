@@ -219,6 +219,9 @@ public sealed class App : Application
         // ── Platform seams ──
         services.AddSingleton<IAppLog>(AppLog.Current);
         services.AddSingleton<IUiDispatcher, UiDispatcher>();
+        services.AddSingleton<IClipboardService, ClipboardService>();
+        services.AddSingleton<IRemoteDialogs, RemoteDialogs>();
+        services.AddSingleton<ICommitDraftStore, CommitDraftStore>();
         services.AddSingleton<ISystemThemeProbe, PlatformSystemThemeProbe>();
         services.AddSingleton<IDialogService, AvaloniaDialogService>();
         services.AddSingleton<IExternalLauncher, ExternalLauncher>();

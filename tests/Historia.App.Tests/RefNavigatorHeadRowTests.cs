@@ -65,24 +65,7 @@ public sealed class RefNavigatorHeadRowTests
 
     private static string RunGitIn(string dir, params string[] args)
     {
-        var psi = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = dir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var a in args) psi.ArgumentList.Add(a);
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        using var p = System.Diagnostics.Process.Start(psi)!;
-        var stdoutTask = p.StandardOutput.ReadToEndAsync();
-        var stderrTask = p.StandardError.ReadToEndAsync();
-        p.WaitForExit(30_000);
-        Task.WaitAll(stdoutTask, stderrTask);
-        if (p.ExitCode != 0)
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed ({p.ExitCode}): {stderrTask.Result}");
-        return stdoutTask.Result;
+        return TestGit.RunChecked(dir, args, timeout: TimeSpan.FromSeconds(30), testIdentity: false);
     }
 
     private static ServiceProvider CreateServices()
@@ -159,7 +142,8 @@ public sealed class RefNavigatorHeadRowTests
 
     private static IEnumerable<Border> LeafRows(RefNavigatorView view) =>
         view.GetVisualDescendants().OfType<Border>()
-            .Where(b => b.Child is Grid { ColumnDefinitions.Count: 4 } && b.Height == 24);
+            .Where(b => b.Classes.Contains("ref-row") && b.DataContext is RefLeafRowViewModel)
+            .OrderBy(b => b.TranslatePoint(default, view)?.Y ?? 0);
 
     private static TextBlock RowLabel(Border row) =>
         row.GetVisualDescendants().OfType<TextBlock>().First(t => Grid.GetColumn(t) == 2);

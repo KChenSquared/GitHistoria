@@ -124,28 +124,11 @@ public sealed class UnmergedIndexReaderTests : IAsyncDisposable
         var dummySha2 = "2222222222222222222222222222222222222222";
         var dummySha3 = "3333333333333333333333333333333333333333";
 
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = repo.Path,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("update-index");
-        psi.ArgumentList.Add("--index-info");
-        using (var p = Process.Start(psi)!)
-        {
-            using (var sw = new StreamWriter(p.StandardInput.BaseStream, new UTF8Encoding(false)))
-            {
-                sw.Write($"160000 {dummySha1} 1\tsubmod\n");
-                sw.Write($"160000 {dummySha2} 2\tsubmod\n");
-                sw.Write($"160000 {dummySha3} 3\tsubmod\n");
-            }
-            p.WaitForExit();
-            Assert.Equal(0, p.ExitCode);
-        }
+        var indexInfo =
+            $"160000 {dummySha1} 1\tsubmod\n" +
+            $"160000 {dummySha2} 2\tsubmod\n" +
+            $"160000 {dummySha3} 3\tsubmod\n";
+        Assert.Equal(0, TestGit.Run(repo.Path, ["update-index", "--index-info"], indexInfo, testIdentity: false).ExitCode);
 
         var reader = MakeReader();
         var conflicts = await reader.ReadAsync(repo.Path);
@@ -283,31 +266,15 @@ public sealed class UnmergedIndexReaderTests : IAsyncDisposable
 
         const string pathWithNewline = "sub/file\nwith\nnewlines.txt";
 
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = repo.Path,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add("core.protectNTFS=false");
-        psi.ArgumentList.Add("update-index");
-        psi.ArgumentList.Add("-z");
-        psi.ArgumentList.Add("--index-info");
-        using (var p = Process.Start(psi)!)
-        {
-            using (var sw = new StreamWriter(p.StandardInput.BaseStream, new UTF8Encoding(false)))
-            {
-                sw.Write($"100644 {sha} 1\t{pathWithNewline}\0");
-                sw.Write($"100644 {sha} 2\t{pathWithNewline}\0");
-                sw.Write($"100644 {sha} 3\t{pathWithNewline}\0");
-            }
-            p.WaitForExit();
-            Assert.Equal(0, p.ExitCode);
-        }
+        var indexInfo =
+            $"100644 {sha} 1\t{pathWithNewline}\0" +
+            $"100644 {sha} 2\t{pathWithNewline}\0" +
+            $"100644 {sha} 3\t{pathWithNewline}\0";
+        Assert.Equal(0, TestGit.Run(
+            repo.Path,
+            ["-c", "core.protectNTFS=false", "update-index", "-z", "--index-info"],
+            indexInfo,
+            testIdentity: false).ExitCode);
 
         var reader = MakeReader();
         var conflicts = await reader.ReadAsync(repo.Path);

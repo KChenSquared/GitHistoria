@@ -52,7 +52,7 @@ public class RepositoryTopBarTests : IDisposable
             ],
         };
 
-        var count = RepositoryView.WorkingCopyChangeCount(status);
+        var count = RepositoryViewModel.WorkingCopyChangeCount(status);
         Assert.Equal(5, count); // file1, file2, file3, untracked, file4
     }
 
@@ -251,6 +251,29 @@ public class RepositoryTopBarTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void Detail_router_hosts_the_repository_view_for_the_repo_route()
+    {
+        _sp.GetRequiredService<INavigationBus>().ReportRoute("repo");
+        var router = new DetailRouter(_sp);
+        var window = new Window { Width = 800, Height = 600, Content = router };
+        window.Show();
+        try
+        {
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(DetailPage.Repo, router.ViewModel.Current.Page);
+            var view = Assert.Single(router.GetVisualDescendants().OfType<RepositoryView>());
+            Assert.Equal("main", view.ViewModel.BranchText);
+            Assert.Single(router.GetVisualDescendants().OfType<NotificationHostView>());
+        }
+        finally
+        {
+            window.Close();
+            router.Dispose();
+        }
+    }
+
     private sealed class TestRepoFixture : IDisposable
     {
         public string Path { get; }
@@ -277,40 +300,12 @@ public class RepositoryTopBarTests : IDisposable
 
         private static void RunGit(string dir, params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            psi.Environment["GIT_AUTHOR_NAME"] = "Test";
-            psi.Environment["GIT_AUTHOR_EMAIL"] = "test@example.com";
-            psi.Environment["GIT_COMMITTER_NAME"] = "Test";
-            psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            p.WaitForExit();
+            TestGit.Run(dir, args);
         }
 
         private static string RunGitOutput(string dir, params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            var stdout = p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-            return stdout.Trim();
+            return TestGit.Run(dir, args, testIdentity: false).Stdout.Trim();
         }
 
         public void Dispose() => TestScratch.Delete(Path);

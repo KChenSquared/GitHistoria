@@ -4,7 +4,7 @@ public sealed partial class ConflictResolverView
 {
     private void OnResultDocumentTextChanged(object? sender, EventArgs e)
     {
-        if (_suppressTextChanged || _currentFile == null)
+        if (_suppressTextChanged || ViewModel.CurrentFile == null)
         {
             return;
         }
@@ -21,7 +21,7 @@ public sealed partial class ConflictResolverView
             _inResultTextChanged = false;
         }
 
-        RegisterUnsavedWork();
+        ViewModel.RegisterUnsavedWork();
 
         if (_session.IsMutating)
         {
@@ -42,15 +42,15 @@ public sealed partial class ConflictResolverView
         _debounceCts = new CancellationTokenSource();
         var ct = _debounceCts.Token;
 
-        var docSnapshot = _resultEditor.Document.CreateSnapshot();
-        var versionSnapshot = _resultEditor.Document.Version;
-        int markerSize = _workingCopy?.MarkerSize ?? 7;
+        var docSnapshot = ResultEditor.Document.CreateSnapshot();
+        var versionSnapshot = ResultEditor.Document.Version;
+        int markerSize = ViewModel.WorkingCopy?.MarkerSize ?? 7;
         var spans = _session.Spans;
         var managedAnalyses = ManagedAnalyses();
 
         Task.Delay(150, ct).ContinueWith(_ =>
         {
-            if (ct.IsCancellationRequested || _disposed)
+            if (ct.IsCancellationRequested || ViewModel.IsDisposed)
             {
                 return;
             }
@@ -64,27 +64,27 @@ public sealed partial class ConflictResolverView
 
             Dispatcher.UIThread.Post(() =>
             {
-                if (ct.IsCancellationRequested || _disposed)
+                if (ct.IsCancellationRequested || ViewModel.IsDisposed)
                 {
                     return;
                 }
 
-                if (_resultEditor.Document.Version.CompareAge(versionSnapshot) == 0)
+                if (ResultEditor.Document.Version.CompareAge(versionSnapshot) == 0)
                 {
                     InstallSnapshot(snapshot);
                     _parse = parse;
                     _parseVersion = versionSnapshot;
 
-                    ConflictPaneUpdateHelper.UpdateDocumentIncremental(_oursEditor.Document, oursLines);
-                    ConflictPaneUpdateHelper.UpdateDocumentIncremental(_theirsEditor.Document, theirsLines);
+                    ConflictPaneUpdateHelper.UpdateDocumentIncremental(OursEditor.Document, oursLines);
+                    ConflictPaneUpdateHelper.UpdateDocumentIncremental(TheirsEditor.Document, theirsLines);
 
                     _session.SetMarkerRegions(parse.Regions);
-                    _minimap.Parse = parse;
-                    _minimap.ResolvedRanges = ManagedRanges();
+                    Minimap.Parse = parse;
+                    Minimap.ResolvedRanges = ManagedRanges();
                     UpdateConflictsCount();
-                    _oursEditor.TextArea.TextView.Redraw();
-                    _theirsEditor.TextArea.TextView.Redraw();
-                    _resultEditor.TextArea.TextView.Redraw();
+                    OursEditor.TextArea.TextView.Redraw();
+                    TheirsEditor.TextArea.TextView.Redraw();
+                    ResultEditor.TextArea.TextView.Redraw();
                 }
             });
         }, TaskScheduler.Default);
@@ -92,14 +92,14 @@ public sealed partial class ConflictResolverView
 
     private void UpdateConflictParseSync()
     {
-        int markerSize = _workingCopy?.MarkerSize ?? 7;
-        var text = _resultEditor.Text;
+        int markerSize = ViewModel.WorkingCopy?.MarkerSize ?? 7;
+        var text = ResultEditor.Text;
         _parse = ConflictMarkerParser.Parse(text, markerSize);
         var parse = _parse;
         var spans = _session.Spans;
         var oursLines = ConflictPaneBuilder.Build(parse, ConflictSide.Ours, spans);
         var theirsLines = ConflictPaneBuilder.Build(parse, ConflictSide.Theirs, spans);
-        var version = _resultEditor.Document.Version;
+        var version = ResultEditor.Document.Version;
         _parseVersion = version;
         _session.SetMarkerRegions(parse.Regions);
         var managedAnalyses = ManagedAnalyses();
@@ -121,13 +121,13 @@ public sealed partial class ConflictResolverView
 
         carriedAnalyses.AddRange(managedAnalyses);
         InstallSnapshot(new ConflictParseSnapshot(parse, oursLines, theirsLines, carriedAnalyses, version));
-        _minimap.Parse = parse;
-        _minimap.ResolvedRanges = ManagedRanges();
+        Minimap.Parse = parse;
+        Minimap.ResolvedRanges = ManagedRanges();
         UpdateConflictsCount();
 
         Task.Run(() =>
         {
-            if (_disposed)
+            if (ViewModel.IsDisposed)
             {
                 return;
             }
@@ -135,17 +135,17 @@ public sealed partial class ConflictResolverView
             var fullAnalyses = ConflictRegionAnalyzer.AnalyzeAll(parse).Concat(managedAnalyses).ToList();
             Dispatcher.UIThread.Post(() =>
             {
-                if (_disposed)
+                if (ViewModel.IsDisposed)
                 {
                     return;
                 }
 
-                if (_resultEditor.Document.Version.CompareAge(version) == 0)
+                if (ResultEditor.Document.Version.CompareAge(version) == 0)
                 {
                     InstallSnapshot(new ConflictParseSnapshot(parse, oursLines, theirsLines, fullAnalyses, version));
-                    _oursEditor.TextArea.TextView.Redraw();
-                    _theirsEditor.TextArea.TextView.Redraw();
-                    _resultEditor.TextArea.TextView.Redraw();
+                    OursEditor.TextArea.TextView.Redraw();
+                    TheirsEditor.TextArea.TextView.Redraw();
+                    ResultEditor.TextArea.TextView.Redraw();
                 }
             });
         });
@@ -216,12 +216,12 @@ public sealed partial class ConflictResolverView
             return;
         }
 
-        _oursEditor.Text = string.Join('\n', _snapshot.OursLines.Select(l => l.Text));
-        _theirsEditor.Text = string.Join('\n', _snapshot.TheirsLines.Select(l => l.Text));
+        OursEditor.Text = string.Join('\n', _snapshot.OursLines.Select(l => l.Text));
+        TheirsEditor.Text = string.Join('\n', _snapshot.TheirsLines.Select(l => l.Text));
 
-        _oursEditor.TextArea.TextView.Redraw();
-        _theirsEditor.TextArea.TextView.Redraw();
-        _resultEditor.TextArea.TextView.Redraw();
+        OursEditor.TextArea.TextView.Redraw();
+        TheirsEditor.TextArea.TextView.Redraw();
+        ResultEditor.TextArea.TextView.Redraw();
     }
 
     private IReadOnlyList<ConflictPaneLine>? GetPaneLines(ConflictSide side)
@@ -301,7 +301,7 @@ public sealed partial class ConflictResolverView
             return -1;
         }
 
-        int caretLine = _resultEditor.TextArea.Caret.Line - 1;
+        int caretLine = ResultEditor.TextArea.Caret.Line - 1;
         for (int i = 0; i < regions.Count; i++)
         {
             if (caretLine <= regions[i].End)
@@ -320,28 +320,13 @@ public sealed partial class ConflictResolverView
         int current = CurrentRegionIndex(regions) + 1;
         int unresolved = _parse?.Regions.Count ?? 0;
 
-        _conflictsCountText.IsVisible = total > 0;
-        _conflictsCountText.Text = total > 0 ? $"{current}/{total}" : string.Empty;
-        ToolTip.SetTip(_conflictsCountText, total > 0 ? $"Conflict {current} of {total} in this file · {unresolved} unresolved" : null);
-        bool canNavigate = !_isBusy && _isEditable && total > 0;
-        _prevConflictBtn.IsEnabled = canNavigate;
-        _nextConflictBtn.IsEnabled = canNavigate;
-
-        if (malformed > 0)
-        {
-            var firstLine = _parse!.MalformedAt[0] + 1;
-            _damagedMarkersHint.Text = $"Conflict markers damaged near line {firstLine}";
-            _damagedMarkersHint.IsVisible = true;
-        }
-        else
-        {
-            _damagedMarkersHint.IsVisible = false;
-        }
+        int firstMalformedLine = malformed > 0 ? _parse!.MalformedAt[0] + 1 : 0;
+        ViewModel.SetConflictStats(total, current, unresolved, malformed, firstMalformedLine);
     }
 
     private void OnResultCaretPositionChanged(object? sender, EventArgs e)
     {
-        if (_isEditable)
+        if (ViewModel.IsEditable)
         {
             UpdateConflictsCount();
         }
@@ -357,29 +342,29 @@ public sealed partial class ConflictResolverView
         _isSyncingScroll = true;
         try
         {
-            if (!ReferenceEquals(source, _oursEditor))
+            if (!ReferenceEquals(source, OursEditor))
             {
-                _oursEditor.SetScrollOffset(offset);
+                OursEditor.SetScrollOffset(offset);
             }
-            if (!ReferenceEquals(source, _theirsEditor))
+            if (!ReferenceEquals(source, TheirsEditor))
             {
-                _theirsEditor.SetScrollOffset(offset);
+                TheirsEditor.SetScrollOffset(offset);
             }
-            if (!ReferenceEquals(source, _resultEditor))
+            if (!ReferenceEquals(source, ResultEditor))
             {
-                _resultEditor.SetScrollOffset(offset);
+                ResultEditor.SetScrollOffset(offset);
             }
 
-            if (_resultEditor.TextArea.TextView is { VisualLinesValid: true } tv && tv.VisualLines.Count > 0)
+            if (ResultEditor.TextArea.TextView is { VisualLinesValid: true } tv && tv.VisualLines.Count > 0)
             {
                 var first = tv.VisualLines[0].FirstDocumentLine.LineNumber;
                 var last = tv.VisualLines[^1].LastDocumentLine.LineNumber;
-                _minimap.DisplayRange = (first, last);
+                Minimap.DisplayRange = (first, last);
             }
             else
             {
-                int line = _resultEditor.TextArea.Caret.Line;
-                _minimap.DisplayRange = (line, line + 20);
+                int line = ResultEditor.TextArea.Caret.Line;
+                Minimap.DisplayRange = (line, line + 20);
             }
         }
         finally

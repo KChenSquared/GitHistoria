@@ -1,0 +1,12 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.DetailRouter"
+             x:DataType="vm:DetailRouterViewModel"
+             Background="{DynamicResource ColorChrome}">
+    <!-- The current page and the notification host overlay are added by the code-behind: both are
+         view instances, not templates. -->
+    <Panel x:Name="OverlayRoot">
+        <ContentControl x:Name="Host" />
+    </Panel>
+</UserControl>

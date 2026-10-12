@@ -1,0 +1,56 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+        x:Class="Historia.Platform.EditRemoteDialog"
+        x:DataType="vm:EditRemoteDialogViewModel"
+        Title="Edit remote"
+        SizeToContent="WidthAndHeight"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Window.Styles>
+        <Style Selector="TextBlock.field-label">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,10,0,3" />
+        </Style>
+        <Style Selector="TextBlock.problem">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="0,6,0,0" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorDanger}" />
+        </Style>
+    </Window.Styles>
+
+    <StackPanel Margin="20">
+        <TextBlock Classes="field-label" Text="Name" />
+        <TextBox x:Name="NameBox"
+                 MinWidth="460"
+                 Text="{Binding Name}" />
+        <TextBlock Classes="field-label" Text="URL" />
+        <TextBox x:Name="UrlBox"
+                 MinWidth="460"
+                 Text="{Binding Url}" />
+        <CheckBox Margin="0,12,0,0"
+                  IsVisible="{Binding HasDistinctPushUrl}"
+                  Content="{Binding ResetPushUrlLabel}"
+                  IsChecked="{Binding ResetPushUrl}" />
+        <TextBlock Classes="problem"
+                   Text="{Binding Problem}"
+                   IsVisible="{Binding ShowProblem}" />
+        <StackPanel Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Spacing="8"
+                    Margin="0,20,0,0">
+            <Button Classes="primary"
+                    Content="Save"
+                    IsDefault="True"
+                    MinWidth="80"
+                    Command="{Binding SaveCommand}" />
+            <Button Content="Cancel"
+                    IsCancel="True"
+                    MinWidth="80"
+                    Command="{Binding CancelCommand}" />
+        </StackPanel>
+    </StackPanel>
+</Window>

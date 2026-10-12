@@ -1,0 +1,539 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:v="clr-namespace:Historia.Views"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.StagingPanelView"
+             x:DataType="vm:StagingPanelViewModel">
+    <UserControl.Styles>
+        <!-- The two file lists show plain rows: no selection or hover chrome, no inner padding, and
+             one pixel between rows. -->
+        <Style Selector="ListBox.rows">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <Style Selector="ListBox.rows > ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Margin" Value="0,0,0,1" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.rows > ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.rows > ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.rows > ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+        <!-- The status word at the start of a row, coloured by the kind of change. -->
+        <Style Selector="TextBlock.kind">
+            <Setter Property="Width" Value="84" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+        </Style>
+        <Style Selector="TextBlock.kind.added">
+            <Setter Property="Foreground" Value="{DynamicResource ColorSuccess}" />
+        </Style>
+        <Style Selector="TextBlock.kind.deleted">
+            <Setter Property="Foreground" Value="{DynamicResource ColorDanger}" />
+        </Style>
+        <Style Selector="TextBlock.kind.modified">
+            <Setter Property="Foreground" Value="{DynamicResource ColorWarning}" />
+        </Style>
+        <Style Selector="TextBlock.kind.moved">
+            <Setter Property="Foreground" Value="{DynamicResource ColorAccent}" />
+        </Style>
+        <Style Selector="TextBlock.kind.conflict">
+            <Setter Property="Foreground" Value="{DynamicResource ColorDanger}" />
+        </Style>
+
+        <!-- A conflicted row is highlighted while the resolver shows its file. -->
+        <Style Selector="Border.conflict-row">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.conflict-row.active">
+            <Setter Property="Background" Value="{DynamicResource ColorListActive}" />
+        </Style>
+
+        <!-- A note stands in for rows ("No changes.") at the row text size; a footnote is smaller. -->
+        <Style Selector="TextBlock.note">
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+        <Style Selector="TextBlock.footnote">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="0,4,0,0" />
+        </Style>
+
+        <!-- The commit message length counter: muted, then warning from the subject limit, then danger. -->
+        <Style Selector="TextBlock.counter">
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+        </Style>
+        <Style Selector="TextBlock.counter.warning">
+            <Setter Property="Foreground" Value="{DynamicResource ColorWarning}" />
+        </Style>
+        <Style Selector="TextBlock.counter.danger">
+            <Setter Property="Foreground" Value="{DynamicResource ColorDanger}" />
+        </Style>
+
+        <!-- The wand is outlined in the border colour until an AI integration is active. -->
+        <Style Selector="Button.wand">
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+        </Style>
+        <Style Selector="Button.wand.active">
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorSuccess}" />
+        </Style>
+
+        <Style Selector="Button.arrow">
+            <Setter Property="Padding" Value="6,2" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+    </UserControl.Styles>
+
+    <DockPanel x:Name="LayoutRoot" LastChildFill="True">
+        <!-- The commit message strip docks to the bottom; its top edge resizes the message box only. -->
+        <Border x:Name="MessageSection"
+                DockPanel.Dock="Bottom"
+                MinHeight="64"
+                BorderThickness="1"
+                ZIndex="1"
+                BorderBrush="{DynamicResource ColorBorder}">
+            <Grid>
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="MessageStack" Spacing="6" Margin="12,8,12,12">
+                        <Border x:Name="OfferBar"
+                                BorderThickness="3,0,0,0"
+                                Padding="8,4"
+                                BorderBrush="{DynamicResource ColorAccent}"
+                                Background="{DynamicResource ColorSurface2}"
+                                IsVisible="{Binding IsOfferVisible}"
+                                ToolTip.Tip="{Binding OfferTip}">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <TextBlock Classes="text"
+                                           FontSize="12"
+                                           TextWrapping="Wrap"
+                                           Text="A coding agent proposed a commit message." />
+                                <StackPanel Grid.Column="1"
+                                            Orientation="Horizontal"
+                                            Spacing="6"
+                                            VerticalAlignment="Center">
+                                    <Button x:Name="OfferUse"
+                                            Classes="secondary"
+                                            Cursor="Hand"
+                                            Content="Use it"
+                                            Command="{Binding UseOfferCommand}" />
+                                    <Button x:Name="OfferDismiss"
+                                            Classes="secondary"
+                                            Cursor="Hand"
+                                            Content="Dismiss"
+                                            Command="{Binding DismissOfferCommand}" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <Grid x:Name="MessageCell">
+                            <TextBox x:Name="MessageInput"
+                                     AcceptsReturn="True"
+                                     Height="96"
+                                     Watermark="Commit message (subject; blank line; body)"
+                                     TextWrapping="Wrap"
+                                     Padding="6,6,6,20"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     Text="{Binding MessageText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     IsReadOnly="{Binding IsMessageReadOnly}" />
+                            <TextBlock x:Name="MessageCounter"
+                                       Classes="counter"
+                                       Classes.warning="{Binding IsCounterWarning}"
+                                       Classes.danger="{Binding IsCounterDanger}"
+                                       FontSize="11"
+                                       Text="{Binding CounterText}"
+                                       HorizontalAlignment="Right"
+                                       VerticalAlignment="Bottom"
+                                       Margin="0,0,8,4"
+                                       IsHitTestVisible="False" />
+                        </Grid>
+
+                        <TextBlock x:Name="AgentNote"
+                                   Classes="muted"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Text="Message proposed by a coding agent. Review the staged files before committing."
+                                   IsVisible="{Binding IsAgentNoteVisible}" />
+
+                        <Grid x:Name="CommitOptionsRow" ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+                            <StackPanel x:Name="AiStrip"
+                                        Orientation="Horizontal"
+                                        Spacing="4"
+                                        HorizontalAlignment="Left"
+                                        VerticalAlignment="Center"
+                                        IsVisible="{Binding HasAiServices}">
+                                <Button x:Name="Wand"
+                                        Classes="wand"
+                                        Classes.active="{Binding IsWandActive}"
+                                        Width="22"
+                                        Height="22"
+                                        Padding="0"
+                                        Background="Transparent"
+                                        BorderThickness="1"
+                                        HorizontalContentAlignment="Center"
+                                        VerticalContentAlignment="Center"
+                                        Cursor="Hand"
+                                        IsEnabled="{Binding IsWandEnabled}"
+                                        ToolTip.Tip="{Binding WandTip}"
+                                        ToolTip.ShowOnDisabled="True"
+                                        Command="{Binding GenerateCommand}">
+                                    <Grid>
+                                        <ctl:IconGlyph x:Name="WandActiveIcon"
+                                                       Icon="wand_stars"
+                                                       Size="16"
+                                                       ForegroundKey="ColorSuccess"
+                                                       IsVisible="{Binding IsWandActive}" />
+                                        <ctl:IconGlyph x:Name="WandIdleIcon"
+                                                       Icon="wand_stars"
+                                                       Size="16"
+                                                       ForegroundKey="ColorTextFaint"
+                                                       IsVisible="{Binding !IsWandActive}" />
+                                    </Grid>
+                                </Button>
+                                <Button x:Name="AiSettings"
+                                        Width="22"
+                                        Height="22"
+                                        Padding="0"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        HorizontalContentAlignment="Center"
+                                        VerticalContentAlignment="Center"
+                                        Cursor="Hand"
+                                        ToolTip.Tip="Setup AI Integration"
+                                        Command="{Binding OpenAiSettingsCommand}">
+                                    <ctl:IconGlyph x:Name="AiSettingsIcon" Icon="settings" Size="16" ForegroundKey="ColorText" />
+                                </Button>
+                            </StackPanel>
+
+                            <ComboBox x:Name="ModelPicker"
+                                      Grid.Column="1"
+                                      IsEditable="False"
+                                      Width="184"
+                                      FontSize="13"
+                                      MinHeight="0"
+                                      VerticalAlignment="Center"
+                                      Margin="6,0,0,0"
+                                      PlaceholderText="{Binding ModelPlaceholder}"
+                                      ItemsSource="{Binding ModelItems}"
+                                      SelectedItem="{Binding SelectedModel}"
+                                      IsEnabled="{Binding IsModelPickerEnabled}"
+                                      IsVisible="{Binding HasAiServices}"
+                                      ToolTip.Tip="{Binding ModelTip}"
+                                      ToolTip.ShowOnDisabled="True"
+                                      DropDownOpened="OnModelPickerOpened" />
+
+                            <Border x:Name="AmendDivider"
+                                    Grid.Column="3"
+                                    Width="1"
+                                    VerticalAlignment="Stretch"
+                                    Margin="8,2"
+                                    Background="{DynamicResource ColorBorder}"
+                                    IsVisible="{Binding HasAiServices}" />
+
+                            <CheckBox x:Name="AmendBox"
+                                      Grid.Column="4"
+                                      Content="Amend"
+                                      FontSize="14"
+                                      HorizontalAlignment="Right"
+                                      VerticalAlignment="Center"
+                                      IsChecked="{Binding IsAmend}" />
+                        </Grid>
+
+                        <TextBox x:Name="AuthorInput"
+                                 Watermark="Author override (Name &lt;email&gt;)"
+                                 Text="{Binding AuthorOverride, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <StackPanel x:Name="CommitActions" Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="CommitButton"
+                                    Classes="primary"
+                                    Cursor="Hand"
+                                    Content="Commit"
+                                    Command="{Binding CommitCommand}" />
+                            <Button x:Name="CommitPushButton"
+                                    Classes="secondary"
+                                    Cursor="Hand"
+                                    Content="Commit &amp; Push"
+                                    Command="{Binding CommitAndPushCommand}" />
+                            <Button x:Name="StashStagedButton"
+                                    Classes="secondary"
+                                    Cursor="Hand"
+                                    Content="Stash Staged"
+                                    ToolTip.Tip="Stash only the staged changes, leaving unstaged edits in the working tree"
+                                    Command="{Binding StashStagedCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- The grab strip on the strip's top edge; it adds no height. -->
+                <Border x:Name="MessageResizeHandle"
+                        Height="7"
+                        Background="Transparent"
+                        VerticalAlignment="Top"
+                        Margin="0,-4.5,0,0" />
+            </Grid>
+        </Border>
+
+        <!-- Changes above Staged. A split drag past Staged's minimum borrows from the message box. -->
+        <ctl:SectionFrameHost x:Name="SplitHost" RepoId="{Binding RepoId}">
+            <ctl:SectionFrameHost.TopHeader>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <CheckBox x:Name="ChangesSelectAll"
+                              IsThreeState="True"
+                              VerticalAlignment="Center"
+                              Margin="2,0,6,0"
+                              IsChecked="{Binding ChangesCheckState, Mode=OneWay}"
+                              Click="OnSelectAllChangesClick" />
+                    <TextBlock x:Name="ChangesHeaderText"
+                               Classes="section"
+                               Text="{Binding ChangesHeader}" />
+                </StackPanel>
+            </ctl:SectionFrameHost.TopHeader>
+
+            <ctl:SectionFrameHost.TopHeaderEnd>
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <Button x:Name="DiscardAllButton"
+                            Classes="danger"
+                            Padding="6,2"
+                            Cursor="Hand"
+                            VerticalAlignment="Center"
+                            BorderBrush="{DynamicResource ColorDanger}"
+                            ToolTip.Tip="Discard all changes"
+                            Command="{Binding DiscardAllChangesCommand}">
+                        <ctl:IconGlyph Icon="delete" Size="14" ForegroundKey="ColorDanger" />
+                    </Button>
+                    <Button x:Name="StageAllButton"
+                            Classes="success"
+                            Content="Stage all"
+                            FontSize="13"
+                            Padding="8,2"
+                            VerticalAlignment="Center"
+                            Command="{Binding StageAllChangesCommand}" />
+                </StackPanel>
+            </ctl:SectionFrameHost.TopHeaderEnd>
+
+            <ctl:SectionFrameHost.Top>
+                <ListBox x:Name="ChangesList"
+                         Classes="rows"
+                         ItemsSource="{Binding Changes}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.DataTemplates>
+                        <DataTemplate DataType="vm:StagingNoteRowViewModel" x:DataType="vm:StagingNoteRowViewModel">
+                            <TextBlock Classes="text faint note"
+                                       Classes.footnote="{Binding IsFootnote}"
+                                       Text="{Binding Text}"
+                                       ToolTip.Tip="{Binding ToolTip}" />
+                        </DataTemplate>
+                        <DataTemplate DataType="vm:ConflictHeaderRowViewModel" x:DataType="vm:ConflictHeaderRowViewModel">
+                            <Grid ColumnDefinitions="*,Auto" Margin="4,1,0,1">
+                                <TextBlock Classes="text"
+                                           FontSize="12"
+                                           FontWeight="SemiBold"
+                                           Foreground="{DynamicResource ColorDanger}"
+                                           Text="Conflicted — resolve these before committing" />
+                                <Button Name="ConflictAbort"
+                                        Grid.Column="1"
+                                        Classes="danger"
+                                        Content="Abort"
+                                        FontSize="12"
+                                        FontWeight="SemiBold"
+                                        Padding="6,0"
+                                        MinHeight="0"
+                                        VerticalAlignment="Center"
+                                        Cursor="Hand"
+                                        IsVisible="{Binding IsAbortVisible}"
+                                        ToolTip.Tip="{Binding AbortTip}"
+                                        Command="{Binding AbortCommand}" />
+                            </Grid>
+                        </DataTemplate>
+                        <DataTemplate DataType="vm:ConflictRowViewModel" x:DataType="vm:ConflictRowViewModel">
+                            <Border Name="ConflictRow"
+                                    Classes="conflict-row"
+                                    Classes.active="{Binding IsActive}"
+                                    Cursor="Hand"
+                                    PointerPressed="OnRowPressed">
+                                <Border.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Open file location"
+                                                  Command="{Binding RevealCommand}" />
+                                        <MenuItem Header="Copy path"
+                                                  Command="{Binding CopyPathCommand}" />
+                                    </ContextMenu>
+                                </Border.ContextMenu>
+                                <Grid ColumnDefinitions="Auto,*" Height="24">
+                                    <TextBlock Classes="kind conflict" Text="Conflict" />
+                                    <TextBlock Grid.Column="1"
+                                               Classes="text"
+                                               FontSize="12"
+                                               Margin="8,0,0,0"
+                                               Text="{Binding Path}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                        <DataTemplate DataType="vm:FileRowViewModel" x:DataType="vm:FileRowViewModel">
+                            <Border Name="ChangeRow"
+                                    Background="Transparent"
+                                    Cursor="Hand"
+                                    PointerPressed="OnRowPressed">
+                                <Border.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Open file location"
+                                                  Command="{Binding RevealCommand}" />
+                                        <MenuItem Header="Copy path"
+                                                  Command="{Binding CopyPathCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="Discard changes"
+                                                  Command="{Binding DiscardCommand}" />
+                                    </ContextMenu>
+                                </Border.ContextMenu>
+                                <Grid ColumnDefinitions="Auto,Auto,*,Auto" Height="24">
+                                    <CheckBox VerticalAlignment="Center"
+                                              Margin="2,0,6,0"
+                                              IsChecked="{Binding IsChecked}" />
+                                    <TextBlock Grid.Column="1"
+                                               Classes="kind"
+                                               Classes.added="{Binding IsAdded}"
+                                               Classes.deleted="{Binding IsDeleted}"
+                                               Classes.modified="{Binding IsModified}"
+                                               Classes.moved="{Binding IsMoved}"
+                                               Text="{Binding Kind, Converter={x:Static v:FileChangeKindLabelConverter.Instance}}" />
+                                    <TextBlock Grid.Column="2"
+                                               Classes="text"
+                                               FontSize="12"
+                                               Margin="8,0,0,0"
+                                               Text="{Binding Path}" />
+                                    <Button Name="DiscardRowButton"
+                                            Grid.Column="3"
+                                            Content="↺"
+                                            Padding="4,0"
+                                            Background="Transparent"
+                                            BorderThickness="0"
+                                            ToolTip.Tip="Discard"
+                                            Command="{Binding DiscardCommand}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.DataTemplates>
+                </ListBox>
+            </ctl:SectionFrameHost.Top>
+
+            <ctl:SectionFrameHost.Header>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <CheckBox x:Name="StagedSelectAll"
+                              IsThreeState="True"
+                              VerticalAlignment="Center"
+                              Margin="2,0,6,0"
+                              IsChecked="{Binding StagedCheckState, Mode=OneWay}"
+                              Click="OnSelectAllStagedClick" />
+                    <TextBlock x:Name="StagedHeaderText"
+                               Classes="section"
+                               Text="{Binding StagedHeader}" />
+                </StackPanel>
+            </ctl:SectionFrameHost.Header>
+
+            <!-- The stage and unstage arrows sit in the Staged header's empty middle. -->
+            <ctl:SectionFrameHost.HeaderCenter>
+                <StackPanel Orientation="Horizontal"
+                            Spacing="0"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <Button x:Name="StageArrow"
+                            Classes="arrow"
+                            ToolTip.Tip="Stage"
+                            Command="{Binding StageCheckedCommand}">
+                        <ctl:IconGlyph Icon="arrow_downward" Size="21" ForegroundKey="ColorSuccess" />
+                    </Button>
+                    <Button x:Name="UnstageArrow"
+                            Classes="arrow"
+                            ToolTip.Tip="Unstage"
+                            Command="{Binding UnstageCheckedCommand}">
+                        <ctl:IconGlyph Icon="arrow_upward" Size="21" ForegroundKey="ColorDanger" />
+                    </Button>
+                </StackPanel>
+            </ctl:SectionFrameHost.HeaderCenter>
+
+            <ctl:SectionFrameHost.HeaderEnd>
+                <Button x:Name="UnstageAllButton"
+                        Classes="danger"
+                        Content="Unstage all"
+                        FontSize="13"
+                        Padding="8,2"
+                        VerticalAlignment="Center"
+                        Command="{Binding UnstageAllCommand}" />
+            </ctl:SectionFrameHost.HeaderEnd>
+
+            <ctl:SectionFrameHost.Bottom>
+                <ListBox x:Name="StagedList"
+                         Classes="rows"
+                         ItemsSource="{Binding Staged}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.DataTemplates>
+                        <DataTemplate DataType="vm:StagingNoteRowViewModel" x:DataType="vm:StagingNoteRowViewModel">
+                            <TextBlock Classes="text faint"
+                                       FontSize="12"
+                                       Text="{Binding Text}" />
+                        </DataTemplate>
+                        <DataTemplate DataType="vm:FileRowViewModel" x:DataType="vm:FileRowViewModel">
+                            <Border Name="StagedRow"
+                                    Background="Transparent"
+                                    Cursor="Hand"
+                                    PointerPressed="OnRowPressed">
+                                <Border.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Open file location"
+                                                  Command="{Binding RevealCommand}" />
+                                        <MenuItem Header="Copy path"
+                                                  Command="{Binding CopyPathCommand}" />
+                                    </ContextMenu>
+                                </Border.ContextMenu>
+                                <Grid ColumnDefinitions="Auto,Auto,*" Height="24">
+                                    <CheckBox VerticalAlignment="Center"
+                                              Margin="2,0,6,0"
+                                              IsChecked="{Binding IsChecked}" />
+                                    <TextBlock Grid.Column="1"
+                                               Classes="kind"
+                                               Classes.added="{Binding IsAdded}"
+                                               Classes.deleted="{Binding IsDeleted}"
+                                               Classes.modified="{Binding IsModified}"
+                                               Classes.moved="{Binding IsMoved}"
+                                               Text="{Binding Kind, Converter={x:Static v:FileChangeKindLabelConverter.Instance}}" />
+                                    <TextBlock Grid.Column="2"
+                                               Classes="text"
+                                               FontSize="12"
+                                               Margin="8,0,0,0"
+                                               Text="{Binding Path}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.DataTemplates>
+                </ListBox>
+            </ctl:SectionFrameHost.Bottom>
+        </ctl:SectionFrameHost>
+    </DockPanel>
+</UserControl>

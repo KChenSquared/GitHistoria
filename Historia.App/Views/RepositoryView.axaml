@@ -1,0 +1,115 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:v="clr-namespace:Historia.Views"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.RepositoryView"
+             x:DataType="vm:RepositoryViewModel"
+             Background="{DynamicResource ColorChrome}">
+    <UserControl.Styles>
+        <!-- Without changes the working-copy button is flat with normal text; with changes it
+             is the primary button, whose own foreground applies. -->
+        <Style Selector="Button.working-copy.flat">
+            <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+        </Style>
+    </UserControl.Styles>
+
+    <DockPanel LastChildFill="True">
+        <!-- Two-mode top bar: over the staging panel it shows the branch name and the
+             ahead/behind count; over a commit's detail, the full-width Working Copy return button
+             (primary when tracked changes exist). -->
+        <Panel x:Name="TopBar" DockPanel.Dock="Top" Height="{x:Static v:SectionFrame.TopBarHeight}">
+            <Grid x:Name="BranchBar"
+                  ColumnDefinitions="Auto,Auto,*"
+                  Margin="{x:Static v:SectionFrame.TopBarBranchMargin}"
+                  VerticalAlignment="Center"
+                  IsVisible="{Binding IsBranchBarVisible}">
+                <TextBlock x:Name="BranchLabel"
+                           Classes="text"
+                           Text="{Binding BranchText}"
+                           FontSize="16"
+                           FontWeight="Bold" />
+                <TextBlock Grid.Column="1"
+                           Classes="text muted"
+                           Text="{Binding AheadBehindText}"
+                           FontSize="12"
+                           Margin="8,0,0,0" />
+            </Grid>
+            <Button x:Name="WorkingCopyButton"
+                    Classes="working-copy"
+                    Classes.primary="{Binding HasWorkingCopyChanges}"
+                    Classes.flat="{Binding IsWorkingCopyClean}"
+                    Command="{Binding ShowWorkingCopyCommand}"
+                    IsVisible="{Binding IsWorkingCopyVisible}"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center"
+                    CornerRadius="0"
+                    Padding="12,0"
+                    FontSize="16"
+                    FontWeight="Bold">
+                <TextBlock x:Name="WorkingCopyLabel"
+                           Text="{Binding WorkingCopyText}"
+                           VerticalAlignment="Center"
+                           FontSize="16"
+                           FontWeight="Bold" />
+            </Button>
+        </Panel>
+
+        <!-- An operation is in progress with no conflicts left. -->
+        <Border x:Name="OpBox"
+                DockPanel.Dock="Top"
+                IsVisible="{Binding IsOpBannerVisible}"
+                Padding="12,6"
+                BorderThickness="0,0,0,1"
+                Background="{DynamicResource ColorSurface2}"
+                BorderBrush="{DynamicResource ColorBorder}">
+            <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+                <TextBlock x:Name="OpBannerLabel"
+                           Classes="text"
+                           Text="{Binding OpBannerText}"
+                           FontSize="12"
+                           TextWrapping="Wrap" />
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            VerticalAlignment="Center"
+                            IsVisible="{Binding ShowOpActions}">
+                    <Button x:Name="OpContinueButton"
+                            Classes="primary"
+                            Content="Continue"
+                            Command="{Binding ContinueCommand}"
+                            IsEnabled="{Binding AreOpButtonsEnabled}"
+                            Cursor="Hand" />
+                    <Button x:Name="OpAbortButton"
+                            Classes="secondary"
+                            Content="Abort"
+                            Command="{Binding AbortCommand}"
+                            IsEnabled="{Binding AreOpButtonsEnabled}"
+                            Cursor="Hand" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Progress of a running Fetch / Pull / Push. -->
+        <Border DockPanel.Dock="Top"
+                IsVisible="{Binding IsNetworkProgressVisible}"
+                Padding="12,6"
+                BorderThickness="0,0,0,1"
+                Background="{DynamicResource ColorSurface}"
+                BorderBrush="{DynamicResource ColorBorder}">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <TextBlock Classes="text muted"
+                           Text="{Binding NetworkProgressText}"
+                           FontSize="12" />
+                <Button Classes="secondary"
+                        Content="Cancel"
+                        Command="{Binding CancelNetworkCommand}"
+                        Cursor="Hand" />
+            </StackPanel>
+        </Border>
+
+        <!-- The staging panel or the selected commit's detail, set by the code-behind. -->
+        <ContentControl x:Name="Body" />
+    </DockPanel>
+</UserControl>

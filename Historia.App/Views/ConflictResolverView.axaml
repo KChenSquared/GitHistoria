@@ -1,0 +1,329 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.ConflictResolverView"
+             x:DataType="vm:ConflictResolverViewModel"
+             Background="{DynamicResource ColorBg}">
+    <UserControl.Styles>
+        <!-- A warning note on a file card; any other note stays muted. -->
+        <Style Selector="TextBlock.card-note">
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+        </Style>
+        <Style Selector="TextBlock.card-note.warning">
+            <Setter Property="Foreground" Value="{DynamicResource ColorWarning}" />
+        </Style>
+    </UserControl.Styles>
+
+    <DockPanel LastChildFill="True">
+        <!-- Toolbar and banners. -->
+        <StackPanel DockPanel.Dock="Top" Spacing="4" Margin="4,2">
+            <Grid ColumnDefinitions="*,Auto,*" Margin="8,4">
+                <!-- File actions. -->
+                <StackPanel Grid.Column="0"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            VerticalAlignment="Center">
+                    <Button x:Name="SaveAndResolveButton"
+                            Classes.primary="{Binding FilesRemain}"
+                            Classes.secondary="{Binding !FilesRemain}"
+                            Content="Save &amp; mark resolved"
+                            Cursor="Hand"
+                            Command="{Binding SaveAndMarkResolvedCommand}"
+                            IsEnabled="{Binding AreTextActionsEnabled}"
+                            ToolTip.Tip="Save this file and mark it resolved (git add). Ctrl+S saves without marking." />
+                    <Button x:Name="ResolveFileButton"
+                            Classes="secondary"
+                            Content="Resolve file ▾"
+                            Cursor="Hand"
+                            IsEnabled="{Binding CanResolveFile}"
+                            ToolTip.Tip="Whole-file actions">
+                        <Button.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                                <MenuItem Header="Take ours (whole file)" />
+                                <MenuItem Header="Take theirs (whole file)" />
+                                <Separator />
+                                <MenuItem Header="Reset file to conflicted" />
+                                <Separator />
+                                <MenuItem Header="Open in external tool" />
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+                    <TextBlock x:Name="DamagedMarkersHint"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource ColorWarning}"
+                               Text="{Binding DamagedMarkersText}"
+                               IsVisible="{Binding HasDamagedMarkers}" />
+                </StackPanel>
+
+                <!-- Conflict navigation. -->
+                <StackPanel Grid.Column="1"
+                            Orientation="Horizontal"
+                            Spacing="2"
+                            VerticalAlignment="Center">
+                    <Button x:Name="PrevConflictButton"
+                            Padding="4"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Cursor="Hand"
+                            Command="{Binding PreviousConflictCommand}"
+                            IsEnabled="{Binding CanNavigate}"
+                            ToolTip.Tip="Previous conflict">
+                        <ctl:IconGlyph Icon="arrow_upward" Size="14" ForegroundKey="ColorTextMuted" />
+                    </Button>
+                    <TextBlock x:Name="ConflictsCountLabel"
+                               FontSize="11"
+                               MinWidth="44"
+                               TextAlignment="Center"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource ColorTextMuted}"
+                               Text="{Binding ConflictsCountText}"
+                               IsVisible="{Binding HasConflictsCount}"
+                               ToolTip.Tip="{Binding ConflictsCountToolTip}" />
+                    <Button x:Name="NextConflictButton"
+                            Padding="4"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Cursor="Hand"
+                            Command="{Binding NextConflictCommand}"
+                            IsEnabled="{Binding CanNavigate}"
+                            ToolTip.Tip="Next conflict">
+                        <ctl:IconGlyph Icon="arrow_downward" Size="14" ForegroundKey="ColorTextMuted" />
+                    </Button>
+                </StackPanel>
+
+                <!-- Operation actions and close. -->
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <StackPanel x:Name="OpBar"
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                HorizontalAlignment="Right"
+                                IsVisible="{Binding IsOperationBarVisible}">
+                        <Button x:Name="ContinueButton"
+                                Classes.primary="{Binding ContinueIsPrimary}"
+                                Classes.secondary="{Binding FilesRemain}"
+                                Content="Continue"
+                                Cursor="Hand"
+                                Command="{Binding ContinueCommand}"
+                                IsEnabled="{Binding AreActionsEnabled}"
+                                ToolTip.Tip="Finish the operation once every file is resolved." />
+                        <Button x:Name="SkipButton"
+                                Classes="secondary"
+                                Content="Skip"
+                                Cursor="Hand"
+                                Command="{Binding SkipCommand}"
+                                IsEnabled="{Binding AreActionsEnabled}"
+                                IsVisible="{Binding IsSkipVisible}"
+                                ToolTip.Tip="Drop this commit and move to the next one." />
+                        <Button x:Name="AbortButton"
+                                Classes="secondary"
+                                Content="Abort"
+                                Cursor="Hand"
+                                Command="{Binding AbortCommand}"
+                                IsEnabled="{Binding AreActionsEnabled}"
+                                ToolTip.Tip="Cancel the operation and restore the state before it started." />
+                    </StackPanel>
+                    <Button x:Name="CloseButton"
+                            Padding="4"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Cursor="Hand"
+                            VerticalAlignment="Center"
+                            Command="{Binding CloseCommand}"
+                            IsVisible="{Binding IsCloseVisible}"
+                            ToolTip.Tip="Close the resolver — unsaved edits are kept">
+                        <ctl:IconGlyph Icon="close" Size="14" ForegroundKey="ColorTextMuted" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <Border x:Name="ExternalEndedBanner"
+                    Padding="12,6"
+                    BorderThickness="0,0,0,1"
+                    Background="{DynamicResource ColorSurface2}"
+                    BorderBrush="{DynamicResource ColorBorder}"
+                    IsVisible="{Binding IsExternalEndedBannerVisible}">
+                <TextBlock FontSize="12"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource ColorWarning}"
+                           Text="The operation ended outside Historia — save or discard your edits." />
+            </Border>
+
+            <Border x:Name="ChangedOnDiskBanner"
+                    Padding="12,6"
+                    BorderThickness="0,0,0,1"
+                    Background="{DynamicResource ColorSurface2}"
+                    BorderBrush="{DynamicResource ColorBorder}"
+                    IsVisible="{Binding IsChangedOnDiskBannerVisible}">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <TextBlock FontSize="12"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{DynamicResource ColorWarning}"
+                               Text="This file changed on disk outside Historia." />
+                    <Button x:Name="ReloadButton"
+                            Classes="primary"
+                            Content="Reload"
+                            Cursor="Hand"
+                            Command="{Binding ReloadFromDiskCommand}"
+                            IsEnabled="{Binding AreActionsEnabled}" />
+                    <Button x:Name="KeepMineButton"
+                            Classes="secondary"
+                            Content="Keep mine"
+                            Cursor="Hand"
+                            Command="{Binding KeepMineCommand}"
+                            IsEnabled="{Binding AreActionsEnabled}" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- Editor area: the three panes, or a card when there is nothing to edit. -->
+        <Panel x:Name="EditorArea">
+            <!-- Ours | Theirs on top, a draggable boundary, the Result below, the minimap down the right edge. -->
+            <Grid x:Name="SplitGrid"
+                  RowDefinitions="*,4,*"
+                  ColumnDefinitions="*,12"
+                  IsVisible="{Binding ShowEditors}">
+                <Grid Grid.Row="0"
+                      Grid.Column="0"
+                      RowDefinitions="Auto,*"
+                      ColumnDefinitions="*,Auto,*">
+                    <Border Grid.Column="0"
+                            Padding="8,2"
+                            BorderThickness="0,0,0,1"
+                            BorderBrush="{DynamicResource ColorBorder}">
+                        <TextBlock x:Name="OursCaptionText"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource ColorTextMuted}"
+                                   Text="{Binding OursCaption}"
+                                   ToolTip.Tip="{Binding OursCaptionToolTip}" />
+                    </Border>
+                    <Border Grid.Column="2"
+                            Padding="8,2"
+                            BorderThickness="0,0,0,1"
+                            BorderBrush="{DynamicResource ColorBorder}">
+                        <TextBlock x:Name="TheirsCaptionText"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource ColorTextMuted}"
+                                   Text="{Binding TheirsCaption}"
+                                   ToolTip.Tip="{Binding TheirsCaptionToolTip}" />
+                    </Border>
+                    <ctl:ConflictPaneEditor x:Name="OursEditor"
+                                            Grid.Row="1"
+                                            Grid.Column="0"
+                                            IsReadOnly="True" />
+                    <Rectangle x:Name="PaneDivider"
+                               Grid.Column="1"
+                               Grid.RowSpan="2"
+                               Width="4"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Stretch"
+                               Fill="{DynamicResource ColorBorder}" />
+                    <ctl:ConflictPaneEditor x:Name="TheirsEditor"
+                                            Grid.Row="1"
+                                            Grid.Column="2"
+                                            IsReadOnly="True" />
+                </Grid>
+
+                <!-- A divider bar marks the boundary; the transparent splitter over it stays the drag target. -->
+                <Rectangle x:Name="ResultDivider"
+                           Grid.Row="1"
+                           Grid.Column="0"
+                           Height="4"
+                           IsHitTestVisible="False"
+                           HorizontalAlignment="Stretch"
+                           VerticalAlignment="Center"
+                           Fill="{DynamicResource ColorBorder}" />
+                <GridSplitter x:Name="ResultSplitter"
+                              Grid.Row="1"
+                              Grid.Column="0"
+                              Height="4"
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Stretch"
+                              Background="Transparent"
+                              Focusable="False" />
+                <ctl:ConflictPaneEditor x:Name="ResultEditor"
+                                        Grid.Row="2"
+                                        Grid.Column="0"
+                                        IsReadOnly="False" />
+                <ctl:ConflictResolverMinimap x:Name="Minimap"
+                                             Grid.Row="0"
+                                             Grid.RowSpan="3"
+                                             Grid.Column="1" />
+            </Grid>
+
+            <StackPanel x:Name="AllResolvedCard"
+                        Spacing="10"
+                        Margin="24"
+                        IsVisible="{Binding ShowAllResolvedCard}">
+                <TextBlock FontSize="14"
+                           FontWeight="Bold"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource ColorSuccess}"
+                           Text="✓ All conflicts resolved" />
+                <TextBlock FontSize="12"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource ColorTextMuted}"
+                           Text="Press Continue to finish the operation." />
+            </StackPanel>
+
+            <StackPanel x:Name="FileCard"
+                        Spacing="10"
+                        Margin="24"
+                        IsVisible="{Binding ShowFileCard}">
+                <TextBlock FontSize="14"
+                           FontWeight="Bold"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource ColorText}"
+                           Text="{Binding CardPath}" />
+                <TextBlock FontSize="12"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource ColorTextMuted}"
+                           Text="{Binding CardStatus}" />
+                <TextBlock Classes="card-note"
+                           Classes.warning="{Binding CardNoteIsWarning}"
+                           FontSize="12"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Text="{Binding CardNote}"
+                           IsVisible="{Binding HasCardNote}" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="CardTakeOursButton"
+                            Classes="secondary"
+                            Content="Take ours"
+                            Cursor="Hand"
+                            Command="{Binding TakeOursCurrentCommand}"
+                            IsEnabled="{Binding AreActionsEnabled}" />
+                    <Button x:Name="CardTakeTheirsButton"
+                            Classes="secondary"
+                            Content="Take theirs"
+                            Cursor="Hand"
+                            Command="{Binding TakeTheirsCurrentCommand}"
+                            IsEnabled="{Binding AreActionsEnabled}" />
+                    <Button x:Name="CardExternalToolButton"
+                            Classes="secondary"
+                            Content="External tool"
+                            Cursor="Hand"
+                            Command="{Binding LaunchExternalToolCommand}"
+                            IsEnabled="{Binding AreActionsEnabled}"
+                            IsVisible="{Binding CardCanUseExternalTool}" />
+                </StackPanel>
+            </StackPanel>
+        </Panel>
+    </DockPanel>
+</UserControl>

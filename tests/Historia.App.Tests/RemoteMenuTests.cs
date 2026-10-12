@@ -1,7 +1,6 @@
 namespace HistoriaApp.Tests;
 
-/// <summary>The remote context menu's item order, click routing and pure rules (push-URL
-/// decision, edit validation, delete confirmation text).</summary>
+/// <summary>The remote context menu's item order and click routing, and the Edit dialog's validation.</summary>
 [Trait("tier", "ui")]
 public sealed class RemoteMenuTests
 {
@@ -94,38 +93,6 @@ public sealed class RemoteMenuTests
         Assert.Equal(["git@example.com:o/r.git"], copied);
     }
 
-    [Fact]
-    public void DecidePushUrl_empty_with_distinct_push_url_clears() =>
-        Assert.Equal(RemoteMenu.PushUrlChange.Clear,
-            RemoteMenu.DecidePushUrl(Remote("https://a/r.git", "https://b/r.git"), "  "));
-
-    [Fact]
-    public void DecidePushUrl_empty_without_push_url_is_noop() =>
-        Assert.Equal(RemoteMenu.PushUrlChange.NoOp, RemoteMenu.DecidePushUrl(Remote("https://a/r.git"), ""));
-
-    [Fact]
-    public void DecidePushUrl_fetch_url_clears_or_is_noop()
-    {
-        Assert.Equal(RemoteMenu.PushUrlChange.Clear,
-            RemoteMenu.DecidePushUrl(Remote("https://a/r.git", "https://b/r.git"), " https://a/r.git "));
-        Assert.Equal(RemoteMenu.PushUrlChange.NoOp,
-            RemoteMenu.DecidePushUrl(Remote("https://a/r.git"), "https://a/r.git"));
-    }
-
-    [Fact]
-    public void DecidePushUrl_current_push_url_is_noop() =>
-        Assert.Equal(RemoteMenu.PushUrlChange.NoOp,
-            RemoteMenu.DecidePushUrl(Remote("https://a/r.git", "https://b/r.git"), "https://b/r.git"));
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void DecidePushUrl_new_value_sets(bool hasDistinct)
-    {
-        var remote = hasDistinct ? Remote("https://a/r.git", "https://b/r.git") : Remote("https://a/r.git");
-        Assert.Equal(RemoteMenu.PushUrlChange.Set("https://c/r.git"), RemoteMenu.DecidePushUrl(remote, " https://c/r.git "));
-    }
-
     [Theory]
     [InlineData("", "https://a/r.git", false)]
     [InlineData("   ", "https://a/r.git", false)]
@@ -176,25 +143,4 @@ public sealed class RemoteMenuTests
     public void Validate_rejects_a_leading_dash_with_its_own_message() =>
         Assert.Equal("A remote name cannot start with '-'.",
             Historia.Platform.EditRemoteDialog.Validate("-x", "git@host:o/r.git", [], new Dictionary<string, string>()));
-
-    [Fact]
-    public void Delete_effect_names_remote_url_and_branch_count()
-    {
-        var effect = RemoteMenu.DeleteEffect("origin", "https://example.com/o/r.git", 65);
-
-        Assert.Contains("'origin'", effect);
-        Assert.Contains("https://example.com/o/r.git", effect);
-        Assert.Contains("65 remote-tracking branches", effect);
-        Assert.Contains("origin/", effect);
-        Assert.Contains("lose their upstream", effect);
-        Assert.Contains("become unreferenced locally", effect);
-        Assert.DoesNotContain("Are you sure", effect);
-    }
-
-    [Fact]
-    public void Delete_effect_handles_zero_and_one_branch()
-    {
-        Assert.Contains("no remote-tracking branches", RemoteMenu.DeleteEffect("origin", "u", 0));
-        Assert.Contains("1 remote-tracking branch (", RemoteMenu.DeleteEffect("origin", "u", 1));
-    }
 }

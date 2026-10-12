@@ -113,24 +113,7 @@ public sealed class BadgeCheckoutSyncTests
 
         public static string RunGit(string dir, params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            psi.Environment["GIT_AUTHOR_NAME"] = "Test";
-            psi.Environment["GIT_AUTHOR_EMAIL"] = "test@example.com";
-            psi.Environment["GIT_COMMITTER_NAME"] = "Test";
-            psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            var output = p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-            return output;
+            return TestGit.Run(dir, args).Stdout;
         }
 
         public void Dispose()
@@ -218,7 +201,7 @@ public sealed class BadgeCheckoutSyncTests
             RemotesOrNull = ["origin"],
         };
 
-        await graph.CheckoutLocalThenMaybeSyncAsync(ctx, deco, "feature");
+        await graph.CheckoutThenMaybeSyncAsync(ctx, deco);
         Dispatcher.UIThread.RunJobs();
 
         var currentHead = RemoteAndClonesFixture.RunGit(fixture.LocalPath, "rev-parse", "--abbrev-ref", "HEAD").Trim();
@@ -267,7 +250,7 @@ public sealed class BadgeCheckoutSyncTests
             RemotesOrNull = ["origin"],
         };
 
-        await graph.CheckoutLocalThenMaybeSyncAsync(ctx, deco, "feature");
+        await graph.CheckoutThenMaybeSyncAsync(ctx, deco);
         Dispatcher.UIThread.RunJobs();
 
         var currentHead = RemoteAndClonesFixture.RunGit(fixture.LocalPath, "rev-parse", "--abbrev-ref", "HEAD").Trim();
@@ -275,6 +258,52 @@ public sealed class BadgeCheckoutSyncTests
 
         var featureSha = RemoteAndClonesFixture.RunGit(fixture.LocalPath, "rev-parse", "HEAD").Trim();
         Assert.Equal(fixture.RemoteFeatureTipSha, featureSha);
+
+        window.Close();
+        await ws.CloseAsync(ctx);
+    }
+
+    [AvaloniaFact]
+    public async Task A_remote_badge_with_no_local_branch_creates_a_tracking_branch_with_its_upstream()
+    {
+        using var fixture = new RemoteAndClonesFixture(dirtyLocalEdit: false);
+        RemoteAndClonesFixture.RunGit(fixture.LocalPath, "branch", "-D", "feature");
+        // Without git's automatic upstream, only an explicit one can link the new branch to its remote.
+        RemoteAndClonesFixture.RunGit(fixture.LocalPath, "config", "branch.autoSetupMerge", "false");
+        var notify = new CapturingNotificationService();
+        await using var sp = CreateServices(notify);
+        var ws = sp.GetRequiredService<IWorkspaceService>();
+
+        var ctx = await ws.OpenAsync(fixture.LocalPath);
+        ctx.MarkFirstGraphPaintDone();
+        ctx.MarkFirstFullLoadDone();
+        await ctx.State.RefreshRefsAsync();
+
+        var graph = new CommitGraphControl();
+        graph.Initialize(sp);
+        var window = new Window { Width = 800, Height = 600, Content = graph };
+        window.Show();
+        ws.Focus(ctx);
+        Dispatcher.UIThread.RunJobs();
+
+        var deco = new GraphDecoration
+        {
+            RowIndex = 0,
+            Type = DecorationType.RemoteBranch,
+            Label = "feature",
+            ColorIndex = 0,
+            IsLocal = false,
+            RemotesOrNull = ["origin"],
+        };
+
+        await graph.CheckoutThenMaybeSyncAsync(ctx, deco);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(notify.Published);
+        Assert.Equal("feature", RemoteAndClonesFixture.RunGit(fixture.LocalPath, "rev-parse", "--abbrev-ref", "HEAD").Trim());
+        Assert.Equal(fixture.RemoteFeatureTipSha, RemoteAndClonesFixture.RunGit(fixture.LocalPath, "rev-parse", "HEAD").Trim());
+        Assert.Equal("origin/feature",
+            RemoteAndClonesFixture.RunGit(fixture.LocalPath, "for-each-ref", "--format=%(upstream:short)", "refs/heads/feature").Trim());
 
         window.Close();
         await ws.CloseAsync(ctx);

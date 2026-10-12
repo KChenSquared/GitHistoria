@@ -6,6 +6,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     private readonly TestRepoFixture _fixture;
     private readonly ServiceProvider _sp;
     private readonly IWorkspaceService _workspace;
+    private readonly List<Window> _windows = [];
     private RepositoryContext _context;
 
     public StagingPanelConflictRowsTests()
@@ -49,10 +50,29 @@ public class StagingPanelConflictRowsTests : IDisposable
 
     public void Dispose()
     {
+        foreach (var window in _windows)
+            try { window.Close(); } catch { }
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
         try { _fixture.Dispose(); } catch { }
     }
+
+    private StagingPanelView ShowPanel()
+    {
+        var panel = new StagingPanelView(_sp, _context);
+        var window = new Window { Width = 800, Height = 900, Content = panel };
+        _windows.Add(window);
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        return panel;
+    }
+
+    private static Border ConflictRow(StagingPanelView panel, string path) =>
+        panel.ChangesList.GetVisualDescendants().OfType<Border>()
+            .Single(b => b.Name == "ConflictRow" && b.DataContext is ConflictRowViewModel row && row.Path == path);
+
+    private static Button ConflictAbort(StagingPanelView panel) =>
+        panel.ChangesList.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "ConflictAbort");
 
     private static void Click(Control control)
     {
@@ -71,19 +91,19 @@ public class StagingPanelConflictRowsTests : IDisposable
     {
         await OpenMergeConflictAsync();
 
-        var panel = new StagingPanelView(_sp, _context);
-        Dispatcher.UIThread.RunJobs();
+        var panel = ShowPanel();
 
-        var rows = panel.ChangesRowsForTesting.Children;
-        Assert.NotEmpty(rows);
+        var items = panel.ViewModel.Changes;
+        Assert.IsType<ConflictHeaderRowViewModel>(items[0]);
+        Assert.IsType<ConflictRowViewModel>(items[1]);
 
-        var headerGrid = Assert.IsType<Grid>(rows[0]);
-        Assert.Same(panel.ConflictHeaderForTesting, headerGrid);
+        var abort = ConflictAbort(panel);
+        var headerGrid = Assert.IsType<Grid>(abort.Parent);
         var header = headerGrid.Children.OfType<TextBlock>().Single();
         Assert.Equal("Conflicted — resolve these before committing", header.Text);
-        Assert.Contains(panel.ConflictAbortButtonForTesting, headerGrid.Children);
+        Assert.Contains(abort, headerGrid.Children);
 
-        var border = Assert.IsType<Border>(rows[1]);
+        var border = ConflictRow(panel, "f.txt");
         var grid = Assert.IsType<Grid>(border.Child);
         Assert.Equal(2, grid.ColumnDefinitions.Count);
 
@@ -99,13 +119,11 @@ public class StagingPanelConflictRowsTests : IDisposable
     {
         await OpenMergeConflictAsync();
 
-        var panel = new StagingPanelView(_sp, _context);
-        Dispatcher.UIThread.RunJobs();
+        var panel = ShowPanel();
 
-        Assert.True(panel.ConflictedRowCacheForTesting.TryGetValue("f.txt", out var border));
-        Assert.NotNull(border);
+        var border = ConflictRow(panel, "f.txt");
 
-        Assert.Empty(border!.GetLogicalDescendants().OfType<CheckBox>());
+        Assert.Empty(border.GetLogicalDescendants().OfType<CheckBox>());
         Assert.Empty(border.GetLogicalDescendants().OfType<Button>());
     }
 
@@ -114,8 +132,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     {
         await OpenMergeConflictAsync();
 
-        var panel = new StagingPanelView(_sp, _context);
-        Dispatcher.UIThread.RunJobs();
+        var panel = ShowPanel();
 
         var dock = Assert.IsType<DockPanel>(panel.Content);
         Assert.Equal(2, dock.Children.Count);
@@ -127,8 +144,7 @@ public class StagingPanelConflictRowsTests : IDisposable
     {
         await OpenMergeConflictAsync();
 
-        var panel = new StagingPanelView(_sp, _context);
-        Dispatcher.UIThread.RunJobs();
+        var panel = ShowPanel();
 
         _context.State.SetOpenDiff(new DiffRequest
         {
@@ -137,8 +153,8 @@ public class StagingPanelConflictRowsTests : IDisposable
         });
         Assert.NotNull(_context.State.OpenDiff);
 
-        Assert.True(panel.ConflictedRowCacheForTesting.TryGetValue("f.txt", out var border));
-        Click(border!);
+        var border = ConflictRow(panel, "f.txt");
+        Click(border);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Null(_context.State.OpenDiff);
@@ -150,11 +166,10 @@ public class StagingPanelConflictRowsTests : IDisposable
     {
         await OpenMergeConflictAsync();
 
-        var panel = new StagingPanelView(_sp, _context);
-        Dispatcher.UIThread.RunJobs();
-        Assert.True(panel.ConflictedRowCacheForTesting.TryGetValue("f.txt", out var border));
+        var panel = ShowPanel();
+        var border = ConflictRow(panel, "f.txt");
 
-        Click(border!);
+        Click(border);
         Dispatcher.UIThread.RunJobs();
         Assert.Equal("f.txt", _context.State.SelectedConflictPath);
 
@@ -162,7 +177,7 @@ public class StagingPanelConflictRowsTests : IDisposable
         _context.State.SetConflictResolverClosed(true);
         Assert.True(_context.State.IsConflictResolverClosed);
 
-        Click(border!);
+        Click(border);
         Dispatcher.UIThread.RunJobs();
 
         Assert.False(_context.State.IsConflictResolverClosed);
@@ -174,11 +189,10 @@ public class StagingPanelConflictRowsTests : IDisposable
     {
         await OpenMergeConflictAsync(() => File.WriteAllText(System.IO.Path.Combine(_fixture.Path, "u.txt"), "untracked content\n"));
 
-        var panel = new StagingPanelView(_sp, _context);
-        Dispatcher.UIThread.RunJobs();
+        var panel = ShowPanel();
 
         var stageAllBtn = panel.GetLogicalDescendants().OfType<Button>().First(b => b.Content?.ToString() == "Stage all");
-        stageAllBtn.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        stageAllBtn.Command!.Execute(stageAllBtn.CommandParameter);
         Dispatcher.UIThread.RunJobs();
 
         var deadline = DateTime.UtcNow.AddSeconds(10);
@@ -203,20 +217,20 @@ public class StagingPanelConflictRowsTests : IDisposable
         await OpenConflictAsync(f => f.LoadMergeConflicts());
 
         var panel = new StagingPanelView(_sp, _context);
-        var window = new Window { Content = panel };
+        var window = new Window { Width = 800, Height = 900, Content = panel };
         window.Show();
         try
         {
             Dispatcher.UIThread.RunJobs();
 
-            Assert.True(panel.ConflictedRowCacheForTesting.TryGetValue("f.txt", out var rowF));
-            Assert.True(panel.ConflictedRowCacheForTesting.TryGetValue("g.txt", out var rowG));
+            var rowF = ConflictRow(panel, "f.txt");
+            var rowG = ConflictRow(panel, "g.txt");
 
             _context.State.SetSelectedConflictPath("f.txt");
             Dispatcher.UIThread.RunJobs();
 
-            Assert.NotEqual(Brushes.Transparent, rowF!.Background);
-            Assert.Equal(Brushes.Transparent, rowG!.Background);
+            Assert.NotEqual(Brushes.Transparent, rowF.Background);
+            Assert.Equal(Brushes.Transparent, rowG.Background);
 
             _context.State.SetSelectedConflictPath("g.txt");
             Dispatcher.UIThread.RunJobs();
@@ -241,11 +255,10 @@ public class StagingPanelConflictRowsTests : IDisposable
     {
         await OpenMergeConflictAsync(() => File.WriteAllText(System.IO.Path.Combine(_fixture.Path, "u.txt"), "untracked content\n"));
 
-        var panel = new StagingPanelView(_sp, _context);
-        Dispatcher.UIThread.RunJobs();
+        var panel = ShowPanel();
 
-        Assert.Equal("Changes (2)", panel.ChangesHeaderForTesting.Text);
-        Assert.DoesNotContain(panel.ChangesRowsForTesting.Children.OfType<TextBlock>(), tb => tb.Text == "No changes.");
+        Assert.Equal("Changes (2)", panel.ChangesHeaderText.Text);
+        Assert.DoesNotContain(panel.ChangesList.GetVisualDescendants().OfType<TextBlock>(), tb => tb.Text == "No changes.");
     }
 
     private static ServiceProvider CreateServices()

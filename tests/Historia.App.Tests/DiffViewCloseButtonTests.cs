@@ -62,9 +62,21 @@ public class DiffViewCloseButtonTests : IDisposable
         var view = new DiffView(_context, request, _sp.GetService<ISettingsService>(), _sp);
         Assert.NotNull(_context.State.OpenDiff);
 
-        view.CloseButtonForTesting.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var window = new Window { Width = 600, Height = 300, Content = view };
+        window.Show();
+        try
+        {
+            var close = view.CloseButtonForTesting;
+            Assert.True(close.IsEffectivelyEnabled);
+            close.Command!.Execute(null);
 
-        Assert.Null(_context.State.OpenDiff);
+            Assert.Null(_context.State.OpenDiff);
+        }
+        finally
+        {
+            view.Dispose();
+            window.Close();
+        }
     }
 
     private sealed class FakeLayoutService : IRepoLayoutService

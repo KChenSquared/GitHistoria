@@ -1,0 +1,213 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:conv="clr-namespace:Historia.Views"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.ThemesView"
+             x:DataType="vm:ThemesViewModel"
+             Background="{DynamicResource ColorChrome}">
+    <UserControl.Styles>
+        <!-- The caption to the left of an editor field. -->
+        <Style Selector="TextBlock.field-label">
+            <Setter Property="Width" Value="120" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+        </Style>
+        <!-- A colour swatch: the fill is the user's colour, the outline is a palette colour. -->
+        <Style Selector="Border.swatch">
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+        </Style>
+    </UserControl.Styles>
+
+    <UserControl.Resources>
+        <!-- One colour override: label, live swatch, hex box, inline error. -->
+        <DataTemplate x:Key="HexRowTemplate" x:DataType="vm:ColorRowViewModel">
+            <StackPanel Orientation="Horizontal" Spacing="10">
+                <TextBlock Classes="field-label" Text="{Binding Label}" />
+                <Border Classes="swatch"
+                        Width="22"
+                        Height="22"
+                        Background="{Binding SwatchHex, Converter={x:Static conv:HexBrushConverter.Instance}}" />
+                <TextBox Text="{Binding Text}"
+                         Width="130"
+                         Watermark="{Binding BaseHex}" />
+                <TextBlock Classes="text"
+                           Text="{Binding ErrorText}"
+                           Foreground="{DynamicResource ColorDanger}" />
+            </StackPanel>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid>
+        <ScrollViewer>
+            <StackPanel Spacing="16" Margin="32" MaxWidth="720">
+                <!-- list -->
+                <StackPanel Spacing="16" IsVisible="{Binding IsListing}">
+                    <TextBlock Classes="pane-title" Text="Themes" />
+                    <TextBlock Classes="text muted"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               Text="Custom themes override any subset of the palette and the nine graph-lane colours over a Dark or Light base. Each theme is saved to its own file under the themes folder. Saving applies it." />
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Classes="text muted" Text="New theme:" />
+                        <Button Classes="secondary"
+                                Content="from Dark"
+                                Command="{Binding NewCommand}"
+                                CommandParameter="Dark"
+                                Cursor="Hand" />
+                        <Button Classes="secondary"
+                                Content="from Light"
+                                Command="{Binding NewCommand}"
+                                CommandParameter="Light"
+                                Cursor="Hand" />
+                    </StackPanel>
+
+                    <TextBlock Classes="text muted"
+                               FontSize="12"
+                               Text="No custom themes yet."
+                               IsVisible="{Binding IsListEmpty}" />
+
+                    <ItemsControl ItemsSource="{Binding Themes}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Spacing="16" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ThemeRowViewModel">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Border Classes="swatch"
+                                            Width="18"
+                                            Height="18"
+                                            Background="{Binding SwatchHex, Converter={x:Static conv:HexBrushConverter.Instance}}" />
+                                    <TextBlock Classes="text" Text="{Binding DisplayName}" />
+                                    <TextBlock Classes="text muted" FontSize="11" Text="{Binding BaseLabel}" />
+                                    <Button Classes="secondary"
+                                            Content="Edit"
+                                            Command="{Binding EditCommand}"
+                                            CommandParameter="{Binding}"
+                                            Cursor="Hand" />
+                                    <Button Classes="secondary"
+                                            Content="Duplicate"
+                                            Command="{Binding DuplicateCommand}"
+                                            CommandParameter="{Binding}"
+                                            Cursor="Hand" />
+                                    <Button Classes="secondary"
+                                            Content="Delete"
+                                            Command="{Binding DeleteCommand}"
+                                            CommandParameter="{Binding}"
+                                            Cursor="Hand" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <!-- editor -->
+                <StackPanel Spacing="16" IsVisible="{Binding IsEditing}">
+                    <Button Classes="secondary"
+                            Content="← Back to themes"
+                            Command="{Binding BackCommand}"
+                            Cursor="Hand" />
+                    <TextBlock Classes="text" FontSize="22" FontWeight="SemiBold" Text="Edit theme" />
+
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Classes="field-label" Text="Name" />
+                        <TextBox Text="{Binding DraftName}" Width="260" Watermark="Theme name" />
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Classes="field-label" Text="Base" />
+                        <ComboBox Width="140"
+                                  ItemsSource="{Binding BaseChoices}"
+                                  SelectedItem="{Binding DraftBase}" />
+                    </StackPanel>
+
+                    <TextBlock Classes="section" Text="Launch splash" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Classes="field-label" Text="Image" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBox Text="{Binding DraftSplashPath}"
+                                     Width="340"
+                                     Watermark="{Binding SplashWatermark}" />
+                            <Button Classes="secondary"
+                                    Content="Browse…"
+                                    Command="{Binding BrowseSplashCommand}"
+                                    Cursor="Hand" />
+                        </StackPanel>
+                    </StackPanel>
+                    <TextBlock Classes="text muted"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               Text="A complete PNG — background, emblem and wordmark baked in. Empty uses the built-in splash for the base theme." />
+
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Classes="field-label" Text="Seconds" />
+                        <NumericUpDown Minimum="0"
+                                       Maximum="10"
+                                       Increment="1"
+                                       FormatString="0"
+                                       Width="100"
+                                       Value="{Binding DraftSplashSeconds}" />
+                    </StackPanel>
+                    <TextBlock Classes="text muted"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               Text="How long the splash shows, 0–10. 0 disables the splash for this theme." />
+
+                    <TextBlock Classes="section" Text="Palette tokens" />
+                    <ItemsControl ItemsSource="{Binding TokenRows}"
+                                  ItemTemplate="{StaticResource HexRowTemplate}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Spacing="16" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+
+                    <TextBlock Classes="section" Text="Graph lane colours" />
+                    <ItemsControl ItemsSource="{Binding LaneRows}"
+                                  ItemTemplate="{StaticResource HexRowTemplate}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Spacing="16" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+
+                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,12,0,0">
+                        <Button Classes="primary"
+                                Content="Save"
+                                Command="{Binding SaveDraftCommand}"
+                                Cursor="Hand" />
+                        <Button Classes="secondary"
+                                Content="Cancel"
+                                Command="{Binding BackCommand}"
+                                Cursor="Hand" />
+                        <TextBlock Classes="text"
+                                   FontSize="12"
+                                   Text="{Binding ErrorSummary}"
+                                   IsVisible="{Binding HasErrors}"
+                                   Foreground="{DynamicResource ColorDanger}" />
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Button Command="{Binding CloseCommand}"
+                ToolTip.Tip="Close"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="0,6,6,0"
+                ZIndex="1"
+                Padding="4"
+                Background="Transparent"
+                BorderThickness="0"
+                Cursor="Hand">
+            <ctl:IconGlyph Icon="close" Size="12" ForegroundKey="ColorTextMuted" />
+        </Button>
+    </Grid>
+</UserControl>

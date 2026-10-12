@@ -3,8 +3,10 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:ctl="clr-namespace:Historia.Controls"
+        xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
         mc:Ignorable="d"
         x:Class="Historia.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
         Title="Historia" Icon="/Assets/Historia.ico" Width="1280" Height="760"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource ColorBg}">
@@ -62,7 +64,7 @@
         <Border Grid.Row="2" Background="{DynamicResource ColorSurface}"
                 BorderBrush="{DynamicResource ColorBorder}" BorderThickness="0,1,0,0"
                 Padding="12,4">
-            <TextBlock x:Name="StatusText" Text="Ready" FontSize="11"
+            <TextBlock x:Name="StatusText" Text="{Binding StatusText}" FontSize="11"
                        Foreground="{DynamicResource ColorTextMuted}" />
         </Border>
 

@@ -1,0 +1,48 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Style classes for AXAML views, matching the sizes and palette keys of ViewKit.Text,
+         Section and Card. Colours come from the generated palette through DynamicResource
+         only, so a theme change repaints them with no rebuild. -->
+
+    <!-- text: body copy. muted and faint only change the colour, so they combine with text or
+         stand alone. -->
+    <Style Selector="TextBlock.text">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+        <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+    </Style>
+    <Style Selector="TextBlock.faint">
+        <Setter Property="Foreground" Value="{DynamicResource ColorTextFaint}" />
+    </Style>
+
+    <!-- section: the small semi-bold heading above a group of settings or rows. -->
+    <Style Selector="TextBlock.section">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <!-- pane-title: the heading of a full-pane view such as Settings, Themes or Profiles. -->
+    <Style Selector="TextBlock.pane-title">
+        <Setter Property="FontSize" Value="24" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource ColorText}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <!-- card: a bordered surface panel. -->
+    <Style Selector="Border.card">
+        <Setter Property="Background" Value="{DynamicResource ColorSurface}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="12" />
+    </Style>
+</Styles>

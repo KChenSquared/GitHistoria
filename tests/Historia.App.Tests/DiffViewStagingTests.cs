@@ -207,7 +207,7 @@ public class DiffViewStagingTests : IDisposable
         Assert.True(combined.AllowStaging);
         Assert.Equal("Stage", combined.StageVerb);
 
-        await view.ApplyHunkAsync(0);
+        await view.ViewModel.ApplyHunkAsync(0);
 
         Assert.Equal(PatchScope.SingleHunk, _patchService.LastScope);
         Assert.NotNull(_patchService.LastSelectedLines);
@@ -233,7 +233,7 @@ public class DiffViewStagingTests : IDisposable
         Assert.True(combined.AllowStaging);
         Assert.Equal("Unstage", combined.StageVerb);
 
-        await view.ApplyHunkAsync(0);
+        await view.ViewModel.ApplyHunkAsync(0);
 
         Assert.Equal(PatchScope.SingleHunk, _patchService.LastScope);
         Assert.NotNull(_patchService.LastSelectedLines);
@@ -251,7 +251,7 @@ public class DiffViewStagingTests : IDisposable
         await WaitForPresenterAsync(view);
 
         var refs = new List<DiffLineRef> { new(0, 1), new(0, 2) };
-        await view.ApplySelectionAsync(refs);
+        await view.ViewModel.ApplySelectionAsync(refs);
 
         Assert.Equal(PatchScope.SelectedLines, _patchService.LastScope);
         Assert.NotNull(_patchService.LastSelectedLines);
@@ -285,7 +285,7 @@ public class DiffViewStagingTests : IDisposable
         var view = new DiffView(_context, req, _sp.GetService<ISettingsService>(), _sp);
         await WaitForPresenterAsync(view);
 
-        await view.ApplyHunkAsync(0);
+        await view.ViewModel.ApplyHunkAsync(0);
 
         Assert.Single(_notificationService.Notifications);
         Assert.Equal(NotificationSeverity.Warning, _notificationService.Notifications[0].Severity);
@@ -307,6 +307,9 @@ public class DiffViewStagingTests : IDisposable
 
         Assert.Equal("File too large to diff inline", tb.Text);
         Assert.NotEqual("No changes.", tb.Text);
+        Assert.Equal("File too large to diff inline", view.ViewModel.Message);
+        Assert.False(view.ViewModel.ShowsDiff);
+        Assert.True(tb.IsVisible);
     }
 
     [AvaloniaFact]
@@ -501,8 +504,8 @@ public class DiffViewStagingTests : IDisposable
         var gate = new TaskCompletionSource<bool>();
         _patchService.CheckGate = gate;
 
-        var task1 = view.ApplyHunkAsync(0);
-        var task2 = view.ApplyHunkAsync(1);
+        var task1 = view.ViewModel.ApplyHunkAsync(0);
+        var task2 = view.ViewModel.ApplyHunkAsync(1);
 
         await task2;
 
@@ -518,7 +521,7 @@ public class DiffViewStagingTests : IDisposable
         Assert.Equal(1, _patchService.CheckAsyncCount);
         Assert.Equal(1, _patchService.ApplyPatchCount);
 
-        await view.ApplyHunkAsync(0);
+        await view.ViewModel.ApplyHunkAsync(0);
         Assert.Equal(2, _patchService.GeneratePatchCount);
         Assert.Equal(2, _patchService.CheckAsyncCount);
         Assert.Equal(2, _patchService.ApplyPatchCount);
@@ -534,8 +537,8 @@ public class DiffViewStagingTests : IDisposable
         var gate = new TaskCompletionSource<bool>();
         _patchService.CheckGate = gate;
 
-        var task1 = view.ApplyHunkAsync(0);
-        var task2 = view.ApplySelectionAsync([new DiffLineRef(0, 1)]);
+        var task1 = view.ViewModel.ApplyHunkAsync(0);
+        var task2 = view.ViewModel.ApplySelectionAsync([new DiffLineRef(0, 1)]);
 
         await task2;
 
@@ -558,14 +561,14 @@ public class DiffViewStagingTests : IDisposable
         await WaitForPresenterAsync(view);
 
         _patchService.CheckResult = new(false, "conflict");
-        await view.ApplyHunkAsync(0);
+        await view.ViewModel.ApplyHunkAsync(0);
 
         Assert.Equal(1, _patchService.GeneratePatchCount);
         Assert.Equal(0, _patchService.ApplyPatchCount);
         Assert.Contains(_notificationService.Notifications, n => n.Severity == NotificationSeverity.Warning && n.Message.Contains("conflict"));
 
         _patchService.CheckResult = new(true, null);
-        await view.ApplyHunkAsync(0);
+        await view.ViewModel.ApplyHunkAsync(0);
 
         Assert.Equal(2, _patchService.GeneratePatchCount);
         Assert.Equal(1, _patchService.ApplyPatchCount);
@@ -579,13 +582,13 @@ public class DiffViewStagingTests : IDisposable
         await WaitForPresenterAsync(view);
 
         _patchService.ThrowOnApply = new InvalidOperationException("simulated failure");
-        await view.ApplyHunkAsync(0);
+        await view.ViewModel.ApplyHunkAsync(0);
 
         Assert.Equal(1, _patchService.GeneratePatchCount);
         Assert.Contains(_notificationService.Notifications, n => n.Severity == NotificationSeverity.Error && n.Message.Contains("simulated failure"));
 
         _patchService.ThrowOnApply = null;
-        await view.ApplyHunkAsync(0);
+        await view.ViewModel.ApplyHunkAsync(0);
 
         Assert.Equal(2, _patchService.GeneratePatchCount);
         Assert.Equal(1, _patchService.ApplyPatchCount);

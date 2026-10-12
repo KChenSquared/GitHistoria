@@ -7,6 +7,7 @@ public class StagingPanelDiscardTests : IDisposable
     private readonly ServiceProvider _sp;
     private readonly IWorkspaceService _workspace;
     private readonly StubDialogService _dialogs;
+    private readonly List<Window> _windows = [];
     private RepositoryContext _context;
 
     public StagingPanelDiscardTests()
@@ -23,6 +24,8 @@ public class StagingPanelDiscardTests : IDisposable
 
     public void Dispose()
     {
+        foreach (var window in _windows)
+            try { window.Close(); } catch { }
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
         try { _sp.Dispose(); } catch { }
         try { _fixture.Dispose(); } catch { }
@@ -37,21 +40,25 @@ public class StagingPanelDiscardTests : IDisposable
         await _context.State.RefreshStatusAsync();
 
         var panel = new StagingPanelView(_sp, _context);
+        var window = new Window { Width = 800, Height = 900, Content = panel };
+        window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        var stagedRow = Assert.Single(panel.StagedRowsForTesting.Children.OfType<Border>());
+        var stagedRow = Assert.Single(panel.StagedList.GetVisualDescendants().OfType<Border>(), b => b.Name == "StagedRow");
         var stagedMenu = stagedRow.ContextMenu;
         Assert.NotNull(stagedMenu);
-        var stagedItems = ((IEnumerable<Control>)stagedMenu.ItemsSource!).OfType<MenuItem>().ToList();
+        var stagedItems = stagedMenu.Items.OfType<MenuItem>().ToList();
         Assert.DoesNotContain(stagedItems, mi => mi.Header?.ToString() == "Discard changes");
         Assert.Contains(stagedItems, mi => mi.Header?.ToString() == "Open file location");
         Assert.Contains(stagedItems, mi => mi.Header?.ToString() == "Copy path");
 
-        var changesRow = Assert.Single(panel.ChangesRowsForTesting.Children.OfType<Border>());
+        var changesRow = Assert.Single(panel.ChangesList.GetVisualDescendants().OfType<Border>(), b => b.Name == "ChangeRow");
         var changesMenu = changesRow.ContextMenu;
         Assert.NotNull(changesMenu);
-        var changesItems = ((IEnumerable<Control>)changesMenu.ItemsSource!).OfType<MenuItem>().ToList();
+        var changesItems = changesMenu.Items.OfType<MenuItem>().ToList();
         Assert.Contains(changesItems, mi => mi.Header?.ToString() == "Discard changes");
+
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -86,7 +93,7 @@ public class StagingPanelDiscardTests : IDisposable
         var panel = new StagingPanelView(_sp, _context);
         Dispatcher.UIThread.RunJobs();
 
-        await panel.DiscardAllChangesForTestingAsync();
+        await panel.ViewModel.DiscardAllChangesCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
         await _context.State.RefreshStatusAsync();
@@ -94,6 +101,131 @@ public class StagingPanelDiscardTests : IDisposable
         Assert.True(File.Exists(aPath));
         Assert.False(File.Exists(bPath));
         Assert.Equal("same content across move", (await File.ReadAllTextAsync(aPath)).Trim());
+    }
+
+    private StagingPanelView ShowPanel(out Window window)
+    {
+        var panel = new StagingPanelView(_sp, _context);
+        window = new Window { Width = 800, Height = 900, Content = panel };
+        _windows.Add(window);
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        return panel;
+    }
+
+    private async Task ModifyTwoFilesAsync()
+    {
+        await File.WriteAllTextAsync(System.IO.Path.Combine(_fixture.Path, "one.txt"), "one\n");
+        await File.WriteAllTextAsync(System.IO.Path.Combine(_fixture.Path, "two.txt"), "two\n");
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        do
+        {
+            await _context.State.RefreshStatusAsync();
+        }
+        while (_context.State.Status.Untracked.Count < 2 && DateTime.UtcNow < deadline);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    private static IReadOnlyList<CheckBox> RowCheckBoxes(ListBox list) =>
+        [.. list.GetVisualDescendants().OfType<Border>().Where(b => b.Name is "ChangeRow" or "StagedRow")
+            .Select(b => b.GetVisualDescendants().OfType<CheckBox>().Single())];
+
+    private static void ClickCenter(Window window, Control control)
+    {
+        var center = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, center, MouseButton.Left);
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, center, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    private static void Press(Control control)
+    {
+        control.RaiseEvent(new PointerPressedEventArgs(
+            control,
+            new Pointer(1, PointerType.Mouse, true),
+            control,
+            new Point(5, 5),
+            0,
+            new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonPressed),
+            KeyModifiers.None));
+    }
+
+    [AvaloniaFact]
+    public async Task The_arrows_are_enabled_only_while_rows_are_checked_and_stage_the_checked_row()
+    {
+        await ModifyTwoFilesAsync();
+        var panel = ShowPanel(out var window);
+        Assert.False(panel.StageArrow.IsEffectivelyEnabled);
+        Assert.False(panel.UnstageArrow.IsEffectivelyEnabled);
+
+        var boxes = RowCheckBoxes(panel.ChangesList);
+        Assert.Equal(2, boxes.Count);
+        ClickCenter(window, boxes[0]);
+
+        Assert.True(panel.StageArrow.IsEffectivelyEnabled);
+        Assert.False(panel.UnstageArrow.IsEffectivelyEnabled);
+        Assert.Null(panel.ChangesSelectAll.IsChecked);
+
+        await panel.ViewModel.StageCheckedCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(["one.txt"], _context.State.Status.Staged.Select(f => f.Path));
+        Assert.False(panel.StageArrow.IsEffectivelyEnabled);
+    }
+
+    [AvaloniaFact]
+    public async Task Clicking_the_select_all_box_checks_every_row_and_clicking_it_again_clears_them()
+    {
+        await ModifyTwoFilesAsync();
+        var panel = ShowPanel(out var window);
+
+        ClickCenter(window, panel.ChangesSelectAll);
+
+        Assert.True(panel.ChangesSelectAll.IsChecked);
+        Assert.All(RowCheckBoxes(panel.ChangesList), box => Assert.True(box.IsChecked));
+        Assert.True(panel.StageArrow.IsEffectivelyEnabled);
+
+        ClickCenter(window, panel.ChangesSelectAll);
+
+        Assert.False(panel.ChangesSelectAll.IsChecked);
+        Assert.All(RowCheckBoxes(panel.ChangesList), box => Assert.False(box.IsChecked));
+        Assert.False(panel.StageArrow.IsEffectivelyEnabled);
+    }
+
+    [AvaloniaFact]
+    public async Task The_row_discard_button_asks_and_restores_the_file()
+    {
+        await File.WriteAllTextAsync(System.IO.Path.Combine(_fixture.Path, "f.txt"), "edited\n");
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        do
+        {
+            await _context.State.RefreshStatusAsync();
+        }
+        while (_context.State.Status.Unstaged.Count == 0 && DateTime.UtcNow < deadline);
+        var panel = ShowPanel(out _);
+        var discard = panel.ChangesList.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "DiscardRowButton");
+
+        await ((IAsyncRelayCommand)discard.Command!).ExecuteAsync(discard.CommandParameter);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("init", (await File.ReadAllTextAsync(System.IO.Path.Combine(_fixture.Path, "f.txt"))).Trim());
+    }
+
+    [AvaloniaFact]
+    public async Task A_press_on_a_row_opens_its_diff_but_a_press_on_its_checkbox_does_not()
+    {
+        await ModifyTwoFilesAsync();
+        var panel = ShowPanel(out _);
+        var rows = panel.ChangesList.GetVisualDescendants().OfType<Border>().Where(b => b.Name == "ChangeRow").ToList();
+        var row = rows.Single(b => b.DataContext is FileRowViewModel { Path: "one.txt" });
+
+        Press(row.GetVisualDescendants().OfType<CheckBox>().Single());
+        Assert.Null(_context.State.OpenDiff);
+
+        Press(row);
+
+        Assert.Equal("one.txt", _context.State.OpenDiff?.Path);
+        Assert.Equal(DiffSource.UnstagedChanges, _context.State.OpenDiff?.Source);
     }
 
     private static ServiceProvider CreateServices(IDialogService dialogs)

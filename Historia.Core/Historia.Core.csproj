@@ -21,6 +21,9 @@
          parsing libraries, so Core purity holds. -->
     <PackageReference Include="XTerm.NET" Version="2.0.2" />
     <PackageReference Include="Porta.Pty" Version="2.2.2" />
+    <!-- Source-generated observable properties and relay commands for the view models. The
+         generators emit plain C#, so Core purity holds. -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
 
   <ItemGroup>

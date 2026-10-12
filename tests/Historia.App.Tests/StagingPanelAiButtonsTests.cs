@@ -47,6 +47,7 @@ public class StagingPanelAiButtonsTests : IDisposable
     private readonly AiIntegrationsPanel _panel = new();
     private readonly FakeGenerator _generator = new();
     private readonly List<StagingPanelView> _views = [];
+    private readonly List<Window> _windows = [];
     private readonly AiTestSupport.Client _client = new();
     private readonly AiTestSupport.Factory _factory;
     private readonly AiTestSupport.CountingCatalog _catalog;
@@ -108,6 +109,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         sc.AddSingleton<ICredentialVaultService, FakeVault>();
         sc.AddSingleton<IExternalLauncher, ExternalLauncher>();
         sc.AddSingleton<Historia.Theming.AvaloniaThemeApplier>();
+        sc.AddSingleton<ICommitDraftStore, CommitDraftStore>();
         sc.AddSingleton<IAiProfileService>(_profiles);
         sc.AddSingleton<IAiIntegrationsPanel>(_panel);
         sc.AddSingleton<IAiClientFactory>(_factory);
@@ -123,6 +125,8 @@ public class StagingPanelAiButtonsTests : IDisposable
 
     public void Dispose()
     {
+        foreach (var window in _windows)
+            try { window.Close(); } catch { }
         foreach (var view in _views)
             try { view.Dispose(); } catch { }
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
@@ -150,22 +154,26 @@ public class StagingPanelAiButtonsTests : IDisposable
         return _profiles.Profiles.Single(p => p.Id == added.Id);
     }
 
-    private StagingPanelView NewPanel()
+    private StagingPanelView NewPanel(double width = 600, double height = 900)
     {
         var panel = new StagingPanelView(_sp, _context);
         _views.Add(panel);
+        var window = new Window { Width = width, Height = height, Content = panel };
+        _windows.Add(window);
+        window.Show();
         Dispatcher.UIThread.RunJobs();
         return panel;
     }
 
     private static void Click(Button button)
     {
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        button.Command!.Execute(button.CommandParameter);
         Dispatcher.UIThread.RunJobs();
     }
 
     private static Task Settled(StagingPanelView panel) =>
-        AiTestSupport.PumpUntil(() => panel.GenerationForTesting.IsCompleted && !panel.IsGeneratingForTesting);
+        AiTestSupport.PumpUntil(() => !panel.ViewModel.IsGenerating
+            && (panel.ViewModel.GenerateCommand.ExecutionTask?.IsCompleted ?? true));
 
     // ── Buttons ──
 
@@ -174,15 +182,15 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         var panel = NewPanel();
 
-        var strip = panel.CommitOptionsRowForTesting!.Children.OfType<StackPanel>().Single();
+        var strip = panel.CommitOptionsRow.Children.OfType<StackPanel>().Single();
 
         Assert.Equal(0, Grid.GetColumn(strip));
         Assert.Equal(HorizontalAlignment.Left, strip.HorizontalAlignment);
-        Assert.Same(panel.WandForTesting, strip.Children[0]);
-        Assert.Same(panel.AiSettingsForTesting, strip.Children[1]);
-        Assert.Empty(panel.MessageCellForTesting!.Children.OfType<StackPanel>());
-        Assert.Equal("Setup AI Integration", ToolTip.GetTip(panel.AiSettingsForTesting!));
-        Assert.Equal("Generate Commit Message", ToolTip.GetTip(panel.WandForTesting!));
+        Assert.Same(panel.Wand, strip.Children[0]);
+        Assert.Same(panel.AiSettings, strip.Children[1]);
+        Assert.Empty(panel.MessageCell.Children.OfType<StackPanel>());
+        Assert.Equal("Setup AI Integration", ToolTip.GetTip(panel.AiSettings));
+        Assert.Equal("Generate Commit Message", ToolTip.GetTip(panel.Wand));
     }
 
     [AvaloniaFact]
@@ -190,29 +198,36 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         var panel = NewPanel();
 
-        Assert.Equal("Amend", panel.AmendForTesting.Content);
-        Assert.Equal(4, Grid.GetColumn(panel.AmendForTesting));
-        Assert.Equal(HorizontalAlignment.Right, panel.AmendForTesting.HorizontalAlignment);
+        Assert.Equal("Amend", panel.AmendBox.Content);
+        Assert.Equal(4, Grid.GetColumn(panel.AmendBox));
+        Assert.Equal(HorizontalAlignment.Right, panel.AmendBox.HorizontalAlignment);
     }
 
     [AvaloniaFact]
     public async Task The_icons_are_two_px_above_the_amend_text_size()
     {
         var panel = NewPanel();
-        var glyphSize = panel.AmendForTesting.FontSize + 2;
+        var glyphSize = panel.AmendBox.FontSize + 2;
 
-        var wandPath = Assert.IsType<Avalonia.Controls.Shapes.Path>(panel.WandForTesting!.Content);
-        var gearPath = Assert.IsType<Avalonia.Controls.Shapes.Path>(panel.AiSettingsForTesting!.Content);
-        Assert.Equal(glyphSize, wandPath.Width);
-        Assert.Equal(glyphSize, wandPath.Height);
-        Assert.Equal(glyphSize, gearPath.Width);
-        Assert.Equal(glyphSize, gearPath.Height);
+        AssertGlyphSize(panel.WandActiveIcon, glyphSize);
+        AssertGlyphSize(panel.WandIdleIcon, glyphSize);
+        AssertGlyphSize(panel.AiSettingsIcon, glyphSize);
+        Assert.False(panel.WandActiveIcon.IsVisible);
+        Assert.True(panel.WandIdleIcon.IsVisible);
 
         await ActivateAsync();
 
-        var activeWandPath = Assert.IsType<Avalonia.Controls.Shapes.Path>(panel.WandForTesting.Content);
-        Assert.Equal(glyphSize, activeWandPath.Width);
-        Assert.Equal(glyphSize, activeWandPath.Height);
+        AssertGlyphSize(panel.WandActiveIcon, glyphSize);
+        Assert.True(panel.WandActiveIcon.IsVisible);
+        Assert.False(panel.WandIdleIcon.IsVisible);
+    }
+
+    private static void AssertGlyphSize(IconGlyph glyph, double size)
+    {
+        Assert.Equal(size, glyph.Size);
+        var path = Assert.IsType<Avalonia.Controls.Shapes.Path>(glyph.Content);
+        Assert.Equal(size, path.Width);
+        Assert.Equal(size, path.Height);
     }
 
     [AvaloniaFact]
@@ -220,18 +235,18 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         var panel = NewPanel();
 
-        Assert.True(panel.MessageForTesting.Padding.Bottom >= 16);
+        Assert.True(panel.MessageInput.Padding.Bottom >= 16);
     }
 
     [AvaloniaFact]
     public async Task The_wand_is_disabled_with_no_active_profile_and_enabled_once_one_is_activated()
     {
         var panel = NewPanel();
-        Assert.False(panel.WandForTesting!.IsEnabled);
+        Assert.False(panel.Wand.IsEnabled);
 
         await ActivateAsync();
 
-        Assert.True(panel.WandForTesting.IsEnabled);
+        Assert.True(panel.Wand.IsEnabled);
     }
 
     [AvaloniaFact]
@@ -239,26 +254,23 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         var panel = NewPanel();
 
-        Assert.False(panel.WandForTesting!.IsEnabled);
-        Assert.True(ToolTip.GetShowOnDisabled(panel.WandForTesting));
-        Assert.Equal("Generate Commit Message", ToolTip.GetTip(panel.WandForTesting));
+        Assert.False(panel.Wand.IsEnabled);
+        Assert.True(ToolTip.GetShowOnDisabled(panel.Wand));
+        Assert.Equal("Generate Commit Message", ToolTip.GetTip(panel.Wand));
     }
 
     [AvaloniaFact]
     public async Task The_wand_is_green_when_active_and_grey_when_not()
     {
         var panel = NewPanel();
-        var window = new Window { Width = 600, Height = 900, Content = panel };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
         if (Application.Current is null || !Application.Current.TryFindResource("ColorBorder", out var border) || border is not IBrush borderBrush)
             return;
-        Assert.Equal(borderBrush, panel.WandForTesting!.BorderBrush);
+        Assert.Equal(borderBrush, panel.Wand.BorderBrush);
 
         await ActivateAsync();
 
         Assert.True(Application.Current.TryFindResource("ColorSuccess", out var success));
-        Assert.Equal(success, panel.WandForTesting.BorderBrush);
+        Assert.Equal(success, panel.Wand.BorderBrush);
     }
 
     [AvaloniaFact]
@@ -267,7 +279,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         var active = await ActivateAsync();
         var panel = NewPanel();
 
-        Click(panel.AiSettingsForTesting!);
+        Click(panel.AiSettings);
 
         Assert.True(_panel.IsOpen);
         Assert.Equal(active.Id, _panel.FocusProfileId);
@@ -278,7 +290,7 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         var panel = NewPanel();
 
-        Click(panel.AiSettingsForTesting!);
+        Click(panel.AiSettings);
 
         Assert.True(_panel.IsOpen);
         Assert.Null(_panel.FocusProfileId);
@@ -293,14 +305,14 @@ public class StagingPanelAiButtonsTests : IDisposable
         await StageChangeAsync();
         var panel = NewPanel();
 
-        Click(panel.WandForTesting!);
+        Click(panel.Wand);
         await Settled(panel);
 
-        Assert.Equal("feat: from ai", panel.MessageForTesting.Text);
+        Assert.Equal("feat: from ai", panel.MessageInput.Text);
         Assert.Empty(_dialogs.ConfirmDestructiveCalls);
         Assert.DoesNotContain(_notifications.Published, n => n.Severity == NotificationSeverity.Info);
         Assert.Equal(false, _generator.LastAmend);
-        Assert.False(panel.MessageForTesting.IsReadOnly);
+        Assert.False(panel.MessageInput.IsReadOnly);
     }
 
     [AvaloniaFact]
@@ -309,10 +321,10 @@ public class StagingPanelAiButtonsTests : IDisposable
         await ActivateAsync();
         await StageChangeAsync();
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "my draft";
+        panel.MessageInput.Text = "my draft";
         _dialogs.ConfirmDestructiveResult = false;
 
-        Click(panel.WandForTesting!);
+        Click(panel.Wand);
         await AiTestSupport.PumpUntil(() => _dialogs.ConfirmDestructiveCalls.Count == 1);
         await Settled(panel);
 
@@ -320,7 +332,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         Assert.Equal("Replace commit message", call.Title);
         Assert.Equal("Replace your commit message draft (8 characters) with an AI-generated message? Your draft is discarded.", call.Effect);
         Assert.Equal("Replace", call.ConfirmLabel);
-        Assert.Equal("my draft", panel.MessageForTesting.Text);
+        Assert.Equal("my draft", panel.MessageInput.Text);
         Assert.Equal(0, _generator.Calls);
     }
 
@@ -330,10 +342,10 @@ public class StagingPanelAiButtonsTests : IDisposable
         await ActivateAsync();
         await StageChangeAsync();
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "my draft";
+        panel.MessageInput.Text = "my draft";
 
-        Click(panel.WandForTesting!);
-        await AiTestSupport.PumpUntil(() => panel.MessageForTesting.Text == "feat: from ai");
+        Click(panel.Wand);
+        await AiTestSupport.PumpUntil(() => panel.MessageInput.Text == "feat: from ai");
         await Settled(panel);
 
         Assert.Equal(1, _generator.Calls);
@@ -346,7 +358,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         await StageChangeAsync();
         var panel = NewPanel();
 
-        Click(panel.WandForTesting!);
+        Click(panel.Wand);
         await Settled(panel);
 
         Assert.True(_panel.IsOpen);
@@ -362,7 +374,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         await StageChangeAsync();
         var panel = NewPanel();
 
-        Click(panel.WandForTesting!);
+        Click(panel.Wand);
         await Settled(panel);
 
         Assert.Equal(1, _generator.Calls);
@@ -375,7 +387,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         await ActivateAsync();
         var panel = NewPanel();
 
-        Click(panel.WandForTesting!);
+        Click(panel.Wand);
         await Settled(panel);
 
         Assert.Equal(0, _generator.Calls);
@@ -387,9 +399,9 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         await ActivateAsync();
         var panel = NewPanel();
-        panel.AmendForTesting.IsChecked = true;
+        panel.AmendBox.IsChecked = true;
 
-        Click(panel.WandForTesting!);
+        Click(panel.Wand);
         await Settled(panel);
 
         Assert.Equal(1, _generator.Calls);
@@ -402,7 +414,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         await ActivateAsync();
         await StageChangeAsync();
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "keep me";
+        panel.MessageInput.Text = "keep me";
         var gate = new TaskCompletionSource<CommitMessageResult>();
         _generator.Behavior = ct =>
         {
@@ -410,20 +422,20 @@ public class StagingPanelAiButtonsTests : IDisposable
             return gate.Task;
         };
 
-        Click(panel.WandForTesting!);
-        await AiTestSupport.PumpUntil(() => panel.IsGeneratingForTesting);
+        Click(panel.Wand);
+        await AiTestSupport.PumpUntil(() => panel.ViewModel.IsGenerating);
 
-        Assert.True(panel.MessageForTesting.IsReadOnly);
-        Assert.Equal("Generating… click to cancel", ToolTip.GetTip(panel.WandForTesting!));
-        Assert.True(panel.WandForTesting!.IsEnabled);
+        Assert.True(panel.MessageInput.IsReadOnly);
+        Assert.Equal("Generating… click to cancel", ToolTip.GetTip(panel.Wand));
+        Assert.True(panel.Wand.IsEnabled);
 
-        Click(panel.WandForTesting);
+        Click(panel.Wand);
         await Settled(panel);
 
         Assert.True(_generator.LastToken.IsCancellationRequested);
-        Assert.Equal("keep me", panel.MessageForTesting.Text);
-        Assert.False(panel.MessageForTesting.IsReadOnly);
-        Assert.Equal("Generate Commit Message", ToolTip.GetTip(panel.WandForTesting));
+        Assert.Equal("keep me", panel.MessageInput.Text);
+        Assert.False(panel.MessageInput.IsReadOnly);
+        Assert.Equal("Generate Commit Message", ToolTip.GetTip(panel.Wand));
         Assert.DoesNotContain(_notifications.Published, n => n.Severity is NotificationSeverity.Error or NotificationSeverity.Warning);
     }
 
@@ -433,17 +445,17 @@ public class StagingPanelAiButtonsTests : IDisposable
         await ActivateAsync();
         await StageChangeAsync();
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "keep me";
+        panel.MessageInput.Text = "keep me";
         _generator.Behavior = _ => throw new AiException(AiErrorKind.Unauthorized, "The AI service rejected the API key.", "HTTP 401");
 
-        Click(panel.WandForTesting!);
+        Click(panel.Wand);
         await Settled(panel);
 
-        Assert.Equal("keep me", panel.MessageForTesting.Text);
+        Assert.Equal("keep me", panel.MessageInput.Text);
         var error = Assert.Single(_notifications.Published, n => n.Severity == NotificationSeverity.Error);
         Assert.Equal("The AI service rejected the API key.", error.Message);
         Assert.Equal("HTTP 401", error.Details);
-        Assert.False(panel.MessageForTesting.IsReadOnly);
+        Assert.False(panel.MessageInput.IsReadOnly);
     }
 
     [AvaloniaFact]
@@ -454,7 +466,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         var panel = NewPanel();
         _generator.Behavior = _ => Task.FromResult(new CommitMessageResult("feat: x", "gemini-1.0-pro", "gemini-2.5-flash"));
 
-        Click(panel.WandForTesting!);
+        Click(panel.Wand);
         await Settled(panel);
 
         Assert.Contains(_notifications.Published, n => n.Severity == NotificationSeverity.Warning
@@ -467,7 +479,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         await ActivateAsync();
         await StageChangeAsync();
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "old draft";
+        panel.MessageInput.Text = "old draft";
         var gate = new TaskCompletionSource<CommitMessageResult>();
         _generator.Behavior = ct =>
         {
@@ -475,14 +487,14 @@ public class StagingPanelAiButtonsTests : IDisposable
             return gate.Task;
         };
 
-        Click(panel.WandForTesting!);
-        await AiTestSupport.PumpUntil(() => panel.IsGeneratingForTesting);
+        Click(panel.Wand);
+        await AiTestSupport.PumpUntil(() => panel.ViewModel.IsGenerating);
 
         panel.Dispose();
         await AiTestSupport.PumpUntil(() => _generator.LastToken.IsCancellationRequested);
 
         var reopened = NewPanel();
-        Assert.Equal("old draft", reopened.MessageForTesting.Text);
+        Assert.Equal("old draft", reopened.MessageInput.Text);
     }
 
     [AvaloniaFact]
@@ -491,23 +503,23 @@ public class StagingPanelAiButtonsTests : IDisposable
         await ActivateAsync();
         await StageChangeAsync();
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "feat: old draft";
+        panel.MessageInput.Text = "feat: old draft";
         var gate = new TaskCompletionSource<CommitMessageResult>();
         _generator.Behavior = ct =>
         {
             ct.Register(() => gate.TrySetCanceled(ct));
             return gate.Task;
         };
-        Click(panel.WandForTesting!);
-        await AiTestSupport.PumpUntil(() => panel.IsGeneratingForTesting);
+        Click(panel.Wand);
+        await AiTestSupport.PumpUntil(() => panel.ViewModel.IsGenerating);
 
-        await panel.CommitForTestingAsync();
+        await panel.ViewModel.CommitCommand.ExecuteAsync(null);
 
         using (var repo = new LibGit2Sharp.Repository(_repoDir))
             Assert.Single(repo.Commits);
-        Assert.Equal("feat: old draft", panel.MessageForTesting.Text);
+        Assert.Equal("feat: old draft", panel.MessageInput.Text);
 
-        Click(panel.WandForTesting!);
+        Click(panel.Wand);
         await Settled(panel);
     }
 
@@ -519,7 +531,7 @@ public class StagingPanelAiButtonsTests : IDisposable
 
         await ActivateAsync();
 
-        Assert.False(panel.WandForTesting!.IsEnabled);
+        Assert.False(panel.Wand.IsEnabled);
     }
 
     // ── Model picker ──
@@ -529,22 +541,19 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         var panel = NewPanel();
 
-        Assert.NotNull(panel.ModelPickerForTesting);
-        Assert.NotNull(panel.AmendDividerForTesting);
-        Assert.Equal(1, Grid.GetColumn(panel.ModelPickerForTesting!));
-        Assert.Equal(3, Grid.GetColumn(panel.AmendDividerForTesting!));
-        Assert.Equal(4, Grid.GetColumn(panel.AmendForTesting));
+        Assert.True(panel.ModelPicker.IsEffectivelyVisible);
+        Assert.True(panel.AmendDivider.IsEffectivelyVisible);
+        Assert.Equal(1, Grid.GetColumn(panel.ModelPicker));
+        Assert.Equal(3, Grid.GetColumn(panel.AmendDivider));
+        Assert.Equal(4, Grid.GetColumn(panel.AmendBox));
     }
 
     [AvaloniaFact]
     public void The_divider_is_one_px_in_the_border_colour()
     {
         var panel = NewPanel();
-        var window = new Window { Width = 600, Height = 900, Content = panel };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
 
-        var divider = panel.AmendDividerForTesting!;
+        var divider = panel.AmendDivider;
         Assert.Equal(1, divider.Width);
         Assert.Equal(VerticalAlignment.Stretch, divider.VerticalAlignment);
         Assert.Equal(new Thickness(8, 2), divider.Margin);
@@ -559,7 +568,7 @@ public class StagingPanelAiButtonsTests : IDisposable
     public void With_no_active_profile_the_picker_is_visible_disabled_and_reads_Select_a_Model()
     {
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
 
         Assert.True(picker.IsVisible);
         Assert.False(picker.IsEnabled);
@@ -573,7 +582,7 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         var active = await ActivateAsync(p => p with { Model = "gemini-2.5-flash" }, name: "Gemini");
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
 
         Assert.True(picker.IsEnabled);
         Assert.Equal("gemini-2.5-flash", picker.SelectedItem);
@@ -585,7 +594,7 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         await ActivateAsync(p => p with { Model = "" });
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
 
         Assert.True(picker.IsEnabled);
         Assert.Null(picker.SelectedItem);
@@ -600,7 +609,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         catalog.Remember(active, ["new-model-1", "new-model-2"]);
 
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
 
         Assert.Null(picker.SelectedItem);
         Assert.Equal("retired-model", _profiles.ActiveProfile!.Model);
@@ -617,7 +626,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         catalog.Remember(p1, ["m1", "m1-new"]);
 
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
         picker.SelectedItem = "m1-new";
         Dispatcher.UIThread.RunJobs();
 
@@ -633,7 +642,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         await _profiles.UpdateAsync(p2Added.Id, p => p with { Model = "m2" });
 
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
         Assert.Equal("m1", picker.SelectedItem);
 
         await _profiles.SetActiveAsync(p2Added.Id);
@@ -660,13 +669,13 @@ public class StagingPanelAiButtonsTests : IDisposable
         await ActivateAsync(p => p with { AutoFetchModels = true });
         var panel = NewPanel();
 
-        panel.OpenModelPickerForTesting();
-        await panel.ModelLoadForTesting;
+        panel.ViewModel.OpenModelPickerCommand.Execute(null);
+        await panel.ViewModel.ModelLoad;
 
         Assert.Single(_client.Lists);
 
-        panel.OpenModelPickerForTesting();
-        await panel.ModelLoadForTesting;
+        panel.ViewModel.OpenModelPickerCommand.Execute(null);
+        await panel.ViewModel.ModelLoad;
 
         Assert.Single(_client.Lists);
     }
@@ -676,10 +685,10 @@ public class StagingPanelAiButtonsTests : IDisposable
     {
         var active = await ActivateAsync(p => p with { AutoFetchModels = false, Model = "current-model" });
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
 
-        panel.OpenModelPickerForTesting();
-        await panel.ModelLoadForTesting;
+        panel.ViewModel.OpenModelPickerCommand.Execute(null);
+        await panel.ViewModel.ModelLoad;
 
         Assert.Empty(_client.Lists);
         Assert.Equal(["current-model"], picker.ItemsSource as IEnumerable<string>);
@@ -698,13 +707,10 @@ public class StagingPanelAiButtonsTests : IDisposable
         _client.ListResult = () => ["model-1", "model-2"];
         await ActivateAsync(p => p with { AutoFetchModels = true });
         var panel = NewPanel();
-        var window = new Window { Width = 600, Height = 900, Content = panel };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
 
-        panel.ModelPickerForTesting!.IsDropDownOpen = true;
+        panel.ModelPicker.IsDropDownOpen = true;
         Dispatcher.UIThread.RunJobs();
-        await panel.ModelLoadForTesting;
+        await panel.ViewModel.ModelLoad;
 
         Assert.Single(_client.Lists);
     }
@@ -716,8 +722,8 @@ public class StagingPanelAiButtonsTests : IDisposable
         await ActivateAsync(p => p with { AutoFetchModels = true });
         var panel = NewPanel();
 
-        panel.OpenModelPickerForTesting();
-        await panel.ModelLoadForTesting;
+        panel.ViewModel.OpenModelPickerCommand.Execute(null);
+        await panel.ViewModel.ModelLoad;
 
         Assert.Contains(_notifications.Published, n => n.Severity == NotificationSeverity.Error && n.Message.Contains("Couldn't load the model list"));
     }
@@ -726,13 +732,10 @@ public class StagingPanelAiButtonsTests : IDisposable
     public async Task The_picker_fills_the_row_at_the_narrowest_right_column()
     {
         await ActivateAsync();
-        var panel = NewPanel();
-        var window = new Window { Width = 360, Height = 600, Content = panel };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
+        var panel = NewPanel(width: 360, height: 600);
 
-        var picker = panel.ModelPickerForTesting!;
-        var divider = panel.AmendDividerForTesting!;
+        var picker = panel.ModelPicker;
+        var divider = panel.AmendDivider;
         var slack = divider.Bounds.Left - 8 - picker.Bounds.Right;
         Assert.InRange(slack, 0, 2);
     }
@@ -741,28 +744,20 @@ public class StagingPanelAiButtonsTests : IDisposable
     public async Task The_picker_width_is_fixed_and_the_divider_stays_next_to_amend()
     {
         await ActivateAsync();
-        var panel = NewPanel();
-        var window360 = new Window { Width = 360, Height = 600, Content = panel };
-        window360.Show();
-        Dispatcher.UIThread.RunJobs();
+        var panel = NewPanel(width: 360, height: 600);
 
-        var picker = panel.ModelPickerForTesting!;
-        var divider = panel.AmendDividerForTesting!;
-        var amend = panel.AmendForTesting;
+        var picker = panel.ModelPicker;
+        var divider = panel.AmendDivider;
+        var amend = panel.AmendBox;
 
         var pickerWidth360 = picker.Bounds.Width;
         var gap360 = amend.Bounds.Left - divider.Bounds.Right;
 
-        window360.Close();
+        var panel900 = NewPanel(width: 900, height: 600);
 
-        var panel900 = NewPanel();
-        var window900 = new Window { Width = 900, Height = 600, Content = panel900 };
-        window900.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var picker900 = panel900.ModelPickerForTesting!;
-        var divider900 = panel900.AmendDividerForTesting!;
-        var amend900 = panel900.AmendForTesting;
+        var picker900 = panel900.ModelPicker;
+        var divider900 = panel900.AmendDivider;
+        var amend900 = panel900.AmendBox;
 
         Assert.Equal(pickerWidth360, picker900.Bounds.Width);
         Assert.Equal(gap360, amend900.Bounds.Left - divider900.Bounds.Right);
@@ -772,13 +767,10 @@ public class StagingPanelAiButtonsTests : IDisposable
     public async Task The_picker_does_not_grow_the_options_row()
     {
         await ActivateAsync();
-        var panel = NewPanel();
-        var window = new Window { Width = 600, Height = 600, Content = panel };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
+        var panel = NewPanel(width: 600, height: 600);
 
-        var row = panel.CommitOptionsRowForTesting!;
-        var amend = panel.AmendForTesting;
+        var row = panel.CommitOptionsRow;
+        var amend = panel.AmendBox;
         Assert.Equal(amend.Bounds.Height, row.Bounds.Height);
     }
 
@@ -790,7 +782,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         catalog.Remember(active, ["m1", "m2"]);
 
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
         var itemsBefore = picker.ItemsSource;
 
         await _profiles.UpdateAsync(active.Id, p => p with { Name = "Renamed" });
@@ -807,7 +799,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         var active = await ActivateAsync();
         var before = _catalog.Subscribers;
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
         Assert.Equal(before + 1, _catalog.Subscribers);
 
         panel.Dispose();
@@ -825,19 +817,19 @@ public class StagingPanelAiButtonsTests : IDisposable
         _client.ListGate = new TaskCompletionSource();
         await ActivateAsync(p => p with { AutoFetchModels = true });
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
 
-        panel.OpenModelPickerForTesting();
+        panel.ViewModel.OpenModelPickerCommand.Execute(null);
         await AiTestSupport.PumpUntil(() => _client.Lists.Count == 1);
-        var firstLoad = panel.ModelLoadForTesting;
-        panel.OpenModelPickerForTesting();
+        var firstLoad = panel.ViewModel.ModelLoad;
+        panel.ViewModel.OpenModelPickerCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Same(firstLoad, panel.ModelLoadForTesting);
+        Assert.Same(firstLoad, panel.ViewModel.ModelLoad);
         Assert.Equal("Loading…", picker.PlaceholderText);
 
         _client.ListGate.SetResult();
-        await panel.ModelLoadForTesting;
+        await panel.ViewModel.ModelLoad;
         Dispatcher.UIThread.RunJobs();
 
         Assert.Single(_client.Lists);
@@ -852,16 +844,16 @@ public class StagingPanelAiButtonsTests : IDisposable
         _client.ListGate = new TaskCompletionSource();
         await ActivateAsync(p => p with { AutoFetchModels = true });
         var panel = NewPanel();
-        var picker = panel.ModelPickerForTesting!;
+        var picker = panel.ModelPicker;
 
-        panel.OpenModelPickerForTesting();
+        panel.ViewModel.OpenModelPickerCommand.Execute(null);
         await AiTestSupport.PumpUntil(() => _client.Lists.Count == 1);
 
         Assert.Equal("m", picker.SelectedItem);
         Assert.Contains("Loading models…", ToolTip.GetTip(picker) as string);
 
         _client.ListGate.SetResult();
-        await panel.ModelLoadForTesting;
+        await panel.ViewModel.ModelLoad;
         Dispatcher.UIThread.RunJobs();
 
         Assert.DoesNotContain("Loading models…", ToolTip.GetTip(picker) as string);

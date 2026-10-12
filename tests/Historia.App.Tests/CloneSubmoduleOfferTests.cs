@@ -22,7 +22,7 @@ public sealed class CloneSubmoduleOfferTests
         public Task DeleteTokenAsync(string key, CancellationToken ct = default) => Task.CompletedTask;
     }
 
-    private static ServiceProvider CreateServices()
+    internal static ServiceProvider CreateServices()
     {
         var sc = new ServiceCollection();
         var settings = SettingsService.Load();
@@ -69,75 +69,16 @@ public sealed class CloneSubmoduleOfferTests
         return sc.BuildServiceProvider();
     }
 
-    private static string CreateTestRepo(string name)
+    internal static string CreateTestRepo(string name)
     {
         var path = TestScratch.NewDirectory($"historia-clonetest-{name}-");
-        var psi = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("init");
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        using var p = System.Diagnostics.Process.Start(psi)!;
-        p.WaitForExit();
+        TestGit.Run(path, ["init"], testIdentity: false);
 
         File.WriteAllText(Path.Combine(path, "init.txt"), "hello\n");
-        var psiAdd = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psiAdd.ArgumentList.Add("add");
-        psiAdd.ArgumentList.Add("init.txt");
-        using var pAdd = System.Diagnostics.Process.Start(psiAdd)!;
-        pAdd.WaitForExit();
-
-        var psiCommit = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psiCommit.ArgumentList.Add("config");
-        psiCommit.ArgumentList.Add("user.name");
-        psiCommit.ArgumentList.Add("Test");
-        using (var pc = System.Diagnostics.Process.Start(psiCommit)!) pc.WaitForExit();
-
-        var psiEmail = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psiEmail.ArgumentList.Add("config");
-        psiEmail.ArgumentList.Add("user.email");
-        psiEmail.ArgumentList.Add("test@example.com");
-        using (var pe = System.Diagnostics.Process.Start(psiEmail)!) pe.WaitForExit();
-
-        var psiC = new System.Diagnostics.ProcessStartInfo("git")
-        {
-            WorkingDirectory = path,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psiC.ArgumentList.Add("commit");
-        psiC.ArgumentList.Add("-m");
-        psiC.ArgumentList.Add("init");
-        psiC.ArgumentList.Add("--no-gpg-sign");
-        using (var pCommit = System.Diagnostics.Process.Start(psiC)!) pCommit.WaitForExit();
+        TestGit.Run(path, ["add", "init.txt"], testIdentity: false);
+        TestGit.Run(path, ["config", "user.name", "Test"], testIdentity: false);
+        TestGit.Run(path, ["config", "user.email", "test@example.com"], testIdentity: false);
+        TestGit.Run(path, ["commit", "-m", "init", "--no-gpg-sign"], testIdentity: false);
 
         return path;
     }
@@ -145,15 +86,15 @@ public sealed class CloneSubmoduleOfferTests
     [Fact]
     public void PathsEqual_handles_trailing_separators()
     {
-        Assert.True(HomeView.PathsEqual(@"C:\src\repo\", @"C:\src\repo"));
-        Assert.True(HomeView.PathsEqual(@"C:/src/repo/", @"C:/src/repo"));
+        Assert.True(HomeViewModel.PathsEqual(@"C:\src\repo\", @"C:\src\repo"));
+        Assert.True(HomeViewModel.PathsEqual(@"C:/src/repo/", @"C:/src/repo"));
     }
 
     [Fact]
     public void PathsEqual_handles_mixed_separators()
     {
-        Assert.True(HomeView.PathsEqual(@"C:\src\repo", "C:/src/repo"));
-        Assert.True(HomeView.PathsEqual(@"C:\src/repo\sub", "C:/src/repo/sub"));
+        Assert.True(HomeViewModel.PathsEqual(@"C:\src\repo", "C:/src/repo"));
+        Assert.True(HomeViewModel.PathsEqual(@"C:\src/repo\sub", "C:/src/repo/sub"));
     }
 
     [Fact]
@@ -161,15 +102,15 @@ public sealed class CloneSubmoduleOfferTests
     {
         if (OperatingSystem.IsWindows())
         {
-            Assert.True(HomeView.PathsEqual(@"C:\Src\Repo", @"C:\src\repo"));
+            Assert.True(HomeViewModel.PathsEqual(@"C:\Src\Repo", @"C:\src\repo"));
         }
     }
 
     [Fact]
     public void PathsEqual_rejects_sibling_paths()
     {
-        Assert.False(HomeView.PathsEqual(@"C:\src\repo2", @"C:\src\repo"));
-        Assert.False(HomeView.PathsEqual("C:/src/repo2", "C:/src/repo"));
+        Assert.False(HomeViewModel.PathsEqual(@"C:\src\repo2", @"C:\src\repo"));
+        Assert.False(HomeViewModel.PathsEqual("C:/src/repo2", "C:/src/repo"));
     }
 
     [Fact]
@@ -189,10 +130,10 @@ public sealed class CloneSubmoduleOfferTests
             ws.Focus(ctx1);
             Assert.Same(ctx1, ws.Focused);
 
-            var found = HomeView.FindClonedRepository(ws.OpenRepositories, repoPath2);
+            var found = HomeViewModel.FindClonedRepository(ws.OpenRepositories, repoPath2);
             Assert.Same(ctx2, found);
 
-            var notFound = HomeView.FindClonedRepository(ws.OpenRepositories, TestScratch.NewPath("nonexistent-target-"));
+            var notFound = HomeViewModel.FindClonedRepository(ws.OpenRepositories, TestScratch.NewPath("nonexistent-target-"));
             Assert.Null(notFound);
 
             await ws.CloseAsync(ctx1);

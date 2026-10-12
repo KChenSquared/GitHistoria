@@ -28,6 +28,7 @@ public class StagingPanelProposalTests : IDisposable
     private readonly AiTestSupport.Notifications _notifications = new();
     private readonly InMemorySettingsService _settings = new();
     private readonly List<StagingPanelView> _views = [];
+    private readonly List<Window> _windows = [];
 
     public StagingPanelProposalTests()
     {
@@ -95,6 +96,8 @@ public class StagingPanelProposalTests : IDisposable
 
     public void Dispose()
     {
+        foreach (var window in _windows)
+            try { window.Close(); } catch { }
         foreach (var view in _views)
             try { view.Dispose(); } catch { }
         try { _context.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
@@ -106,6 +109,9 @@ public class StagingPanelProposalTests : IDisposable
     {
         var panel = new StagingPanelView(_sp, _context);
         _views.Add(panel);
+        var window = new Window { Width = 800, Height = 900, Content = panel };
+        _windows.Add(window);
+        window.Show();
         Dispatcher.UIThread.RunJobs();
         return panel;
     }
@@ -118,7 +124,7 @@ public class StagingPanelProposalTests : IDisposable
 
     private static void Click(Button button)
     {
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        button.Command!.Execute(button.CommandParameter);
         Dispatcher.UIThread.RunJobs();
     }
 
@@ -142,10 +148,10 @@ public class StagingPanelProposalTests : IDisposable
 
         Propose();
 
-        Assert.Equal(Proposal, panel.MessageForTesting.Text);
+        Assert.Equal(Proposal, panel.MessageInput.Text);
         Assert.Null(_context.State.PendingCommitMessage);
-        Assert.False(panel.OfferBarForTesting!.IsVisible);
-        Assert.True(panel.AgentNoteForTesting!.IsVisible);
+        Assert.False(panel.OfferBar.IsVisible);
+        Assert.True(panel.AgentNote.IsVisible);
         Assert.Empty(_dialogs.ConfirmDestructiveCalls);
         Assert.Empty(_dialogs.ConfirmCalls);
     }
@@ -154,12 +160,12 @@ public class StagingPanelProposalTests : IDisposable
     public void The_same_text_already_in_the_box_is_taken_without_asking()
     {
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "  " + Proposal + "\n";
+        panel.MessageInput.Text = "  " + Proposal + "\n";
 
         Propose();
 
         Assert.Null(_context.State.PendingCommitMessage);
-        Assert.False(panel.OfferBarForTesting!.IsVisible);
+        Assert.False(panel.OfferBar.IsVisible);
         Assert.Empty(_dialogs.ConfirmDestructiveCalls);
     }
 
@@ -167,27 +173,27 @@ public class StagingPanelProposalTests : IDisposable
     public void A_different_draft_is_kept_and_the_proposal_is_offered()
     {
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "my own draft";
+        panel.MessageInput.Text = "my own draft";
 
         Propose();
 
-        Assert.Equal("my own draft", panel.MessageForTesting.Text);
-        Assert.True(panel.OfferBarForTesting!.IsVisible);
+        Assert.Equal("my own draft", panel.MessageInput.Text);
+        Assert.True(panel.OfferBar.IsVisible);
         Assert.Equal(Proposal, _context.State.PendingCommitMessage);
-        Assert.False(panel.AgentNoteForTesting!.IsVisible);
+        Assert.False(panel.AgentNote.IsVisible);
         Assert.Empty(_dialogs.ConfirmDestructiveCalls);
-        Assert.Equal(Proposal, ToolTip.GetTip(panel.OfferBarForTesting));
+        Assert.Equal(Proposal, ToolTip.GetTip(panel.OfferBar));
     }
 
     [AvaloniaFact]
     public void The_offer_tooltip_shows_only_the_first_300_characters()
     {
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "draft";
+        panel.MessageInput.Text = "draft";
 
         Propose(new string('x', 500));
 
-        var tip = Assert.IsType<string>(ToolTip.GetTip(panel.OfferBarForTesting!));
+        var tip = Assert.IsType<string>(ToolTip.GetTip(panel.OfferBar));
         Assert.True(tip.Length <= 301);
     }
 
@@ -195,14 +201,14 @@ public class StagingPanelProposalTests : IDisposable
     public async Task Use_it_replaces_the_draft_after_a_destructive_confirm()
     {
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "my own draft";
+        panel.MessageInput.Text = "my own draft";
         Propose();
 
-        await panel.OfferUseForTestingAsync();
+        await panel.ViewModel.UseOfferCommand.ExecuteAsync(null);
 
-        Assert.Equal(Proposal, panel.MessageForTesting.Text);
+        Assert.Equal(Proposal, panel.MessageInput.Text);
         Assert.Null(_context.State.PendingCommitMessage);
-        Assert.False(panel.OfferBarForTesting!.IsVisible);
+        Assert.False(panel.OfferBar.IsVisible);
         var confirm = Assert.Single(_dialogs.ConfirmDestructiveCalls);
         Assert.Equal("Replace commit message", confirm.Title);
         Assert.Equal("Replace your commit message draft (12 characters) with the coding agent's message? Your draft is discarded.", confirm.Effect);
@@ -215,13 +221,13 @@ public class StagingPanelProposalTests : IDisposable
     {
         _dialogs.ConfirmDestructiveResult = false;
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "my own draft";
+        panel.MessageInput.Text = "my own draft";
         Propose();
 
-        await panel.OfferUseForTestingAsync();
+        await panel.ViewModel.UseOfferCommand.ExecuteAsync(null);
 
-        Assert.Equal("my own draft", panel.MessageForTesting.Text);
-        Assert.True(panel.OfferBarForTesting!.IsVisible);
+        Assert.Equal("my own draft", panel.MessageInput.Text);
+        Assert.True(panel.OfferBar.IsVisible);
         Assert.Equal(Proposal, _context.State.PendingCommitMessage);
     }
 
@@ -229,14 +235,14 @@ public class StagingPanelProposalTests : IDisposable
     public void Dismiss_hides_the_bar_and_forgets_the_proposal_without_touching_the_draft()
     {
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "my own draft";
+        panel.MessageInput.Text = "my own draft";
         Propose();
 
-        Click(panel.OfferDismissForTesting!);
+        Click(panel.OfferDismiss);
 
-        Assert.False(panel.OfferBarForTesting!.IsVisible);
+        Assert.False(panel.OfferBar.IsVisible);
         Assert.Null(_context.State.PendingCommitMessage);
-        Assert.Equal("my own draft", panel.MessageForTesting.Text);
+        Assert.Equal("my own draft", panel.MessageInput.Text);
         Assert.Empty(_dialogs.ConfirmDestructiveCalls);
     }
 
@@ -244,12 +250,12 @@ public class StagingPanelProposalTests : IDisposable
     public void A_newer_proposal_replaces_the_offer()
     {
         var panel = NewPanel();
-        panel.MessageForTesting.Text = "my own draft";
+        panel.MessageInput.Text = "my own draft";
         Propose("first");
 
         Propose("second");
 
-        Assert.True(panel.OfferBarForTesting!.IsVisible);
+        Assert.True(panel.OfferBar.IsVisible);
         Assert.Equal("second", _context.State.PendingCommitMessage);
     }
 
@@ -257,23 +263,23 @@ public class StagingPanelProposalTests : IDisposable
     public async Task A_read_only_box_is_never_written_and_use_it_does_nothing_until_it_is_free()
     {
         var panel = NewPanel();
-        panel.MessageForTesting.IsReadOnly = true;
+        panel.ViewModel.IsMessageReadOnly = true;
 
         Propose();
 
-        Assert.True(panel.OfferBarForTesting!.IsVisible);
-        Assert.Equal("", panel.MessageForTesting.Text);
+        Assert.True(panel.OfferBar.IsVisible);
+        Assert.Equal("", panel.MessageInput.Text);
 
-        await panel.OfferUseForTestingAsync();
+        await panel.ViewModel.UseOfferCommand.ExecuteAsync(null);
 
-        Assert.Equal("", panel.MessageForTesting.Text);
-        Assert.True(panel.OfferBarForTesting.IsVisible);
+        Assert.Equal("", panel.MessageInput.Text);
+        Assert.True(panel.OfferBar.IsVisible);
         Assert.Equal(Proposal, _context.State.PendingCommitMessage);
 
-        panel.MessageForTesting.IsReadOnly = false;
-        await panel.OfferUseForTestingAsync();
+        panel.ViewModel.IsMessageReadOnly = false;
+        await panel.ViewModel.UseOfferCommand.ExecuteAsync(null);
 
-        Assert.Equal(Proposal, panel.MessageForTesting.Text);
+        Assert.Equal(Proposal, panel.MessageInput.Text);
         Assert.Empty(_dialogs.ConfirmDestructiveCalls);
     }
 
@@ -285,7 +291,7 @@ public class StagingPanelProposalTests : IDisposable
 
         var panel = NewPanel();
 
-        Assert.Equal(Proposal, panel.MessageForTesting.Text);
+        Assert.Equal(Proposal, panel.MessageInput.Text);
         Assert.Null(_context.State.PendingCommitMessage);
     }
 
@@ -293,19 +299,19 @@ public class StagingPanelProposalTests : IDisposable
     public void A_proposal_never_touches_amend_or_moves_focus()
     {
         var panel = NewPanel();
-        panel.AmendForTesting.IsChecked = true;
-        panel.MessageForTesting.Text = "my own draft";
+        panel.AmendBox.IsChecked = true;
+        panel.MessageInput.Text = "my own draft";
 
         Propose();
 
-        Assert.True(panel.AmendForTesting.IsChecked);
-        Assert.False(panel.MessageForTesting.IsFocused);
+        Assert.True(panel.AmendBox.IsChecked);
+        Assert.False(panel.MessageInput.IsFocused);
 
-        panel.MessageForTesting.Text = "";
+        panel.MessageInput.Text = "";
         Propose("another");
 
-        Assert.True(panel.AmendForTesting.IsChecked);
-        Assert.False(panel.MessageForTesting.IsFocused);
+        Assert.True(panel.AmendBox.IsChecked);
+        Assert.False(panel.MessageInput.IsFocused);
     }
 
     [AvaloniaFact]
@@ -313,12 +319,12 @@ public class StagingPanelProposalTests : IDisposable
     {
         var panel = NewPanel();
         Propose();
-        Assert.True(panel.AgentNoteForTesting!.IsVisible);
+        Assert.True(panel.AgentNote.IsVisible);
 
-        panel.MessageForTesting.Text += " edited";
+        panel.MessageInput.Text += " edited";
         Dispatcher.UIThread.RunJobs();
 
-        Assert.False(panel.AgentNoteForTesting.IsVisible);
+        Assert.False(panel.AgentNote.IsVisible);
     }
 
     [AvaloniaFact]
@@ -326,19 +332,19 @@ public class StagingPanelProposalTests : IDisposable
     {
         var panel = NewPanel();
         await StageChangeAsync();
-        panel.MessageForTesting.Text = "feat: mine";
+        panel.MessageInput.Text = "feat: mine";
         Propose();
-        Assert.True(panel.OfferBarForTesting!.IsVisible);
+        Assert.True(panel.OfferBar.IsVisible);
 
-        await panel.CommitForTestingAsync();
+        await panel.ViewModel.CommitCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(_notifications.Published.Count == 1 && _notifications.Published[0].Severity == NotificationSeverity.Success,
             string.Join(" | ", _notifications.Published.Select(n => n.Message)));
         Assert.Null(_context.State.PendingCommitMessage);
-        Assert.False(panel.OfferBarForTesting.IsVisible);
-        Assert.False(panel.AgentNoteForTesting!.IsVisible);
-        Assert.Equal("", panel.MessageForTesting.Text);
+        Assert.False(panel.OfferBar.IsVisible);
+        Assert.False(panel.AgentNote.IsVisible);
+        Assert.Equal("", panel.MessageInput.Text);
     }
 
     [AvaloniaFact]
@@ -350,7 +356,7 @@ public class StagingPanelProposalTests : IDisposable
         Propose();
 
         Assert.Equal(Proposal, _context.State.PendingCommitMessage);
-        Assert.Equal("", panel.MessageForTesting.Text);
+        Assert.Equal("", panel.MessageInput.Text);
     }
 
     [AvaloniaFact]
@@ -358,11 +364,12 @@ public class StagingPanelProposalTests : IDisposable
     {
         var panel = NewPanel();
 
-        Assert.Null(panel.WandForTesting);
-        Assert.Null(panel.AiSettingsForTesting);
-        var row = Assert.IsType<Grid>(panel.CommitOptionsRowForTesting);
-        var child = Assert.Single(row.Children);
-        Assert.Same(panel.AmendForTesting, child);
-        Assert.Equal(HorizontalAlignment.Right, panel.AmendForTesting.HorizontalAlignment);
+        Assert.False(panel.Wand.IsEffectivelyVisible);
+        Assert.False(panel.AiSettings.IsEffectivelyVisible);
+        Assert.False(panel.ModelPicker.IsEffectivelyVisible);
+        var row = panel.CommitOptionsRow;
+        var child = Assert.Single(row.Children, c => c.IsVisible);
+        Assert.Same(panel.AmendBox, child);
+        Assert.Equal(HorizontalAlignment.Right, panel.AmendBox.HorizontalAlignment);
     }
 }

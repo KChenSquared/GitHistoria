@@ -12,11 +12,11 @@ public partial class MainWindow : Window
     private readonly IKeyboardCommandRouter? _keyboard;
     private readonly IScrollDirectionProbe? _scrollProbe;
     private readonly AtomicFileWriter? _placementWriter;
-    private readonly AppBandControl? _appBand;
-    private readonly ShortcutsBarControl? _leftShortcuts;
-    private readonly ShortcutsBarControl? _rightShortcuts;
+    private readonly AppBandView? _appBand;
+    private readonly ShortcutsBarView? _leftShortcuts;
+    private readonly ShortcutsBarView? _rightShortcuts;
     private readonly CommitGraphControl? _graph;
-    private readonly TerminalDockControl? _terminalDock;
+    private readonly TerminalDockView? _terminalDock;
     private readonly CenterPaneController? _centerPaneController;
 
     // Parameterless ctor for the XAML previewer only.
@@ -27,6 +27,10 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         _services = services;
+        ViewModel = services is null
+            ? new MainWindowViewModel()
+            : ActivatorUtilities.CreateInstance<MainWindowViewModel>(services);
+        DataContext = ViewModel;
         if (services is not null)
         {
             _theme = services.GetService<IThemeService>();
@@ -38,15 +42,15 @@ public partial class MainWindow : Window
             if (_theme is not null)
                 _theme.ThemeChanged += OnThemeChanged;
 
-            _appBand = new AppBandControl();
+            _appBand = new AppBandView();
             AppBandHost.Content = _appBand;
             _appBand.Initialize(services);
 
-            _leftShortcuts = new ShortcutsBarControl(services, ShortcutsBarSide.Left);
+            _leftShortcuts = new ShortcutsBarView(services, ShortcutsBarSide.Left);
             LeftShortcutsHost.Content = _leftShortcuts;
             _leftShortcuts.NaturalWidthChanged += (_, _) => OnShortcutsNaturalWidthChanged();
 
-            _rightShortcuts = new ShortcutsBarControl(services, ShortcutsBarSide.Right);
+            _rightShortcuts = new ShortcutsBarView(services, ShortcutsBarSide.Right);
             RightShortcutsHost.Content = _rightShortcuts;
             _rightShortcuts.NaturalWidthChanged += (_, _) => OnShortcutsNaturalWidthChanged();
 
@@ -63,7 +67,7 @@ public partial class MainWindow : Window
             SidebarHost.Content = new RefNavigatorView(services);
             DetailHost.Content = new DetailRouter(services);
 
-            _terminalDock = new TerminalDockControl();
+            _terminalDock = new TerminalDockView();
             TerminalDockHost.Content = _terminalDock;
             _terminalDock.Initialize(services);
         }
@@ -84,10 +88,11 @@ public partial class MainWindow : Window
         ApplyBodyLayout();
     }
 
-    private readonly UnsavedWorkCloseGate _closeGate = new();
+    internal MainWindowViewModel ViewModel { get; }
 
     protected override void OnClosed(EventArgs e)
     {
+        ViewModel.Dispose();
         if (_theme is not null)
             _theme.ThemeChanged -= OnThemeChanged;
         _appBand?.Dispose();
@@ -373,11 +378,9 @@ public partial class MainWindow : Window
         Historia.Diagnostics.PerfLog.Mark("MainWindow.OnClosing start");
         base.OnClosing(e);
 
-        var registry = _services?.GetService<IUnsavedWorkRegistry>();
-        var dialogs = _services?.GetService<IDialogService>();
-        var work = registry?.For(null) ?? [];
-
-        var decision = _closeGate.Evaluate(dialogs is not null ? work.Count : 0);
+        // Cancel is set synchronously: an async void handler returns to the window at its first
+        // await, so a cancel set after it would arrive too late.
+        var decision = ViewModel.EvaluateClose();
         switch (decision)
         {
             case CloseDecision.CancelOnly:
@@ -386,17 +389,7 @@ public partial class MainWindow : Window
 
             case CloseDecision.CancelAndPrompt:
                 e.Cancel = true;
-                var proceed = false;
-                try
-                {
-                    proceed = await UnsavedWorkPrompt.ResolveAsync(work, dialogs!).ConfigureAwait(true);
-                }
-                finally
-                {
-                    _closeGate.Complete(proceed);
-                }
-
-                if (proceed)
+                if (await ViewModel.ResolveUnsavedWorkAsync())
                 {
                     Close();
                 }

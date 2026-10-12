@@ -73,18 +73,7 @@ public sealed class RefNavigatorPowerToolsReloadTests
 
         public void RunGit(params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = Path,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            p.WaitForExit();
-            if (p.ExitCode != 0)
-                throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {p.StandardError.ReadToEnd()}");
+            TestGit.RunChecked(Path, args, testIdentity: false);
         }
 
         public void Dispose() => TestScratch.Delete(Path);
@@ -167,16 +156,8 @@ public sealed class RefNavigatorPowerToolsReloadTests
         try { setup.Fixture.Dispose(); } catch { }
     }
 
-    private static List<Border> GetSectionHeaders(RefNavigatorView view)
-    {
-        var headers = new List<Border>();
-        foreach (var child in view._root.Children)
-        {
-            if (child is Border b && b.Child is Grid g && g.ColumnDefinitions.Count >= 3)
-                headers.Add(b);
-        }
-        return headers;
-    }
+    private static List<Border> GetSectionHeaders(RefNavigatorView view) =>
+        view.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("section-header")).ToList();
 
     private static void ExpandSection(Border header)
     {
@@ -187,32 +168,18 @@ public sealed class RefNavigatorPowerToolsReloadTests
         Dispatcher.UIThread.RunJobs();
     }
 
-    private static StackPanel GetSectionBody(RefNavigatorView view, int sectionIndex)
-    {
-        var headers = GetSectionHeaders(view);
-        var header = headers[sectionIndex];
-        var headerIdx = view._root.Children.IndexOf(header);
-        for (int i = headerIdx + 1; i < view._root.Children.Count; i++)
-        {
-            if (view._root.Children[i] is ScrollViewer sv && sv.Content is StackPanel sp)
-                return sp;
-            if (headers.Contains(view._root.Children[i]))
-                break;
-        }
-        throw new InvalidOperationException($"Body for section {sectionIndex} not found");
-    }
+    private static ListBox GetSectionBody(RefNavigatorView view, int sectionIndex) =>
+        GetSectionHeaders(view)[sectionIndex].GetVisualAncestors().OfType<StackPanel>().First()
+            .Children.OfType<ListBox>().Single();
 
-    private static List<string> GetRowTexts(StackPanel body)
+    private static List<string> GetRowTexts(ListBox body)
     {
         var texts = new List<string>();
-        foreach (var child in body.Children)
+        foreach (var item in body.GetVisualDescendants().OfType<ListBoxItem>().OrderBy(i => i.Bounds.Y))
         {
-            if (child is Border b)
-            {
-                var tb = b.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Text != "⋯" && t.Text != "▾" && t.Text != "▸");
-                if (tb?.Text is not null)
-                    texts.Add(tb.Text);
-            }
+            var tb = item.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Text != "⋯" && t.Text != "▾" && t.Text != "▸");
+            if (tb?.Text is not null)
+                texts.Add(tb.Text);
         }
         return texts;
     }
@@ -423,8 +390,7 @@ public sealed class RefNavigatorPowerToolsReloadTests
             Assert.Equal(2, setup.Counter.ListCount);
 
             var stale = new RefsChangedEventArgs([], [], []) { StashStamp = ctx2.State.StashStamp + 1 };
-            typeof(RefNavigatorView).GetMethod("OnRefsChanged", BindingFlags.NonPublic | BindingFlags.Instance)!
-                .Invoke(setup.View, [setup.Context.State, stale]);
+            setup.View.ViewModel.OnRefsChanged(setup.Context.State, stale);
             for (var i = 0; i < 10; i++)
             {
                 Dispatcher.UIThread.RunJobs();
@@ -432,9 +398,7 @@ public sealed class RefNavigatorPowerToolsReloadTests
             }
 
             Assert.Equal(2, setup.Counter.ListCount);
-            var baseline = typeof(RefNavigatorView).GetField("_loadedStashStamp", BindingFlags.NonPublic | BindingFlags.Instance)!
-                .GetValue(setup.View);
-            Assert.Equal(ctx2.State.StashStamp, (long?)baseline);
+            Assert.Equal(ctx2.State.StashStamp, setup.View.ViewModel.LoadedStashStamp);
             await ctx2.DisposeAsync();
         }
         finally

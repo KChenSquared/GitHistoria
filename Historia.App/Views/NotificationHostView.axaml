@@ -1,0 +1,122 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.NotificationHostView"
+             x:DataType="vm:NotificationHostViewModel">
+    <UserControl.Styles>
+        <!-- The card border carries the severity: one class per severity, set from the item view
+             model, so the colour follows the palette and repaints on a theme change. -->
+        <Style Selector="Border.card.error">
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorDanger}" />
+        </Style>
+        <Style Selector="Border.card.warning">
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorWarning}" />
+        </Style>
+        <Style Selector="Border.card.success">
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorSuccess}" />
+        </Style>
+        <Style Selector="Border.card.info">
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorderStrong}" />
+        </Style>
+
+        <!-- A toast with a details pane is wider than one without. -->
+        <Style Selector="StackPanel.toast-body">
+            <Setter Property="MaxWidth" Value="420" />
+        </Style>
+        <Style Selector="StackPanel.toast-body.has-details">
+            <Setter Property="MaxWidth" Value="920" />
+        </Style>
+    </UserControl.Styles>
+
+    <ItemsControl ItemsSource="{Binding Items}"
+                  Margin="12"
+                  HorizontalAlignment="Right"
+                  VerticalAlignment="Bottom">
+        <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+                <StackPanel Spacing="8" />
+            </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:NotificationItemViewModel">
+                <Border Classes="card"
+                        Classes.error="{Binding IsError}"
+                        Classes.warning="{Binding IsWarning}"
+                        Classes.success="{Binding IsSuccess}"
+                        Classes.info="{Binding IsInfo}"
+                        Padding="5"
+                        BoxShadow="0 4 16 0 #40000000">
+                    <StackPanel Classes="toast-body"
+                                Classes.has-details="{Binding HasDetails}"
+                                Spacing="8">
+                        <Grid ColumnDefinitions="*,Auto" Margin="7,7,7,0">
+                            <!-- A toast shows its whole message: it wraps instead of trimming. -->
+                            <TextBlock Classes="text"
+                                       Text="{Binding DisplayMessage}"
+                                       TextWrapping="Wrap"
+                                       TextTrimming="None" />
+                            <StackPanel Grid.Column="1"
+                                        Orientation="Horizontal"
+                                        Spacing="4"
+                                        VerticalAlignment="Top">
+                                <Button Classes="secondary"
+                                        Content="Copy"
+                                        Command="{Binding CopyDetailsCommand}"
+                                        IsVisible="{Binding ShowCopy}"
+                                        Padding="7,2"
+                                        MinHeight="0"
+                                        FontSize="11"
+                                        VerticalAlignment="Top"
+                                        Cursor="Hand" />
+                                <Button Command="{Binding DismissCommand}"
+                                        ToolTip.Tip="Dismiss"
+                                        Padding="4"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Cursor="Hand">
+                                    <ctl:IconGlyph Icon="close" Size="14" ForegroundKey="ColorTextMuted" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- The detail text sits in a fixed, always-visible scrollable pane. -->
+                        <Border IsVisible="{Binding HasDetails}"
+                                Height="220"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                BorderBrush="{DynamicResource ColorBorderStrong}"
+                                Background="{DynamicResource ColorChrome}">
+                            <ScrollViewer Padding="8"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          VerticalScrollBarVisibility="Auto">
+                                <SelectableTextBlock Text="{Binding Details}"
+                                                     FontFamily="Consolas, monospace"
+                                                     FontSize="11"
+                                                     TextWrapping="Wrap" />
+                            </ScrollViewer>
+                        </Border>
+
+                        <ItemsControl IsVisible="{Binding HasActions}"
+                                      ItemsSource="{Binding Actions}"
+                                      Margin="7,0,7,5">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" Spacing="6" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:NotificationActionViewModel">
+                                    <Button Classes="secondary"
+                                            Content="{Binding Label}"
+                                            Command="{Binding RunCommand}"
+                                            Cursor="Hand" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+        </ItemsControl.ItemTemplate>
+    </ItemsControl>
+</UserControl>

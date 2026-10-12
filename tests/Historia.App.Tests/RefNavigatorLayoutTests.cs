@@ -56,22 +56,7 @@ public sealed class RefNavigatorLayoutTests
 
         private static void RunGit(string dir, params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            psi.Environment["GIT_AUTHOR_NAME"] = "Test";
-            psi.Environment["GIT_AUTHOR_EMAIL"] = "test@example.com";
-            psi.Environment["GIT_COMMITTER_NAME"] = "Test";
-            psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            p.WaitForExit();
+            TestGit.Run(dir, args);
         }
 
         public void Dispose() => TestScratch.Delete(Path);
@@ -150,31 +135,18 @@ public sealed class RefNavigatorLayoutTests
         try { ctx.Fixture.Dispose(); } catch { }
     }
 
-    private static List<Border> GetSectionHeaders(RefNavigatorView view)
-    {
-        var headers = new List<Border>();
-        foreach (var child in view._root.Children)
-        {
-            if (child is Border b && b.Child is Grid g && g.ColumnDefinitions.Count >= 3)
-                headers.Add(b);
-        }
-        return headers;
-    }
+    private static List<Border> GetSectionHeaders(RefNavigatorView view) =>
+        view.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("section-header")).ToList();
 
-    private static StackPanel GetSectionBody(RefNavigatorView view, int sectionIndex)
-    {
-        var headers = GetSectionHeaders(view);
-        var header = headers[sectionIndex];
-        var headerIdx = view._root.Children.IndexOf(header);
-        for (int i = headerIdx + 1; i < view._root.Children.Count; i++)
-        {
-            if (view._root.Children[i] is ScrollViewer sv && sv.Content is StackPanel sp)
-                return sp;
-            if (headers.Contains(view._root.Children[i]))
-                break;
-        }
-        throw new InvalidOperationException($"No body found for section {sectionIndex}");
-    }
+    private static ListBox GetSectionBody(RefNavigatorView view, int sectionIndex) =>
+        GetSectionHeaders(view)[sectionIndex].GetVisualAncestors().OfType<StackPanel>().First()
+            .Children.OfType<ListBox>().Single();
+
+    private static List<Border> RowBorders(ListBox body) =>
+        body.GetVisualDescendants().OfType<ListBoxItem>()
+            .OrderBy(i => i.Bounds.Y)
+            .Select(i => (Border)i.Presenter!.Child!)
+            .ToList();
 
     private static double RightEdgeInView(Control view, Control element)
     {
@@ -216,7 +188,7 @@ public sealed class RefNavigatorLayoutTests
         try
         {
             var body = GetSectionBody(setup.View, 0);
-            var row = body.Children.OfType<Border>()
+            var row = RowBorders(body)
                 .FirstOrDefault(b => ToolTip.GetTip(b)?.ToString() == longName);
             Assert.NotNull(row);
 
@@ -255,7 +227,7 @@ public sealed class RefNavigatorLayoutTests
             for (int i = 0; i < 50; i++)
             {
                 Dispatcher.UIThread.RunJobs();
-                var texts = GetSectionBody(setup.View, 3).Children.OfType<Border>()
+                var texts = RowBorders(GetSectionBody(setup.View, 3))
                     .SelectMany(b => b.GetVisualDescendants().OfType<TextBlock>())
                     .Select(t => t.Text);
                 if (!texts.Contains("Loading…")) break;
@@ -278,11 +250,10 @@ public sealed class RefNavigatorLayoutTests
 
             for (int i = 0; i < headers.Count; i++)
             {
-                StackPanel body;
-                try { body = GetSectionBody(setup.View, i); }
-                catch (InvalidOperationException) { continue; }
+                var body = GetSectionBody(setup.View, i);
+                if (!body.IsEffectivelyVisible) continue;
 
-                foreach (var row in body.Children.OfType<Border>())
+                foreach (var row in RowBorders(body))
                 {
                     if (row.Child is null) continue;
                     var edge = RightEdgeInView(setup.View, row.Child);
@@ -304,7 +275,7 @@ public sealed class RefNavigatorLayoutTests
         try
         {
             var body = GetSectionBody(setup.View, 0);
-            var row = body.Children.OfType<Border>().First(b => ToolTip.GetTip(b)?.ToString() == longName);
+            var row = RowBorders(body).First(b => ToolTip.GetTip(b)?.ToString() == longName);
             var label = row.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == longName);
             var narrowEdge = RightEdgeInView(setup.View, label);
             var narrowWidth = label.Bounds.Width;
@@ -313,7 +284,7 @@ public sealed class RefNavigatorLayoutTests
             Dispatcher.UIThread.RunJobs();
 
             var bodyAfter = GetSectionBody(setup.View, 0);
-            var rowAfter = bodyAfter.Children.OfType<Border>().First(b => ToolTip.GetTip(b)?.ToString() == longName);
+            var rowAfter = RowBorders(bodyAfter).First(b => ToolTip.GetTip(b)?.ToString() == longName);
             var labelAfter = rowAfter.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == longName);
             var wideWidth = labelAfter.Bounds.Width;
             var wideLimit = setup.View.Bounds.Width - RefNavigatorView.RowRightGutter;
@@ -341,14 +312,14 @@ public sealed class RefNavigatorLayoutTests
             // holds a "feature" folder (depth 1, collapsed by default) holding leaf "auth" —
             // full ref name "origin/feature/auth". Expand the nested folder to reach the leaf.
             var body = GetSectionBody(setup.View, 1);
-            var folderRow = body.Children.OfType<Border>()
+            var folderRow = RowBorders(body)
                 .FirstOrDefault(b => ToolTip.GetTip(b)?.ToString() == "feature");
             Assert.NotNull(folderRow);
             Click(folderRow!);
             Dispatcher.UIThread.RunJobs();
 
             body = GetSectionBody(setup.View, 1);
-            var leafRow = body.Children.OfType<Border>()
+            var leafRow = RowBorders(body)
                 .FirstOrDefault(b => ToolTip.GetTip(b)?.ToString() == "origin/feature/auth");
             Assert.NotNull(leafRow);
         }
@@ -375,8 +346,8 @@ public sealed class RefNavigatorLayoutTests
                 Click(stashesHeader);
             Dispatcher.UIThread.RunJobs();
 
-            var rootBars = setup.View._root.GetVisualDescendants().OfType<ScrollBar>().ToHashSet();
-            var outerBar = setup.View._outerScroller.GetVisualDescendants()
+            var rootBars = setup.View.Root.GetVisualDescendants().OfType<ScrollBar>().ToHashSet();
+            var outerBar = setup.View.OuterScroller.GetVisualDescendants()
                 .OfType<ScrollBar>().Single(b => b.Orientation == Orientation.Vertical && !rootBars.Contains(b));
             Assert.True(outerBar.IsVisible);
 
@@ -411,9 +382,9 @@ public sealed class RefNavigatorLayoutTests
         try
         {
             Dispatcher.UIThread.RunJobs();
-            Assert.Equal(default, setup.View._root.Margin);
+            Assert.Equal(default, setup.View.Root.Margin);
 
-            var sBar = setup.View._root.GetVisualDescendants()
+            var sBar = setup.View.Root.GetVisualDescendants()
                 .OfType<ScrollBar>()
                 .First(b => b.Orientation == Orientation.Vertical && b.IsVisible);
             var sRight = RightEdgeInView(setup.View, sBar);
@@ -433,15 +404,15 @@ public sealed class RefNavigatorLayoutTests
         try
         {
             Dispatcher.UIThread.RunJobs();
-            Assert.Equal(default, setup.View._root.Margin);
+            Assert.Equal(default, setup.View.Root.Margin);
 
             setup.Window.Height = 250;
             Dispatcher.UIThread.RunJobs();
-            Assert.Equal(new Thickness(0, 0, ScrollBarMetrics.NestedGap, 0), setup.View._root.Margin);
+            Assert.Equal(new Thickness(0, 0, ScrollBarMetrics.NestedGap, 0), setup.View.Root.Margin);
 
             setup.Window.Height = 1200;
             Dispatcher.UIThread.RunJobs();
-            Assert.Equal(default, setup.View._root.Margin);
+            Assert.Equal(default, setup.View.Root.Margin);
         }
         finally
         {
@@ -460,7 +431,7 @@ public sealed class RefNavigatorLayoutTests
             string? navigated = null;
             nav.NavigationRequested += target => navigated = target;
 
-            var sBar = setup.View._root.GetVisualDescendants()
+            var sBar = setup.View.Root.GetVisualDescendants()
                 .OfType<ScrollBar>()
                 .First(b => b.Orientation == Orientation.Vertical && b.IsVisible);
             var thumb = sBar.GetVisualDescendants().OfType<Thumb>().First();

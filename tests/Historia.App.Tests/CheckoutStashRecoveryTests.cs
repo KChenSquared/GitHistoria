@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// Verify BranchMenu.RunWithStashRecovery integration when a checkout conflict occurs —
+/// Verify BranchActions.RunWithStashRecovery integration when a checkout conflict occurs —
 /// ensures the classified UncommittedChanges error carries a "Stash &amp; retry" action that
 /// successfully creates and switches to the branch.
 /// </summary>
@@ -83,27 +83,7 @@ public sealed class CheckoutStashRecoveryTests
 
         private static string RunGit(string dir, params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            psi.Environment["GIT_AUTHOR_NAME"] = "Test";
-            psi.Environment["GIT_AUTHOR_EMAIL"] = "test@example.com";
-            psi.Environment["GIT_COMMITTER_NAME"] = "Test";
-            psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            var stdout = p.StandardOutput.ReadToEnd();
-            var stderr = p.StandardError.ReadToEnd();
-            p.WaitForExit(30_000);
-            if (p.ExitCode != 0)
-                throw new InvalidOperationException($"git failed ({p.ExitCode}): {stderr}");
-            return stdout;
+            return TestGit.RunChecked(dir, args, timeout: TimeSpan.FromSeconds(30));
         }
 
         public void Dispose() => TestScratch.Delete(Path);
@@ -177,7 +157,7 @@ public sealed class CheckoutStashRecoveryTests
                 await ctx.State.RefreshRefsAsync();
 
                 var stash = sp.GetRequiredService<IStashService>();
-                await BranchMenu.RunWithStashRecovery(
+                await BranchActions.RunWithStashRecovery(
                     ctx, notify, stash,
                     () => ctx.Gateway.CreateBranchAsync("test-conflict", c1, checkout: true),
                     "Create branch");
@@ -220,7 +200,7 @@ public sealed class CheckoutStashRecoveryTests
                 await ctx.State.RefreshRefsAsync();
 
                 var stash = sp.GetRequiredService<IStashService>();
-                await BranchMenu.RunWithStashRecovery(
+                await BranchActions.RunWithStashRecovery(
                     ctx, notify, stash,
                     () => ctx.Gateway.CreateBranchAsync("test-conflict", c1, checkout: true),
                     "Create branch");

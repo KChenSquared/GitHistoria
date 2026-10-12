@@ -72,28 +72,7 @@ public sealed class GraphLaneRunDrawTests
 
         private static void RunGit(string dir, string? stdin, params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardInput = stdin is not null,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            if (stdin is not null)
-            {
-                p.StandardInput.Write(stdin);
-                p.StandardInput.Close();
-            }
-            var err = p.StandardError.ReadToEndAsync();
-            p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-            if (p.ExitCode != 0)
-                throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {err.Result}");
+            TestGit.RunChecked(dir, args, stdin, testIdentity: false);
         }
 
         public void Dispose() => TestScratch.Delete(Path);

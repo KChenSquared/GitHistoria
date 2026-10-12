@@ -66,13 +66,12 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             await WaitForCommitLoadedAsync(view);
 
-            var tb = Assert.IsType<SelectableTextBlock>(view.MessageHostForTesting.Content);
             if (assertNoModeButtons)
             {
                 var allButtons = view.GetVisualDescendants().OfType<Button>().ToList();
                 Assert.DoesNotContain(allButtons, b => b.Content is "Raw" or "Rendered");
             }
-            return string.Concat(tb.Inlines!.OfType<Avalonia.Controls.Documents.Run>().Select(r => r.Text));
+            return string.Concat(view.MessageText.Inlines!.OfType<Avalonia.Controls.Documents.Run>().Select(r => r.Text));
         }
         finally
         {
@@ -91,26 +90,26 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             await WaitForCommitLoadedAsync(view);
 
-            Assert.NotNull(view.AuthorTextForTesting);
-            Assert.NotNull(view.HashTextForTesting);
-
-            Assert.Equal(16, view.AuthorTextForTesting.FontSize);
-            Assert.Equal(14, view.HashTextForTesting.FontSize);
-            Assert.NotNull(view.AuthorTextForTesting.Foreground);
+            Assert.Equal(16, view.AuthorText.FontSize);
+            Assert.Equal(14, view.HashText.FontSize);
+            Assert.NotNull(view.AuthorText.Foreground);
             if (Application.Current?.TryFindResource("ColorText", out var res) == true && res is IBrush expectedBrush)
             {
-                Assert.Equal(expectedBrush, view.AuthorTextForTesting.Foreground);
+                Assert.Equal(expectedBrush, view.AuthorText.Foreground);
             }
             if (Application.Current?.TryFindResource("ColorAccent", out var accentRes) == true && accentRes is IBrush expectedAccent)
             {
-                Assert.Equal(expectedAccent, view.HashTextForTesting.Foreground);
+                Assert.Equal(expectedAccent, view.HashText.Foreground);
             }
 
-            var metaRow = Assert.IsType<Grid>(view.MetaHostForTesting.Content);
-            var allTextBlocks = metaRow.GetVisualDescendants().OfType<TextBlock>().ToList();
+            Assert.Equal("Test", view.AuthorText.Text);
+            Assert.Equal(view.ViewModel.ShortHash, view.HashText.Text);
+            Assert.True(IsUnderlined(view.HashText));
+
+            var allTextBlocks = view.MetaRow.GetVisualDescendants().OfType<TextBlock>().ToList();
             Assert.Equal(2, allTextBlocks.Count);
-            Assert.Contains(view.AuthorTextForTesting, allTextBlocks);
-            Assert.Contains(view.HashTextForTesting, allTextBlocks);
+            Assert.Contains(view.AuthorText, allTextBlocks);
+            Assert.Contains(view.HashText, allTextBlocks);
         }
         finally
         {
@@ -129,8 +128,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             await WaitForCommitLoadedAsync(view);
 
-            var dateText = view.DateTextForTesting;
-            Assert.NotNull(dateText);
+            var dateText = view.DateText;
             Assert.Equal(12, dateText.FontSize);
             Assert.Matches(@"^\d{4}-\d{2}-\d{2}$", dateText.Text);
 
@@ -139,7 +137,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
                 Assert.Equal(expectedMuted, dateText.Foreground);
             }
 
-            var parentsRow = Assert.IsType<Grid>(view.ParentsHostForTesting.Content);
+            Assert.Same(view.ParentsRow, dateText.GetVisualAncestors().OfType<Grid>().First());
             Assert.Equal(0, Grid.GetColumn(dateText));
 
             var tip = ToolTip.GetTip(dateText)?.ToString();
@@ -150,6 +148,33 @@ public class CommitDetailPanelLayoutTests : IDisposable
         }
         finally
         {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Date_follows_the_author_date_setting_live()
+    {
+        var settings = _sp.GetRequiredService<ISettingsService>();
+        await settings.UpdateAsync(s => s with { ShowAuthorDate = false });
+        var headId = _fixture.HeadCommitId;
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            var detail = view.ViewModel.Detail!;
+            Assert.Equal($"{detail.CommitWhen:yyyy-MM-dd}", view.DateText.Text);
+
+            await settings.UpdateAsync(s => s with { ShowAuthorDate = true });
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal($"{detail.AuthorWhen:yyyy-MM-dd}", view.DateText.Text);
+        }
+        finally
+        {
+            await settings.UpdateAsync(s => s with { ShowAuthorDate = false });
             window.Close();
         }
     }
@@ -166,9 +191,8 @@ public class CommitDetailPanelLayoutTests : IDisposable
             await WaitForCommitLoadedAsync(view);
             Dispatcher.UIThread.RunJobs();
 
-            var parentsRow = Assert.IsType<Grid>(view.ParentsHostForTesting.Content);
-            var parentsList = view.ParentsListForTesting;
-            Assert.NotNull(parentsList);
+            var parentsRow = view.ParentsRow;
+            var parentsList = view.ParentsList;
             Assert.Equal(Avalonia.Layout.HorizontalAlignment.Right, parentsList.HorizontalAlignment);
 
             var rowBounds = parentsRow.Bounds;
@@ -195,9 +219,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             await WaitForCommitLoadedAsync(view);
 
-            var parentsList = view.ParentsListForTesting;
-            Assert.NotNull(parentsList);
-            var label = Assert.IsType<TextBlock>(parentsList.Children[0]);
+            var label = view.ParentsList.GetVisualDescendants().OfType<TextBlock>().First();
             Assert.Equal(12, label.FontSize);
             Assert.Equal("Parent(s):", label.Text);
             Assert.NotNull(label.Foreground);
@@ -206,9 +228,9 @@ public class CommitDetailPanelLayoutTests : IDisposable
                 Assert.Equal(expectedMuted, label.Foreground);
             }
 
-            var hash = Assert.IsType<TextBlock>(parentsList.Children[1]);
+            var hash = Assert.Single(ParentHashes(view));
             Assert.Equal(12, hash.FontSize);
-            Assert.Equal(TextDecorations.Underline, hash.TextDecorations);
+            Assert.True(IsUnderlined(hash));
             Assert.NotNull(hash.Foreground);
             if (Application.Current?.TryFindResource("ColorText", out var textRes) == true && textRes is IBrush expectedText)
             {
@@ -232,11 +254,9 @@ public class CommitDetailPanelLayoutTests : IDisposable
         try
         {
             await WaitForCommitLoadedAsync(rootView);
-            var rootParentsList = rootView.ParentsListForTesting;
-            Assert.NotNull(rootParentsList);
-            Assert.Equal(2, rootParentsList.Children.Count);
-            var noneText = Assert.IsType<TextBlock>(rootParentsList.Children[1]);
-            Assert.Equal("none", noneText.Text);
+            Assert.Empty(ParentHashes(rootView));
+            var noneText = rootView.ParentsList.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Text == "none");
+            Assert.True(noneText.IsEffectivelyVisible);
         }
         finally
         {
@@ -251,11 +271,10 @@ public class CommitDetailPanelLayoutTests : IDisposable
         try
         {
             await WaitForCommitLoadedAsync(normalView);
-            var normalParentsList = normalView.ParentsListForTesting;
-            Assert.NotNull(normalParentsList);
-            Assert.Equal(2, normalParentsList.Children.Count);
-            var parentHash = Assert.IsType<TextBlock>(normalParentsList.Children[1]);
+            var parentHash = Assert.Single(ParentHashes(normalView));
             Assert.Equal(rootId.ToShortString(10), parentHash.Text);
+            Assert.DoesNotContain(normalView.ParentsList.GetVisualDescendants().OfType<TextBlock>(),
+                t => t.Text == "none" && t.IsEffectivelyVisible);
         }
         finally
         {
@@ -270,13 +289,10 @@ public class CommitDetailPanelLayoutTests : IDisposable
         try
         {
             await WaitForCommitLoadedAsync(mergeView);
-            var mergeParentsList = mergeView.ParentsListForTesting;
-            Assert.NotNull(mergeParentsList);
-            Assert.Equal(3, mergeParentsList.Children.Count);
-            var hash1 = Assert.IsType<TextBlock>(mergeParentsList.Children[1]);
-            var hash2 = Assert.IsType<TextBlock>(mergeParentsList.Children[2]);
-            Assert.Equal(parent1Id.ToShortString(10), hash1.Text);
-            Assert.Equal(parent2Id.ToShortString(10), hash2.Text);
+            var hashes = ParentHashes(mergeView);
+            Assert.Equal(2, hashes.Count);
+            Assert.Equal(parent1Id.ToShortString(10), hashes[0].Text);
+            Assert.Equal(parent2Id.ToShortString(10), hashes[1].Text);
         }
         finally
         {
@@ -295,9 +311,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             await WaitForCommitLoadedAsync(view);
 
-            var parentsList = view.ParentsListForTesting;
-            Assert.NotNull(parentsList);
-            var hash2 = Assert.IsType<TextBlock>(parentsList.Children[2]);
+            var hash2 = ParentHashes(view)[1];
 
             GitObjectId? revealed = null;
             _context.State.RevealCommitRequested += (_, e) => revealed = e.CommitId;
@@ -342,9 +356,8 @@ public class CommitDetailPanelLayoutTests : IDisposable
             const double expectedAuthorGap = SectionFrame.HeaderGap + 4; // 6
             Assert.Equal(6, expectedAuthorGap);
 
-            var topSection = view.TopSectionForTesting;
-            var author = view.AuthorTextForTesting;
-            Assert.NotNull(author);
+            var topSection = view.TopSection;
+            var author = view.AuthorText;
 
             var authorOrigin = author.TranslatePoint(new Point(0, 0), topSection);
             Assert.NotNull(authorOrigin);
@@ -352,10 +365,10 @@ public class CommitDetailPanelLayoutTests : IDisposable
             var gapAboveAuthor = authorOrigin.Value.Y - sectionInnerTop;
             Assert.InRange(Math.Abs(gapAboveAuthor - expectedAuthorGap), 0, 1.01);
 
-            var rule = view.AuthorRuleForTesting;
+            var rule = view.AuthorRule;
             Assert.Equal(1, rule.Height);
 
-            var parentsHost = view.ParentsHostForTesting;
+            var parentsHost = view.ParentsRow;
             var parentsBottom = parentsHost.TranslatePoint(new Point(0, parentsHost.Bounds.Height), topSection);
             var ruleTop = rule.TranslatePoint(new Point(0, 0), topSection);
             var ruleBottom = rule.TranslatePoint(new Point(0, rule.Bounds.Height), topSection);
@@ -366,8 +379,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
             var gapAboveRule = ruleTop.Value.Y - parentsBottom.Value.Y;
             Assert.InRange(Math.Abs(gapAboveRule - expectedAuthorGap), 0, 1.01);
 
-            var messageScroll = Assert.IsType<ScrollViewer>(view.MessageHostForTesting.Parent);
-            var messageTop = messageScroll.TranslatePoint(new Point(0, 0), topSection);
+            var messageTop = view.MessageScroll.TranslatePoint(new Point(0, 0), topSection);
             Assert.NotNull(messageTop);
 
             var gapBelowRule = messageTop.Value.Y - ruleBottom.Value.Y;
@@ -392,23 +404,121 @@ public class CommitDetailPanelLayoutTests : IDisposable
             await WaitForCommitLoadedAsync(view);
             Dispatcher.UIThread.RunJobs();
 
-            Assert.Equal(16, view.FilesLabelForTesting.FontSize);
+            Assert.Equal(16, view.FilesLabel.FontSize);
 
             // Path view (default)
-            var pathRowGrid = view.FilesHostForTesting.GetVisualDescendants().OfType<Grid>().First(g => g.Height == 22);
+            var pathRowGrid = view.FilesList.GetVisualDescendants().OfType<Grid>().First(g => g.Height == 22);
             Assert.Equal(22, pathRowGrid.Height);
             var pathTextBlock = pathRowGrid.Children.OfType<TextBlock>().First(tb => tb.Text == "f.txt");
             Assert.Equal(14, pathTextBlock.FontSize);
 
             // Switch to Tree view
-            var treeBtn = view.GetVisualDescendants().OfType<Button>().First(b => b.Content is "Tree");
-            treeBtn.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
-            Dispatcher.UIThread.RunJobs();
+            Click(window, ModeButton(view, "Tree"));
 
-            var treeRowGrid = view.FilesHostForTesting.GetVisualDescendants().OfType<Grid>().First(g => g.Height == 22);
+            var treeRowGrid = view.FilesList.GetVisualDescendants().OfType<Grid>().First(g => g.Height == 22);
             Assert.Equal(22, treeRowGrid.Height);
             var treeTextBlock = treeRowGrid.Children.OfType<TextBlock>().First(tb => tb.Text == "f.txt");
             Assert.Equal(14, treeTextBlock.FontSize);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Files_mode_buttons_switch_the_mode_and_mark_the_active_one()
+    {
+        await UsePathViewAsync();
+        var headId = _fixture.HeadCommitId;
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            Dispatcher.UIThread.RunJobs();
+            var pathButton = ModeButton(view, "Path");
+            var treeButton = ModeButton(view, "Tree");
+            Assert.Equal(FontWeight.SemiBold, pathButton.FontWeight);
+            Assert.Equal(FontWeight.Normal, treeButton.FontWeight);
+
+            Click(window, treeButton);
+
+            Assert.Equal(CommitFilesView.Tree, _sp.GetRequiredService<ISettingsService>().Current.CommitFilesView);
+            Assert.True(view.ViewModel.IsTreeMode);
+            Assert.Equal(FontWeight.Normal, pathButton.FontWeight);
+            Assert.Equal(FontWeight.SemiBold, treeButton.FontWeight);
+
+            Click(window, pathButton);
+
+            Assert.Equal(CommitFilesView.Path, _sp.GetRequiredService<ISettingsService>().Current.CommitFilesView);
+            Assert.Equal(FontWeight.SemiBold, pathButton.FontWeight);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Clicking_a_folder_row_collapses_it_and_clicking_a_file_row_opens_its_diff()
+    {
+        await _sp.GetRequiredService<ISettingsService>().UpdateAsync(s => s with { CommitFilesView = CommitFilesView.Tree });
+        try
+        {
+            var headId = _fixture.CreateCommitWithFile("d/x/y.txt");
+            var view = new CommitDetailPanelView(_sp, _context, headId);
+            var window = new Window { Width = 600, Height = 600, Content = view };
+            window.Show();
+            try
+            {
+                await WaitForCommitLoadedAsync(view);
+                Dispatcher.UIThread.RunJobs();
+                Assert.Equal(["d/", "x/", "y.txt"], RowTexts(view));
+
+                Click(window, RowBorders(view).First(b => b.DataContext is CommitFolderRowViewModel { Name: "x" }));
+
+                Assert.Equal(["d/", "x/"], RowTexts(view));
+
+                Click(window, RowBorders(view).First(b => b.DataContext is CommitFolderRowViewModel { Name: "x" }));
+                Assert.Equal(["d/", "x/", "y.txt"], RowTexts(view));
+
+                Click(window, RowBorders(view).First(b => b.DataContext is CommitFileRowViewModel));
+
+                var diff = Assert.IsType<DiffRequest>(_context.State.OpenDiff);
+                Assert.Equal("d/x/y.txt", diff.Path);
+                Assert.Equal(headId, diff.CommitId);
+                Assert.Equal(DiffSource.Commit, diff.Source);
+            }
+            finally
+            {
+                window.Close();
+            }
+        }
+        finally
+        {
+            await UsePathViewAsync();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task A_file_row_offers_reveal_and_copy_path_in_its_context_menu()
+    {
+        await UsePathViewAsync();
+        var headId = _fixture.HeadCommitId;
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            Dispatcher.UIThread.RunJobs();
+
+            var row = RowBorders(view).First(b => b.DataContext is CommitFileRowViewModel);
+            var menu = Assert.IsType<ContextMenu>(row.ContextMenu);
+            var headers = menu.Items.OfType<MenuItem>().Select(m => m.Header).ToList();
+            Assert.Equal(["Open file location", "Copy path"], headers);
         }
         finally
         {
@@ -421,7 +531,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
     {
         var headId = _fixture.HeadCommitId;
         var view = new CommitDetailPanelView(_sp, _context, headId);
-        Assert.Equal(new Thickness(1, 1, 1, 0), view.TopSectionForTesting.BorderThickness);
+        Assert.Equal(new Thickness(1, 1, 1, 0), view.TopSection.BorderThickness);
     }
 
     [AvaloniaFact]
@@ -442,14 +552,14 @@ public class CommitDetailPanelLayoutTests : IDisposable
             await WaitForCommitLoadedAsync(detailView);
             Dispatcher.UIThread.RunJobs();
 
-            var filesY = detailView.FilesSectionForTesting.TranslatePoint(new Point(0, 0), windowDetail)!.Value.Y;
+            var filesY = detailView.Split.Frame.TranslatePoint(new Point(0, 0), windowDetail)!.Value.Y;
             var stagedSection = windowStaging.GetVisualDescendants().OfType<Border>().First(b => Grid.GetRow(b) == 2);
             var stagedY = stagedSection.TranslatePoint(new Point(0, 0), windowStaging)!.Value.Y;
 
             Assert.Equal(filesY, stagedY, 1);
 
             // Drag detail pane's divider handle down by 40 px
-            var handle = detailView.FilesDividerHandleForTesting;
+            var handle = detailView.Split.DividerHandle;
             var handleCenter = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), windowDetail)!.Value;
 
             Avalonia.Headless.HeadlessWindowExtensions.MouseDown(windowDetail, handleCenter, MouseButton.Left);
@@ -495,23 +605,21 @@ public class CommitDetailPanelLayoutTests : IDisposable
             await WaitForCommitLoadedAsync(view);
             Dispatcher.UIThread.RunJobs();
 
-            Assert.False(view.FilesHostForTesting.Content is ItemsControl { Tag: "Tree" });
-            var scroller = view.FilesScrollViewerForTesting;
+            Assert.True(view.ViewModel.IsPathMode);
+            var scroller = FilesScroller(view);
             Assert.Equal(ScrollBarVisibility.Auto, scroller.HorizontalScrollBarVisibility);
             Assert.True(scroller.Extent.Width > scroller.Viewport.Width);
 
-            var pathTextBlock = view.FilesHostForTesting.GetVisualDescendants().OfType<TextBlock>().First(tb => tb.Text == longPath);
+            var pathTextBlock = view.FilesList.GetVisualDescendants().OfType<TextBlock>().First(tb => tb.Text == longPath);
             pathTextBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             Assert.True(pathTextBlock.Bounds.Width >= pathTextBlock.DesiredSize.Width - pathTextBlock.Margin.Left - 0.5);
 
             // Switch to Tree view
-            var treeBtn = view.GetVisualDescendants().OfType<Button>().First(b => b.Content is "Tree");
-            treeBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Dispatcher.UIThread.RunJobs();
+            Click(window, ModeButton(view, "Tree"));
 
-            Assert.True(view.FilesHostForTesting.Content is ItemsControl { Tag: "Tree" });
+            Assert.True(view.ViewModel.IsTreeMode);
             Assert.True(scroller.Extent.Width > scroller.Viewport.Width);
-            var treeTextBlock = view.FilesHostForTesting.GetVisualDescendants().OfType<TextBlock>().First(tb => tb.Text == longName);
+            var treeTextBlock = view.FilesList.GetVisualDescendants().OfType<TextBlock>().First(tb => tb.Text == longName);
             treeTextBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             Assert.True(treeTextBlock.Bounds.Width >= treeTextBlock.DesiredSize.Width - treeTextBlock.Margin.Left - 0.5);
         }
@@ -533,10 +641,10 @@ public class CommitDetailPanelLayoutTests : IDisposable
             await WaitForCommitLoadedAsync(view);
             Dispatcher.UIThread.RunJobs();
 
-            var scroller = view.FilesScrollViewerForTesting;
+            var scroller = FilesScroller(view);
             Assert.True(scroller.Extent.Width <= scroller.Viewport.Width + 0.5);
 
-            var rowBorder = view.FilesHostForTesting.GetVisualDescendants()
+            var rowBorder = view.FilesList.GetVisualDescendants()
                 .OfType<Border>()
                 .First(b => b.Child is Grid g && g.Height == 22);
             Assert.InRange(Math.Abs(rowBorder.Bounds.Width - scroller.Viewport.Width), 0, 1.0);
@@ -559,13 +667,73 @@ public class CommitDetailPanelLayoutTests : IDisposable
             await WaitForCommitLoadedAsync(view);
             Dispatcher.UIThread.RunJobs();
 
-            var realizedGrids = view.FilesHostForTesting.GetVisualDescendants()
+            var realizedGrids = view.FilesList.GetVisualDescendants()
                 .OfType<Grid>()
                 .Where(g => g.Height == 22)
                 .ToList();
 
             Assert.True(realizedGrids.Count > 0);
             Assert.True(realizedGrids.Count < 50);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Five_thousand_files_realize_fewer_than_200_row_containers_in_both_modes()
+    {
+        await UsePathViewAsync();
+        var headId = _fixture.CreateCommitWithManyFiles(5000, folders: 40);
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.IsType<VirtualizingStackPanel>(view.FilesList.ItemsPanelRoot);
+            Assert.Equal(5000, view.ViewModel.Rows.Count);
+            var pathContainers = view.FilesList.GetVisualDescendants().OfType<ListBoxItem>().Count();
+            Assert.InRange(pathContainers, 1, 199);
+
+            Click(window, ModeButton(view, "Tree"));
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(5040, view.ViewModel.Rows.Count);
+            var treeContainers = view.FilesList.GetVisualDescendants().OfType<ListBoxItem>().Count();
+            Assert.InRange(treeContainers, 1, 199);
+        }
+        finally
+        {
+            await UsePathViewAsync();
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Showing_another_commit_replaces_the_header_and_the_files()
+    {
+        await UsePathViewAsync();
+        var firstId = _fixture.RootCommitId;
+        var view = new CommitDetailPanelView(_sp, _context, firstId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            Assert.Empty(ParentHashes(view));
+
+            view.SetCommit(_fixture.HeadCommitId);
+            await WaitForCommitLoadedAsync(view);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Single(ParentHashes(view));
+            Assert.Equal(_fixture.HeadCommitId.ToShortString(10), view.HashText.Text);
         }
         finally
         {
@@ -583,8 +751,8 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             Dispatcher.UIThread.RunJobs();
 
-            var changesScroll = stagingView.ChangesRowsForTesting.FindAncestorOfType<ScrollViewer>();
-            var stagedScroll = stagingView.StagedRowsForTesting.FindAncestorOfType<ScrollViewer>();
+            var changesScroll = stagingView.ChangesList.ItemsPanelRoot.FindAncestorOfType<ScrollViewer>();
+            var stagedScroll = stagingView.StagedList.ItemsPanelRoot.FindAncestorOfType<ScrollViewer>();
 
             Assert.Equal(ScrollBarVisibility.Disabled, changesScroll!.HorizontalScrollBarVisibility);
             Assert.Equal(ScrollBarVisibility.Disabled, stagedScroll!.HorizontalScrollBarVisibility);
@@ -596,6 +764,58 @@ public class CommitDetailPanelLayoutTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void Staging_footnotes_are_smaller_than_the_other_notes()
+    {
+        var stagingView = new StagingPanelView(_sp, _context);
+        var window = new Window { Width = 800, Height = 900, Content = stagingView };
+        window.Show();
+        try
+        {
+            stagingView.ChangesList.ItemsSource = new StagingListItem[]
+            {
+                new StagingNoteRowViewModel("No changes."),
+                new StagingNoteRowViewModel("1 case-collision file hidden", isFootnote: true),
+            };
+            Dispatcher.UIThread.RunJobs();
+
+            var notes = stagingView.ChangesList.GetVisualDescendants().OfType<TextBlock>().ToList();
+            Assert.Equal(12, notes.Single(t => t.Text == "No changes.").FontSize);
+            Assert.Equal(11, notes.Single(t => t.Text == "1 case-collision file hidden").FontSize);
+        }
+        finally
+        {
+            stagingView.Dispose();
+            window.Close();
+        }
+    }
+
+    private static bool IsUnderlined(TextBlock text)
+        => text.TextDecorations?.Any(d => d.Location == TextDecorationLocation.Underline) == true;
+
+    private static IReadOnlyList<TextBlock> ParentHashes(CommitDetailPanelView view)
+        => [.. view.ParentsList.GetVisualDescendants().OfType<TextBlock>().Where(IsUnderlined)];
+
+    private static ScrollViewer FilesScroller(CommitDetailPanelView view)
+        => view.FilesList.GetVisualDescendants().OfType<ScrollViewer>().First();
+
+    private static Button ModeButton(CommitDetailPanelView view, string label)
+        => view.GetVisualDescendants().OfType<Button>().First(b => b.Content is string text && text == label);
+
+    private static IEnumerable<Border> RowBorders(CommitDetailPanelView view)
+        => view.FilesList.GetVisualDescendants().OfType<Border>().Where(b => b.DataContext is CommitRowViewModel && b.Child is Grid);
+
+    private static List<string> RowTexts(CommitDetailPanelView view)
+        => [.. RowBorders(view).Select(b => ((TextBlock)((Grid)b.Child!).Children[^1]).Text!)];
+
+    private static void Click(Window window, Control control)
+    {
+        var center = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, center, MouseButton.Left);
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, center, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+    }
+
     private Task UsePathViewAsync() =>
         _sp.GetRequiredService<ISettingsService>().UpdateAsync(s => s with { CommitFilesView = CommitFilesView.Path });
 
@@ -604,7 +824,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
         for (var i = 0; i < 100; i++)
         {
             Dispatcher.UIThread.RunJobs();
-            if (view.MetaHostForTesting.Content is not null && view.MessageHostForTesting.Content is not null)
+            if (view.ViewModel.HasDetail)
                 return;
             await Task.Delay(20);
         }
@@ -650,12 +870,13 @@ public class CommitDetailPanelLayoutTests : IDisposable
             return HeadCommitId;
         }
 
-        public GitObjectId CreateCommitWithManyFiles(int count)
+        public GitObjectId CreateCommitWithManyFiles(int count, int folders = 0)
         {
             for (var i = 0; i < count; i++)
             {
-                var fullPath = System.IO.Path.Combine(Path, $"file_{i:D4}.txt");
-                File.WriteAllText(fullPath, $"{i}\n");
+                var dir = folders > 0 ? System.IO.Path.Combine(Path, $"dir_{i % folders:D2}") : Path;
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(System.IO.Path.Combine(dir, $"file_{i:D4}.txt"), $"{i}\n");
             }
             RunGit(Path, "add", ".");
             RunGit(Path, "commit", "-m", $"add {count} files", "--no-gpg-sign");
@@ -693,45 +914,12 @@ public class CommitDetailPanelLayoutTests : IDisposable
 
         private static void RunGit(string dir, params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            psi.Environment["GIT_AUTHOR_NAME"] = "Test";
-            psi.Environment["GIT_AUTHOR_EMAIL"] = "test@example.com";
-            psi.Environment["GIT_COMMITTER_NAME"] = "Test";
-            psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            var outTask = p.StandardOutput.ReadToEndAsync();
-            var errTask = p.StandardError.ReadToEndAsync();
-            p.WaitForExit();
-            Task.WaitAll(outTask, errTask);
+            TestGit.Run(dir, args);
         }
 
         private static string RunGitOutput(string dir, params string[] args)
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("git")
-            {
-                WorkingDirectory = dir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            using var p = System.Diagnostics.Process.Start(psi)!;
-            var errTask = p.StandardError.ReadToEndAsync();
-            var stdout = p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-            errTask.Wait();
-            return stdout.Trim();
+            return TestGit.Run(dir, args, testIdentity: false).Stdout.Trim();
         }
 
         public void Dispose() => TestScratch.Delete(Path);
