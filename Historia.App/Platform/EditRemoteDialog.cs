@@ -1,9 +1,5 @@
 namespace Historia.Platform;
 
-/// <summary>The values chosen in the Edit remote dialog. <paramref name="ResetPushUrl"/> is true
-/// when the user asked to drop the separate push URL.</summary>
-internal sealed record EditRemoteResult(string Name, string Url, bool ResetPushUrl);
-
 /// <summary>
 /// Modal "Edit remote" window: the remote's name, its fetch URL and, only when a separate push
 /// URL is configured, a checkbox to reset it. Save stays disabled until the input is valid;

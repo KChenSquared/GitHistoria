@@ -271,7 +271,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
             if (_sessions.Sessions.Count == 0)
             {
                 if (_workspace.Focused is { } focused)
-                    _ = _sessions.OpenOrFocusAsync(AppBandControl.RepoOrigin(focused));
+                    _ = _sessions.OpenOrFocusAsync(RepoTerminalOrigin.For(focused));
                 else
                     _ = _sessions.OpenNewAsync(TerminalOrigin.Home(HomeDirectory));
             }
@@ -338,7 +338,7 @@ public sealed class TerminalDockControl : UserControl, IDisposable
     /// tab id, or, as a fallback, by start directory.</summary>
     private TerminalSession? FindRepoSession(Historia.Services.Workspace.RepositoryContext repo)
     {
-        var origin = AppBandControl.RepoOrigin(repo);
+        var origin = RepoTerminalOrigin.For(repo);
         return _sessions.Sessions.FirstOrDefault(s =>
             (origin.TabId is { } id && s.Origin.TabId == id)
             || PathsEqual(s.Origin.WorkingDirectory, origin.WorkingDirectory));

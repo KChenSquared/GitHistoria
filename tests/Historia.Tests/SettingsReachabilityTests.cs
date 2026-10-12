@@ -4,7 +4,7 @@ namespace Historia.Tests;
 /// Guard against write-only (inert) settings. A setting defined on <see cref="AppSettings"/>
 /// that has no readers outside of its definition and settings editor is dead UI.
 /// This test scans the source files of Historia.Core, Historia.App, and Historia.ScenarioLab,
-/// outside of AppSettings.cs and the settings views, for a member-access read of each public
+/// outside of AppSettings.cs and the settings views and view models, for a member-access read of each public
 /// property (<c>.Name</c>).
 ///
 /// Trap: matching the bare name is not enough. A same-named constant or field, an enum type of
@@ -41,7 +41,7 @@ public class SettingsReachabilityTests
             .ToList();
 
         Assert.True(unread.Count == 0,
-            $"The following AppSettings properties have no member-access reader outside AppSettings.cs and the settings views:\n  "
+            $"The following AppSettings properties have no member-access reader outside AppSettings.cs and the settings views and view models:\n  "
             + string.Join("\n  ", unread)
             + "\nWire each setting to its consumer or delete it if unused.");
     }
@@ -111,7 +111,7 @@ public class SettingsReachabilityTests
 
                 var fileName = Path.GetFileName(file);
                 if (fileName.Equals("AppSettings.cs", StringComparison.OrdinalIgnoreCase)
-                    || fileName.Equals("SettingsView.cs", StringComparison.OrdinalIgnoreCase)
+                    || fileName.StartsWith("SettingsView", StringComparison.OrdinalIgnoreCase)
                     || fileName.StartsWith("RepoSettingsView", StringComparison.OrdinalIgnoreCase))
                     continue;
 

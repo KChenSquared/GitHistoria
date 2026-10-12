@@ -289,3 +289,171 @@ public sealed class BlockingGitCliService(IGitCliService inner, Func<GitCliReque
         string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(request.WorkingDirectory)),
             Path.TrimEndingDirectorySeparator(Path.GetFullPath(repositoryPath)), StringComparison.OrdinalIgnoreCase);
 }
+
+/// <summary>An <see cref="IDialogService"/> that never opens a window. Each method answers from a
+/// script queued with the <c>Enqueue…</c> methods, falling back to the safe answer (no, cancel,
+/// null) once the script runs out. Every call is logged; destructive confirmations are also
+/// listed on their own so a test can assert that a destructive action asked first.</summary>
+public sealed class FakeDialogService : IDialogService
+{
+    /// <summary>One call to any dialog method. <see cref="Detail"/> is the message or effect text.</summary>
+    public sealed record Call(string Method, string Title, string? Detail);
+
+    /// <summary>One <see cref="ConfirmDestructiveAsync"/> call.</summary>
+    public sealed record DestructiveCall(string Title, string Effect, string ConfirmLabel);
+
+    private readonly Queue<string?> _folders = new();
+    private readonly Queue<string?> _files = new();
+    private readonly Queue<bool> _confirms = new();
+    private readonly Queue<bool> _destructiveConfirms = new();
+    private readonly Queue<int> _choices = new();
+    private readonly Queue<string?> _prompts = new();
+
+    public List<Call> Calls { get; } = [];
+    public List<DestructiveCall> ConfirmDestructiveCalls { get; } = [];
+
+    public FakeDialogService EnqueueFolder(string? answer) { _folders.Enqueue(answer); return this; }
+    public FakeDialogService EnqueueFile(string? answer) { _files.Enqueue(answer); return this; }
+    public FakeDialogService EnqueueConfirm(bool answer) { _confirms.Enqueue(answer); return this; }
+    public FakeDialogService EnqueueConfirmDestructive(bool answer) { _destructiveConfirms.Enqueue(answer); return this; }
+    public FakeDialogService EnqueueChoice(int answer) { _choices.Enqueue(answer); return this; }
+    public FakeDialogService EnqueuePrompt(string? answer) { _prompts.Enqueue(answer); return this; }
+
+    public Task<string?> PickFolderAsync(string title, string? initialDirectory = null)
+    {
+        Calls.Add(new Call(nameof(PickFolderAsync), title, initialDirectory));
+        return Task.FromResult(_folders.Count > 0 ? _folders.Dequeue() : null);
+    }
+
+    public Task<string?> PickFileAsync(string title, string filter, string? initialDirectory = null)
+    {
+        Calls.Add(new Call(nameof(PickFileAsync), title, filter));
+        return Task.FromResult(_files.Count > 0 ? _files.Dequeue() : null);
+    }
+
+    public Task<bool> ConfirmAsync(string title, string message, bool destructive = false,
+        string confirmLabel = "OK", bool defaultToCancel = false, DialogIcon icon = DialogIcon.None)
+    {
+        Calls.Add(new Call(nameof(ConfirmAsync), title, message));
+        return Task.FromResult(_confirms.Count > 0 && _confirms.Dequeue());
+    }
+
+    public Task<bool> ConfirmDestructiveAsync(string title, string effect, string confirmLabel)
+    {
+        Calls.Add(new Call(nameof(ConfirmDestructiveAsync), title, effect));
+        ConfirmDestructiveCalls.Add(new DestructiveCall(title, effect, confirmLabel));
+        return Task.FromResult(_destructiveConfirms.Count > 0 && _destructiveConfirms.Dequeue());
+    }
+
+    public Task<int> ChooseAsync(string title, string message, IReadOnlyList<string> options,
+        int defaultIndex = 0, int destructiveIndex = -1, DialogIcon icon = DialogIcon.None)
+    {
+        Calls.Add(new Call(nameof(ChooseAsync), title, message));
+        return Task.FromResult(_choices.Count > 0 ? _choices.Dequeue() : -1);
+    }
+
+    public Task ShowMessageAsync(string title, string message)
+    {
+        Calls.Add(new Call(nameof(ShowMessageAsync), title, message));
+        return Task.CompletedTask;
+    }
+
+    public Task<string?> PromptAsync(string title, string message, string? defaultValue = null,
+        string confirmLabel = "OK", bool primaryConfirm = false)
+    {
+        Calls.Add(new Call(nameof(PromptAsync), title, message));
+        return Task.FromResult(_prompts.Count > 0 ? _prompts.Dequeue() : null);
+    }
+}
+
+/// <summary>An <see cref="INotificationService"/> that keeps what was published and raises
+/// <see cref="Changed"/> on every publish and dismiss, without coalescing or timing.</summary>
+public sealed class FakeNotificationService : INotificationService
+{
+    private readonly List<Notification> _current = [];
+
+    /// <summary>Every notification ever published, in order, including dismissed ones.</summary>
+    public List<Notification> Published { get; } = [];
+
+    public IReadOnlyList<Notification> Current => _current;
+
+    public event EventHandler<NotificationsChangedEventArgs>? Changed;
+
+    public Notification Publish(NotificationSeverity severity, string message, string? details = null,
+        IReadOnlyList<NotificationAction>? actions = null)
+    {
+        var notification = new Notification
+        {
+            Id = Guid.NewGuid(),
+            Severity = severity,
+            Message = message,
+            Details = details,
+            Actions = actions ?? [],
+            CreatedAt = DateTimeOffset.UtcNow,
+        };
+        Published.Add(notification);
+        _current.Add(notification);
+        Changed?.Invoke(this, new NotificationsChangedEventArgs([.. _current]));
+        return notification;
+    }
+
+    public void Dismiss(Guid id)
+    {
+        if (_current.RemoveAll(n => n.Id == id) > 0)
+            Changed?.Invoke(this, new NotificationsChangedEventArgs([.. _current]));
+    }
+}
+
+/// <summary>An <see cref="IClipboardService"/> that records the text it was given.</summary>
+public sealed class FakeClipboardService : IClipboardService
+{
+    public List<string> Copied { get; } = [];
+
+    public string? Last => Copied.Count > 0 ? Copied[^1] : null;
+
+    public Task SetTextAsync(string text)
+    {
+        Copied.Add(text);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>An <see cref="IRemoteDialogs"/> that answers from values set by the test and records
+/// what it was asked.</summary>
+public sealed class FakeRemoteDialogs : IRemoteDialogs
+{
+    public AddRemoteResult? AddAnswer { get; set; }
+    public EditRemoteResult? EditAnswer { get; set; }
+
+    public List<IReadOnlyList<RemoteInfo>> AddCalls { get; } = [];
+    public List<RemoteInfo> EditCalls { get; } = [];
+
+    public Task<AddRemoteResult?> ShowAddAsync(IReadOnlyList<RemoteInfo> existing)
+    {
+        AddCalls.Add(existing);
+        return Task.FromResult(AddAnswer);
+    }
+
+    public Task<EditRemoteResult?> ShowEditAsync(RemoteInfo remote, IReadOnlyCollection<string> otherNames,
+        IReadOnlyDictionary<string, string> urlOwners)
+    {
+        EditCalls.Add(remote);
+        return Task.FromResult(EditAnswer);
+    }
+}
+
+/// <summary>An in-memory <see cref="ICommitDraftStore"/> that exposes its contents to the test.</summary>
+public sealed class FakeCommitDraftStore : ICommitDraftStore
+{
+    public Dictionary<string, string> Drafts { get; } = new(StringComparer.Ordinal);
+
+    public string Get(string repoKey) => Drafts.GetValueOrDefault(repoKey, "");
+
+    public void Set(string repoKey, string? draft)
+    {
+        if (string.IsNullOrEmpty(draft))
+            Drafts.Remove(repoKey);
+        else
+            Drafts[repoKey] = draft;
+    }
+}

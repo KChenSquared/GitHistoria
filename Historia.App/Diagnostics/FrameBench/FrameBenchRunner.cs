@@ -381,7 +381,7 @@ internal static class FrameBenchRunner
         IServiceProvider services, Window window, RepositoryContext context, FrameBenchOptions options)
     {
         var terminals = services.GetRequiredService<ITerminalSessionService>();
-        var session = await terminals.OpenOrFocusAsync(AppBandControl.RepoOrigin(context)).ConfigureAwait(true);
+        var session = await terminals.OpenOrFocusAsync(RepoTerminalOrigin.For(context)).ConfigureAwait(true);
         var ready = await WaitUntilAsync(() =>
             session.State == TerminalSessionState.Running
             && window.GetVisualDescendants().OfType<TerminalDockControl>().Any(d => d.IsVisible && d.Bounds.Height > 0)

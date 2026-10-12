@@ -1,9 +1,5 @@
 namespace Historia.Platform;
 
-/// <summary>The values chosen in the Add remote dialog. <paramref name="Fetch"/> is true when the
-/// new remote should be fetched right after it is added.</summary>
-internal sealed record AddRemoteResult(string Name, string Url, bool Fetch);
-
 /// <summary>
 /// Modal "Add remote" window: a name, a fetch URL and a "Fetch after adding" checkbox (on by
 /// default). Validation is shared with the Edit remote dialog; Add stays disabled until the

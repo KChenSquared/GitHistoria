@@ -105,33 +105,12 @@ public class DestructiveConfirmationTests
     public void Every_destructive_call_site_confirms_in_its_own_method()
     {
         var root = RepoRoot();
-        var appDir = Path.Combine(root, "Historia.App");
         var offenders = new List<string>();
 
-        foreach (var file in Directory.EnumerateFiles(appDir, "*.cs", SearchOption.AllDirectories))
+        foreach (var file in CallSiteScannedFiles(root))
         {
             var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
-            if (rel.Contains("/bin/") || rel.Contains("/obj/"))
-                continue;
-
-            var text = File.ReadAllText(file);
-            var methodSpans = FindMethodSpans(text);
-
-            foreach (var (pattern, what) in DestructiveCallSites)
-            {
-                foreach (Match m in pattern.Matches(text))
-                {
-                    if (AllowlistMarkers.Any(marker => IsNear(text, m.Index, marker)))
-                        continue;
-
-                    var method = EnclosingMethodText(text, methodSpans, m.Index);
-                    if (!method.Contains("ConfirmDestructiveAsync(", StringComparison.Ordinal))
-                    {
-                        var callLine = text[..m.Index].Count(c => c == '\n') + 1;
-                        offenders.Add($"{rel}:{callLine}: {what} has no ConfirmDestructiveAsync in its enclosing method.");
-                    }
-                }
-            }
+            offenders.AddRange(FindUnconfirmedCallSites(rel, File.ReadAllText(file)));
         }
 
         Assert.True(offenders.Count == 0,
@@ -139,14 +118,114 @@ public class DestructiveConfirmationTests
             + string.Join("\n  ", offenders));
     }
 
+    /// <summary>Every call to a destructive service method in <paramref name="text"/> whose
+    /// enclosing method does not also call <c>ConfirmDestructiveAsync</c>, as readable offender lines.</summary>
+    private static List<string> FindUnconfirmedCallSites(string rel, string text)
+    {
+        var offenders = new List<string>();
+        var methodSpans = FindMethodSpans(text);
+
+        foreach (var (pattern, what) in DestructiveCallSites)
+        {
+            foreach (Match m in pattern.Matches(text))
+            {
+                if (AllowlistMarkers.Any(marker => IsNear(text, m.Index, marker)))
+                    continue;
+
+                var method = EnclosingMethodText(text, methodSpans, m.Index);
+                if (!method.Contains("ConfirmDestructiveAsync(", StringComparison.Ordinal))
+                {
+                    var callLine = text[..m.Index].Count(c => c == '\n') + 1;
+                    offenders.Add($"{rel}:{callLine}: {what} has no ConfirmDestructiveAsync in its enclosing method.");
+                }
+            }
+        }
+
+        return offenders;
+    }
+
+    // Scanner self-tests: a view-model command is a [RelayCommand] method, and the scan must see
+    // into it — with or without an accessibility modifier — rather than falling back to the whole
+    // file, where a confirm in some other method would excuse it.
+
     [Fact]
-    public void Cmdr_path_apply_pattern_matches_its_call_site()
+    public void Scanner_reports_a_relay_command_with_no_confirm()
+    {
+        const string fixture = """
+            public sealed partial class FixtureViewModel
+            {
+                [RelayCommand]
+                private async Task DiscardAsync()
+                {
+                    await _gateway.DiscardAsync(_paths);
+                }
+
+                [RelayCommand]
+                async Task ResetHardAsync()
+                {
+                    await _gateway.ResetAsync("HEAD", GitResetMode.Hard);
+                }
+
+                private async Task<bool> AskAsync()
+                    => await _dialogs.ConfirmDestructiveAsync("Discard", "Discard 1 file", "Discard");
+            }
+            """;
+
+        var offenders = FindUnconfirmedCallSites("Fixture.cs", fixture);
+
+        Assert.Equal(2, offenders.Count);
+        Assert.Contains(offenders, o => o.Contains("DiscardAsync"));
+        Assert.Contains(offenders, o => o.Contains("ResetAsync"));
+    }
+
+    [Fact]
+    public void Scanner_accepts_a_relay_command_that_confirms_in_its_own_method()
+    {
+        const string fixture = """
+            public sealed partial class FixtureViewModel
+            {
+                [RelayCommand]
+                private async Task DiscardAsync()
+                {
+                    if (!await _dialogs.ConfirmDestructiveAsync("Discard", "Discard 1 file", "Discard"))
+                        return;
+                    await _gateway.DiscardAsync(_paths);
+                }
+
+                [RelayCommand]
+                async Task ResetHardAsync()
+                {
+                    if (!await _dialogs.ConfirmDestructiveAsync("Reset", "Reset to HEAD", "Reset"))
+                        return;
+                    await _gateway.ResetAsync("HEAD", GitResetMode.Hard);
+                }
+            }
+            """;
+
+        Assert.Empty(FindUnconfirmedCallSites("Fixture.cs", fixture));
+    }
+
+    // Six patterns are anchored to a field name. A view model that renames the field would drop
+    // its call from the scan silently, so each pattern that has a call site today must still match
+    // at least one scanned file.
+    [Theory]
+    [InlineData("_submodules.RemoveAsync")]
+    [InlineData("_worktrees.RemoveAsync")]
+    [InlineData("_rebase.StartAsync")]
+    [InlineData("_stashes.DropAsync")]
+    [InlineData("_cmdrPath.Apply")]
+    public void Field_anchored_patterns_match_a_scanned_call_site(string call)
     {
         var root = RepoRoot();
-        var file = Path.Combine(root, "Historia.App", "Views", "SettingsView.cs");
-        var text = File.ReadAllText(file);
-        var pattern = new Regex(@"_cmdrPath\.Apply\s*\(", RegexOptions.Compiled);
-        Assert.Matches(pattern, text);
+        var pattern = DestructiveCallSites
+            .Select(site => site.Pattern)
+            .Single(p => p.IsMatch(call + "("));
+
+        var matched = CallSiteScannedFiles(root).Any(f => pattern.IsMatch(File.ReadAllText(f)));
+
+        Assert.True(matched,
+            $"No scanned file calls `{call}(`. If the field was renamed, the destructive scan no longer sees the call — "
+            + "keep the field name, or update the pattern in DestructiveCallSites together with this list.");
     }
 
     private static bool IsNear(string text, int index, string marker)
@@ -163,7 +242,9 @@ public class DestructiveConfirmationTests
     /// balancing parens/braces from here rather than by re-matching more regex against later
     /// lines.</summary>
     private static readonly Regex MethodSignatureStart = new(
-        @"(?:public|private|protected|internal)(?:\s+(?:static|sealed|virtual|override|async|partial|new))*\s+[\w<>\[\],\.\?]+\s+\w+\s*\(",
+        @"(?:public|private|protected|internal)(?:\s+(?:static|sealed|virtual|override|async|partial|new))*\s+[\w<>\[\],\.\?]+\s+\w+\s*\("
+        // A [RelayCommand] method may omit the modifier (private by default).
+        + @"|\[RelayCommand[^\]]*\]\s*(?:async\s+)?(?:Task|ValueTask|void)(?:<[^>\n]+>)?\s+\w+\s*\(",
         RegexOptions.Compiled);
 
     /// <summary>Finds every method body in <paramref name="text"/> as a (start-of-signature,
@@ -218,6 +299,23 @@ public class DestructiveConfirmationTests
                 best = span;
         }
         return best is { } chosen ? text[chosen.Start..(chosen.End + 1)] : text;
+    }
+
+    /// <summary>Every file the call-site scan reads: all of the App, plus the view models in Core.</summary>
+    private static IEnumerable<string> CallSiteScannedFiles(string root)
+    {
+        foreach (var dir in new[] { Path.Combine(root, "Historia.App"), Path.Combine(root, "Historia.Core", "ViewModels") })
+        {
+            if (!Directory.Exists(dir))
+                continue;
+            foreach (var f in Directory.EnumerateFiles(dir, "*.cs", SearchOption.AllDirectories))
+            {
+                var rel = Path.GetRelativePath(root, f).Replace('\\', '/');
+                if (rel.Contains("/bin/") || rel.Contains("/obj/"))
+                    continue;
+                yield return f;
+            }
+        }
     }
 
     private static IEnumerable<string> SourceFiles(string root)

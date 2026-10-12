@@ -85,7 +85,7 @@ internal sealed class ShortcutsBarControl : UserControl, IDisposable
             {
                 if (_workspace?.Focused is { } ctx)
                     _ = _sp?.GetService<ITerminalSessionService>()
-                           ?.OpenOrFocusAsync(AppBandControl.RepoOrigin(ctx));
+                           ?.OpenOrFocusAsync(RepoTerminalOrigin.For(ctx));
             });
 
             var leadGroup = new StackPanel
