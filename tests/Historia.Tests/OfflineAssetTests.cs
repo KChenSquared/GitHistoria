@@ -69,24 +69,7 @@ public class OfflineAssetTests
 
     private static IEnumerable<string> ScannedFiles(string root)
     {
-        var psi = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        psi.ArgumentList.Add("ls-files");
-        psi.ArgumentList.Add("--cached");
-        psi.ArgumentList.Add("--others");
-        psi.ArgumentList.Add("--exclude-standard");
-
-        using var p = Process.Start(psi)!;
-        var stdout = p.StandardOutput.ReadToEnd();
-        p.WaitForExit();
-        if (p.ExitCode != 0)
-            throw new InvalidOperationException($"git ls-files failed: {p.ExitCode}");
+        var stdout = TestGit.RunChecked(root, ["ls-files", "--cached", "--others", "--exclude-standard"], testIdentity: false);
 
         var candidateExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
