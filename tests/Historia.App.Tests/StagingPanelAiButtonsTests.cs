@@ -140,7 +140,9 @@ public class StagingPanelAiButtonsTests : IDisposable
     private async Task<AiServiceProfile> ActivateAsync(Func<AiServiceProfile, AiServiceProfile>? configure = null, string name = "Gemini")
     {
         var added = await _profiles.AddAsync();
-        await _profiles.UpdateAsync(added.Id, p => (configure?.Invoke(p) ?? p with { Server = "https://ai.example.test/v1", Model = "m", ApiKey = "key" }) with { Name = name });
+        var baseProfile = added with { Server = "https://ai.example.test/v1", Model = "m", ApiKey = "key", Name = name };
+        var configured = configure is not null ? configure(baseProfile) : baseProfile;
+        await _profiles.UpdateAsync(added.Id, _ => configured);
         await _profiles.SetActiveAsync(added.Id);
         Dispatcher.UIThread.RunJobs();
         return _profiles.Profiles.Single(p => p.Id == added.Id);
@@ -187,7 +189,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         var panel = NewPanel();
 
         Assert.Equal("Amend", panel.AmendForTesting.Content);
-        Assert.Equal(2, Grid.GetColumn(panel.AmendForTesting));
+        Assert.Equal(4, Grid.GetColumn(panel.AmendForTesting));
         Assert.Equal(HorizontalAlignment.Right, panel.AmendForTesting.HorizontalAlignment);
     }
 
@@ -516,5 +518,297 @@ public class StagingPanelAiButtonsTests : IDisposable
         await ActivateAsync();
 
         Assert.False(panel.WandForTesting!.IsEnabled);
+    }
+
+    // ── Model picker ──
+
+    [AvaloniaFact]
+    public void The_picker_sits_right_of_the_cog_and_the_divider_sits_left_of_amend()
+    {
+        var panel = NewPanel();
+
+        Assert.NotNull(panel.ModelPickerForTesting);
+        Assert.NotNull(panel.AmendDividerForTesting);
+        Assert.Equal(1, Grid.GetColumn(panel.ModelPickerForTesting!));
+        Assert.Equal(3, Grid.GetColumn(panel.AmendDividerForTesting!));
+        Assert.Equal(4, Grid.GetColumn(panel.AmendForTesting));
+    }
+
+    [AvaloniaFact]
+    public void The_divider_is_one_px_in_the_border_colour()
+    {
+        var panel = NewPanel();
+        var window = new Window { Width = 600, Height = 900, Content = panel };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var divider = panel.AmendDividerForTesting!;
+        Assert.Equal(1, divider.Width);
+        Assert.Equal(VerticalAlignment.Stretch, divider.VerticalAlignment);
+        Assert.Equal(new Thickness(8, 2), divider.Margin);
+
+        if (Application.Current is not null && Application.Current.TryFindResource("ColorBorder", out var border) && border is IBrush borderBrush)
+        {
+            Assert.Equal(borderBrush, divider.Background);
+        }
+    }
+
+    [AvaloniaFact]
+    public void With_no_active_profile_the_picker_is_visible_disabled_and_reads_Select_a_Model()
+    {
+        var panel = NewPanel();
+        var picker = panel.ModelPickerForTesting!;
+
+        Assert.True(picker.IsVisible);
+        Assert.False(picker.IsEnabled);
+        Assert.Null(picker.SelectedItem);
+        Assert.Equal("Select a Model", picker.PlaceholderText);
+        Assert.Equal("Set up an AI integration to choose a model", ToolTip.GetTip(picker));
+    }
+
+    [AvaloniaFact]
+    public async Task The_picker_shows_the_active_profiles_model()
+    {
+        var active = await ActivateAsync(p => p with { Model = "gemini-2.5-flash" }, name: "Gemini");
+        var panel = NewPanel();
+        var picker = panel.ModelPickerForTesting!;
+
+        Assert.True(picker.IsEnabled);
+        Assert.Equal("gemini-2.5-flash", picker.SelectedItem);
+        Assert.Contains($"Model for {_profiles.DisplayLabel(active)}", ToolTip.GetTip(picker) as string);
+    }
+
+    [AvaloniaFact]
+    public async Task A_blank_model_reads_Select_a_Model()
+    {
+        await ActivateAsync(p => p with { Model = "" });
+        var panel = NewPanel();
+        var picker = panel.ModelPickerForTesting!;
+
+        Assert.True(picker.IsEnabled);
+        Assert.Null(picker.SelectedItem);
+        Assert.Equal("Select a Model", picker.PlaceholderText);
+    }
+
+    [AvaloniaFact]
+    public async Task A_loaded_list_without_the_saved_model_reads_Select_a_Model_and_changes_nothing()
+    {
+        var active = await ActivateAsync(p => p with { Model = "retired-model" });
+        var catalog = _sp.GetRequiredService<IAiModelCatalog>();
+        catalog.Remember(active, ["new-model-1", "new-model-2"]);
+
+        var panel = NewPanel();
+        var picker = panel.ModelPickerForTesting!;
+
+        Assert.Null(picker.SelectedItem);
+        Assert.Equal("retired-model", _profiles.ActiveProfile!.Model);
+    }
+
+    [AvaloniaFact]
+    public async Task Picking_a_model_saves_it_to_the_active_profile_only()
+    {
+        var p1 = await ActivateAsync(p => p with { Model = "m1" }, name: "P1");
+        var p2Added = await _profiles.AddAsync();
+        await _profiles.UpdateAsync(p2Added.Id, p => p with { Name = "P2", Model = "m2" });
+
+        var catalog = _sp.GetRequiredService<IAiModelCatalog>();
+        catalog.Remember(p1, ["m1", "m1-new"]);
+
+        var panel = NewPanel();
+        var picker = panel.ModelPickerForTesting!;
+        picker.SelectedItem = "m1-new";
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("m1-new", _profiles.ActiveProfile!.Model);
+        Assert.Equal("m2", _profiles.Profiles.Single(p => p.Id == p2Added.Id).Model);
+    }
+
+    [AvaloniaFact]
+    public async Task Switching_the_active_profile_switches_the_picker()
+    {
+        var p1 = await ActivateAsync(p => p with { Model = "m1" });
+        var p2Added = await _profiles.AddAsync();
+        await _profiles.UpdateAsync(p2Added.Id, p => p with { Model = "m2" });
+
+        var panel = NewPanel();
+        var picker = panel.ModelPickerForTesting!;
+        Assert.Equal("m1", picker.SelectedItem);
+
+        await _profiles.SetActiveAsync(p2Added.Id);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("m2", picker.SelectedItem);
+    }
+
+    [AvaloniaFact]
+    public async Task Constructing_the_panel_makes_no_model_request()
+    {
+        await ActivateAsync();
+        Assert.Empty(_client.Lists);
+
+        _ = NewPanel();
+
+        Assert.Empty(_client.Lists);
+    }
+
+    [AvaloniaFact]
+    public async Task Opening_the_picker_loads_the_list_once_with_auto_fetch_on()
+    {
+        _client.ListResult = () => ["model-a", "model-b"];
+        await ActivateAsync(p => p with { AutoFetchModels = true });
+        var panel = NewPanel();
+
+        panel.OpenModelPickerForTesting();
+        await panel.ModelLoadForTesting;
+
+        Assert.Single(_client.Lists);
+
+        panel.OpenModelPickerForTesting();
+        await panel.ModelLoadForTesting;
+
+        Assert.Single(_client.Lists);
+    }
+
+    [AvaloniaFact]
+    public async Task Opening_the_picker_with_auto_fetch_off_makes_no_request_and_offers_a_cached_list()
+    {
+        var active = await ActivateAsync(p => p with { AutoFetchModels = false, Model = "current-model" });
+        var panel = NewPanel();
+        var picker = panel.ModelPickerForTesting!;
+
+        panel.OpenModelPickerForTesting();
+        await panel.ModelLoadForTesting;
+
+        Assert.Empty(_client.Lists);
+        Assert.Equal(["current-model"], picker.ItemsSource as IEnumerable<string>);
+        Assert.Contains("Press refresh in AI Integrations to load models", ToolTip.GetTip(picker) as string);
+
+        var catalog = _sp.GetRequiredService<IAiModelCatalog>();
+        catalog.Remember(active, ["current-model", "cached-other"]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(["current-model", "cached-other"], picker.ItemsSource as IEnumerable<string>);
+    }
+
+    [AvaloniaFact]
+    public async Task The_dropdown_opened_event_reaches_the_load()
+    {
+        _client.ListResult = () => ["model-1", "model-2"];
+        await ActivateAsync(p => p with { AutoFetchModels = true });
+        var panel = NewPanel();
+        var window = new Window { Width = 600, Height = 900, Content = panel };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        panel.ModelPickerForTesting!.IsDropDownOpen = true;
+        Dispatcher.UIThread.RunJobs();
+        await panel.ModelLoadForTesting;
+
+        Assert.Single(_client.Lists);
+    }
+
+    [AvaloniaFact]
+    public async Task A_failed_list_load_publishes_the_classified_notification()
+    {
+        _client.ListResult = () => throw new AiException(AiErrorKind.Unauthorized, "unauthorized key");
+        await ActivateAsync(p => p with { AutoFetchModels = true });
+        var panel = NewPanel();
+
+        panel.OpenModelPickerForTesting();
+        await panel.ModelLoadForTesting;
+
+        Assert.Contains(_notifications.Published, n => n.Severity == NotificationSeverity.Error && n.Message.Contains("Couldn't load the model list"));
+    }
+
+    [AvaloniaFact]
+    public async Task The_picker_fills_the_row_at_the_narrowest_right_column()
+    {
+        await ActivateAsync();
+        var panel = NewPanel();
+        var window = new Window { Width = 360, Height = 600, Content = panel };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var picker = panel.ModelPickerForTesting!;
+        var divider = panel.AmendDividerForTesting!;
+        var slack = divider.Bounds.Left - 8 - picker.Bounds.Right;
+        Assert.InRange(slack, 0, 2);
+    }
+
+    [AvaloniaFact]
+    public async Task The_picker_width_is_fixed_and_the_divider_stays_next_to_amend()
+    {
+        await ActivateAsync();
+        var panel = NewPanel();
+        var window360 = new Window { Width = 360, Height = 600, Content = panel };
+        window360.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var picker = panel.ModelPickerForTesting!;
+        var divider = panel.AmendDividerForTesting!;
+        var amend = panel.AmendForTesting;
+
+        var pickerWidth360 = picker.Bounds.Width;
+        var gap360 = amend.Bounds.Left - divider.Bounds.Right;
+
+        window360.Close();
+
+        var panel900 = NewPanel();
+        var window900 = new Window { Width = 900, Height = 600, Content = panel900 };
+        window900.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var picker900 = panel900.ModelPickerForTesting!;
+        var divider900 = panel900.AmendDividerForTesting!;
+        var amend900 = panel900.AmendForTesting;
+
+        Assert.Equal(pickerWidth360, picker900.Bounds.Width);
+        Assert.Equal(gap360, amend900.Bounds.Left - divider900.Bounds.Right);
+    }
+
+    [AvaloniaFact]
+    public async Task The_picker_does_not_grow_the_options_row()
+    {
+        await ActivateAsync();
+        var panel = NewPanel();
+        var window = new Window { Width = 600, Height = 600, Content = panel };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var row = panel.CommitOptionsRowForTesting!;
+        var amend = panel.AmendForTesting;
+        Assert.Equal(amend.Bounds.Height, row.Bounds.Height);
+    }
+
+    [AvaloniaFact]
+    public async Task An_unrelated_profile_save_keeps_the_items_and_selection()
+    {
+        var active = await ActivateAsync(p => p with { Model = "m1" });
+        var catalog = _sp.GetRequiredService<IAiModelCatalog>();
+        catalog.Remember(active, ["m1", "m2"]);
+
+        var panel = NewPanel();
+        var picker = panel.ModelPickerForTesting!;
+        var itemsBefore = picker.ItemsSource;
+
+        await _profiles.UpdateAsync(active.Id, p => p with { Name = "Renamed" });
+        Dispatcher.UIThread.RunJobs();
+
+        var itemsAfter = picker.ItemsSource;
+        Assert.Same(itemsBefore, itemsAfter);
+        Assert.Equal("m1", picker.SelectedItem);
+    }
+
+    [AvaloniaFact]
+    public async Task Disposing_stops_listening_to_the_catalog()
+    {
+        var active = await ActivateAsync();
+        var panel = NewPanel();
+        var catalog = _sp.GetRequiredService<IAiModelCatalog>();
+
+        panel.Dispose();
+
+        catalog.Remember(active, ["new-model"]);
+        Dispatcher.UIThread.RunJobs();
     }
 }
