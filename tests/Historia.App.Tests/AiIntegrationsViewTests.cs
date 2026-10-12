@@ -137,6 +137,7 @@ public class AiIntegrationsViewTests
             sc.AddSingleton<IDialogService>(Dialogs);
             sc.AddSingleton<INotificationService>(Notifications);
             sc.AddSingleton<IAiClientFactory>(Factory);
+            sc.AddSingleton<IAiModelCatalog>(new AiModelCatalog(Profiles, Factory));
             Services = sc.BuildServiceProvider();
         }
 

@@ -47,6 +47,8 @@ public class StagingPanelAiButtonsTests : IDisposable
     private readonly AiIntegrationsPanel _panel = new();
     private readonly FakeGenerator _generator = new();
     private readonly List<StagingPanelView> _views = [];
+    private readonly AiTestSupport.Client _client = new();
+    private readonly AiTestSupport.Factory _factory;
 
     public StagingPanelAiButtonsTests()
     {
@@ -61,6 +63,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         }
 
         _profiles = new AiProfileService(_settings);
+        _factory = new AiTestSupport.Factory(_client);
 
         var sc = new ServiceCollection();
         sc.AddSingleton<ISettingsService>(_settings);
@@ -105,6 +108,8 @@ public class StagingPanelAiButtonsTests : IDisposable
         sc.AddSingleton<Historia.Theming.AvaloniaThemeApplier>();
         sc.AddSingleton<IAiProfileService>(_profiles);
         sc.AddSingleton<IAiIntegrationsPanel>(_panel);
+        sc.AddSingleton<IAiClientFactory>(_factory);
+        sc.AddSingleton<IAiModelCatalog>(new AiModelCatalog(_profiles, _factory));
         sc.AddSingleton<ICommitMessageGenerator>(_generator);
         _sp = sc.BuildServiceProvider();
         _sp.GetRequiredService<Historia.Theming.AvaloniaThemeApplier>();

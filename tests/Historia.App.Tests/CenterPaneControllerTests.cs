@@ -1,4 +1,4 @@
-﻿namespace HistoriaApp.Tests;
+namespace HistoriaApp.Tests;
 
 [Trait("tier", "ui")]
 public class CenterPaneControllerTests : IDisposable
@@ -81,9 +81,12 @@ public class CenterPaneControllerTests : IDisposable
         sc.AddSingleton<IRepoNetworkActionRunner, ConflictResolverViewTests.FakeNetworkRunner>();
         var settings = new ConflictResolverViewTests.FakeSettingsService();
         sc.AddSingleton<ISettingsService>(settings);
-        sc.AddSingleton<IAiProfileService>(new AiProfileService(settings));
+        var aiProfiles = new AiProfileService(settings);
+        sc.AddSingleton<IAiProfileService>(aiProfiles);
         sc.AddSingleton<IAiIntegrationsPanel>(_aiPanel);
-        sc.AddSingleton<IAiClientFactory>(new AiTestSupport.Factory(new AiTestSupport.Client()));
+        var clientFactory = new AiTestSupport.Factory(new AiTestSupport.Client());
+        sc.AddSingleton<IAiClientFactory>(clientFactory);
+        sc.AddSingleton<IAiModelCatalog>(new AiModelCatalog(aiProfiles, clientFactory));
 
         _sp = sc.BuildServiceProvider();
         _conflictHost = _sp.GetRequiredService<ConflictResolverHost>();
