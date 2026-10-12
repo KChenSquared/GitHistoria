@@ -1,0 +1,59 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+        x:Class="Historia.Platform.AboutDialog"
+        x:DataType="vm:AboutDialogViewModel"
+        Title="About Historia"
+        Width="440"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <StackPanel Margin="24">
+        <Image x:Name="Emblem"
+               Width="64"
+               Height="64"
+               Stretch="Uniform"
+               HorizontalAlignment="Center" />
+        <TextBlock Text="Historia"
+                   FontSize="22"
+                   FontWeight="SemiBold"
+                   Foreground="{DynamicResource ColorText}"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis"
+                   Margin="0,12,0,0" />
+        <SelectableTextBlock Text="{Binding VersionText}"
+                             FontSize="13"
+                             Foreground="{DynamicResource ColorTextMuted}"
+                             HorizontalAlignment="Center"
+                             Margin="0,4,0,0" />
+        <ItemsControl ItemsSource="{Binding Credits}" Margin="0,16,0,0">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <StackPanel Spacing="4" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                    <TextBlock Classes="text muted"
+                               Text="{Binding}"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               TextTrimming="None"
+                               TextAlignment="Center" />
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <StackPanel Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,20,0,0">
+            <Button Classes="primary"
+                    Content="OK"
+                    IsDefault="True"
+                    IsCancel="True"
+                    MinWidth="80"
+                    Click="OnOkClick" />
+        </StackPanel>
+    </StackPanel>
+</Window>
