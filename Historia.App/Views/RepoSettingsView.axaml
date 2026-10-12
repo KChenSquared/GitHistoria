@@ -1,0 +1,110 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.RepoSettingsView"
+             x:DataType="vm:RepoSettingsViewModel"
+             Background="{DynamicResource ColorChrome}">
+    <UserControl.Styles>
+        <!-- A column row lifted by a reorder drag stays in the list, dimmed, while its ghost
+             follows the pointer. -->
+        <Style Selector="Border.column-row.dragging">
+            <Setter Property="Opacity" Value="0.3" />
+        </Style>
+    </UserControl.Styles>
+
+    <Panel>
+        <ScrollViewer>
+            <StackPanel x:Name="Root" Spacing="12" Margin="32" MaxWidth="560">
+                <TextBlock Text="{Binding Title}"
+                           FontSize="22"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource ColorText}"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Classes="text muted"
+                           FontSize="12"
+                           IsVisible="{Binding HasRepository}"
+                           Text="{Binding RepositoryPath}" />
+
+                <!-- Identity and network belong to the focused repository. -->
+                <StackPanel Spacing="12" IsVisible="{Binding HasRepository}">
+                    <DockPanel HorizontalAlignment="Left" HorizontalSpacing="6">
+                        <ctl:HelpHint DockPanel.Dock="Right"
+                                      ZIndex="1"
+                                      Text="Name, email and signing key used for commits in this repository." />
+                        <TextBlock Classes="section" Text="Identity" />
+                    </DockPanel>
+
+                    <Button x:Name="ProfileButton"
+                            Content="{Binding ProfileButtonText}"
+                            Padding="10,4"
+                            HorizontalAlignment="Left"
+                            Cursor="Hand"
+                            Click="OnProfileButtonClick" />
+
+                    <TextBlock Classes="section" Text="Network" />
+                    <DockPanel HorizontalAlignment="Left" HorizontalSpacing="6">
+                        <ctl:HelpHint DockPanel.Dock="Right"
+                                      ZIndex="1"
+                                      Text="Fetch, pull and push always use SSH, even for HTTPS remotes. HTTPS is never tried." />
+                        <ToggleSwitch Content="SSH only"
+                                      IsChecked="{Binding SshOnly}"
+                                      HorizontalAlignment="Left"
+                                      VerticalAlignment="Center"
+                                      Cursor="Hand" />
+                    </DockPanel>
+                </StackPanel>
+
+                <DockPanel HorizontalAlignment="Left" HorizontalSpacing="6">
+                    <ctl:HelpHint DockPanel.Dock="Right"
+                                  ZIndex="1"
+                                  Text="Order and visibility apply to all repositories. Widths are per repository and reset on restart." />
+                    <TextBlock Classes="section" Text="Graph columns" />
+                </DockPanel>
+
+                <!-- The editor works on the application-wide column set and shows even with no repository. -->
+                <ItemsControl x:Name="ColumnList" ItemsSource="{Binding Columns}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Spacing="12" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ColumnRowViewModel">
+                            <Border Classes="column-row"
+                                    Classes.dragging="{Binding IsDragging}"
+                                    Background="Transparent"
+                                    Height="30">
+                                <Grid ColumnDefinitions="Auto,*">
+                                    <Border Classes="column-handle"
+                                            Padding="6,0"
+                                            Background="Transparent"
+                                            Cursor="SizeAll"
+                                            VerticalAlignment="Center">
+                                        <TextBlock Text="☰"
+                                                   FontSize="15"
+                                                   Foreground="{DynamicResource ColorTextMuted}"
+                                                   VerticalAlignment="Center" />
+                                    </Border>
+                                    <CheckBox Grid.Column="1"
+                                              Content="{Binding Name}"
+                                              IsChecked="{Binding Visible}"
+                                              Margin="6,0,0,0" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Button Classes="secondary"
+                        Content="Reset to defaults"
+                        Command="{Binding ResetColumnsCommand}"
+                        Cursor="Hand" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- The drag ghost is drawn here, above the scrolled content. -->
+        <Panel x:Name="Overlay" IsHitTestVisible="False" />
+    </Panel>
+</UserControl>
