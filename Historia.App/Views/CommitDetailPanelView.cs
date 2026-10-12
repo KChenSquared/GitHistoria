@@ -111,7 +111,7 @@ public sealed class CommitDetailPanelView : UserControl, IDisposable
             horizontalScroll: true);
         FilesSectionForTesting = filesSection;
         FilesDividerHandleForTesting = filesDividerHandle;
-        FilesScrollViewerForTesting = (ScrollViewer)(_filesHost.Parent ?? ((DockPanel)filesSection.Child!).Children[2]);
+        FilesScrollViewerForTesting = (ScrollViewer)_filesHost.Parent!;
 
         var topRow = new RowDefinition(new GridLength(SectionFrame.GetSplitHeight(_ctx.Id), GridUnitType.Pixel))
         {

@@ -382,6 +382,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
     [AvaloniaFact]
     public async Task Files_label_is_16_and_rows_are_14()
     {
+        await UsePathViewAsync();
         var headId = _fixture.HeadCommitId;
         var view = new CommitDetailPanelView(_sp, _context, headId);
         var window = new Window { Width = 600, Height = 600, Content = view };
@@ -482,8 +483,10 @@ public class CommitDetailPanelLayoutTests : IDisposable
     [AvaloniaFact]
     public async Task Files_list_scrolls_horizontally_when_a_path_is_wider_than_the_panel()
     {
+        await UsePathViewAsync();
         var longName = new string('a', 120) + ".txt";
-        var headId = _fixture.CreateCommitWithFile(longName);
+        var longPath = "d/" + longName;
+        var headId = _fixture.CreateCommitWithFile(longPath);
         var view = new CommitDetailPanelView(_sp, _context, headId);
         var window = new Window { Width = 300, Height = 600, Content = view };
         window.Show();
@@ -492,12 +495,12 @@ public class CommitDetailPanelLayoutTests : IDisposable
             await WaitForCommitLoadedAsync(view);
             Dispatcher.UIThread.RunJobs();
 
+            Assert.False(view.FilesHostForTesting.Content is ItemsControl { Tag: "Tree" });
             var scroller = view.FilesScrollViewerForTesting;
             Assert.Equal(ScrollBarVisibility.Auto, scroller.HorizontalScrollBarVisibility);
             Assert.True(scroller.Extent.Width > scroller.Viewport.Width);
 
-            var pathRowGrid = view.FilesHostForTesting.GetVisualDescendants().OfType<Grid>().First(g => g.Height == 22);
-            var pathTextBlock = pathRowGrid.Children.OfType<TextBlock>().First(tb => tb.Text == longName);
+            var pathTextBlock = view.FilesHostForTesting.GetVisualDescendants().OfType<TextBlock>().First(tb => tb.Text == longPath);
             pathTextBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             Assert.True(pathTextBlock.Bounds.Width >= pathTextBlock.DesiredSize.Width - pathTextBlock.Margin.Left - 0.5);
 
@@ -506,9 +509,9 @@ public class CommitDetailPanelLayoutTests : IDisposable
             treeBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Dispatcher.UIThread.RunJobs();
 
+            Assert.True(view.FilesHostForTesting.Content is ItemsControl { Tag: "Tree" });
             Assert.True(scroller.Extent.Width > scroller.Viewport.Width);
-            var treeRowGrid = view.FilesHostForTesting.GetVisualDescendants().OfType<Grid>().First(g => g.Height == 22);
-            var treeTextBlock = treeRowGrid.Children.OfType<TextBlock>().First(tb => tb.Text == longName);
+            var treeTextBlock = view.FilesHostForTesting.GetVisualDescendants().OfType<TextBlock>().First(tb => tb.Text == longName);
             treeTextBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             Assert.True(treeTextBlock.Bounds.Width >= treeTextBlock.DesiredSize.Width - treeTextBlock.Margin.Left - 0.5);
         }
@@ -580,13 +583,11 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             Dispatcher.UIThread.RunJobs();
 
-            var changesScroll = stagingView.ChangesRowsForTesting.FindAncestorOfType<ScrollViewer>()
-                ?? (ScrollViewer)stagingView.ChangesRowsForTesting.Parent!.Parent!;
-            var stagedScroll = stagingView.StagedRowsForTesting.FindAncestorOfType<ScrollViewer>()
-                ?? (ScrollViewer)stagingView.StagedRowsForTesting.Parent!;
+            var changesScroll = stagingView.ChangesRowsForTesting.FindAncestorOfType<ScrollViewer>();
+            var stagedScroll = stagingView.StagedRowsForTesting.FindAncestorOfType<ScrollViewer>();
 
-            Assert.Equal(ScrollBarVisibility.Disabled, changesScroll.HorizontalScrollBarVisibility);
-            Assert.Equal(ScrollBarVisibility.Disabled, stagedScroll.HorizontalScrollBarVisibility);
+            Assert.Equal(ScrollBarVisibility.Disabled, changesScroll!.HorizontalScrollBarVisibility);
+            Assert.Equal(ScrollBarVisibility.Disabled, stagedScroll!.HorizontalScrollBarVisibility);
         }
         finally
         {
@@ -594,6 +595,9 @@ public class CommitDetailPanelLayoutTests : IDisposable
             window.Close();
         }
     }
+
+    private Task UsePathViewAsync() =>
+        _sp.GetRequiredService<ISettingsService>().UpdateAsync(s => s with { CommitFilesView = CommitFilesView.Path });
 
     private static async Task WaitForCommitLoadedAsync(CommitDetailPanelView view)
     {
