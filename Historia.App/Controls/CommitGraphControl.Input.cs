@@ -250,10 +250,10 @@ public sealed partial class CommitGraphControl
 
         if (_rowHeight != DefaultRowHeight || _laneWidth != DefaultLaneWidth)
         {
-            var topRow = _rowHeight > 0 ? _scrollOffset / _rowHeight : 0;
+            var topRow = _scrollOffset / _rowHeight;
             _rowHeight = DefaultRowHeight;
             _laneWidth = DefaultLaneWidth;
-            _scrollOffset = Math.Max(0, topRow * DefaultRowHeight);
+            _scrollOffset = topRow * DefaultRowHeight;
             _zoomOverridesPin = false;
             _elbowGeometryCache.Clear();
         }

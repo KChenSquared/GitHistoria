@@ -251,7 +251,7 @@ public sealed class GraphHeaderActionsTests
     }
 
     [AvaloniaFact]
-    public void ResetClickReturnsGraphColumnToItsPreZoomWidth()
+    public void ResetClickRestoresPinnedGraphWidthAfterZoom()
     {
         using var s = CreateGraph();
         var graphCol = s.Graph.ResolvedColumnsForTesting.First(c => c.Kind == GraphColumnKind.Graph);
@@ -261,6 +261,8 @@ public sealed class GraphHeaderActionsTests
         s.Window.MouseMove(new Point(dividerX - 50, 15));
         s.Window.MouseUp(new Point(dividerX - 50, 15), MouseButton.Left);
         Dispatcher.UIThread.RunJobs();
+
+        Assert.True(s.Graph.GraphWidthPinnedForTesting);
 
         var widthBefore = s.Graph.ResolvedColumnsForTesting
             .First(c => c.Kind == GraphColumnKind.Graph).Width;

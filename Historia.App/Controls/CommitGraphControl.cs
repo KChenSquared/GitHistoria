@@ -278,6 +278,7 @@ public sealed partial class CommitGraphControl : Control
     internal double GraphPanOffsetForTesting => _graphPanOffset;
     internal double RowHeightForTesting => _rowHeight;
     internal double LaneWidthForTesting => _laneWidth;
+    internal bool GraphWidthPinnedForTesting => _graphWidthPinned;
     internal int RowCountForTesting => _layout?.Layout.RowCount ?? 0;
     internal IReadOnlyList<GraphColumn> ColumnsForTesting => _columns;
     internal ContextMenu? OpenMenuForTesting => _openMenu;
