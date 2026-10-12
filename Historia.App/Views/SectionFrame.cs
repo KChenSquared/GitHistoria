@@ -189,7 +189,7 @@ internal static class SectionFrame
     }
 
     public static Border Build(Control left, Control? center, Control? right, Control body,
-        Thickness border, double minHeight, out Control dividerHandle, bool horizontalScroll = false)
+        Thickness border, double minHeight, out Control dividerHandle, bool horizontalScroll = false, bool scrollBody = true)
     {
         var head = new Grid
         {
@@ -232,11 +232,15 @@ internal static class SectionFrame
         strip.Child = line;
         dividerHandle = strip;
 
-        var scroll = new ScrollViewer
-        {
-            Content = body,
-            HorizontalScrollBarVisibility = horizontalScroll ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled
-        };
+        // A body that scrolls and virtualizes itself (a list) goes in unwrapped; an outer scroller
+        // would measure it at unbounded height and realize every item.
+        Control scroll = scrollBody
+            ? new ScrollViewer
+            {
+                Content = body,
+                HorizontalScrollBarVisibility = horizontalScroll ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled
+            }
+            : body;
 
         var inner = new DockPanel
         {

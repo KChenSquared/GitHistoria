@@ -371,4 +371,154 @@ public class SectionFrameTests
 
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void Build_without_a_scroll_viewer_puts_the_body_straight_into_the_frame()
+    {
+        var body = new ListBox();
+        var border = SectionFrame.Build(
+            left: new TextBlock { Text = "Files:" },
+            center: null,
+            right: null,
+            body: body,
+            border: new Thickness(1),
+            minHeight: 150,
+            out _,
+            scrollBody: false);
+
+        var inner = (DockPanel)border.Child!;
+
+        Assert.Same(body, inner.Children[2]);
+        Assert.DoesNotContain(inner.Children, c => c is ScrollViewer);
+    }
+
+    [AvaloniaFact]
+    public void Build_wraps_the_body_in_a_scroll_viewer_by_default()
+    {
+        var body = new StackPanel();
+        var border = SectionFrame.Build(
+            left: new TextBlock { Text = "Files:" },
+            center: null,
+            right: null,
+            body: body,
+            border: new Thickness(1),
+            minHeight: 150,
+            out _);
+
+        var inner = (DockPanel)border.Child!;
+
+        Assert.Same(body, Assert.IsType<ScrollViewer>(inner.Children[2]).Content);
+    }
+
+    [AvaloniaFact]
+    public void Host_shows_its_top_header_and_bottom_content_and_passes_the_data_context_down()
+    {
+        var top = new TextBlock { Text = "top" };
+        var header = new TextBlock { Text = "header" };
+        var headerEnd = new TextBlock { Text = "end" };
+        var bottom = new TextBlock { Text = "bottom" };
+        var host = new SectionFrameHost
+        {
+            RepoId = "host-content",
+            Top = top,
+            Header = header,
+            HeaderEnd = headerEnd,
+            Bottom = bottom,
+            DataContext = "context",
+        };
+
+        var window = new Window { Width = 400, Height = 600, Content = host };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.All(new Control[] { top, header, headerEnd, bottom }, c =>
+        {
+            Assert.True(c.IsEffectivelyVisible);
+            Assert.Equal("context", c.DataContext);
+            Assert.NotNull(c.TranslatePoint(new Point(0, 0), host));
+        });
+        Assert.True(top.TranslatePoint(new Point(0, 0), host)!.Value.Y < host.Frame.TranslatePoint(new Point(0, 0), host)!.Value.Y);
+        Assert.True(header.TranslatePoint(new Point(0, 0), host)!.Value.X < headerEnd.TranslatePoint(new Point(0, 0), host)!.Value.X);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Host_replaces_a_section_when_its_property_changes()
+    {
+        var host = new SectionFrameHost { Top = new TextBlock { Text = "one" } };
+        var window = new Window { Width = 400, Height = 600, Content = host };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var second = new TextBlock { Text = "two" };
+        host.Top = second;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(second.IsEffectivelyVisible);
+        Assert.Single(host.GetVisualDescendants().OfType<TextBlock>(), t => t.Text is "one" or "two");
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Host_takes_its_top_height_from_the_stored_split_of_its_repo()
+    {
+        const string repoId = "host-stored-split";
+        SectionFrame.SetSplitHeight(repoId, 210);
+        var host = new SectionFrameHost { RepoId = repoId, Top = new Border(), Bottom = new Border() };
+
+        var window = new Window { Width = 400, Height = 700, Content = host };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(210, host.RowDefinitions[0].Height.Value);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Host_drag_stores_the_split_for_its_repo_from_either_handle()
+    {
+        const string repoId = "host-drag-split";
+        SectionFrame.SetSplitHeight(repoId, 200);
+        var host = new SectionFrameHost { RepoId = repoId, Top = new Border(), Bottom = new Border() };
+        var window = new Window { Width = 400, Height = 700, Content = host };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        foreach (var (handle, delta) in new[] { ((Control)host.SplitHandle, 30), (host.DividerHandle, 20) })
+        {
+            var before = SectionFrame.GetSplitHeight(repoId);
+            var center = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+
+            Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, center, MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+            Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(center.X, center.Y + delta));
+            Dispatcher.UIThread.RunJobs();
+            Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(center.X, center.Y + delta), MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(before + delta, SectionFrame.GetSplitHeight(repoId));
+        }
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Host_clamps_a_stored_split_that_is_taller_than_the_panel_without_changing_it()
+    {
+        const string repoId = "host-clamped-split";
+        SectionFrame.SetSplitHeight(repoId, 900);
+        var host = new SectionFrameHost { RepoId = repoId, Top = new Border(), Bottom = new Border() };
+
+        var window = new Window { Width = 400, Height = 400, Content = host };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(host.RowDefinitions[0].Height.Value < 400 - SectionFrame.HandleHeight - SectionFrame.BottomMinHeight + 1);
+        Assert.Equal(900, SectionFrame.GetSplitHeight(repoId));
+
+        window.Close();
+    }
 }

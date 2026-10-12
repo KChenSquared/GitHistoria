@@ -1,0 +1,212 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:v="clr-namespace:Historia.Views"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.CommitDetailPanelView"
+             x:DataType="vm:CommitDetailViewModel">
+    <UserControl.Styles>
+        <!-- The Path / Tree switch: the active mode is semi-bold. -->
+        <Style Selector="Button.files-mode">
+            <Setter Property="Padding" Value="8,2" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style Selector="Button.files-mode.active">
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <!-- The files list shows plain rows: no selection or hover chrome, no inner padding. -->
+        <Style Selector="ListBox.files">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <Style Selector="ListBox.files > ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.files > ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.files > ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.files > ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+    </UserControl.Styles>
+
+    <ctl:SectionFrameHost x:Name="SplitHost" RepoId="{Binding RepoId}">
+        <ctl:SectionFrameHost.Top>
+            <Border x:Name="TopSection"
+                    BorderThickness="1,1,1,0"
+                    MinHeight="150"
+                    BorderBrush="{DynamicResource ColorBorder}">
+                <DockPanel LastChildFill="True" Margin="8,6,8,8">
+                    <!-- Author name and the click-to-copy hash. -->
+                    <Grid x:Name="MetaRow"
+                          DockPanel.Dock="Top"
+                          ColumnDefinitions="*,Auto"
+                          IsVisible="{Binding HasDetail}">
+                        <TextBlock x:Name="AuthorText"
+                                   Classes="text"
+                                   FontSize="16"
+                                   Text="{Binding AuthorName}"
+                                   ToolTip.Tip="{Binding AuthorEmail}" />
+                        <TextBlock x:Name="HashText"
+                                   Grid.Column="1"
+                                   Classes="text"
+                                   FontSize="14"
+                                   Foreground="{DynamicResource ColorAccent}"
+                                   Text="{Binding ShortHash}"
+                                   TextDecorations="Underline"
+                                   Cursor="Hand"
+                                   ToolTip.Tip="Click to copy full commit hash"
+                                   PointerPressed="OnHashPressed" />
+                    </Grid>
+
+                    <!-- The date on the left, the parent commits on the right. -->
+                    <Grid x:Name="ParentsRow"
+                          DockPanel.Dock="Top"
+                          ColumnDefinitions="*,Auto"
+                          IsVisible="{Binding HasDetail}">
+                        <TextBlock x:Name="DateText"
+                                   Classes="text muted"
+                                   FontSize="12"
+                                   Text="{Binding DateText}"
+                                   ToolTip.Tip="{Binding DateToolTip}" />
+                        <StackPanel x:Name="ParentsList"
+                                    Grid.Column="1"
+                                    Orientation="Horizontal"
+                                    Spacing="8"
+                                    HorizontalAlignment="Right">
+                            <TextBlock Classes="text muted" FontSize="12" Text="Parent(s):" />
+                            <TextBlock Classes="text muted"
+                                       FontSize="12"
+                                       Text="none"
+                                       IsVisible="{Binding HasNoParents}" />
+                            <ItemsControl ItemsSource="{Binding Parents}" IsVisible="{Binding HasParents}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="8" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:CommitParentViewModel">
+                                        <TextBlock Classes="text"
+                                                   FontSize="12"
+                                                   Text="{Binding ShortHash}"
+                                                   TextDecorations="Underline"
+                                                   Cursor="Hand"
+                                                   ToolTip.Tip="Go to parent commit"
+                                                   PointerPressed="OnParentPressed" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Grid>
+
+                    <Border x:Name="AuthorRule"
+                            DockPanel.Dock="Top"
+                            Height="1"
+                            Margin="0,6,0,6"
+                            Background="{DynamicResource ColorBorder}" />
+
+                    <ScrollViewer x:Name="MessageScroll" HorizontalScrollBarVisibility="Disabled">
+                        <SelectableTextBlock x:Name="MessageText"
+                                             FontSize="14"
+                                             TextWrapping="Wrap"
+                                             Foreground="{DynamicResource ColorText}"
+                                             PointerPressed="OnMessagePressed" />
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </ctl:SectionFrameHost.Top>
+
+        <ctl:SectionFrameHost.Header>
+            <TextBlock x:Name="FilesLabel" Classes="text" FontSize="16" Text="Files:" />
+        </ctl:SectionFrameHost.Header>
+
+        <ctl:SectionFrameHost.HeaderEnd>
+            <StackPanel Orientation="Horizontal" Spacing="2">
+                <Button Classes="files-mode"
+                        Classes.active="{Binding IsPathMode}"
+                        Content="Path"
+                        Command="{Binding ShowPathCommand}" />
+                <Button Classes="files-mode"
+                        Classes.active="{Binding IsTreeMode}"
+                        Content="Tree"
+                        Command="{Binding ShowTreeCommand}" />
+            </StackPanel>
+        </ctl:SectionFrameHost.HeaderEnd>
+
+        <ctl:SectionFrameHost.Bottom>
+            <Grid>
+                <ListBox x:Name="FilesList"
+                         Classes="files"
+                         ItemsSource="{Binding Rows}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.DataTemplates>
+                        <DataTemplate DataType="vm:CommitFolderRowViewModel" x:DataType="vm:CommitFolderRowViewModel">
+                            <Border Background="Transparent" Cursor="Hand" PointerPressed="OnRowPressed">
+                                <Grid ColumnDefinitions="Auto,Auto,*" Height="22">
+                                    <Border Width="{Binding Indent}" />
+                                    <TextBlock Grid.Column="1"
+                                               Classes="text muted"
+                                               FontSize="12"
+                                               Text="{Binding Chevron}" />
+                                    <TextBlock Grid.Column="2"
+                                               Classes="text muted"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               Margin="6,0,0,0"
+                                               Text="{Binding Label}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                        <DataTemplate DataType="vm:CommitFileRowViewModel" x:DataType="vm:CommitFileRowViewModel">
+                            <Border Background="Transparent" Cursor="Hand" PointerPressed="OnRowPressed">
+                                <Border.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Open file location" Command="{Binding RevealCommand}" />
+                                        <MenuItem Header="Copy path" Command="{Binding CopyPathCommand}" />
+                                    </ContextMenu>
+                                </Border.ContextMenu>
+                                <Grid ColumnDefinitions="Auto,Auto,*" Height="22">
+                                    <Border Width="{Binding Indent}" />
+                                    <TextBlock Grid.Column="1"
+                                               Classes="text muted"
+                                               FontSize="14"
+                                               Text="{Binding Kind, Converter={x:Static v:FileChangeKindGlyphConverter.Instance}}" />
+                                    <TextBlock Grid.Column="2"
+                                               Classes="text"
+                                               FontSize="14"
+                                               Margin="8,0,0,0"
+                                               Text="{Binding Display}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.DataTemplates>
+                </ListBox>
+
+                <TextBlock Classes="text muted"
+                           FontSize="12"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Top"
+                           Margin="0,24,0,0"
+                           Text="{Binding FilesStatus}"
+                           IsVisible="{Binding HasFilesStatus}" />
+            </Grid>
+        </ctl:SectionFrameHost.Bottom>
+    </ctl:SectionFrameHost>
+</UserControl>
