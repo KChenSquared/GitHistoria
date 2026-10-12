@@ -33,15 +33,7 @@ public sealed partial class RefNavigatorView : UserControl, IDisposable
     private readonly IExternalLauncher _launcher;
     private readonly INavigationBus _nav;
 
-    static RefNavigatorView()
-    {
-        // A filter box takes focus when it appears.
-        IsVisibleProperty.Changed.AddClassHandler<TextBox>((box, e) =>
-        {
-            if (e.NewValue is true && box.Classes.Contains("ref-filter"))
-                Dispatcher.UIThread.Post(() => box.Focus());
-        });
-    }
+    private readonly Dictionary<TextBox, (RefSectionViewModel Section, EventHandler Handler)> _filterFocus = [];
 
     public RefNavigatorView(IServiceProvider sp)
     {
@@ -82,7 +74,13 @@ public sealed partial class RefNavigatorView : UserControl, IDisposable
     /// <summary>The sidebar's own scroller, around every section.</summary>
     internal ScrollViewer OuterScroller => OuterScroll;
 
-    public void Dispose() => ViewModel.Dispose();
+    public void Dispose()
+    {
+        foreach (var (section, handler) in _filterFocus.Values)
+            section.FocusFilterRequested -= handler;
+        _filterFocus.Clear();
+        ViewModel.Dispose();
+    }
 
     private void UpdateNestedMargin()
     {
@@ -100,6 +98,22 @@ public sealed partial class RefNavigatorView : UserControl, IDisposable
             return;
         e.Handled = true;
         section.ToggleCommand.Execute(null);
+    }
+
+    // A filter box takes focus when the user opens its filter, not whenever the box becomes visible:
+    // re-expanding a section with an open filter must leave the caret where the user was typing.
+    // The focus is posted so it lands after the open's bindings and layout have settled.
+    private void OnFilterDataContextChanged(object? sender, EventArgs e)
+    {
+        if (sender is not TextBox box)
+            return;
+        if (_filterFocus.Remove(box, out var previous))
+            previous.Section.FocusFilterRequested -= previous.Handler;
+        if (box.DataContext is not RefSectionViewModel section)
+            return;
+        void OnFocusRequested(object? s, EventArgs args) => Dispatcher.UIThread.Post(() => box.Focus());
+        section.FocusFilterRequested += OnFocusRequested;
+        _filterFocus[box] = (section, OnFocusRequested);
     }
 
     private void OnFilterKeyDown(object? sender, KeyEventArgs e)
@@ -172,9 +186,7 @@ public sealed partial class RefNavigatorView : UserControl, IDisposable
 
         var b = row.Branch;
         var isRemote = row.IsRemote;
-        var shortLocal = isRemote && b.RemoteName is { } r && b.Name.StartsWith(r + "/", StringComparison.Ordinal)
-            ? b.Name[(r.Length + 1)..]
-            : b.Name;
+        var shortLocal = BranchActions.LocalName(b);
 
         // The counterpart to measure divergence against, and the remote alias that owns
         // it — resolved via BranchInfo.RemoteName (reliable even when the alias itself contains

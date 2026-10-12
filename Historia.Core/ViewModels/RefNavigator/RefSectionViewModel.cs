@@ -78,6 +78,12 @@ public sealed partial class RefSectionViewModel : ObservableObject
 
     internal void SetFilterOpen(bool open) => IsFilterOpen = open;
 
+    /// <summary>Raised when the user opens the filter, so the view can put the caret in its box.
+    /// Re-expanding a section whose filter is already open does not raise it.</summary>
+    public event EventHandler? FocusFilterRequested;
+
+    internal void RequestFilterFocus() => FocusFilterRequested?.Invoke(this, EventArgs.Empty);
+
     /// <summary>Clears the filter without asking the host to rebuild.</summary>
     internal void ClearFilterQuietly()
     {

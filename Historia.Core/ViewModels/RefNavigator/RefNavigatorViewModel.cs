@@ -356,6 +356,8 @@ public sealed partial class RefNavigatorViewModel : ViewModelBase
         if (section.IsFilterOpen)
             section.SetOpen(true);
         RebuildSection(section);
+        if (section.IsFilterOpen)
+            section.RequestFilterFocus();
     }
 
     internal void CloseFilter(RefSectionViewModel section)
@@ -725,22 +727,10 @@ public sealed partial class RefNavigatorViewModel : ViewModelBase
         if (repo is null || (b.IsCurrent && !row.IsRemote))
             return;
 
-        var name = row.IsRemote
-            ? (b.RemoteName is { } rn && b.Name.StartsWith(rn + "/", StringComparison.Ordinal) ? b.Name[(rn.Length + 1)..]
-               : b.Name.Contains('/') ? b.Name[(b.Name.IndexOf('/') + 1)..] : b.Name)
-            : b.Name;
-
         try
         {
-            var localExists = repo.State.Branches.Any(x => !x.IsRemote && x.Name == name);
-            if (row.IsRemote && !localExists)
-                await BranchActions.CheckoutTrackingAsync(repo, _notifications, _stashes, name, b.Name);
-            else
-                await BranchActions.CheckoutAsync(repo, _notifications, _stashes, name);
-
-            // The checkout reports its own failures; the state it refreshed says whether it landed.
-            if (string.Equals(repo.State.CurrentBranch?.Name, name, StringComparison.Ordinal))
-                _notifications.Publish(NotificationSeverity.Success, $"Switched to {name}.");
+            await BranchActions.CheckoutBranchAsync(repo, _notifications, _stashes, b,
+                onSwitched: name => _notifications.Publish(NotificationSeverity.Success, $"Switched to {name}."));
         }
         catch (Exception ex)
         {

@@ -146,6 +146,76 @@ public sealed class BranchActionsTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_checkout_recovered_by_stash_and_retry_runs_on_success_after_the_retry()
+    {
+        var (repo, first) = RepoWithBlockingEdit();
+        var ctx = _host.Open(repo.Path);
+        var succeeded = 0;
+
+        await BranchActions.RunWithStashRecovery(ctx, _notify, Stash(),
+            () => ctx.Gateway.CreateBranchAsync("recovered", first, checkout: true), "Create branch",
+            onSuccess: () => succeeded++);
+
+        Assert.Equal(0, succeeded);
+        var retry = Assert.Single(Assert.Single(_notify.Published).Actions);
+
+        await retry.Invoke();
+
+        Assert.Equal("recovered", Head(repo));
+        Assert.Equal(1, succeeded);
+    }
+
+    [Fact]
+    public async Task A_stash_and_retry_whose_retry_fails_does_not_run_on_success()
+    {
+        var (repo, first) = RepoWithBlockingEdit();
+        var ctx = _host.Open(repo.Path);
+        var succeeded = 0;
+        var attempts = 0;
+
+        await BranchActions.RunWithStashRecovery(ctx, _notify, Stash(), async () =>
+        {
+            if (++attempts == 1)
+                await ctx.Gateway.CreateBranchAsync("recovered", first, checkout: true);
+            else
+                throw new InvalidOperationException("retry failed");
+        }, "Create branch", onSuccess: () => succeeded++);
+
+        await Assert.Single(Assert.Single(_notify.Published).Actions).Invoke();
+
+        Assert.Equal(2, attempts);
+        Assert.Equal(0, succeeded);
+        Assert.Equal(NotificationSeverity.Error, _notify.Published[^1].Severity);
+        Assert.Contains("retry failed", _notify.Published[^1].Message);
+    }
+
+    [Fact]
+    public async Task A_successful_operation_runs_on_success_once()
+    {
+        var repo = NewRepo();
+        var ctx = _host.Open(repo.Path);
+        var succeeded = 0;
+
+        await BranchActions.RunWithStashRecovery(ctx, _notify, Stash(), () => Task.CompletedTask, "Noop", onSuccess: () => succeeded++);
+
+        Assert.Equal(1, succeeded);
+    }
+
+    [Fact]
+    public async Task A_failed_operation_does_not_run_on_success()
+    {
+        var repo = NewRepo();
+        var ctx = _host.Open(repo.Path);
+        var succeeded = 0;
+
+        await BranchActions.RunWithStashRecovery(ctx, _notify, Stash(),
+            () => throw new InvalidOperationException("nope"), "Noop", onSuccess: () => succeeded++);
+
+        Assert.Equal(0, succeeded);
+        Assert.Equal(NotificationSeverity.Error, Assert.Single(_notify.Published).Severity);
+    }
+
+    [Fact]
     public async Task A_successful_operation_publishes_nothing()
     {
         var repo = NewRepo();
@@ -245,6 +315,126 @@ public sealed class BranchActionsTests : IAsyncDisposable
         Assert.Empty(_notify.Published);
         Assert.Equal("feature", Head(repo));
         Assert.Equal("origin/feature", repo.Git("rev-parse", "--abbrev-ref", "feature@{upstream}").Trim());
+    }
+
+    /// <summary>A repository with a remote <paramref name="remote"/> that has a branch "feature".</summary>
+    private async Task<(TestRepositoryBuilder Repo, RepositoryContext Ctx)> RepoWithRemoteFeature(string remote, bool localFeature)
+    {
+        var upstream = NewRepo();
+        upstream.Git("branch", "feature");
+        var repo = NewRepo();
+        repo.Git("remote", "add", remote, upstream.Path);
+        repo.Git("fetch", remote);
+        if (localFeature)
+            repo.Git("branch", "feature");
+        var ctx = _host.Open(repo.Path);
+        await ctx.State.RefreshRefsAsync();
+        return (repo, ctx);
+    }
+
+    private static BranchInfo Remote(RepositoryContext ctx, string name) =>
+        ctx.State.Branches.Single(b => b.IsRemote && b.Name == name);
+
+    private static string Upstream(TestRepositoryBuilder repo, string branch) =>
+        repo.Git("for-each-ref", "--format=%(upstream:short)", $"refs/heads/{branch}").Trim();
+
+    [Fact]
+    public async Task CheckoutBranchAsync_creates_a_tracking_branch_for_a_remote_without_a_local()
+    {
+        var (repo, ctx) = await RepoWithRemoteFeature("origin", localFeature: false);
+        var switched = new List<string>();
+
+        await BranchActions.CheckoutBranchAsync(ctx, _notify, Stash(), Remote(ctx, "origin/feature"), switched.Add);
+
+        Assert.Empty(_notify.Published);
+        Assert.Equal("feature", Head(repo));
+        Assert.Equal("origin/feature", Upstream(repo, "feature"));
+        Assert.Equal(["feature"], switched);
+    }
+
+    [Fact]
+    public async Task CheckoutBranchAsync_checks_out_the_local_branch_when_one_exists()
+    {
+        var (repo, ctx) = await RepoWithRemoteFeature("origin", localFeature: true);
+        var switched = new List<string>();
+
+        await BranchActions.CheckoutBranchAsync(ctx, _notify, Stash(), Remote(ctx, "origin/feature"), switched.Add);
+
+        Assert.Empty(_notify.Published);
+        Assert.Equal("feature", Head(repo));
+        Assert.Equal("", Upstream(repo, "feature"));
+        Assert.Equal(["feature"], switched);
+    }
+
+    [Fact]
+    public async Task CheckoutBranchAsync_handles_a_remote_alias_with_a_slash()
+    {
+        var (repo, ctx) = await RepoWithRemoteFeature("team/infra", localFeature: false);
+        var remote = Remote(ctx, "team/infra/feature");
+        Assert.Equal("team/infra", remote.RemoteName);
+
+        await BranchActions.CheckoutBranchAsync(ctx, _notify, Stash(), remote);
+
+        Assert.Empty(_notify.Published);
+        Assert.Equal("feature", Head(repo));
+        Assert.Equal("team/infra/feature", Upstream(repo, "feature"));
+    }
+
+    [Fact]
+    public async Task CheckoutBranchAsync_checks_out_a_local_branch_by_its_own_name()
+    {
+        var repo = NewRepo();
+        repo.Git("branch", "topic");
+        var ctx = _host.Open(repo.Path);
+        await ctx.State.RefreshRefsAsync();
+        var topic = ctx.State.Branches.Single(b => !b.IsRemote && b.Name == "topic");
+        var switched = new List<string>();
+
+        await BranchActions.CheckoutBranchAsync(ctx, _notify, Stash(), topic, switched.Add);
+
+        Assert.Equal("topic", Head(repo));
+        Assert.Equal(["topic"], switched);
+    }
+
+    [Fact]
+    public async Task A_checkout_blocked_by_local_edits_announces_the_switch_only_after_stash_and_retry()
+    {
+        var (repo, first) = RepoWithBlockingEdit();
+        repo.Git("branch", "older", first);
+        var ctx = _host.Open(repo.Path);
+        await ctx.State.RefreshRefsAsync();
+        var older = ctx.State.Branches.Single(b => b.Name == "older");
+        var switched = new List<string>();
+
+        await BranchActions.CheckoutBranchAsync(ctx, _notify, Stash(), older, switched.Add);
+
+        Assert.Empty(switched);
+        var retry = Assert.Single(Assert.Single(_notify.Published).Actions);
+        Assert.Equal("Stash & retry", retry.Label);
+
+        await retry.Invoke();
+
+        Assert.Equal("older", Head(repo));
+        Assert.Equal(["older"], switched);
+    }
+
+    [Fact]
+    public void LocalName_drops_the_remote_prefix_and_falls_back_to_the_first_segment()
+    {
+        static BranchInfo Branch(string name, bool remote, string? remoteName) => new()
+        {
+            Name = name,
+            CanonicalName = remote ? $"refs/remotes/{name}" : $"refs/heads/{name}",
+            IsRemote = remote,
+            IsCurrent = false,
+            RemoteName = remoteName,
+        };
+
+        Assert.Equal("feature/x", BranchActions.LocalName(Branch("feature/x", false, null)));
+        Assert.Equal("feature/x", BranchActions.LocalName(Branch("origin/feature/x", true, "origin")));
+        Assert.Equal("feature", BranchActions.LocalName(Branch("team/infra/feature", true, "team/infra")));
+        Assert.Equal("feature/x", BranchActions.LocalName(Branch("origin/feature/x", true, null)));
+        Assert.Equal("lone", BranchActions.LocalName(Branch("lone", true, null)));
     }
 
     [Fact]

@@ -131,6 +131,7 @@
                                      VerticalAlignment="Center"
                                      Text="{Binding FilterText}"
                                      IsVisible="{Binding ShowFilterBox}"
+                                     DataContextChanged="OnFilterDataContextChanged"
                                      KeyDown="OnFilterKeyDown" />
 
                             <ListBox Classes="refs"

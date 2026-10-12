@@ -448,6 +448,64 @@ public sealed class RefNavigatorFilterTests
     }
 
     [AvaloniaFact]
+    public void OpeningTheFilterWithItsButtonFocusesTheBox()
+    {
+        var setup = CreateView();
+        try
+        {
+            SimulateClick(setup.Window, GetFilterButton(GetSectionHeaders(setup.View)[0])!);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(FilterBox(setup.View, 0).IsFocused, "Opening the filter must put the caret in its box");
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Reexpanding_a_section_with_an_open_filter_leaves_focus_where_it_was()
+    {
+        var setup = CreateView();
+        try
+        {
+            SimulateClick(setup.Window, GetFilterButton(GetSectionHeaders(setup.View)[0])!);
+            Dispatcher.UIThread.RunJobs();
+
+            var other = new TextBox();
+            setup.Window.Content = null;
+            setup.Window.Content = new DockPanel { Children = { Docked(other, Dock.Top), setup.View } };
+            Dispatcher.UIThread.RunJobs();
+            var box = FilterBox(setup.View, 0);
+            other.Focus();
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(other.IsFocused);
+            Assert.True(setup.View.ViewModel.Local.ShowFilterBox);
+
+            setup.View.ViewModel.Local.ToggleCommand.Execute(null);
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(box.IsEffectivelyVisible);
+            setup.View.ViewModel.Local.ToggleCommand.Execute(null);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(box.IsEffectivelyVisible);
+            Assert.True(other.IsFocused, "Re-expanding a section must not move focus into its open filter");
+            Assert.False(box.IsFocused);
+        }
+        finally
+        {
+            Cleanup(setup);
+        }
+    }
+
+    private static T Docked<T>(T control, Dock dock) where T : Control
+    {
+        DockPanel.SetDock(control, dock);
+        return control;
+    }
+
+    [AvaloniaFact]
     public void EscapeClearsAndClosesTheFilter()
     {
         var setup = CreateView();

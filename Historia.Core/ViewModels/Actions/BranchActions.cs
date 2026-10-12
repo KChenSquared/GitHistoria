@@ -7,22 +7,66 @@ namespace Historia.ViewModels;
 /// </summary>
 public static class BranchActions
 {
-    /// <summary>Checks out the existing local branch <paramref name="name"/>. A remote row whose short
-    /// name already exists locally takes this path; only a remote row with no local counterpart
-    /// materialises a tracking branch (<see cref="CheckoutTrackingAsync"/>).</summary>
-    public static Task CheckoutAsync(RepositoryContext ctx, INotificationService notify, IStashService stash, string name) =>
+    /// <summary>Checks out <paramref name="branch"/>. A remote branch whose local name already exists
+    /// checks that local branch out; a remote branch with no local counterpart materialises a tracking
+    /// branch. <paramref name="onSwitched"/> receives the local name once the checkout has landed, on
+    /// the first attempt or after a successful "Stash &amp; retry".</summary>
+    public static Task CheckoutBranchAsync(RepositoryContext ctx, INotificationService notify, IStashService stash,
+        BranchInfo branch, Action<string>? onSwitched = null) =>
+        CheckoutBranchAsync(ctx, notify, stash, LocalName(branch), branch.Name, !branch.IsRemote, onSwitched);
+
+    /// <summary>The same decision for callers that already hold the local name and the ref to track:
+    /// <paramref name="trackingRef"/> is only used when the row is remote
+    /// (<paramref name="isLocal"/> false) and no local branch called <paramref name="name"/> exists.</summary>
+    public static Task CheckoutBranchAsync(RepositoryContext ctx, INotificationService notify, IStashService stash,
+        string name, string trackingRef, bool isLocal, Action<string>? onSwitched = null)
+    {
+        Action? onSuccess = onSwitched is null
+            ? null
+            : () =>
+            {
+                // The checkout reports its own failures; the refreshed state says whether it landed.
+                if (string.Equals(ctx.State.CurrentBranch?.Name, name, StringComparison.Ordinal))
+                    onSwitched(name);
+            };
+
+        var localExists = ctx.State.Branches.Any(x => !x.IsRemote && string.Equals(x.Name, name, StringComparison.Ordinal));
+        return !isLocal && !localExists
+            ? CheckoutTrackingAsync(ctx, notify, stash, name, trackingRef, onSuccess)
+            : CheckoutAsync(ctx, notify, stash, name, onSuccess);
+    }
+
+    /// <summary>The local branch name for <paramref name="branch"/>: a remote branch loses its remote
+    /// prefix (its <see cref="BranchInfo.RemoteName"/>, which may itself contain a slash, or the first
+    /// segment when that is unknown); a local branch keeps its name.</summary>
+    public static string LocalName(BranchInfo branch)
+    {
+        if (!branch.IsRemote)
+            return branch.Name;
+        if (branch.RemoteName is { } remote && branch.Name.StartsWith(remote + "/", StringComparison.Ordinal))
+            return branch.Name[(remote.Length + 1)..];
+        var slash = branch.Name.IndexOf('/');
+        return slash >= 0 ? branch.Name[(slash + 1)..] : branch.Name;
+    }
+
+    /// <summary>Checks out the existing local branch <paramref name="name"/>. <paramref name="onSuccess"/>
+    /// runs once the checkout and the state refresh have succeeded, including after a successful
+    /// "Stash &amp; retry".</summary>
+    public static Task CheckoutAsync(RepositoryContext ctx, INotificationService notify, IStashService stash,
+        string name, Action? onSuccess = null) =>
         RunWithStashRecovery(ctx, notify, stash,
-            () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout");
+            () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout", onSuccess);
 
     /// <summary>Creates the local branch <paramref name="name"/> from <paramref name="trackingRef"/>, checks
-    /// it out and wires its upstream to that ref.</summary>
-    public static Task CheckoutTrackingAsync(
-        RepositoryContext ctx, INotificationService notify, IStashService stash, string name, string trackingRef) =>
+    /// it out and wires its upstream to that ref. <paramref name="onSuccess"/> runs as for
+    /// <see cref="CheckoutAsync"/>.</summary>
+    public static Task CheckoutTrackingAsync(RepositoryContext ctx, INotificationService notify, IStashService stash,
+        string name, string trackingRef, Action? onSuccess = null) =>
         RunWithStashRecovery(ctx, notify, stash, async () =>
         {
             await ctx.Gateway.CreateBranchAsync(name, trackingRef, checkout: true, ctx.Lifetime);
             await ctx.Gateway.SetUpstreamAsync(name, trackingRef, ctx.Lifetime);
-        }, "Checkout");
+        }, "Checkout", onSuccess);
 
     /// <summary>Asks for a branch name and creates it at <paramref name="sha"/>, checking it out.
     /// Unlike creating a branch at the current tip, this can check out a different commit than HEAD,
@@ -116,26 +160,33 @@ public static class BranchActions
 
     /// <summary>Shared by every checkout/pull/merge call site that can hit git's "commit your
     /// changes or stash them first" refusal (<see cref="GitErrorKind.UncommittedChanges"/>).
-    /// Offers a "Stash & retry" recovery action in place of a dead-end error.</summary>
+    /// Offers a "Stash &amp; retry" recovery action in place of a dead-end error.
+    /// <paramref name="onSuccess"/> runs once <paramref name="op"/> and the state refresh have
+    /// succeeded: on the first attempt, or after the recovery action's retry succeeded.</summary>
     public static async Task RunWithStashRecovery(RepositoryContext ctx, INotificationService notify,
-        IStashService stash, Func<Task> op, string what)
+        IStashService stash, Func<Task> op, string what, Action? onSuccess = null)
     {
+        var succeeded = false;
         try
         {
             await op();
             await ctx.State.RefreshAllAsync(ctx.Lifetime);
+            succeeded = true;
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.UncommittedChanges)
         {
             notify.Publish(NotificationSeverity.Error, ex.Message, ex.Details,
             [
-                new NotificationAction("Stash & retry", () => StashAndRetryAsync(ctx, notify, stash, op, what)),
+                new NotificationAction("Stash & retry", () => StashAndRetryAsync(ctx, notify, stash, op, what, onSuccess)),
             ]);
         }
         catch (Exception ex)
         {
             notify.Publish(NotificationSeverity.Error, ex.NotificationMessage(what), ex.NotificationDetails());
         }
+
+        if (succeeded)
+            onSuccess?.Invoke();
     }
 
     /// <summary>Stashes (including untracked files), retries <paramref name="op"/>, then pops the
@@ -143,9 +194,11 @@ public static class BranchActions
     /// the user and the working tree they had a moment ago. If popping the stash back conflicts,
     /// it is deliberately left in the stash list (git's own behaviour) rather than dropped; the
     /// conflict markers land in the working tree and the existing conflict-resolver panel picks
-    /// them up on the refresh below.</summary>
+    /// them up on the refresh below. <paramref name="onSuccess"/> runs only when the retried
+    /// <paramref name="op"/> succeeded, after the stash was popped back and the state refreshed; a
+    /// stash that could not be restored does not stop it, since the operation itself completed.</summary>
     public static async Task StashAndRetryAsync(RepositoryContext ctx, INotificationService notify,
-        IStashService stash, Func<Task> op, string what)
+        IStashService stash, Func<Task> op, string what, Action? onSuccess = null)
     {
         bool stashed;
         try
@@ -163,7 +216,12 @@ public static class BranchActions
         if (!stashed)
         {
             try { await op(); await ctx.State.RefreshAllAsync(ctx.Lifetime); }
-            catch (Exception ex) { notify.Publish(NotificationSeverity.Error, ex.NotificationMessage(what), ex.NotificationDetails()); }
+            catch (Exception ex)
+            {
+                notify.Publish(NotificationSeverity.Error, ex.NotificationMessage(what), ex.NotificationDetails());
+                return;
+            }
+            onSuccess?.Invoke();
             return;
         }
 
@@ -188,5 +246,7 @@ public static class BranchActions
 
         if (failure is not null)
             notify.Publish(NotificationSeverity.Error, $"{what} failed: {failure.Message}", failure.NotificationDetails());
+        else
+            onSuccess?.Invoke();
     }
 }

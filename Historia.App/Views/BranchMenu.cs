@@ -127,15 +127,9 @@ internal static class BranchMenu
     {
         var items = new List<Control>();
 
-        // A local branch matching the short name already exists → just check it out. Only when a
-        // remote row has no local counterpart do we materialise a tracking branch.
-        var localExists = ctx.State.Branches.Any(x =>
-            !x.IsRemote && string.Equals(x.Name, t.Name, StringComparison.Ordinal));
         var isCurrent = t.IsLocal && string.Equals(t.Name, t.CurrentBranch, StringComparison.Ordinal);
 
-        items.Add(MenuLeaf("Checkout", () => !t.IsLocal && !localExists
-            ? BranchActions.CheckoutTrackingAsync(ctx, notify, stash, t.Name, t.TrackingRef)
-            : BranchActions.CheckoutAsync(ctx, notify, stash, t.Name)));
+        items.Add(MenuLeaf("Checkout", () => BranchActions.CheckoutBranchAsync(ctx, notify, stash, t.Name, t.TrackingRef, t.IsLocal)));
 
         if (t.TipSha is { Length: > 0 } sha)
         {

@@ -55,10 +55,10 @@ public sealed class RefNavigatorViewModelTests : IAsyncDisposable
 
     private sealed class Rig
     {
-        public Rig(RepositoryContext? focused, IUiDispatcher? ui = null)
+        public Rig(RepositoryContext? focused, IUiDispatcher? ui = null, IStashService? stashes = null)
         {
             Workspace.Set(focused);
-            Vm = new RefNavigatorViewModel(Workspace, Nav, Dialogs, Notifications, Stashes, Submodules, Worktrees,
+            Vm = new RefNavigatorViewModel(Workspace, Nav, Dialogs, Notifications, stashes ?? Stashes, Submodules, Worktrees,
                 Cache, Actions, ui ?? new ImmediateUiDispatcher(), RemoteDialogs);
         }
 
@@ -77,9 +77,9 @@ public sealed class RefNavigatorViewModelTests : IAsyncDisposable
 
     /// <summary>A view model bound to <paramref name="focused"/>. <paramref name="configure"/> runs
     /// first, so stashes and the like can be set up before the lists are loaded at bind.</summary>
-    private Rig NewRig(RepositoryContext? focused, IUiDispatcher? ui = null, Action<Rig>? configure = null)
+    private Rig NewRig(RepositoryContext? focused, IUiDispatcher? ui = null, Action<Rig>? configure = null, IStashService? stashes = null)
     {
-        var rig = new Rig(configure is null ? focused : null, ui);
+        var rig = new Rig(configure is null ? focused : null, ui, stashes);
         _vms.Add(rig.Vm);
         if (configure is not null)
         {
@@ -306,6 +306,33 @@ public sealed class RefNavigatorViewModelTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Opening_a_filter_requests_focus_and_reexpanding_a_section_does_not()
+    {
+        var repo = NewRepo(r => r.Git("branch", "topic"));
+        var rig = NewRig(await OpenAsync(repo));
+        var requests = 0;
+        rig.Vm.Local.FocusFilterRequested += (_, _) => requests++;
+
+        rig.Vm.Local.ToggleFilterCommand.Execute(null);
+        Assert.Equal(1, requests);
+
+        rig.Vm.Local.ToggleCommand.Execute(null);
+        rig.Vm.Local.ToggleCommand.Execute(null);
+        Assert.True(rig.Vm.Local.ShowFilterBox);
+        Assert.Equal(1, requests);
+
+        rig.Vm.Local.CloseFilterCommand.Execute(null);
+        Assert.Equal(1, requests);
+
+        rig.Vm.Local.ToggleFilterCommand.Execute(null);
+        Assert.Equal(2, requests);
+
+        rig.Vm.Local.ToggleFilterCommand.Execute(null);
+        Assert.False(rig.Vm.Local.IsFilterOpen);
+        Assert.Equal(2, requests);
+    }
+
+    [Fact]
     public async Task Opening_a_filter_expands_a_collapsed_section()
     {
         var repo = NewRepo(r => r.Git("tag", "v1.0.0"));
@@ -404,6 +431,38 @@ public sealed class RefNavigatorViewModelTests : IAsyncDisposable
         Assert.Equal("feat", repo.Git("rev-parse", "--abbrev-ref", "HEAD").Trim());
         Assert.Equal("origin/feat", repo.Git("rev-parse", "--abbrev-ref", "feat@{upstream}").Trim());
         Assert.Equal("Switched to feat.", Assert.Single(rig.Notifications.Published).Message);
+    }
+
+    [Fact]
+    public async Task Checkout_after_stash_and_retry_announces_the_switch()
+    {
+        var repo = NewRepo(r =>
+        {
+            r.WriteFile("other.txt", "c2\n").Stage();
+            r.Commit("c2");
+            r.Git("branch", "older");
+            r.WriteFile("other.txt", "c3\n").Stage();
+            r.Commit("c3");
+            r.WriteFile("other.txt", "edited\n");
+        });
+        var ctx = await OpenAsync(repo);
+        var rig = NewRig(ctx, stashes: new StashService(_host.Cli));
+
+        var older = rig.Vm.Local.Rows.OfType<RefBranchRowViewModel>().Single(b => b.Text == "older");
+        await rig.Vm.CheckoutCommand.ExecuteAsync(older);
+
+        var refusal = Assert.Single(rig.Notifications.Published);
+        Assert.Equal(NotificationSeverity.Error, refusal.Severity);
+        var retry = Assert.Single(refusal.Actions);
+        Assert.Equal("Stash & retry", retry.Label);
+
+        await retry.Invoke();
+
+        Assert.Equal("older", repo.Git("rev-parse", "--abbrev-ref", "HEAD").Trim());
+        var notice = rig.Notifications.Published[^1];
+        Assert.Equal(NotificationSeverity.Success, notice.Severity);
+        Assert.Equal("Switched to older.", notice.Message);
+        Assert.Equal(1, rig.Notifications.Published.Count(n => n.Message == "Switched to older."));
     }
 
     [Fact]
