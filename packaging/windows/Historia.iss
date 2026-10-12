@@ -242,7 +242,7 @@ begin
     if not RuntimeInstalled then
     begin
       SuppressibleMsgBox('The Microsoft .NET Desktop Runtime 10.x (x64) is required by Historia but was not installed.' + #13#10 +
-        'Setup will continue, but Historia requires the runtime before it can launch.', mbInformation, MB_OK);
+        'Setup will continue, but Historia requires the runtime before it can launch.', mbInformation, MB_OK, IDOK);
     end;
   end;
   #endif
