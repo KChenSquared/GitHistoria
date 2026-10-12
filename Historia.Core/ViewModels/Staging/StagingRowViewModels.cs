@@ -58,9 +58,6 @@ public abstract partial class StagingPathRowViewModel : StagingListItem
     /// <summary>Repo-relative path, forward slashes.</summary>
     public string Path { get; }
 
-    /// <summary>False in a bare repository, which has no working tree to reveal a file in.</summary>
-    public bool HasMenu => !_owner.IsBare;
-
     /// <summary>What a click on the row does.</summary>
     public abstract IRelayCommand ActivateCommand { get; }
 

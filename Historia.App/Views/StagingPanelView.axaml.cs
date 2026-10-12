@@ -70,12 +70,6 @@ public sealed partial class StagingPanelView : UserControl, IDisposable
 
     internal StagingPanelViewModel ViewModel { get; }
 
-    /// <summary>The panel of the Changes list's rows, whose ancestors are the list's scroller.</summary>
-    internal Control? ChangesRowsForTesting => ChangesList.ItemsPanelRoot;
-
-    /// <summary>The panel of the Staged list's rows, whose ancestors are the list's scroller.</summary>
-    internal Control? StagedRowsForTesting => StagedList.ItemsPanelRoot;
-
     public void Dispose() => ViewModel.Dispose();
 
     private void ApplyMessageHeight()

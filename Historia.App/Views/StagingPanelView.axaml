@@ -63,6 +63,10 @@
             <Setter Property="Background" Value="{DynamicResource ColorListActive}" />
         </Style>
 
+        <!-- A note stands in for rows ("No changes.") at the row text size; a footnote is smaller. -->
+        <Style Selector="TextBlock.note">
+            <Setter Property="FontSize" Value="12" />
+        </Style>
         <Style Selector="TextBlock.footnote">
             <Setter Property="FontSize" Value="11" />
             <Setter Property="Margin" Value="0,4,0,0" />
@@ -335,9 +339,8 @@
                     </ListBox.ItemsPanel>
                     <ListBox.DataTemplates>
                         <DataTemplate DataType="vm:StagingNoteRowViewModel" x:DataType="vm:StagingNoteRowViewModel">
-                            <TextBlock Classes="text faint"
+                            <TextBlock Classes="text faint note"
                                        Classes.footnote="{Binding IsFootnote}"
-                                       FontSize="12"
                                        Text="{Binding Text}"
                                        ToolTip.Tip="{Binding ToolTip}" />
                         </DataTemplate>
@@ -372,10 +375,8 @@
                                 <Border.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Open file location"
-                                                  IsVisible="{Binding HasMenu}"
                                                   Command="{Binding RevealCommand}" />
                                         <MenuItem Header="Copy path"
-                                                  IsVisible="{Binding HasMenu}"
                                                   Command="{Binding CopyPathCommand}" />
                                     </ContextMenu>
                                 </Border.ContextMenu>
@@ -397,14 +398,11 @@
                                 <Border.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Open file location"
-                                                  IsVisible="{Binding HasMenu}"
                                                   Command="{Binding RevealCommand}" />
                                         <MenuItem Header="Copy path"
-                                                  IsVisible="{Binding HasMenu}"
                                                   Command="{Binding CopyPathCommand}" />
-                                        <Separator IsVisible="{Binding HasMenu}" />
+                                        <Separator />
                                         <MenuItem Header="Discard changes"
-                                                  IsVisible="{Binding HasMenu}"
                                                   Command="{Binding DiscardCommand}" />
                                     </ContextMenu>
                                 </Border.ContextMenu>
@@ -509,10 +507,8 @@
                                 <Border.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Open file location"
-                                                  IsVisible="{Binding HasMenu}"
                                                   Command="{Binding RevealCommand}" />
                                         <MenuItem Header="Copy path"
-                                                  IsVisible="{Binding HasMenu}"
                                                   Command="{Binding CopyPathCommand}" />
                                     </ContextMenu>
                                 </Border.ContextMenu>
