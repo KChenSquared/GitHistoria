@@ -22,9 +22,6 @@ public sealed partial class AiIntegrationsView : UserControl, IDisposable
 
     internal AiIntegrationsViewModel ViewModel { get; }
 
-    internal static void PublishError(INotificationService? notifications, AiException ex, string? prefix = null)
-        => AiIntegrationsViewModel.PublishError(notifications, ex, prefix);
-
     // A press on a row selects it. A press on the row's check button is handled by the button
     // and never reaches this handler.
     private static void OnRowPressed(object? sender, PointerPressedEventArgs e)

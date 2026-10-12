@@ -18,12 +18,7 @@ public class ViewMarkupGuardTests
     /// An entry needs a comment saying why, and <see cref="Allowlisted_markup_literals_are_still_present"/>
     /// fails once the literal is gone.
     /// </summary>
-    private static readonly (string File, string Attribute, string Value)[] AllowedNamedColours =
-    [
-        // The splash window shows before any theme resource dictionary is loaded; the splash art
-        // is an opaque image, and this is only the window behind it.
-        ("Historia.App/SplashWindow.axaml", "Background", "White"),
-    ];
+    private static readonly (string File, string Attribute, string Value)[] AllowedNamedColours = [];
 
     /// <summary>Attributes that carry a colour or a brush.</summary>
     private const string ColourAttribute = @"[A-Za-z.]*(?:Background|Foreground|Fill|Stroke|Color|Brush)";

@@ -7,9 +7,9 @@
         ShowInTaskbar="False"
         Topmost="True"
         Focusable="False"
-        Background="White"
         WindowStartupLocation="CenterScreen">
-    <!-- Complete splash image (emblem + wordmark + background baked in). The code-behind picks
+    <!-- Complete splash image (emblem + wordmark + background baked in). The code-behind sets the
+         window behind it (before any theme resource dictionary is loaded) and picks
          splash-light / splash-dark by the effective theme. App owns the window lifetime and
          closes it after App.SplashDuration. -->
     <Image x:Name="Art" Stretch="Uniform" />

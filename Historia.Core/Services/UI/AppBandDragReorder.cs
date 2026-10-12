@@ -1,10 +1,10 @@
 namespace Historia.Services.UI;
 
 /// <summary>
-/// Pure geometry for the app-band tab-strip drag reorder. Lifted out of
-/// <c>AppBandControl</c> so the drag threshold, the cursor-to-slot mapping and the edge-scroll
-/// trigger are unit-testable. The control keeps the pointer capture, the
-/// drag ghost, the edge timer and the child-collection surgery.
+/// Pure geometry for the app-band tab-strip drag reorder. Keeps the
+/// drag threshold, the cursor-to-slot mapping and the edge-scroll trigger unit-testable. The
+/// app band view keeps the pointer capture, the drag ghost, the edge timer and the
+/// child-collection surgery.
 /// </summary>
 public static class AppBandDragReorder
 {

@@ -2,7 +2,7 @@ namespace Historia.Views;
 
 /// <summary>
 /// The context menu on a remote's row in the sidebar: Open In Browser · Fetch · Prune · Edit… ·
-/// Set Push URL… · Delete… · Copy URL, plus the Add remote flow behind the Remotes header's button. Fetch and Prune go through <see cref="IRepoActionBus"/>
+/// Set Push URL… · Delete… · Copy URL. Fetch and Prune go through <see cref="IRepoActionBus"/>
 /// so they share the network runner's progress, busy guard and credential fallback; Prune's
 /// confirmation lives in that runner. The items that change the repository call <see cref="RemoteActions"/>,
 /// where Delete confirms in the method that removes the remote.
@@ -37,8 +37,4 @@ internal static class RemoteMenu
         items.Add(MenuLeaf("Copy URL", () => copy(remote.Url)));
         return items;
     }
-
-    /// <summary>Adds a remote from the Add remote dialog; see <see cref="RemoteActions.AddAsync"/>.</summary>
-    internal static Task AddAsync(RepositoryContext ctx, INotificationService notifications, IRepoActionBus actions) =>
-        RemoteActions.AddAsync(ctx, notifications, actions, RemoteWindows);
 }

@@ -115,7 +115,7 @@ Historia/
 - In hot paths (graph calculation, diff parsing), use `Span<T>`, `ReadOnlySpan<T>`, and `ArrayPool<T>` where appropriate to avoid heap allocations.
 
 ### Avalonia UI Conventions
-- Views are hand-built in C# in the `ViewKit` style (`Historia.App/Views/`), matching the native-control layer; XAML is reserved for `App.axaml` and `MainWindow.axaml`.
+- Views are AXAML bound to view models in `Historia.Core/ViewModels`; custom-drawn surfaces (graph, terminal, diff and conflict editors) are custom controls. `MvvmViewGuardTests` enforces it.
 - Never hard-code colors. `HistoriaPalette` (`Historia.Core/Services/Theming/`) is the single source of truth; bind through the generated `{DynamicResource ...}` keys so light/dark theming keeps working.
 - Always use virtualization when rendering large collections such as commit lists or long diffs (see `CommitGraphControl`, which renders only the visible row range).
 

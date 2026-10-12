@@ -50,16 +50,6 @@ public static class RemoteActions
                "or tags reach is kept. Nothing on the server is changed.";
     }
 
-    /// <summary>Maps each remote's trimmed fetch URL to its name, so the Edit dialog can refuse a URL
-    /// another remote already uses.</summary>
-    private static Dictionary<string, string> UrlOwners(IEnumerable<RemoteInfo> remotes)
-    {
-        var owners = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var r in remotes)
-            owners.TryAdd(r.Url.Trim(), r.Name);
-        return owners;
-    }
-
     private static async Task RefreshAsync(RepositoryContext ctx)
     {
         try { await ctx.State.RefreshAllAsync(ctx.Lifetime); }
@@ -104,7 +94,7 @@ public static class RemoteActions
         var others = ctx.State.Remotes
             .Where(r => !string.Equals(r.Name, remote.Name, StringComparison.Ordinal))
             .ToList();
-        var edit = await remoteDialogs.ShowEditAsync(remote, others.Select(r => r.Name).ToList(), UrlOwners(others));
+        var edit = await remoteDialogs.ShowEditAsync(remote, others.Select(r => r.Name).ToList(), RemoteDialogViewModel.UrlOwners(others));
         if (edit is null)
             return;
 
