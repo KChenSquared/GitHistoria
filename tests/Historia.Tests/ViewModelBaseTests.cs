@@ -132,6 +132,40 @@ public class ViewModelBaseTests
     }
 
     [Fact]
+    public void A_dispose_inside_subscribe_still_unsubscribes()
+    {
+        var vm = new Probe();
+        var unsubscribed = 0;
+
+        vm.Hook(() => vm.Dispose(), () => unsubscribed++);
+
+        Assert.True(vm.IsDisposed);
+        Assert.Equal(1, unsubscribed);
+        Assert.Equal(1, vm.DisposedCallbacks);
+    }
+
+    [Fact]
+    public void A_dispose_inside_track_still_disposes()
+    {
+        var vm = new Probe();
+        var tracked = new DisposeOnConstruct(vm);
+
+        vm.Own(tracked);
+        vm.Dispose();
+
+        Assert.Equal(1, tracked.Disposals);
+    }
+
+    private sealed class DisposeOnConstruct : IDisposable
+    {
+        public DisposeOnConstruct(ViewModelBase owner) => owner.Dispose();
+
+        public int Disposals { get; private set; }
+
+        public void Dispose() => Disposals++;
+    }
+
+    [Fact]
     public void Setting_a_property_raises_PropertyChanged_once_and_only_on_change()
     {
         var vm = new Probe();

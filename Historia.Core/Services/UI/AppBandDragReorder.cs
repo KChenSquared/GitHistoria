@@ -3,8 +3,8 @@ namespace Historia.Services.UI;
 /// <summary>
 /// Pure geometry for the app-band tab-strip drag reorder. Keeps the
 /// drag threshold, the cursor-to-slot mapping and the edge-scroll trigger unit-testable. The
-/// app band view keeps the pointer capture, the drag ghost, the edge timer and the
-/// child-collection surgery.
+/// app band view keeps the pointer capture, the drag ghost and the edge timer, and
+/// <see cref="Historia.ViewModels.AppBandViewModel"/> reorders the tabs.
 /// </summary>
 public static class AppBandDragReorder
 {
