@@ -4,7 +4,8 @@ namespace Historia.Tests;
 /// View markup guard. Views are AXAML bound to view models, and the palette stays the single
 /// source of colour: markup names colours only through <c>{DynamicResource Color…}</c>, so a theme
 /// change reaches every view live. A colour literal, a named colour or a <c>StaticResource</c>
-/// palette key in markup would freeze one theme into a view without any error, and a view root
+/// palette key in markup would freeze one theme into a view without any error, and so would a
+/// hex colour inside a longer value such as a <c>BoxShadow</c>. A view root
 /// with no <c>x:DataType</c> would fall back to reflection bindings. This scans every
 /// <c>.axaml</c> file in the App except <c>App.axaml</c>, which defines the palette resources.
 /// </summary>
@@ -19,6 +20,18 @@ public class ViewMarkupGuardTests
     /// fails once the literal is gone.
     /// </summary>
     private static readonly (string File, string Attribute, string Value)[] AllowedNamedColours = [];
+
+    /// <summary>
+    /// Markup that legitimately holds a hex colour inside a longer value, as (file, attribute, whole
+    /// attribute value). An entry needs a comment saying why, and
+    /// <see cref="Allowlisted_markup_literals_are_still_present"/> fails once the literal is gone.
+    /// </summary>
+    private static readonly (string File, string Attribute, string Value)[] AllowedCompositeLiterals =
+    [
+        // A theme-neutral translucent black shadow: it darkens whatever surface is behind it in
+        // every theme, so it has no palette counterpart.
+        ("Historia.App/Views/NotificationHostView.axaml", "BoxShadow", "0 4 16 0 #40000000"),
+    ];
 
     /// <summary>Attributes that carry a colour or a brush.</summary>
     private const string ColourAttribute = @"[A-Za-z.]*(?:Background|Foreground|Fill|Stroke|Color|Brush)";
@@ -65,6 +78,17 @@ public class ViewMarkupGuardTests
     // Anything else starting with # (an element-name binding such as {Binding #Root.Width}) is not a colour.
     private static readonly Regex HexLiteral = new(
         @"(?:=\s*""\s*|>\s*)(?<hex>#(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3,4}))\s*(?:""|<)",
+        RegexOptions.Compiled);
+
+    // A colour-bearing or shadow attribute (or a Setter for one) whose value is longer than a
+    // colour, such as BoxShadow="0 4 16 0 #40000000".
+    private static readonly Regex CompositeAttribute = new(
+        @"(?:(?<![\w.])(?<attr>[A-Za-z.]*(?:Background|Foreground|Fill|Stroke|Color|Brush|Shadow)[A-Za-z]*)\s*=|Property\s*=\s*""(?<attr>[A-Za-z.]*(?:Background|Foreground|Fill|Stroke|Color|Brush|Shadow)[A-Za-z]*)""\s+Value\s*=)\s*""(?<value>[^""]*)""",
+        RegexOptions.Compiled);
+
+    // A hex colour inside a value; an entity such as &#8226; or an element-name binding such as #Add.Text is not one.
+    private static readonly Regex EmbeddedHex = new(
+        @"(?<![\w&#])(?<hex>#(?:[0-9A-Fa-f]{8}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3,4}))(?![\w.])",
         RegexOptions.Compiled);
 
     private static readonly Regex StaticColourKey = new(
@@ -115,6 +139,16 @@ public class ViewMarkupGuardTests
             Assert.True(present,
                 $"{file} no longer sets {attribute}=\"{value}\"; remove it from AllowedNamedColours.");
         }
+
+        foreach (var (file, attribute, value) in AllowedCompositeLiterals)
+        {
+            var text = StripComments(File.ReadAllText(Path.Combine(root, file)));
+            var present = CompositeAttribute.Matches(text)
+                .Any(m => string.Equals(m.Groups["attr"].Value, attribute, StringComparison.Ordinal)
+                          && string.Equals(m.Groups["value"].Value, value, StringComparison.Ordinal));
+            Assert.True(present,
+                $"{file} no longer sets {attribute}=\"{value}\"; remove it from AllowedCompositeLiterals.");
+        }
     }
 
     [Theory]
@@ -129,6 +163,39 @@ public class ViewMarkupGuardTests
 
         Assert.Single(violations);
         Assert.Contains("colour literal", violations[0]);
+    }
+
+    [Theory]
+    [InlineData("""<Border BoxShadow="0 4 16 0 #40000000" />""")]
+    [InlineData("""<Border BoxShadow="inset 0 1 2 0 #fff, 0 4 16 0 #40000000" />""")]
+    [InlineData("""<Border BoxShadow="0 4 16 0 #1e1e1e" />""")]
+    [InlineData("""<Border Background="linear-gradient(#112233, #445566)" />""")]
+    [InlineData("""<Setter Property="BoxShadow" Value="0 2 4 0 #80000000" />""")]
+    public void Colour_literals_inside_a_longer_value_are_reported(string markup)
+    {
+        var violations = FindViolations("Historia.App/Views/Fixture.axaml", Wrap(markup));
+
+        Assert.NotEmpty(violations);
+        Assert.All(violations, v => Assert.Contains("colour literal", v));
+    }
+
+    [Fact]
+    public void An_allowlisted_composite_literal_is_accepted_only_in_its_own_file()
+    {
+        var markup = Wrap("""<Border BoxShadow="0 4 16 0 #40000000" />""");
+
+        Assert.Empty(FindViolations("Historia.App/Views/NotificationHostView.axaml", markup));
+        Assert.NotEmpty(FindViolations("Historia.App/Views/OtherView.axaml", markup));
+    }
+
+    [Theory]
+    [InlineData("""<Border BoxShadow="0 4 16 0 {DynamicResource ColorShadow}" />""")]
+    [InlineData("""<TextBox PasswordChar="&#8226;" />""")]
+    [InlineData("""<Border Background="{Binding #Add.Brush}" />""")]
+    [InlineData("""<TextBlock Text="Item #123456" />""")]
+    public void Hex_like_text_that_is_not_a_colour_is_accepted(string markup)
+    {
+        Assert.Empty(FindViolations("Historia.App/Views/Fixture.axaml", Wrap(markup)));
     }
 
     [Theory]
@@ -204,6 +271,22 @@ public class ViewMarkupGuardTests
 
         foreach (Match m in HexLiteral.Matches(markup))
             violations.Add($"{rel}:{LineOf(markup, m.Index)}: colour literal {m.Groups["hex"].Value} — use {{DynamicResource Color…}}.");
+
+        foreach (Match attribute in CompositeAttribute.Matches(markup))
+        {
+            var value = attribute.Groups["value"].Value;
+            if (HexLiteral.IsMatch($"=\"{value}\""))
+                continue; // the whole value is a colour; reported above
+            foreach (Match hex in EmbeddedHex.Matches(value))
+            {
+                var name = attribute.Groups["attr"].Value;
+                if (AllowedCompositeLiterals.Any(a => a.File == rel
+                        && string.Equals(a.Attribute, name, StringComparison.Ordinal)
+                        && string.Equals(a.Value, value, StringComparison.Ordinal)))
+                    continue;
+                violations.Add($"{rel}:{LineOf(markup, attribute.Index)}: colour literal {hex.Groups["hex"].Value} inside {name}=\"{value}\" — use {{DynamicResource Color…}}.");
+            }
+        }
 
         foreach (var regex in new[] { NamedColourAttribute, NamedColourSetter })
         {

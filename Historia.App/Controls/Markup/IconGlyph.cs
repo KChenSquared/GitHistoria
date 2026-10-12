@@ -20,9 +20,9 @@ public sealed class IconGlyph : ContentControl
 
     static IconGlyph()
     {
-        IconProperty.Changed.AddClassHandler<IconGlyph>((g, _) => g.Rebuild());
-        SizeProperty.Changed.AddClassHandler<IconGlyph>((g, _) => g.Rebuild());
-        ForegroundKeyProperty.Changed.AddClassHandler<IconGlyph>((g, _) => g.Rebuild());
+        IconProperty.Changed.AddClassHandler<IconGlyph>((g, _) => g.UpdateGlyph());
+        SizeProperty.Changed.AddClassHandler<IconGlyph>((g, _) => g.UpdateGlyph());
+        ForegroundKeyProperty.Changed.AddClassHandler<IconGlyph>((g, _) => g.UpdateGlyph());
     }
 
     /// <summary>Name of the glyph in <see cref="Historia.Components.IconPaths"/>; null or empty draws nothing.</summary>
@@ -46,7 +46,7 @@ public sealed class IconGlyph : ContentControl
         set => SetValue(ForegroundKeyProperty, value);
     }
 
-    private void Rebuild()
+    private void UpdateGlyph()
     {
         Content = string.IsNullOrEmpty(Icon) ? null : IconGlyphPath(Icon, Size, ForegroundKey);
     }

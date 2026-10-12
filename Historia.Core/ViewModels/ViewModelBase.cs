@@ -9,13 +9,16 @@ public abstract class ViewModelBase : ObservableObject, IDisposable
 {
     private readonly List<Action> _teardown = [];
     private readonly object _teardownSync = new();
+    private volatile bool _disposed;
 
     /// <summary>True once <see cref="Dispose"/> has run.</summary>
-    public bool IsDisposed { get; private set; }
+    public bool IsDisposed => _disposed;
 
     /// <summary>
     /// Runs <paramref name="subscribe"/> now and remembers <paramref name="unsubscribe"/> to run on
-    /// <see cref="Dispose"/>. On an already disposed view model nothing is subscribed.
+    /// <see cref="Dispose"/>. On an already disposed view model nothing is subscribed; if
+    /// <see cref="Dispose"/> lands while <paramref name="subscribe"/> runs, <paramref name="unsubscribe"/>
+    /// runs at once.
     /// </summary>
     protected void Subscribe(Action subscribe, Action unsubscribe)
     {
@@ -25,23 +28,35 @@ public abstract class ViewModelBase : ObservableObject, IDisposable
             return;
 
         subscribe();
-        lock (_teardownSync)
-            _teardown.Add(unsubscribe);
+        if (!TryRemember(unsubscribe))
+            RunTeardown(unsubscribe);
     }
 
     /// <summary>Remembers <paramref name="disposable"/> to dispose on <see cref="Dispose"/> and returns it.</summary>
     protected T Track<T>(T disposable) where T : IDisposable
     {
         ArgumentNullException.ThrowIfNull(disposable);
-        if (IsDisposed)
-        {
-            disposable.Dispose();
-            return disposable;
-        }
-
-        lock (_teardownSync)
-            _teardown.Add(disposable.Dispose);
+        if (!TryRemember(disposable.Dispose))
+            RunTeardown(disposable.Dispose);
         return disposable;
+    }
+
+    /// <summary>Adds <paramref name="step"/> unless the view model is disposed; the check and the add share one lock.</summary>
+    private bool TryRemember(Action step)
+    {
+        lock (_teardownSync)
+        {
+            if (_disposed)
+                return false;
+            _teardown.Add(step);
+            return true;
+        }
+    }
+
+    private static void RunTeardown(Action step)
+    {
+        try { step(); }
+        catch (Exception ex) { AppLog.Write(AppLogLevel.Warn, "ViewModel", "A view model teardown step failed.", ex); }
     }
 
     /// <summary>
@@ -54,19 +69,16 @@ public abstract class ViewModelBase : ObservableObject, IDisposable
         Action[] teardown;
         lock (_teardownSync)
         {
-            if (IsDisposed)
+            if (_disposed)
                 return;
-            IsDisposed = true;
+            _disposed = true;
             teardown = [.. _teardown];
             _teardown.Clear();
         }
 
         // Callbacks run outside the lock so a teardown step can never deadlock against Subscribe.
         for (var i = teardown.Length - 1; i >= 0; i--)
-        {
-            try { teardown[i](); }
-            catch (Exception ex) { AppLog.Write(AppLogLevel.Warn, "ViewModel", "A view model teardown step failed.", ex); }
-        }
+            RunTeardown(teardown[i]);
 
         OnDisposed();
         GC.SuppressFinalize(this);

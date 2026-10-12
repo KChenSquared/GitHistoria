@@ -24,7 +24,6 @@ public class MvvmViewGuardTests
     private static readonly (string Class, string Reason)[] CodeBuiltViews =
     [
         ("MarkdownView", "Renders Markdown text to a tree of inlines; it has no layout to declare."),
-        ("SimplePageView", "A static two-text page whose strings are its constructor arguments."),
     ];
 
     private static readonly Regex ViewClass = new(
