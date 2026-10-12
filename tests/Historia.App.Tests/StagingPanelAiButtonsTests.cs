@@ -49,6 +49,7 @@ public class StagingPanelAiButtonsTests : IDisposable
     private readonly List<StagingPanelView> _views = [];
     private readonly AiTestSupport.Client _client = new();
     private readonly AiTestSupport.Factory _factory;
+    private readonly AiTestSupport.CountingCatalog _catalog;
 
     public StagingPanelAiButtonsTests()
     {
@@ -64,6 +65,7 @@ public class StagingPanelAiButtonsTests : IDisposable
 
         _profiles = new AiProfileService(_settings);
         _factory = new AiTestSupport.Factory(_client);
+        _catalog = new AiTestSupport.CountingCatalog(new AiModelCatalog(_profiles, _factory));
 
         var sc = new ServiceCollection();
         sc.AddSingleton<ISettingsService>(_settings);
@@ -109,7 +111,7 @@ public class StagingPanelAiButtonsTests : IDisposable
         sc.AddSingleton<IAiProfileService>(_profiles);
         sc.AddSingleton<IAiIntegrationsPanel>(_panel);
         sc.AddSingleton<IAiClientFactory>(_factory);
-        sc.AddSingleton<IAiModelCatalog>(new AiModelCatalog(_profiles, _factory));
+        sc.AddSingleton<IAiModelCatalog>(_catalog);
         sc.AddSingleton<ICommitMessageGenerator>(_generator);
         _sp = sc.BuildServiceProvider();
         _sp.GetRequiredService<Historia.Theming.AvaloniaThemeApplier>();
@@ -803,12 +805,66 @@ public class StagingPanelAiButtonsTests : IDisposable
     public async Task Disposing_stops_listening_to_the_catalog()
     {
         var active = await ActivateAsync();
+        var before = _catalog.Subscribers;
         var panel = NewPanel();
-        var catalog = _sp.GetRequiredService<IAiModelCatalog>();
+        var picker = panel.ModelPickerForTesting!;
+        Assert.Equal(before + 1, _catalog.Subscribers);
 
         panel.Dispose();
 
-        catalog.Remember(active, ["new-model"]);
+        _catalog.Remember(active, ["new-model"]);
         Dispatcher.UIThread.RunJobs();
+        Assert.Equal(before, _catalog.Subscribers);
+        Assert.Equal(["m"], picker.ItemsSource as IEnumerable<string>);
+    }
+
+    [AvaloniaFact]
+    public async Task Reopening_the_picker_while_the_list_loads_makes_no_second_request()
+    {
+        _client.ListResult = () => ["m", "model-b"];
+        _client.ListGate = new TaskCompletionSource();
+        await ActivateAsync(p => p with { AutoFetchModels = true });
+        var panel = NewPanel();
+        var picker = panel.ModelPickerForTesting!;
+
+        panel.OpenModelPickerForTesting();
+        await AiTestSupport.PumpUntil(() => _client.Lists.Count == 1);
+        var firstLoad = panel.ModelLoadForTesting;
+        panel.OpenModelPickerForTesting();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(firstLoad, panel.ModelLoadForTesting);
+        Assert.Equal("Loading…", picker.PlaceholderText);
+
+        _client.ListGate.SetResult();
+        await panel.ModelLoadForTesting;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(_client.Lists);
+        Assert.Equal(["m", "model-b"], picker.ItemsSource as IEnumerable<string>);
+        Assert.Equal("Select a Model", picker.PlaceholderText);
+    }
+
+    [AvaloniaFact]
+    public async Task The_tooltip_says_loading_while_the_list_loads_over_a_selected_model()
+    {
+        _client.ListResult = () => ["m", "model-b"];
+        _client.ListGate = new TaskCompletionSource();
+        await ActivateAsync(p => p with { AutoFetchModels = true });
+        var panel = NewPanel();
+        var picker = panel.ModelPickerForTesting!;
+
+        panel.OpenModelPickerForTesting();
+        await AiTestSupport.PumpUntil(() => _client.Lists.Count == 1);
+
+        Assert.Equal("m", picker.SelectedItem);
+        Assert.Contains("Loading models…", ToolTip.GetTip(picker) as string);
+
+        _client.ListGate.SetResult();
+        await panel.ModelLoadForTesting;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.DoesNotContain("Loading models…", ToolTip.GetTip(picker) as string);
+        Assert.StartsWith("Model for ", ToolTip.GetTip(picker) as string);
     }
 }

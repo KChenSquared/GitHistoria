@@ -14,6 +14,10 @@ public interface IAiModelCatalog
     /// <summary>Records a list loaded elsewhere and raises <see cref="Changed"/>.</summary>
     void Remember(AiServiceProfile profile, IReadOnlyList<string> ids);
 
+    /// <summary>Claims this profile's automatic model switch. False when a switch was claimed for it
+    /// within the last five minutes, so an id the user chose is not overwritten again and again.</summary>
+    bool TryClaimAutoSwitch(string profileId);
+
     /// <summary>Raised on the thread that finished the load; UI subscribers post to the UI thread. The argument is the profile id.</summary>
     event EventHandler<string>? Changed;
 }

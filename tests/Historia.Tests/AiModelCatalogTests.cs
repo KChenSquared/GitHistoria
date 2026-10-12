@@ -19,6 +19,15 @@ public class AiModelCatalogTests
         public IAiChatClient For(AiServiceKind kind) => client;
     }
 
+    private sealed class ManualTime : TimeProvider
+    {
+        private long _ticks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => _ticks;
+        public void Advance(TimeSpan by) => _ticks += by.Ticks;
+    }
+
     private static (AiModelCatalog Catalog, AiServiceProfile Profile, FakeClient Client) CreateRig()
     {
         var settings = new FakeSettingsService();
@@ -134,5 +143,23 @@ public class AiModelCatalogTests
 
         Assert.True(backgroundRan);
         Assert.NotNull(backgroundResult);
+    }
+
+    [Fact]
+    public void An_auto_switch_is_claimed_at_most_once_every_five_minutes_per_profile()
+    {
+        var time = new ManualTime();
+        var catalog = new AiModelCatalog(new AiProfileService(new FakeSettingsService()), new FakeFactory(new FakeClient()), time);
+
+        Assert.True(catalog.TryClaimAutoSwitch("p1"));
+        Assert.False(catalog.TryClaimAutoSwitch("p1"));
+        Assert.True(catalog.TryClaimAutoSwitch("p2"));
+
+        time.Advance(TimeSpan.FromMinutes(5) - TimeSpan.FromTicks(1));
+        Assert.False(catalog.TryClaimAutoSwitch("p1"));
+
+        time.Advance(TimeSpan.FromTicks(1));
+        Assert.True(catalog.TryClaimAutoSwitch("p1"));
+        Assert.False(catalog.TryClaimAutoSwitch("p1"));
     }
 }

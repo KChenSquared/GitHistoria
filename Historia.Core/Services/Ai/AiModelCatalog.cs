@@ -1,10 +1,18 @@
 namespace Historia.Services.Ai;
 
 /// <inheritdoc cref="IAiModelCatalog"/>
-public sealed class AiModelCatalog(IAiProfileService profiles, IAiClientFactory clients) : IAiModelCatalog
+public sealed class AiModelCatalog(
+    IAiProfileService profiles,
+    IAiClientFactory clients,
+    TimeProvider? time = null) : IAiModelCatalog
 {
+    /// <summary>The least time between two automatic model switches of one profile.</summary>
+    public static readonly TimeSpan AutoSwitchInterval = TimeSpan.FromMinutes(5);
+
     private readonly object _lock = new();
     private readonly Dictionary<string, Entry> _cache = [];
+    private readonly Dictionary<string, long> _lastAutoSwitch = [];
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
 
     private sealed record Fingerprint(
         AiServiceKind Kind,
@@ -60,6 +68,19 @@ public sealed class AiModelCatalog(IAiProfileService profiles, IAiClientFactory 
         }
 
         Changed?.Invoke(this, profile.Id);
+    }
+
+    public bool TryClaimAutoSwitch(string profileId)
+    {
+        var now = _time.GetTimestamp();
+        lock (_lock)
+        {
+            if (_lastAutoSwitch.TryGetValue(profileId, out var last)
+                && _time.GetElapsedTime(last, now) < AutoSwitchInterval)
+                return false;
+            _lastAutoSwitch[profileId] = now;
+            return true;
+        }
     }
 
     private static Fingerprint FingerprintOf(AiServiceProfile profile) =>

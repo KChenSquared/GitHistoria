@@ -73,10 +73,19 @@ internal static class AiTestSupport
         public List<AiChatRequest> Completes { get; } = [];
         public Func<IReadOnlyList<string>> ListResult { get; set; } = () => [];
 
+        /// <summary>When set, list calls wait for it before answering.</summary>
+        public TaskCompletionSource? ListGate { get; set; }
+
         public Task<IReadOnlyList<string>> ListModelsAsync(AiChatRequest request, CancellationToken ct)
         {
             Lists.Add(request);
-            return Task.FromResult(ListResult());
+            return ListGate is { } gate ? GatedListAsync(gate, ct) : Task.FromResult(ListResult());
+        }
+
+        private async Task<IReadOnlyList<string>> GatedListAsync(TaskCompletionSource gate, CancellationToken ct)
+        {
+            await gate.Task.WaitAsync(ct);
+            return ListResult();
         }
 
         public Task<string> CompleteAsync(AiChatRequest request, CancellationToken ct)
@@ -84,6 +93,41 @@ internal static class AiTestSupport
             Completes.Add(request);
             return Task.FromResult("feat: x");
         }
+    }
+
+    /// <summary>A real catalog that counts the handlers attached to <see cref="Changed"/>.</summary>
+    internal sealed class CountingCatalog(IAiModelCatalog inner) : IAiModelCatalog
+    {
+        public int Subscribers { get; private set; }
+
+        public event EventHandler<string>? Changed
+        {
+            add
+            {
+                inner.Changed += value;
+                Subscribers++;
+            }
+            remove
+            {
+                inner.Changed -= value;
+                Subscribers--;
+            }
+        }
+
+        public IReadOnlyList<string>? Get(AiServiceProfile profile) => inner.Get(profile);
+        public Task<IReadOnlyList<string>> LoadAsync(AiServiceProfile profile, CancellationToken ct = default) => inner.LoadAsync(profile, ct);
+        public void Remember(AiServiceProfile profile, IReadOnlyList<string> ids) => inner.Remember(profile, ids);
+        public bool TryClaimAutoSwitch(string profileId) => inner.TryClaimAutoSwitch(profileId);
+    }
+
+    /// <summary>A clock that moves only when told to.</summary>
+    internal sealed class ManualTime : TimeProvider
+    {
+        private long _ticks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => _ticks;
+        public void Advance(TimeSpan by) => _ticks += by.Ticks;
     }
 
     internal sealed class Factory(Client client) : IAiClientFactory
@@ -125,14 +169,15 @@ public class AiIntegrationsViewTests
         public AiTestSupport.Notifications Notifications { get; } = new();
         public AiTestSupport.Client Client { get; } = new();
         public AiTestSupport.Factory Factory { get; }
-        public IAiModelCatalog Catalog { get; }
+        public AiTestSupport.CountingCatalog Catalog { get; }
+        public AiTestSupport.ManualTime Time { get; } = new();
         public ServiceProvider Services { get; }
 
         public Rig()
         {
             Profiles = new AiProfileService(Settings);
             Factory = new AiTestSupport.Factory(Client);
-            Catalog = new AiModelCatalog(Profiles, Factory);
+            Catalog = new AiTestSupport.CountingCatalog(new AiModelCatalog(Profiles, Factory, Time));
             var sc = new ServiceCollection();
             sc.AddSingleton<IAiProfileService>(Profiles);
             sc.AddSingleton<IAiIntegrationsPanel>(Panel);
@@ -552,6 +597,7 @@ public class AiIntegrationsViewTests
         var rig = new Rig();
         var a = await rig.Add("A", p => p with { Server = "https://ai.example.test/v1" });
         var view = rig.View();
+        Assert.Equal(1, rig.Catalog.Subscribers);
         view.Dispose();
 
         await rig.Add("B");
@@ -560,6 +606,7 @@ public class AiIntegrationsViewTests
 
         Assert.Single(view.RowsForTesting);
         Assert.Null(view.EditorForTesting!.Model.ItemsSource);
+        Assert.Equal(0, rig.Catalog.Subscribers);
     }
 
     [AvaloniaFact]
@@ -745,5 +792,44 @@ public class AiIntegrationsViewTests
 
         Assert.Equal(["model-1", "model-2"], Assert.IsAssignableFrom<IEnumerable<string>>(editor.Model.ItemsSource).ToArray());
         Assert.Equal("custom-model", rig.Profiles.Profiles.Single().Model);
+    }
+
+    [AvaloniaFact]
+    public async Task The_gemini_switch_runs_at_most_once_every_five_minutes_from_any_source()
+    {
+        var rig = new Rig();
+        var p = await rig.Add("G", p => AiServiceTemplates.ApplyGemini(p) with { ApiKey = "k", Model = "gemini-1.0-pro" });
+        rig.Client.ListResult = () => ["gemini-2.0-flash", "gemini-2.5-flash"];
+        var view = rig.View();
+
+        // The editor's own load switches the retired model.
+        Click(view.EditorForTesting!.ModelRefresh);
+        await AiTestSupport.PumpUntil(() => rig.Profiles.Profiles.Single().Model == "gemini-2.5-flash");
+        await view.ModelFetchForTesting;
+
+        // Within five minutes neither opening the list nor a new editor switches it again.
+        await rig.Profiles.UpdateAsync(p.Id, x => x with { Model = "gemini-typed-by-hand" });
+        Dispatcher.UIThread.RunJobs();
+        view.OpenModelListForTesting();
+        await view.ModelFetchForTesting;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("gemini-typed-by-hand", rig.Profiles.Profiles.Single().Model);
+
+        view.Dispose();
+        rig.Time.Advance(TimeSpan.FromMinutes(5) - TimeSpan.FromSeconds(1));
+        var second = rig.View();
+        second.OpenModelListForTesting();
+        await second.ModelFetchForTesting;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("gemini-typed-by-hand", rig.Profiles.Profiles.Single().Model);
+        Assert.False(second.EditorForTesting!.ModelNote.IsVisible);
+
+        // Five minutes after the last switch, opening the list switches again.
+        rig.Time.Advance(TimeSpan.FromSeconds(1));
+        second.OpenModelListForTesting();
+        await AiTestSupport.PumpUntil(() => rig.Profiles.Profiles.Single().Model == "gemini-2.5-flash");
+        await second.ModelFetchForTesting;
+        Assert.Equal("gemini-2.5-flash", rig.Profiles.Profiles.Single().Model);
+        Assert.Single(rig.Client.Lists);
     }
 }

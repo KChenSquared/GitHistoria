@@ -677,7 +677,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
     }
 
     /// <summary>A Gemini profile whose saved model isn't in the list (or has none) takes the best
-    /// replacement; Custom profiles never switch on their own.</summary>
+    /// replacement, at most once every five minutes; Custom profiles never switch on their own.</summary>
     private async Task SwitchMissingGeminiModelAsync(Editor e, IReadOnlyList<string> ids)
     {
         var profile = e.Snapshot;
@@ -690,7 +690,7 @@ public sealed class AiIntegrationsView : UserControl, IDisposable
             return;
 
         var pick = GeminiModelSelector.PickReplacement(ids, blank ? null : saved);
-        if (pick is null)
+        if (pick is null || !_catalog.TryClaimAutoSwitch(profile.Id))
             return;
 
         await Commit(e, p => p with { Model = pick });

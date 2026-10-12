@@ -38,7 +38,9 @@ public sealed class StagingPanelView : UserControl, IDisposable
     private ComboBox? _modelPicker;
     private Border? _amendDivider;
     private CancellationTokenSource? _modelLoadCts;
+    private Task _modelLoad = Task.CompletedTask;
     private bool _syncingPicker;
+    private bool _loadingModels;
     private EventHandler<string>? _onCatalogChanged;
     private EventHandler? _onAiChanged;
     private CancellationTokenSource? _generateCts;
@@ -106,7 +108,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
     internal Button? AiSettingsForTesting => _aiSettings;
     internal ComboBox? ModelPickerForTesting => _modelPicker;
     internal Border? AmendDividerForTesting => _amendDivider;
-    internal Task ModelLoadForTesting { get; private set; } = Task.CompletedTask;
+    internal Task ModelLoadForTesting => _modelLoad;
     internal void OpenModelPickerForTesting() => OnModelPickerOpened();
     internal Panel? MessageCellForTesting { get; private set; }
     internal Grid? CommitOptionsRowForTesting { get; private set; }
@@ -774,7 +776,11 @@ public sealed class StagingPanelView : UserControl, IDisposable
 
             var label = _aiProfiles.DisplayLabel(active);
             var tip = $"Model for {label}";
-            if (!active.AutoFetchModels && cached is null)
+            if (_loadingModels)
+            {
+                tip += "\nLoading models…";
+            }
+            else if (!active.AutoFetchModels && cached is null)
             {
                 tip += "\nPress refresh in AI Integrations to load models";
             }
@@ -802,7 +808,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
         if (_disposed || _aiProfiles?.ActiveProfile is not { } active)
             return;
 
-        if (!active.AutoFetchModels || _catalog?.Get(active) is not null)
+        if (!active.AutoFetchModels || _catalog?.Get(active) is not null || !_modelLoad.IsCompleted)
             return;
 
         if (string.IsNullOrWhiteSpace(active.Server))
@@ -811,7 +817,7 @@ public sealed class StagingPanelView : UserControl, IDisposable
             return;
         }
 
-        ModelLoadForTesting = LoadModelsAsync(active);
+        _modelLoad = LoadModelsAsync(active);
     }
 
     private async Task LoadModelsAsync(AiServiceProfile profile)
@@ -821,8 +827,11 @@ public sealed class StagingPanelView : UserControl, IDisposable
         var cts = CancellationTokenSource.CreateLinkedTokenSource(_ctx.Lifetime);
         _modelLoadCts = cts;
 
+        // The placeholder shows only while no model is selected; the tooltip covers the rest.
+        _loadingModels = true;
         if (_modelPicker is not null)
             _modelPicker.PlaceholderText = "Loading…";
+        RefreshModelPicker();
 
         try
         {
@@ -844,8 +853,12 @@ public sealed class StagingPanelView : UserControl, IDisposable
         }
         finally
         {
-            if (!_disposed && _modelPicker is not null)
+            if (!_disposed && _modelPicker is not null && ReferenceEquals(_modelLoadCts, cts))
+            {
+                _loadingModels = false;
                 _modelPicker.PlaceholderText = "Select a Model";
+                RefreshModelPicker();
+            }
         }
     }
 
