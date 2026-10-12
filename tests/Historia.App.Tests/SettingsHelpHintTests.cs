@@ -304,6 +304,9 @@ public sealed class SettingsHelpHintTests
         var window = new Window { Width = windowWidth, Height = 600, Content = view };
         window.Show();
         Dispatcher.UIThread.RunJobs();
+        // Hit testing reads the last rendered scene; render the current layout first.
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
 
         var root = Root(view);
         Assert.True(root.Bounds.Width > 0 && root.Bounds.Width <= windowWidth);
