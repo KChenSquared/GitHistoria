@@ -52,7 +52,7 @@ public class RepositoryTopBarTests : IDisposable
             ],
         };
 
-        var count = RepositoryView.WorkingCopyChangeCount(status);
+        var count = RepositoryViewModel.WorkingCopyChangeCount(status);
         Assert.Equal(5, count); // file1, file2, file3, untracked, file4
     }
 
@@ -248,6 +248,29 @@ public class RepositoryTopBarTests : IDisposable
         finally
         {
             window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Detail_router_hosts_the_repository_view_for_the_repo_route()
+    {
+        _sp.GetRequiredService<INavigationBus>().ReportRoute("repo");
+        var router = new DetailRouter(_sp);
+        var window = new Window { Width = 800, Height = 600, Content = router };
+        window.Show();
+        try
+        {
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal(DetailPage.Repo, router.ViewModel.Current.Page);
+            var view = Assert.Single(router.GetVisualDescendants().OfType<RepositoryView>());
+            Assert.Equal("main", view.ViewModel.BranchText);
+            Assert.Single(router.GetVisualDescendants().OfType<NotificationHostView>());
+        }
+        finally
+        {
+            window.Close();
+            router.Dispose();
         }
     }
 

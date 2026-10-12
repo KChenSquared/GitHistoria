@@ -221,7 +221,7 @@ public class RepositoryViewOpBannerTests : IDisposable
             Dispatcher.UIThread.RunJobs();
 
             _dialogs.ChooseResult = 2; // Cancel
-            repoView.OpContinueButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            repoView.OpContinueButtonForTesting.Command!.Execute(null);
             Dispatcher.UIThread.RunJobs();
 
             Assert.Single(_dialogs.ChooseCalls);
@@ -229,7 +229,7 @@ public class RepositoryViewOpBannerTests : IDisposable
             Assert.Equal(0, _conflicts.ContinueCalls);
 
             _dialogs.ChooseResult = 0; // Save
-            repoView.OpContinueButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            repoView.OpContinueButtonForTesting.Command!.Execute(null);
             Dispatcher.UIThread.RunJobs();
 
             Assert.Equal(2, _dialogs.ChooseCalls.Count);
@@ -278,7 +278,7 @@ public class RepositoryViewOpBannerTests : IDisposable
             var tcs = new TaskCompletionSource<bool>();
             _conflicts.ContinueTcs = tcs;
 
-            repoView.OpContinueButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            repoView.OpContinueButtonForTesting.Command!.Execute(null);
             Dispatcher.UIThread.RunJobs();
 
             Assert.False(repoView.OpContinueButtonForTesting.IsEnabled);
@@ -286,7 +286,7 @@ public class RepositoryViewOpBannerTests : IDisposable
             Assert.Equal(1, _conflicts.ContinueCalls);
 
             // Second click while busy
-            repoView.OpContinueButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            repoView.OpContinueButtonForTesting.Command!.Execute(null);
             Dispatcher.UIThread.RunJobs();
 
             Assert.Equal(1, _conflicts.ContinueCalls);
@@ -324,7 +324,7 @@ public class RepositoryViewOpBannerTests : IDisposable
 
             // User cancels destructive confirmation -> no abort call
             _dialogs.ConfirmDestructiveResult = false;
-            repoView.OpAbortButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            repoView.OpAbortButtonForTesting.Command!.Execute(null);
             Dispatcher.UIThread.RunJobs();
 
             Assert.Single(_dialogs.ConfirmDestructiveCalls);
@@ -332,7 +332,7 @@ public class RepositoryViewOpBannerTests : IDisposable
 
             // User confirms -> abort called
             _dialogs.ConfirmDestructiveResult = true;
-            repoView.OpAbortButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            repoView.OpAbortButtonForTesting.Command!.Execute(null);
             Dispatcher.UIThread.RunJobs();
 
             Assert.Equal(2, _dialogs.ConfirmDestructiveCalls.Count);
