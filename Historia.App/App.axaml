@@ -328,5 +328,7 @@
         <Style Selector="ScrollViewer">
             <Setter Property="AllowAutoHide" Value="False" />
         </Style>
+
+        <StyleInclude Source="avares://Historia/Views/Styles/ViewStyles.axaml" />
     </Application.Styles>
 </Application>
