@@ -380,6 +380,25 @@ public class ShortcutBarLayoutTests
         window.Close();
     }
 
+    [AvaloniaFact]
+    public async Task Status_bar_text_follows_the_window_view_model()
+    {
+        await using var sp = CreateServices();
+        var window = new MainWindow(sp);
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var status = window.FindControl<TextBlock>("StatusText")!;
+        Assert.Same(window.ViewModel, window.DataContext);
+        Assert.Equal("Ready", status.Text);
+
+        window.ViewModel.StatusText = "Fetching";
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Fetching", status.Text);
+
+        window.Close();
+    }
+
     private sealed class FakeThemeProbe : ISystemThemeProbe
     {
         public bool IsLightTheme => false;

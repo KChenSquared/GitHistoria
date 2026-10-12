@@ -1,6 +1,6 @@
 namespace Historia.Services.UI;
 
-internal enum CloseDecision
+public enum CloseDecision
 {
     Allow,
     CancelOnly,
@@ -11,7 +11,7 @@ internal enum CloseDecision
 /// State machine guarding the window close workflow against re-entrant prompts.
 /// UI-thread only.
 /// </summary>
-internal sealed class UnsavedWorkCloseGate
+public sealed class UnsavedWorkCloseGate
 {
     private bool _confirmed;
     private bool _promptOpen;
