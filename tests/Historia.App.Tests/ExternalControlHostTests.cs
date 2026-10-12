@@ -448,7 +448,7 @@ public sealed class ExternalControlHostTests : IAsyncLifetime
 
     private sealed class Server : IAsyncDisposable
     {
-        public string PipeName { get; } = "Historia.Test." + Guid.NewGuid().ToString("N");
+        public string PipeName { get; } = "Historia.Test." + Guid.NewGuid().ToString("N")[..8];
         public ConcurrentQueue<string[]> Args { get; } = new();
         private readonly CancellationTokenSource _cts = new();
         private readonly Task _run;
