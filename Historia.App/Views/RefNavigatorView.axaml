@@ -1,0 +1,343 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:v="clr-namespace:Historia.Views"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.RefNavigatorView"
+             x:DataType="vm:RefNavigatorViewModel"
+             Background="{DynamicResource ColorChrome}">
+    <UserControl.Styles>
+        <!-- Header buttons (filter, add remote, delete tag) are bare icons. -->
+        <Style Selector="Button.ref-icon">
+            <Setter Property="Padding" Value="4" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="Button.ref-menu">
+            <Setter Property="Content" Value="⋯" />
+            <Setter Property="Padding" Value="4,0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <!-- A section's rows are plain: no selection or hover chrome, no inner padding. -->
+        <Style Selector="ListBox.refs">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MaxHeight" Value="{x:Static v:RefNavigatorView.SectionMaxHeight}" />
+        </Style>
+        <Style Selector="ListBox.refs > ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.refs > ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.refs > ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.refs > ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+        <!-- The marker dot always takes its slot so labels align with or without it. -->
+        <Style Selector="Ellipse.dot">
+            <Setter Property="Fill" Value="{DynamicResource ColorChrome}" />
+            <Setter Property="Opacity" Value="0" />
+        </Style>
+        <Style Selector="Ellipse.dot.current">
+            <Setter Property="Fill" Value="{DynamicResource ColorSuccess}" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+
+        <Style Selector="TextBlock.text.accent">
+            <Setter Property="Foreground" Value="{DynamicResource ColorAccent}" />
+        </Style>
+        <Style Selector="TextBlock.text.current">
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <!-- The number knocked out of a remote's cloud. -->
+        <Style Selector="TextBlock.cloud-digit">
+            <Setter Property="FontSize" Value="{x:Static v:RefNavigatorView.CloudDigitSize}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorChrome}" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="TextBlock.cloud-digit.wide">
+            <Setter Property="FontSize" Value="{x:Static v:RefNavigatorView.CloudDigitSizeWide}" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer x:Name="OuterScroll" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel x:Name="RootPanel">
+            <ItemsControl ItemsSource="{Binding Sections}">
+                <ItemsControl.Template>
+                    <ControlTemplate>
+                        <ItemsPresenter ItemsPanel="{TemplateBinding ItemsPanel}" />
+                    </ControlTemplate>
+                </ItemsControl.Template>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:RefSectionViewModel">
+                        <StackPanel>
+                            <!-- The header. A press on a button inside it is handled by the button,
+                                 so only a press on the bare header toggles the section. -->
+                            <Border Classes="section-header"
+                                    BorderThickness="0,1,0,0"
+                                    BorderBrush="{DynamicResource ColorBorder}"
+                                    Cursor="Hand"
+                                    Padding="0,0,4,0"
+                                    PointerPressed="OnHeaderPressed">
+                                <Grid ColumnDefinitions="Auto,*,Auto,Auto" Height="28">
+                                    <TextBlock Classes="text muted"
+                                               FontSize="10"
+                                               Margin="8,0,6,0"
+                                               Text="{Binding Caret}" />
+                                    <TextBlock Grid.Column="1"
+                                               Classes="text muted"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               LetterSpacing="0.4"
+                                               Text="{Binding HeaderText}" />
+                                    <Button Grid.Column="2"
+                                            Classes="ref-icon"
+                                            IsVisible="{Binding HasAddButton}"
+                                            Command="{Binding AddRemoteCommand}"
+                                            ToolTip.Tip="Add remote…">
+                                        <ctl:IconGlyph Icon="add" Size="14" ForegroundKey="ColorTextMuted" />
+                                    </Button>
+                                    <Button Grid.Column="3"
+                                            Classes="ref-icon"
+                                            IsVisible="{Binding HasFilter}"
+                                            Command="{Binding ToggleFilterCommand}"
+                                            ToolTip.Tip="Filter this section">
+                                        <ctl:IconGlyph Icon="filter_alt" Size="14" ForegroundKey="ColorTextMuted" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+
+                            <TextBox Classes="ref-filter"
+                                     Watermark="Filter…"
+                                     FontSize="12"
+                                     Height="24"
+                                     Padding="6,2"
+                                     Margin="30,2,4,4"
+                                     VerticalAlignment="Center"
+                                     Text="{Binding FilterText}"
+                                     IsVisible="{Binding ShowFilterBox}"
+                                     KeyDown="OnFilterKeyDown" />
+
+                            <ListBox Classes="refs"
+                                     ItemsSource="{Binding Rows}"
+                                     IsVisible="{Binding IsOpen}"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <VirtualizingStackPanel />
+                                    </ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                                <ListBox.DataTemplates>
+                                    <DataTemplate DataType="vm:RefSeparatorRowViewModel" x:DataType="vm:RefSeparatorRowViewModel">
+                                        <Border Classes="ref-row" Height="1" Margin="0,2" Background="{DynamicResource ColorBorder}" />
+                                    </DataTemplate>
+
+                                    <!-- A folder: a remote's root (with its cloud) or a path segment. -->
+                                    <DataTemplate DataType="vm:RefFolderRowViewModel" x:DataType="vm:RefFolderRowViewModel">
+                                        <Border Classes="ref-row"
+                                                Height="24"
+                                                Background="Transparent"
+                                                Cursor="Hand"
+                                                Padding="0,0,4,0"
+                                                ToolTip.Tip="{Binding Tooltip}"
+                                                DataContextChanged="OnFolderDataContextChanged"
+                                                PointerPressed="OnFolderPressed">
+                                            <Grid ColumnDefinitions="Auto,Auto,Auto,*">
+                                                <Border Width="{Binding CaretIndent}" />
+                                                <TextBlock Grid.Column="1"
+                                                           Classes="text muted"
+                                                           FontSize="10"
+                                                           Margin="0,0,2,0"
+                                                           Text="{Binding Caret}" />
+                                                <Panel Grid.Column="2"
+                                                       Width="14"
+                                                       Height="14"
+                                                       Margin="0,0,3,0"
+                                                       VerticalAlignment="Center"
+                                                       IsVisible="{Binding IsRemoteRoot}">
+                                                    <Path Data="{x:Static v:RefNavigatorView.CloudGeometry}"
+                                                          Stretch="None"
+                                                          Width="14"
+                                                          Height="14"
+                                                          Fill="{DynamicResource ColorTextMuted}" />
+                                                    <Border Width="{x:Static v:RefNavigatorView.CloudDigitBandWidth}"
+                                                            Height="{x:Static v:RefNavigatorView.CloudDigitBandHeight}"
+                                                            Margin="{x:Static v:RefNavigatorView.CloudDigitBandMargin}"
+                                                            HorizontalAlignment="Left"
+                                                            VerticalAlignment="Top"
+                                                            IsVisible="{Binding HasCloudNumber}">
+                                                        <TextBlock Classes="cloud-digit"
+                                                                   Classes.wide="{Binding IsWideCloudNumber}"
+                                                                   Text="{Binding CloudNumberText}" />
+                                                    </Border>
+                                                </Panel>
+                                                <TextBlock Grid.Column="3"
+                                                           Classes="text muted"
+                                                           FontSize="12"
+                                                           Text="{Binding Segment}" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+
+                                    <!-- A tag, with a delete button. -->
+                                    <DataTemplate DataType="vm:RefTagRowViewModel" x:DataType="vm:RefTagRowViewModel">
+                                        <Border Classes="ref-row"
+                                                Height="24"
+                                                Background="Transparent"
+                                                Cursor="Hand"
+                                                Padding="0,0,4,0"
+                                                ToolTip.Tip="{Binding Tooltip}"
+                                                PointerPressed="OnLeafPressed">
+                                            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Height="24">
+                                                <Border Width="{Binding Indent}" />
+                                                <Ellipse Grid.Column="1" Classes="dot" Classes.current="{Binding IsCurrent}" Width="7" Height="7" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2" Classes="text" FontSize="12" Text="{Binding Text}" />
+                                                <Button Grid.Column="3"
+                                                        Classes="ref-icon"
+                                                        Command="{Binding Host.DeleteTagCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip.Tip="Delete tag">
+                                                    <ctl:IconGlyph Icon="delete" Size="14" ForegroundKey="ColorTextMuted" />
+                                                </Button>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+
+                                    <!-- A stash, with its actions menu. -->
+                                    <DataTemplate DataType="vm:RefStashRowViewModel" x:DataType="vm:RefStashRowViewModel">
+                                        <Border Classes="ref-row"
+                                                Height="24"
+                                                Background="Transparent"
+                                                Cursor="Hand"
+                                                Padding="0,0,4,0"
+                                                ToolTip.Tip="{Binding Tooltip}"
+                                                PointerPressed="OnLeafPressed">
+                                            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Height="24">
+                                                <Border Width="{Binding Indent}" />
+                                                <Ellipse Grid.Column="1" Classes="dot" Classes.current="{Binding IsCurrent}" Width="7" Height="7" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2" Classes="text" FontSize="12" Text="{Binding Text}" />
+                                                <Button Grid.Column="3" Classes="ref-menu">
+                                                    <Button.Flyout>
+                                                        <MenuFlyout>
+                                                            <MenuItem Header="Apply" Command="{Binding Host.StashApplyCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="Apply &amp; drop" Command="{Binding Host.StashApplyAndDropCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="New branch from stash…" Command="{Binding Host.StashBranchCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="Drop" Command="{Binding Host.StashDropCommand}" CommandParameter="{Binding}" />
+                                                        </MenuFlyout>
+                                                    </Button.Flyout>
+                                                </Button>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+
+                                    <!-- A submodule: the same actions in a menu button and the row's context menu. -->
+                                    <DataTemplate DataType="vm:RefSubmoduleRowViewModel" x:DataType="vm:RefSubmoduleRowViewModel">
+                                        <Border Classes="ref-row"
+                                                Height="24"
+                                                Background="Transparent"
+                                                Cursor="Hand"
+                                                Padding="0,0,4,0"
+                                                ToolTip.Tip="{Binding Tooltip}"
+                                                DoubleTapped="OnLeafDoubleTapped"
+                                                PointerPressed="OnLeafPressed">
+                                            <Border.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="Init &amp; update" Command="{Binding Host.SubmoduleInitAndUpdateCommand}" CommandParameter="{Binding}" />
+                                                    <MenuItem Header="Sync URL" Command="{Binding Host.SubmoduleSyncCommand}" CommandParameter="{Binding}" />
+                                                    <MenuItem Header="Remove" Command="{Binding Host.SubmoduleRemoveCommand}" CommandParameter="{Binding}" />
+                                                </ContextMenu>
+                                            </Border.ContextMenu>
+                                            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Height="24">
+                                                <Border Width="{Binding Indent}" />
+                                                <Ellipse Grid.Column="1" Classes="dot" Classes.current="{Binding IsCurrent}" Width="7" Height="7" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2" Classes="text" FontSize="12" Text="{Binding Text}" />
+                                                <Button Grid.Column="3" Classes="ref-menu">
+                                                    <Button.Flyout>
+                                                        <MenuFlyout>
+                                                            <MenuItem Header="Init &amp; update" Command="{Binding Host.SubmoduleInitAndUpdateCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="Sync URL" Command="{Binding Host.SubmoduleSyncCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="Remove" Command="{Binding Host.SubmoduleRemoveCommand}" CommandParameter="{Binding}" />
+                                                        </MenuFlyout>
+                                                    </Button.Flyout>
+                                                </Button>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+
+                                    <!-- A worktree: a linked one has a menu, the main one has none. -->
+                                    <DataTemplate DataType="vm:RefWorktreeRowViewModel" x:DataType="vm:RefWorktreeRowViewModel">
+                                        <Border Classes="ref-row"
+                                                Height="24"
+                                                Background="Transparent"
+                                                Cursor="Hand"
+                                                Padding="0,0,4,0"
+                                                ToolTip.Tip="{Binding Tooltip}"
+                                                PointerPressed="OnLeafPressed">
+                                            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Height="24">
+                                                <Border Width="{Binding Indent}" />
+                                                <Ellipse Grid.Column="1" Classes="dot" Classes.current="{Binding IsCurrent}" Width="7" Height="7" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2" Classes="text" FontSize="12" Text="{Binding Text}" />
+                                                <Button Grid.Column="3" Classes="ref-menu" IsVisible="{Binding HasMenu}">
+                                                    <Button.Flyout>
+                                                        <MenuFlyout>
+                                                            <MenuItem Header="Unlock" IsVisible="{Binding IsLocked}" Command="{Binding Host.WorktreeUnlockCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="Lock" IsVisible="{Binding IsUnlocked}" Command="{Binding Host.WorktreeLockCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="Remove" Command="{Binding Host.WorktreeRemoveCommand}" CommandParameter="{Binding}" />
+                                                        </MenuFlyout>
+                                                    </Button.Flyout>
+                                                </Button>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+
+                                    <!-- Every other leaf: a branch (with its context menu, set in code), the
+                                         detached HEAD, a message or an action row. -->
+                                    <DataTemplate DataType="vm:RefLeafRowViewModel" x:DataType="vm:RefLeafRowViewModel">
+                                        <Border Classes="ref-row"
+                                                Height="24"
+                                                Background="Transparent"
+                                                Cursor="Hand"
+                                                Padding="0,0,4,0"
+                                                ToolTip.Tip="{Binding Tooltip}"
+                                                DataContextChanged="OnLeafDataContextChanged"
+                                                DoubleTapped="OnLeafDoubleTapped"
+                                                PointerPressed="OnLeafPressed">
+                                            <Grid ColumnDefinitions="Auto,Auto,*,Auto" Height="24">
+                                                <Border Width="{Binding Indent}" />
+                                                <Ellipse Grid.Column="1" Classes="dot" Classes.current="{Binding IsCurrent}" Width="7" Height="7" Margin="0,0,4,0" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2"
+                                                           Classes="text"
+                                                           Classes.accent="{Binding IsAccent}"
+                                                           Classes.muted="{Binding IsMuted}"
+                                                           Classes.faint="{Binding IsFaint}"
+                                                           Classes.current="{Binding IsCurrent}"
+                                                           FontSize="12"
+                                                           Text="{Binding Text}" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.DataTemplates>
+                            </ListBox>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

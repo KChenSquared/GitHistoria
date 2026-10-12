@@ -145,29 +145,26 @@ public sealed class RefNavigatorFilterTests
         try { ctx.Fixture.Dispose(); } catch { }
     }
 
-    private static List<Border> GetSectionHeaders(RefNavigatorView view)
-    {
-        var headers = new List<Border>();
-        foreach (var child in view._root.Children)
-        {
-            if (child is Border b && b.Child is Grid g && g.ColumnDefinitions.Count >= 3)
-                headers.Add(b);
-        }
-        return headers;
-    }
+    private static List<Border> GetSectionHeaders(RefNavigatorView view) =>
+        view.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("section-header")).ToList();
 
-    private static Button? GetFilterButton(Border header)
-    {
-        if (header.Child is not Grid g) return null;
-        return g.Children.OfType<Button>().FirstOrDefault(b => ToolTip.GetTip(b)?.ToString() == "Filter this section");
-    }
+    // The filter button is in every header; it is shown only for sections that can be filtered.
+    private static Button? GetFilterButton(Border header) =>
+        header.GetVisualDescendants().OfType<Button>()
+            .FirstOrDefault(b => b.IsVisible && ToolTip.GetTip(b)?.ToString() == "Filter this section");
 
-    private static void SimulateClick(Button button)
+    private static TextBox FilterBox(RefNavigatorView view, int sectionIndex) =>
+        GetSectionHeaders(view)[sectionIndex].GetVisualAncestors().OfType<StackPanel>().First()
+            .Children.OfType<TextBox>().Single();
+
+    private static void SimulateClick(Window window, Button button)
     {
-        var p = new Pointer(1, PointerType.Mouse, true);
-        var pe = new PointerPressedEventArgs(button, p, button, new Point(5, 5), 0,
-            new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonPressed), KeyModifiers.None);
-        button.RaiseEvent(pe);
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
+        var at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        window.MouseUp(at, MouseButton.Left);
         Dispatcher.UIThread.RunJobs();
     }
 
@@ -200,15 +197,15 @@ public sealed class RefNavigatorFilterTests
         var setup = CreateView();
         try
         {
-            Assert.True(setup.View.LocalOpen);
+            Assert.True(setup.View.ViewModel.Local.IsOpen);
             var header = GetSectionHeaders(setup.View)[0];
             var filterBtn = GetFilterButton(header);
             Assert.NotNull(filterBtn);
 
-            SimulateClick(filterBtn!);
+            SimulateClick(setup.Window, filterBtn!);
 
-            Assert.True(setup.View.LocalOpen, "Section must stay expanded after filter icon click");
-            Assert.True(setup.View.LocalFilterOpen, "Filter must be open after icon click");
+            Assert.True(setup.View.ViewModel.Local.IsOpen, "Section must stay expanded after filter icon click");
+            Assert.True(setup.View.ViewModel.Local.IsFilterOpen, "Filter must be open after icon click");
         }
         finally
         {
@@ -226,12 +223,14 @@ public sealed class RefNavigatorFilterTests
             var filterBtn = GetFilterButton(header);
             Assert.NotNull(filterBtn);
 
-            SimulateClick(filterBtn!);
+            SimulateClick(setup.Window, filterBtn!);
 
-            var headersAfter = GetSectionHeaders(setup.View);
-            var headerIndex = setup.View._root.Children.IndexOf(headersAfter[0]);
+            var section = GetSectionHeaders(setup.View)[0].GetVisualAncestors().OfType<StackPanel>().First();
+            var headerIndex = section.Children.IndexOf(GetSectionHeaders(setup.View)[0]);
+            var box = FilterBox(setup.View, 0);
             Assert.True(headerIndex >= 0);
-            Assert.Equal(headerIndex + 1, setup.View._root.Children.IndexOf(setup.View._localFilterBox));
+            Assert.True(box.IsEffectivelyVisible);
+            Assert.Equal(headerIndex + 1, section.Children.IndexOf(box));
         }
         finally
         {
@@ -245,15 +244,15 @@ public sealed class RefNavigatorFilterTests
         var setup = CreateView();
         try
         {
-            Assert.False(setup.View.TagsOpen);
+            Assert.False(setup.View.ViewModel.Tags.IsOpen);
             var tagsHeader = GetSectionHeaders(setup.View)[2];
             var filterBtn = GetFilterButton(tagsHeader);
             Assert.NotNull(filterBtn);
 
-            SimulateClick(filterBtn!);
+            SimulateClick(setup.Window, filterBtn!);
 
-            Assert.True(setup.View.TagsOpen, "Tags section must expand when filter icon is clicked");
-            Assert.True(setup.View.TagsFilterOpen, "Tags filter must be open");
+            Assert.True(setup.View.ViewModel.Tags.IsOpen, "Tags section must expand when filter icon is clicked");
+            Assert.True(setup.View.ViewModel.Tags.IsFilterOpen, "Tags filter must be open");
         }
         finally
         {
@@ -261,32 +260,36 @@ public sealed class RefNavigatorFilterTests
         }
     }
 
-    private static StackPanel GetSectionBody(RefNavigatorView view, int sectionIndex)
-    {
-        var headers = GetSectionHeaders(view);
-        var header = headers[sectionIndex];
-        var headerIdx = view._root.Children.IndexOf(header);
-        for (int i = headerIdx + 1; i < view._root.Children.Count; i++)
-        {
-            if (view._root.Children[i] is ScrollViewer sv && sv.Content is StackPanel sp)
-                return sp;
-            if (headers.Contains(view._root.Children[i]))
-                break;
-        }
-        throw new InvalidOperationException($"No body found for section {sectionIndex}");
-    }
+    private static ListBox GetSectionBody(RefNavigatorView view, int sectionIndex) =>
+        GetSectionHeaders(view)[sectionIndex].GetVisualAncestors().OfType<StackPanel>().First()
+            .Children.OfType<ListBox>().Single();
 
-    private static List<string> GetRowTexts(StackPanel body)
+    // A section's list is virtualized and capped in height, so only the rows in view have containers.
+    // Row texts are read from the rows the list is bound to; the realized containers are checked to
+    // show the first of them.
+    private static IReadOnlyList<RefRowViewModel> Rows(ListBox body) =>
+        (IReadOnlyList<RefRowViewModel>)body.ItemsSource!;
+
+    private static string? TextOf(RefRowViewModel row) => row switch
+    {
+        RefFolderRowViewModel folder => folder.Segment,
+        RefLeafRowViewModel leaf => leaf.Text,
+        _ => null,
+    };
+
+    private static List<string> GetRowTexts(ListBox body) =>
+        Rows(body).Select(TextOf).OfType<string>().ToList();
+
+    private static List<string> RealizedRowTexts(ListBox body)
     {
         var texts = new List<string>();
-        foreach (var c in body.Children)
+        foreach (var item in body.GetVisualDescendants().OfType<ListBoxItem>().OrderBy(i => i.Bounds.Y))
         {
-            if (c is Border b)
-            {
-                var tb = b.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Text != "⋯" && t.Text != "▾" && t.Text != "▸");
-                if (tb?.Text is not null)
-                    texts.Add(tb.Text);
-            }
+            var row = (Border)item.Presenter!.Child!;
+            var text = row.GetVisualDescendants().OfType<TextBlock>()
+                .FirstOrDefault(t => t.IsEffectivelyVisible && t.Text != "⋯" && t.Text != "▾" && t.Text != "▸")?.Text;
+            if (text is not null)
+                texts.Add(text);
         }
         return texts;
     }
@@ -298,13 +301,16 @@ public sealed class RefNavigatorFilterTests
         try
         {
             var filterBtn = GetFilterButton(GetSectionHeaders(setup.View)[0])!;
-            SimulateClick(filterBtn);
+            SimulateClick(setup.Window, filterBtn);
 
-            setup.View._localFilterBox.Text = "auth";
+            FilterBox(setup.View, 0).Text = "auth";
             Dispatcher.UIThread.RunJobs();
 
             var body = GetSectionBody(setup.View, 0);
             var texts = GetRowTexts(body);
+            var shown = RealizedRowTexts(body);
+            Assert.NotEmpty(shown);
+            Assert.Equal(texts.Take(shown.Count), shown);
 
             // Hoisted rows appear first, followed by folder row "feature"
             var reworkIdx = texts.IndexOf("feature/auth-rework");
@@ -330,9 +336,9 @@ public sealed class RefNavigatorFilterTests
         try
         {
             var filterBtn = GetFilterButton(GetSectionHeaders(setup.View)[0])!;
-            SimulateClick(filterBtn);
+            SimulateClick(setup.Window, filterBtn);
 
-            setup.View._localFilterBox.Text = "authz";
+            FilterBox(setup.View, 0).Text = "authz";
             Dispatcher.UIThread.RunJobs();
 
             var body = GetSectionBody(setup.View, 0);
@@ -359,34 +365,18 @@ public sealed class RefNavigatorFilterTests
 
             // Open filter and type
             var filterBtn = GetFilterButton(GetSectionHeaders(setup.View)[0])!;
-            SimulateClick(filterBtn);
-            setup.View._localFilterBox.Text = "auth";
+            SimulateClick(setup.Window, filterBtn);
+            FilterBox(setup.View, 0).Text = "auth";
             Dispatcher.UIThread.RunJobs();
 
             var bodyFiltered = GetSectionBody(setup.View, 0);
 
-            // Find hairline border separating hoisted from tree
-            var hairlineIdx = -1;
-            for (int i = 0; i < bodyFiltered.Children.Count; i++)
-            {
-                if (bodyFiltered.Children[i] is Border b && b.Height == 1 && b.Child is null)
-                {
-                    hairlineIdx = i;
-                    break;
-                }
-            }
-            Assert.True(hairlineIdx >= 0, "Hairline border should exist");
+            // Find hairline row separating hoisted from tree
+            var rows = Rows(bodyFiltered);
+            var hairlineIdx = rows.ToList().FindIndex(r => r is RefSeparatorRowViewModel);
+            Assert.True(hairlineIdx >= 0, "Hairline row should exist");
 
-            var belowHairlineTexts = new List<string>();
-            for (int i = hairlineIdx + 1; i < bodyFiltered.Children.Count; i++)
-            {
-                if (bodyFiltered.Children[i] is Border b)
-                {
-                    var tb = b.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Text != "⋯" && t.Text != "▾" && t.Text != "▸");
-                    if (tb?.Text is not null)
-                        belowHairlineTexts.Add(tb.Text);
-                }
-            }
+            var belowHairlineTexts = rows.Skip(hairlineIdx + 1).Select(TextOf).OfType<string>().ToList();
 
             Assert.Equal(unfilteredRows, belowHairlineTexts);
         }
@@ -403,9 +393,9 @@ public sealed class RefNavigatorFilterTests
         try
         {
             var filterBtn = GetFilterButton(GetSectionHeaders(setup.View)[0])!;
-            SimulateClick(filterBtn);
+            SimulateClick(setup.Window, filterBtn);
 
-            setup.View._localFilterBox.Text = "auth";
+            FilterBox(setup.View, 0).Text = "auth";
             Dispatcher.UIThread.RunJobs();
 
             var body = GetSectionBody(setup.View, 0);
@@ -426,9 +416,9 @@ public sealed class RefNavigatorFilterTests
         try
         {
             var filterBtn = GetFilterButton(GetSectionHeaders(setup.View)[0])!;
-            SimulateClick(filterBtn);
+            SimulateClick(setup.Window, filterBtn);
 
-            setup.View._localFilterBox.Text = "zzzz";
+            FilterBox(setup.View, 0).Text = "zzzz";
             Dispatcher.UIThread.RunJobs();
 
             var body = GetSectionBody(setup.View, 0);
@@ -449,9 +439,9 @@ public sealed class RefNavigatorFilterTests
         try
         {
             var filterBtn = GetFilterButton(GetSectionHeaders(setup.View)[0])!;
-            SimulateClick(filterBtn);
+            SimulateClick(setup.Window, filterBtn);
 
-            var box = setup.View._localFilterBox;
+            var box = FilterBox(setup.View, 0);
             box.Focus();
             box.Text = "a";
             box.SelectionStart = 1;
@@ -479,18 +469,18 @@ public sealed class RefNavigatorFilterTests
         try
         {
             var filterBtn = GetFilterButton(GetSectionHeaders(setup.View)[0])!;
-            SimulateClick(filterBtn);
+            SimulateClick(setup.Window, filterBtn);
 
-            var box = setup.View._localFilterBox;
+            var box = FilterBox(setup.View, 0);
             box.Text = "auth";
             Dispatcher.UIThread.RunJobs();
 
             box.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Escape });
             Dispatcher.UIThread.RunJobs();
 
-            Assert.False(setup.View.LocalFilterOpen);
+            Assert.False(setup.View.ViewModel.Local.IsFilterOpen);
             Assert.Equal(string.Empty, box.Text);
-            Assert.DoesNotContain(box, setup.View._root.Children);
+            Assert.False(box.IsEffectivelyVisible);
 
             // Tree intact
             var body = GetSectionBody(setup.View, 0);
@@ -514,9 +504,9 @@ public sealed class RefNavigatorFilterTests
             Assert.Equal("LOCAL BRANCHES (5)", title);
 
             var filterBtn = GetFilterButton(header)!;
-            SimulateClick(filterBtn);
+            SimulateClick(setup.Window, filterBtn);
 
-            setup.View._localFilterBox.Text = "auth";
+            FilterBox(setup.View, 0).Text = "auth";
             Dispatcher.UIThread.RunJobs();
 
             var titleAfter = GetSectionHeaders(setup.View)[0].GetVisualDescendants().OfType<TextBlock>().First(t => t.Text?.StartsWith("LOCAL BRANCHES", StringComparison.OrdinalIgnoreCase) == true).Text;
@@ -537,7 +527,7 @@ public sealed class RefNavigatorFilterTests
             var headers = GetSectionHeaders(setup.View);
             var stashHeader = headers[3];
             var filterBtn = GetFilterButton(stashHeader)!;
-            SimulateClick(filterBtn);
+            SimulateClick(setup.Window, filterBtn);
 
             // Wait for stashes background load to finish
             for (int i = 0; i < 50; i++)
@@ -549,7 +539,7 @@ public sealed class RefNavigatorFilterTests
                 await Task.Delay(20);
             }
 
-            setup.View._stashesFilterBox.Text = "wip";
+            FilterBox(setup.View, 3).Text = "wip";
             Dispatcher.UIThread.RunJobs();
 
             var body = GetSectionBody(setup.View, 3);
