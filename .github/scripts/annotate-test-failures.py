@@ -4,6 +4,9 @@ import xml.etree.ElementTree as ET
 
 NS = "{http://microsoft.com/schemas/VisualStudio/TeamTest/2010}"
 
+# xUnit's messages carry characters such as arrows that a Windows console encoding cannot print.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 def escape(text, limit):
     text = text.strip()[:limit]
