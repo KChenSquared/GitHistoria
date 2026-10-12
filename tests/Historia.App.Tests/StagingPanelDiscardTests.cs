@@ -69,7 +69,14 @@ public class StagingPanelDiscardTests : IDisposable
         });
 
         File.Move(aPath, bPath);
-        await _context.State.RefreshStatusAsync();
+        // A refresh still in flight from the commit can answer the first request with a status
+        // read before the move; refresh until the move shows.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        do
+        {
+            await _context.State.RefreshStatusAsync();
+        }
+        while (_context.State.Status.Unstaged.Count == 0 && DateTime.UtcNow < deadline);
 
         var status = _context.State.Status;
         Assert.Single(status.Unstaged);
