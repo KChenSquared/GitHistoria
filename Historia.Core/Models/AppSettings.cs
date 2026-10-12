@@ -162,6 +162,14 @@ public sealed record AppSettings
     public bool EnableGraphSplice { get; init; }
 
     /// <summary>
+    /// When on, the graph keeps at most <see cref="GraphLimits.LightweightMaxResidentRows"/> rows
+    /// resident and preloads in steps of <see cref="GraphLimits.LightweightSilentCrawlRows"/>,
+    /// overriding <see cref="SilentCrawlRowCap"/> and <see cref="ResidentRowCap"/> without changing
+    /// them. Read once at startup.
+    /// </summary>
+    public bool LightweightMode { get; init; }
+
+    /// <summary>
     /// How many rows the graph's silent background crawler pre-loads into the
     /// resident layout after first paint, before stopping until the viewport scrolls past the
     /// loaded threshold, advancing another this many rows each step. Deeper history

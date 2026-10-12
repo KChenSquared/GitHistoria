@@ -612,4 +612,38 @@ public class SettingsServiceTests : IDisposable
 
         Assert.False(SettingsService.Load().Current.ExternalControlEnabled);
     }
+
+    [Fact]
+    public void Lightweight_mode_defaults_off()
+    {
+        var settings = new AppSettings();
+        Assert.False(settings.LightweightMode);
+
+        var svc = SettingsService.Load();
+        Assert.False(svc.Current.LightweightMode);
+    }
+
+    [Fact]
+    public async Task Lightweight_mode_round_trips_and_leaves_stored_row_caps_untouched()
+    {
+        File.WriteAllText(AppPaths.SettingsFile,
+            "{ \"schemaVersion\": 23, \"lightweightMode\": true, \"silentCrawlRowCap\": 123000, \"residentRowCap\": 7000000 }");
+
+        var svc = SettingsService.Load();
+        Assert.True(svc.Current.LightweightMode);
+        Assert.Equal(123_000, svc.Current.SilentCrawlRowCap);
+        Assert.Equal(7_000_000, svc.Current.ResidentRowCap);
+
+        await svc.UpdateAsync(s => s with { LightweightMode = false });
+        await svc.FlushAsync();
+
+        Assert.False(svc.Current.LightweightMode);
+        Assert.Equal(123_000, svc.Current.SilentCrawlRowCap);
+        Assert.Equal(7_000_000, svc.Current.ResidentRowCap);
+
+        var onDisk = JsonNode.Parse(File.ReadAllText(AppPaths.SettingsFile))!.AsObject();
+        Assert.False(onDisk["lightweightMode"]!.GetValue<bool>());
+        Assert.Equal(123_000, onDisk["silentCrawlRowCap"]!.GetValue<int>());
+        Assert.Equal(7_000_000, onDisk["residentRowCap"]!.GetValue<int>());
+    }
 }
