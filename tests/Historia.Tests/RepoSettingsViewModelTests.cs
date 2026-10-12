@@ -402,7 +402,8 @@ public sealed class RepoSettingsViewModelTests : IAsyncDisposable
     {
         var rig = new Rig();
 
-        await rig.Vm.MoveColumnAsync(0, 2);
+        rig.Vm.PreviewMoveColumn(rig.Vm.Columns[0], 2);
+        await rig.Vm.CommitColumnOrderAsync();
 
         GraphColumnKind[] expected =
         [
@@ -420,7 +421,8 @@ public sealed class RepoSettingsViewModelTests : IAsyncDisposable
         var rig = new Rig();
         var before = rig.Layout.GlobalColumns.ToDictionary(c => c.Kind);
 
-        await rig.Vm.MoveColumnAsync(5, 0);
+        rig.Vm.PreviewMoveColumn(rig.Vm.Columns[5], 0);
+        await rig.Vm.CommitColumnOrderAsync();
 
         Assert.All(rig.Layout.GlobalColumns, c => Assert.Equal(before[c.Kind], c));
     }
@@ -479,13 +481,17 @@ public sealed class RepoSettingsViewModelTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Moving_an_unknown_row_is_ignored()
+    public void Previewing_a_row_the_editor_does_not_list_is_ignored()
     {
         var rig = new Rig();
+        var before = rig.Vm.Columns.Select(c => c.Kind).ToList();
+        var foreign = new Rig().Vm.Columns[0];
 
-        await rig.Vm.MoveColumnAsync(-1, 2);
-        await rig.Vm.MoveColumnAsync(40, 2);
+        Assert.False(rig.Vm.PreviewMoveColumn(foreign, 2));
+        Assert.False(rig.Vm.PreviewMoveColumn(foreign, 40));
+        Assert.False(rig.Vm.PreviewMoveColumn(foreign, -1));
 
+        Assert.Equal(before, rig.Vm.Columns.Select(c => c.Kind));
         Assert.Equal(0, rig.Layout.GlobalWrites);
     }
 
@@ -540,7 +546,8 @@ public sealed class RepoSettingsViewModelTests : IAsyncDisposable
         var rig = new Rig();
         rig.Layout.Fail = new IOException("read-only");
 
-        await rig.Vm.MoveColumnAsync(0, 1);
+        rig.Vm.PreviewMoveColumn(rig.Vm.Columns[0], 1);
+        await rig.Vm.CommitColumnOrderAsync();
 
         Assert.Equal("Could not update graph columns: read-only", Assert.Single(rig.Notifications.Published).Message);
     }
@@ -551,7 +558,8 @@ public sealed class RepoSettingsViewModelTests : IAsyncDisposable
         var ctx = OpenRepo();
         var rig = new Rig();
         rig.Workspace.ChangeFocus(ctx);
-        await rig.Vm.MoveColumnAsync(0, 3);
+        rig.Vm.PreviewMoveColumn(rig.Vm.Columns[0], 3);
+        await rig.Vm.CommitColumnOrderAsync();
         await rig.Layout.UpdateAsync(ctx.RepositoryPath, l => l with { GraphWidthPinned = true });
 
         await rig.Vm.ResetColumnsCommand.ExecuteAsync(null);
@@ -566,7 +574,8 @@ public sealed class RepoSettingsViewModelTests : IAsyncDisposable
     public async Task Reset_with_no_repository_only_resets_the_global_columns()
     {
         var rig = new Rig();
-        await rig.Vm.MoveColumnAsync(0, 3);
+        rig.Vm.PreviewMoveColumn(rig.Vm.Columns[0], 3);
+        await rig.Vm.CommitColumnOrderAsync();
         var repoWrites = rig.Layout.Writes;
 
         await rig.Vm.ResetColumnsCommand.ExecuteAsync(null);

@@ -291,7 +291,8 @@ public class RepoSettingsIdentityTests : IDisposable
         var view = new RepoSettingsView(_sp);
         var window = Host(view);
 
-        await view.ViewModel.MoveColumnAsync(0, 2);
+        view.ViewModel.PreviewMoveColumn(view.ViewModel.Columns[0], 2);
+        await view.ViewModel.CommitColumnOrderAsync();
         Dispatcher.UIThread.RunJobs();
         Assert.NotEqual(GraphColumnKind.Refs, _layoutService.GlobalColumns[0].Kind);
 
