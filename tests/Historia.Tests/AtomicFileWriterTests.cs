@@ -90,15 +90,18 @@ public class AtomicFileWriterTests : IDisposable
         var path = Path.Combine(_dir, "debounce.json");
         await using var writer = new AtomicFileWriter(path);
 
+        var firstQueuedAt = Stopwatch.StartNew();
         writer.QueueWrite("first", sequence: 1);
         await Task.Delay(150);
+        var gapBeforeSecond = firstQueuedAt.ElapsedMilliseconds;
         var secondQueuedAt = Stopwatch.StartNew();
         writer.QueueWrite("second", sequence: 2);
         await Task.Delay(100);
 
         // The 250 ms window restarted at the second queue, so the first one's deadline (100 ms
-        // ago) has passed without a write. Skipped when a loaded machine stretched the delay.
-        if (secondQueuedAt.ElapsedMilliseconds < 200)
+        // ago) has passed without a write. Skipped when a loaded machine stretched either delay:
+        // a second queue past the first one's deadline lets the first write land legitimately.
+        if (gapBeforeSecond < 200 && secondQueuedAt.ElapsedMilliseconds < 200)
             Assert.False(File.Exists(path), "the debounce did not restart");
 
         await writer.FlushAsync();
