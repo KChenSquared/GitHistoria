@@ -13,8 +13,8 @@ public partial class MainWindow : Window
     private readonly IScrollDirectionProbe? _scrollProbe;
     private readonly AtomicFileWriter? _placementWriter;
     private readonly AppBandControl? _appBand;
-    private readonly ShortcutsBarControl? _leftShortcuts;
-    private readonly ShortcutsBarControl? _rightShortcuts;
+    private readonly ShortcutsBarView? _leftShortcuts;
+    private readonly ShortcutsBarView? _rightShortcuts;
     private readonly CommitGraphControl? _graph;
     private readonly TerminalDockControl? _terminalDock;
     private readonly CenterPaneController? _centerPaneController;
@@ -42,11 +42,11 @@ public partial class MainWindow : Window
             AppBandHost.Content = _appBand;
             _appBand.Initialize(services);
 
-            _leftShortcuts = new ShortcutsBarControl(services, ShortcutsBarSide.Left);
+            _leftShortcuts = new ShortcutsBarView(services, ShortcutsBarSide.Left);
             LeftShortcutsHost.Content = _leftShortcuts;
             _leftShortcuts.NaturalWidthChanged += (_, _) => OnShortcutsNaturalWidthChanged();
 
-            _rightShortcuts = new ShortcutsBarControl(services, ShortcutsBarSide.Right);
+            _rightShortcuts = new ShortcutsBarView(services, ShortcutsBarSide.Right);
             RightShortcutsHost.Content = _rightShortcuts;
             _rightShortcuts.NaturalWidthChanged += (_, _) => OnShortcutsNaturalWidthChanged();
 

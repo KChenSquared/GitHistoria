@@ -52,12 +52,20 @@ public class ShortcutBarLayoutTests
         return sc.BuildServiceProvider();
     }
 
+    // The side layout the bar kept: a Grid on the left, a StackPanel on the right.
+    private static Control LayoutOf(ShortcutsBarView bar)
+        => (Control)((Panel)((Border)bar.Content!).Child!).Children.Single();
+
+    // Each button draws its icon through an IconGlyph, whose content is the glyph path.
+    private static IEnumerable<Avalonia.Controls.Shapes.Path> GlyphPaths(StackPanel buttonContent)
+        => buttonContent.Children.OfType<IconGlyph>().Select(g => g.Content).OfType<Avalonia.Controls.Shapes.Path>();
+
     [AvaloniaFact]
     public async Task Left_bar_has_branch_then_terminal()
     {
         await using var sp = CreateServices();
-        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
-        var grid = (Grid)((Border)bar.Content!).Child!;
+        var bar = new ShortcutsBarView(sp, ShortcutsBarSide.Left);
+        var grid = (Grid)LayoutOf(bar);
         var leadGroup = (StackPanel)grid.Children[0];
         var trailGroup = (StackPanel)grid.Children[1];
 
@@ -73,14 +81,14 @@ public class ShortcutBarLayoutTests
     public async Task Left_bar_utilities_are_icon_only()
     {
         await using var sp = CreateServices();
-        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
-        var grid = (Grid)((Border)bar.Content!).Child!;
+        var bar = new ShortcutsBarView(sp, ShortcutsBarSide.Left);
+        var grid = (Grid)LayoutOf(bar);
         var leadGroup = (StackPanel)grid.Children[0];
         var trailGroup = (StackPanel)grid.Children[1];
 
         var branchBtn = leadGroup.Children.OfType<Button>().Single();
         var branchStack = (StackPanel)branchBtn.Content!;
-        Assert.NotEmpty(branchStack.Children.OfType<Avalonia.Controls.Shapes.Path>());
+        Assert.NotEmpty(GlyphPaths(branchStack));
         Assert.Equal("Branch", branchStack.Children.OfType<TextBlock>().Single().Text);
 
         var utilityBtns = trailGroup.Children.OfType<Button>().ToList();
@@ -88,7 +96,7 @@ public class ShortcutBarLayoutTests
         foreach (var btn in utilityBtns)
         {
             var stack = (StackPanel)btn.Content!;
-            Assert.NotEmpty(stack.Children.OfType<Avalonia.Controls.Shapes.Path>());
+            Assert.NotEmpty(GlyphPaths(stack));
             Assert.Empty(stack.Children.OfType<TextBlock>());
             Assert.False(string.IsNullOrEmpty(ToolTip.GetTip(btn)?.ToString()));
         }
@@ -98,8 +106,8 @@ public class ShortcutBarLayoutTests
     public async Task Right_bar_has_fetch_pull_push_stash_in_order()
     {
         await using var sp = CreateServices();
-        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Right);
-        var panel = (StackPanel)((Border)bar.Content!).Child!;
+        var bar = new ShortcutsBarView(sp, ShortcutsBarSide.Right);
+        var panel = (StackPanel)LayoutOf(bar);
         var labels = panel.Children
             .OfType<Button>()
             .Select(b => ((StackPanel)b.Content!).Children.OfType<TextBlock>().First().Text)
@@ -112,8 +120,8 @@ public class ShortcutBarLayoutTests
     public async Task Left_bar_puts_branch_left_and_utilities_right()
     {
         await using var sp = CreateServices();
-        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
-        var grid = (Grid)((Border)bar.Content!).Child!;
+        var bar = new ShortcutsBarView(sp, ShortcutsBarSide.Left);
+        var grid = (Grid)LayoutOf(bar);
         var leadGroup = (StackPanel)grid.Children[0];
         var trailGroup = (StackPanel)grid.Children[1];
 
@@ -130,7 +138,7 @@ public class ShortcutBarLayoutTests
     public async Task Left_bar_natural_width_stays_under_base_left_min()
     {
         await using var sp = CreateServices();
-        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
+        var bar = new ShortcutsBarView(sp, ShortcutsBarSide.Left);
         var window = new Window { Width = 800, Height = 600, Content = bar };
         window.Show();
         Dispatcher.UIThread.RunJobs();
@@ -144,7 +152,7 @@ public class ShortcutBarLayoutTests
     public async Task Right_bar_natural_width_is_unchanged()
     {
         await using var sp = CreateServices();
-        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Right);
+        var bar = new ShortcutsBarView(sp, ShortcutsBarSide.Right);
         var window = new Window { Width = 800, Height = 600, Content = bar };
         window.Show();
         Dispatcher.UIThread.RunJobs();
@@ -158,12 +166,12 @@ public class ShortcutBarLayoutTests
     public async Task Shortcut_bar_buttons_match_appband_typography_and_icon_size()
     {
         await using var sp = CreateServices();
-        var bar = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
-        var grid = (Grid)((Border)bar.Content!).Child!;
+        var bar = new ShortcutsBarView(sp, ShortcutsBarSide.Left);
+        var grid = (Grid)LayoutOf(bar);
         var leadGroup = (StackPanel)grid.Children[0];
         var btn = leadGroup.Children.OfType<Button>().First();
         var stack = (StackPanel)btn.Content!;
-        var path = stack.Children.OfType<Avalonia.Controls.Shapes.Path>().First();
+        var path = GlyphPaths(stack).First();
         var tb = stack.Children.OfType<TextBlock>().First();
 
         Assert.Equal(18.0, path.Width);
@@ -174,7 +182,7 @@ public class ShortcutBarLayoutTests
     [AvaloniaFact]
     public async Task Bars_match_the_graph_header_row()
     {
-        Assert.Equal(CommitGraphControl.HeaderHeight, ShortcutsBarControl.BarHeight);
+        Assert.Equal(CommitGraphControl.HeaderHeight, ShortcutsBarView.BarHeight);
 
         await using var sp = CreateServices();
         var window = new MainWindow(sp);
@@ -198,8 +206,8 @@ public class ShortcutBarLayoutTests
     public async Task Bars_have_no_profile_or_ssh_controls()
     {
         await using var sp = CreateServices();
-        var left = new ShortcutsBarControl(sp, ShortcutsBarSide.Left);
-        var right = new ShortcutsBarControl(sp, ShortcutsBarSide.Right);
+        var left = new ShortcutsBarView(sp, ShortcutsBarSide.Left);
+        var right = new ShortcutsBarView(sp, ShortcutsBarSide.Right);
 
         static void AssertClean(Control control)
         {
@@ -318,9 +326,9 @@ public class ShortcutBarLayoutTests
         Dispatcher.UIThread.RunJobs();
 
         var leftHost = window.FindControl<ContentControl>("LeftShortcutsHost")!;
-        var leftBar = (ShortcutsBarControl)leftHost.Content!;
+        var leftBar = (ShortcutsBarView)leftHost.Content!;
         var rightHost = window.FindControl<ContentControl>("RightShortcutsHost")!;
-        var rightBar = (ShortcutsBarControl)rightHost.Content!;
+        var rightBar = (ShortcutsBarView)rightHost.Content!;
 
         var leftW = leftBar.NaturalWidth;
         var rightW = rightBar.NaturalWidth;
