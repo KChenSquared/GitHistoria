@@ -1,79 +1,91 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// Every numeric Settings field commits on <c>LostFocus</c> <b>and</b> on Enter,
-/// only when the clamped value actually changed. <see cref="SettingsView"/>'s private
-/// <c>WireNumericCommit</c> helper is exercised directly through reflection — standing up the
-/// whole view needs seven unrelated services (<c>ISettingsService</c>, <c>IThemeService</c>,
-/// <c>ICustomThemeService</c>, <c>INavigationBus</c>, <c>IDialogService</c>,
-/// <c>IGraphLayoutService</c>, <c>IRepoStateCache</c>) faked out just to reach this one helper,
-/// so this drives the real production wiring against a bare <see cref="NumericUpDown"/> instead.
+/// Every numeric Settings field commits on <c>LostFocus</c> <b>and</b> on Enter, only when the
+/// clamped value actually changed. The fields are driven in a real <see cref="SettingsView"/>
+/// hosted in a window, against in-memory settings and a scripted dialog service.
 ///
-/// Driving it needed one correction to the naive approach: setting <c>NumericUpDown.Value</c>
-/// directly does not simulate typed input — <c>NumericUpDown</c>'s own LostFocus/Enter class
-/// handlers resync <c>Value</c> <i>from</i> <c>Text</c> on both events (confirmed empirically
-/// here: setting <c>Value</c> then raising LostFocus left <c>Value</c> reset to <c>null</c>,
-/// because the stale empty <c>Text</c> won the resync). Setting <c>.Text</c> instead — what
-/// typing into the templated inner <c>TextBox</c> actually does — is the correct simulation, and
-/// is what the Avalonia-source finding in the helper's doc comment (`SettingsView.cs`) describes:
-/// by the time our instance handler runs, <c>Value</c> already reflects the typed text.
+/// Setting <c>NumericUpDown.Value</c> directly does not simulate typed input —
+/// <c>NumericUpDown</c>'s own LostFocus/Enter class handlers resync <c>Value</c> <i>from</i>
+/// <c>Text</c> on both events. Setting <c>.Text</c> instead — what typing into the templated inner
+/// <c>TextBox</c> actually does — is the correct simulation: by the time the view's handler runs,
+/// <c>Value</c> already reflects the typed text (checked against Avalonia 11.3.20's
+/// <c>NumericUpDown.OnKeyDown</c> source, whose Enter case calls <c>CommitInput()</c>).
 /// </summary>
 [Trait("tier", "ui")]
 public class SettingsNumericCommitTests
 {
-    private static void WireNumericCommit(NumericUpDown nud, int initial, Func<int, int> clamp, Action<int> commit)
-    {
-        var method = typeof(SettingsView).GetMethod("WireNumericCommit", BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new InvalidOperationException("SettingsView.WireNumericCommit not found — rename tracked here too.");
-        method.Invoke(null, [nud, initial, clamp, commit]);
-    }
-
     private static void RaiseEnter(NumericUpDown nud) =>
         nud.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter });
 
     private static void RaiseLostFocus(NumericUpDown nud) =>
         nud.RaiseEvent(new RoutedEventArgs(InputElement.LostFocusEvent));
 
-    [AvaloniaFact]
-    public void Enter_commits_a_changed_typed_value_once()
+    /// <summary>Lets the field's pre-dialog wait and the dialog flow finish.</summary>
+    private static async Task SettleAsync(int milliseconds = 300)
     {
-        var nud = new NumericUpDown { Value = 3 };
-        var commits = new List<int>();
-        WireNumericCommit(nud, initial: 3, clamp: v => v, commit: commits.Add);
-
-        nud.Text = "7"; // what typing "7" into the inner TextBox leaves behind
-        RaiseEnter(nud);
-        Assert.Equal([7], commits);
-
-        // Enter again with no further change commits nothing more.
-        RaiseEnter(nud);
-        Assert.Equal([7], commits);
+        await Task.Delay(milliseconds);
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
     }
 
     [AvaloniaFact]
-    public void LostFocus_commits_a_changed_typed_value_through_the_clamp()
+    public void Enter_commits_a_changed_typed_value_once()
     {
-        var nud = new NumericUpDown { Value = 3 };
-        var commits = new List<int>();
-        WireNumericCommit(nud, initial: 3, clamp: v => Math.Clamp(v, 0, 5), commit: commits.Add);
+        using var rig = new SettingsViewRig(new AppSettings { DiffContextLines = 3 }, new ScriptedDialogs());
+        var nud = rig.Field(rig.View.ViewModel.DiffContextLines);
+        var saves = 0;
+        rig.Settings.Changed += (_, _) => saves++;
 
-        nud.Text = "9";
+        nud.Text = "7"; // what typing "7" into the inner TextBox leaves behind
+        RaiseEnter(nud);
+        Assert.Equal(7, rig.Settings.Current.DiffContextLines);
+        Assert.Equal(1, saves);
+
+        // Enter again with no further change commits nothing more.
+        RaiseEnter(nud);
+        Assert.Equal(1, saves);
+    }
+
+    [AvaloniaFact]
+    public void LostFocus_commits_a_changed_typed_value()
+    {
+        using var rig = new SettingsViewRig(new AppSettings { TerminalScrollbackLines = 5_000 }, new ScriptedDialogs());
+        var nud = rig.Field(rig.View.ViewModel.TerminalScrollbackLines);
+
+        nud.Text = "8000";
         RaiseLostFocus(nud);
 
-        Assert.Equal([5], commits); // clamped, not the raw 9
+        Assert.Equal(8_000, rig.Settings.Current.TerminalScrollbackLines);
     }
 
     [AvaloniaFact]
     public void LostFocus_with_unchanged_text_does_not_commit()
     {
-        var nud = new NumericUpDown { Value = 4 };
-        var commits = new List<int>();
-        WireNumericCommit(nud, initial: 4, clamp: v => v, commit: commits.Add);
+        using var rig = new SettingsViewRig(new AppSettings { DiffContextLines = 4 }, new ScriptedDialogs());
+        var nud = rig.Field(rig.View.ViewModel.DiffContextLines);
+        var saves = 0;
+        rig.Settings.Changed += (_, _) => saves++;
 
         nud.Text = "4";
         RaiseLostFocus(nud);
 
-        Assert.Empty(commits);
+        Assert.Equal(0, saves);
+    }
+
+    [AvaloniaFact]
+    public void A_value_change_without_Enter_or_LostFocus_does_not_commit()
+    {
+        using var rig = new SettingsViewRig(new AppSettings { DiffContextLines = 10 }, new ScriptedDialogs());
+        var nud = rig.Field(rig.View.ViewModel.DiffContextLines);
+
+        // A bare Value change (a spin-button click, or Value syncing live from typed Text)
+        // must not auto-commit on its own — only Enter/LostFocus should.
+        nud.Value = 20;
+        nud.Text = "20";
+        Assert.Equal(10, rig.Settings.Current.DiffContextLines);
+
+        RaiseLostFocus(nud);
+        Assert.Equal(20, rig.Settings.Current.DiffContextLines);
     }
 
     [AvaloniaFact]
@@ -103,291 +115,132 @@ public class SettingsNumericCommitTests
     [AvaloniaFact]
     public async Task ResidentRowCap_increasing_prompts_destructive_confirmation_and_commits_on_confirm()
     {
-        var nud = new NumericUpDown
-        {
-            Minimum = AppSettings.MinResidentRowCap,
-            Maximum = AppSettings.MaxResidentRowCap,
-            Value = 2_000_000,
-        };
-        var dialog = new FakeDialogService { ResultToReturn = true };
-        var commits = new List<int>();
-
-        SettingsView.WireResidentRowCapCommit(nud, 2_000_000, dialog, next =>
-        {
-            commits.Add(next);
-            return Task.CompletedTask;
-        });
+        using var rig = new SettingsViewRig(new AppSettings { ResidentRowCap = 2_000_000 }, new ScriptedDialogs { ResultToReturn = true });
+        var nud = rig.Field(rig.View.ViewModel.ResidentRowCap);
 
         nud.Text = "2500000";
         RaiseEnter(nud);
 
-        // Commit() waits out a real-time delay (guards the Enter-key/dialog race — see the
-        // doc comment on WireResidentRowCapCommit) before touching the dialog service.
-        await Task.Delay(300);
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        // The commit waits out a real-time delay (guards the Enter-key/dialog race) before
+        // touching the dialog service.
+        await SettleAsync();
 
-        Assert.Single(dialog.DestructiveCalls);
-        Assert.Equal("Change the resident row cap?", dialog.DestructiveCalls[0].Title);
-        Assert.Equal("Continue", dialog.DestructiveCalls[0].ConfirmLabel);
-        Assert.Equal([2_500_000], commits);
+        Assert.Single(rig.Dialog.DestructiveCalls);
+        Assert.Equal("Change the resident row cap?", rig.Dialog.DestructiveCalls[0].Title);
+        Assert.Equal("Continue", rig.Dialog.DestructiveCalls[0].ConfirmLabel);
+        Assert.Equal(2_500_000, rig.Settings.Current.ResidentRowCap);
         Assert.Equal(2_500_000, nud.Value);
     }
 
     [AvaloniaFact]
     public async Task ResidentRowCap_decreasing_prompts_destructive_confirmation_and_commits_on_confirm()
     {
-        var nud = new NumericUpDown
-        {
-            Minimum = AppSettings.MinResidentRowCap,
-            Maximum = AppSettings.MaxResidentRowCap,
-            Value = 2_000_000,
-        };
-        var dialog = new FakeDialogService { ResultToReturn = true };
-        var commits = new List<int>();
-
-        SettingsView.WireResidentRowCapCommit(nud, 2_000_000, dialog, next =>
-        {
-            commits.Add(next);
-            return Task.CompletedTask;
-        });
+        using var rig = new SettingsViewRig(new AppSettings { ResidentRowCap = 2_000_000 }, new ScriptedDialogs { ResultToReturn = true });
+        var nud = rig.Field(rig.View.ViewModel.ResidentRowCap);
 
         nud.Text = "1500000";
         RaiseEnter(nud);
+        await SettleAsync();
 
-        // Commit() waits out a real-time delay (guards the Enter-key/dialog race — see the
-        // doc comment on WireResidentRowCapCommit) before touching the dialog service.
-        await Task.Delay(300);
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-
-        Assert.Single(dialog.DestructiveCalls);
-        Assert.Equal("Change the resident row cap?", dialog.DestructiveCalls[0].Title);
-        Assert.Equal([1_500_000], commits);
+        Assert.Single(rig.Dialog.DestructiveCalls);
+        Assert.Equal("Change the resident row cap?", rig.Dialog.DestructiveCalls[0].Title);
+        Assert.Equal(1_500_000, rig.Settings.Current.ResidentRowCap);
         Assert.Equal(1_500_000, nud.Value);
     }
 
     [AvaloniaFact]
     public async Task ResidentRowCap_cancelling_reverts_value_and_does_not_commit()
     {
-        var nud = new NumericUpDown
-        {
-            Minimum = AppSettings.MinResidentRowCap,
-            Maximum = AppSettings.MaxResidentRowCap,
-            Value = 2_000_000,
-        };
-        var dialog = new FakeDialogService { ResultToReturn = false };
-        var commits = new List<int>();
-
-        SettingsView.WireResidentRowCapCommit(nud, 2_000_000, dialog, next =>
-        {
-            commits.Add(next);
-            return Task.CompletedTask;
-        });
+        using var rig = new SettingsViewRig(new AppSettings { ResidentRowCap = 2_000_000 }, new ScriptedDialogs { ResultToReturn = false });
+        var nud = rig.Field(rig.View.ViewModel.ResidentRowCap);
 
         nud.Text = "1500000";
         RaiseEnter(nud);
+        await SettleAsync();
 
-        // Commit() waits out a real-time delay (guards the Enter-key/dialog race — see the
-        // doc comment on WireResidentRowCapCommit) before touching the dialog service.
-        await Task.Delay(300);
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-
-        Assert.Single(dialog.DestructiveCalls);
-        Assert.Empty(commits);
+        Assert.Single(rig.Dialog.DestructiveCalls);
+        Assert.Equal(2_000_000, rig.Settings.Current.ResidentRowCap);
         Assert.Equal(2_000_000, nud.Value);
     }
 
     [AvaloniaFact]
     public async Task ResidentRowCap_unchanged_value_does_not_prompt_or_commit()
     {
-        var nud = new NumericUpDown
-        {
-            Minimum = AppSettings.MinResidentRowCap,
-            Maximum = AppSettings.MaxResidentRowCap,
-            Value = 2_000_000,
-        };
-        var dialog = new FakeDialogService { ResultToReturn = true };
-        var commits = new List<int>();
-
-        SettingsView.WireResidentRowCapCommit(nud, 2_000_000, dialog, next =>
-        {
-            commits.Add(next);
-            return Task.CompletedTask;
-        });
+        using var rig = new SettingsViewRig(new AppSettings { ResidentRowCap = 2_000_000 }, new ScriptedDialogs { ResultToReturn = true });
+        var nud = rig.Field(rig.View.ViewModel.ResidentRowCap);
 
         nud.Text = "2000000";
         RaiseEnter(nud);
+        await SettleAsync();
 
-        // Commit() waits out a real-time delay (guards the Enter-key/dialog race — see the
-        // doc comment on WireResidentRowCapCommit) before touching the dialog service.
-        await Task.Delay(300);
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-
-        Assert.Empty(dialog.DestructiveCalls);
-        Assert.Empty(commits);
+        Assert.Empty(rig.Dialog.DestructiveCalls);
+        Assert.Equal(2_000_000, rig.Settings.Current.ResidentRowCap);
     }
 
     [AvaloniaFact]
     public async Task ResidentRowCap_spin_value_change_does_not_commit_until_Enter()
     {
-        var nud = new NumericUpDown
-        {
-            Minimum = AppSettings.MinResidentRowCap,
-            Maximum = AppSettings.MaxResidentRowCap,
-            Value = 2_000_000,
-        };
-        var dialog = new FakeDialogService { ResultToReturn = true };
-        var commits = new List<int>();
-
-        SettingsView.WireResidentRowCapCommit(nud, 2_000_000, dialog, next =>
-        {
-            commits.Add(next);
-            return Task.CompletedTask;
-        });
+        using var rig = new SettingsViewRig(new AppSettings { ResidentRowCap = 2_000_000 }, new ScriptedDialogs { ResultToReturn = true });
+        var nud = rig.Field(rig.View.ViewModel.ResidentRowCap);
 
         // A spin-button click sets Value directly (no Text/Enter/LostFocus involved) — this
         // must not, on its own, schedule a commit or pop the confirmation dialog.
         nud.Value = 2_100_000;
         nud.Text = "2100000";
-        await Task.Delay(300);
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-        Assert.Empty(dialog.DestructiveCalls);
-        Assert.Empty(commits);
+        await SettleAsync();
+        Assert.Empty(rig.Dialog.DestructiveCalls);
+        Assert.Equal(2_000_000, rig.Settings.Current.ResidentRowCap);
 
         RaiseEnter(nud);
-        await Task.Delay(300);
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        await SettleAsync();
 
-        Assert.Single(dialog.DestructiveCalls);
-        Assert.Equal([2_100_000], commits);
+        Assert.Single(rig.Dialog.DestructiveCalls);
+        Assert.Equal(2_100_000, rig.Settings.Current.ResidentRowCap);
     }
 
     [AvaloniaFact]
     public async Task ResidentRowCap_above_warn_threshold_asks_twice_and_commits_on_both_confirms()
     {
-        var nud = new NumericUpDown
-        {
-            Minimum = AppSettings.MinResidentRowCap,
-            Maximum = AppSettings.MaxResidentRowCap,
-            Value = 2_500_000,
-        };
-        var dialog = new FakeDialogService { ResultToReturn = true };
-        var commits = new List<int>();
-
-        SettingsView.WireResidentRowCapCommit(nud, 2_500_000, dialog, next =>
-        {
-            commits.Add(next);
-            return Task.CompletedTask;
-        });
+        using var rig = new SettingsViewRig(new AppSettings { ResidentRowCap = 2_500_000 }, new ScriptedDialogs { ResultToReturn = true });
+        var nud = rig.Field(rig.View.ViewModel.ResidentRowCap);
 
         nud.Text = "20000000"; // a large value is accepted unclamped
         RaiseEnter(nud);
+        await SettleAsync(600);
 
-        await Task.Delay(500);
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-
-        Assert.Equal(2, dialog.DestructiveCalls.Count);
-        Assert.Equal("Change the resident row cap?", dialog.DestructiveCalls[0].Title);
-        Assert.Equal("Keep this many rows in memory?", dialog.DestructiveCalls[1].Title);
-        Assert.Equal("Save anyway", dialog.DestructiveCalls[1].ConfirmLabel);
-        Assert.Equal([20_000_000], commits);
+        Assert.Equal(2, rig.Dialog.DestructiveCalls.Count);
+        Assert.Equal("Change the resident row cap?", rig.Dialog.DestructiveCalls[0].Title);
+        Assert.Equal("Keep this many rows in memory?", rig.Dialog.DestructiveCalls[1].Title);
+        Assert.Equal("Save anyway", rig.Dialog.DestructiveCalls[1].ConfirmLabel);
+        Assert.Equal(20_000_000, rig.Settings.Current.ResidentRowCap);
     }
 
     [AvaloniaFact]
     public async Task ResidentRowCap_cancelling_the_second_warning_reverts_and_does_not_commit()
     {
-        var nud = new NumericUpDown
-        {
-            Minimum = AppSettings.MinResidentRowCap,
-            Maximum = AppSettings.MaxResidentRowCap,
-            Value = 2_500_000,
-        };
-        var dialog = new FakeDialogService { Results = new Queue<bool>([true, false]) };
-        var commits = new List<int>();
-
-        SettingsView.WireResidentRowCapCommit(nud, 2_500_000, dialog, next =>
-        {
-            commits.Add(next);
-            return Task.CompletedTask;
-        });
+        using var rig = new SettingsViewRig(new AppSettings { ResidentRowCap = 2_500_000 }, new ScriptedDialogs { Results = new Queue<bool>([true, false]) });
+        var nud = rig.Field(rig.View.ViewModel.ResidentRowCap);
 
         nud.Text = "6000000";
         RaiseEnter(nud);
+        await SettleAsync(600);
 
-        await Task.Delay(500);
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-
-        Assert.Equal(2, dialog.DestructiveCalls.Count);
-        Assert.Empty(commits);
+        Assert.Equal(2, rig.Dialog.DestructiveCalls.Count);
+        Assert.Equal(2_500_000, rig.Settings.Current.ResidentRowCap);
         Assert.Equal(2_500_000, nud.Value);
     }
 
     [AvaloniaFact]
     public async Task ResidentRowCap_at_warn_threshold_asks_only_once()
     {
-        var nud = new NumericUpDown
-        {
-            Minimum = AppSettings.MinResidentRowCap,
-            Maximum = AppSettings.MaxResidentRowCap,
-            Value = 2_500_000,
-        };
-        var dialog = new FakeDialogService { ResultToReturn = true };
-        var commits = new List<int>();
-
-        SettingsView.WireResidentRowCapCommit(nud, 2_500_000, dialog, next =>
-        {
-            commits.Add(next);
-            return Task.CompletedTask;
-        });
+        using var rig = new SettingsViewRig(new AppSettings { ResidentRowCap = 2_500_000 }, new ScriptedDialogs { ResultToReturn = true });
+        var nud = rig.Field(rig.View.ViewModel.ResidentRowCap);
 
         nud.Text = AppSettings.ResidentRowCapWarnThreshold.ToString(System.Globalization.CultureInfo.InvariantCulture);
         RaiseEnter(nud);
+        await SettleAsync(600);
 
-        await Task.Delay(500);
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-
-        Assert.Single(dialog.DestructiveCalls);
-        Assert.Equal([AppSettings.ResidentRowCapWarnThreshold], commits);
-    }
-
-    [AvaloniaFact]
-    public void WireNumericCommit_does_not_commit_a_value_change_until_LostFocus()
-    {
-        var nud = new NumericUpDown { Value = 10 };
-        var commits = new List<int>();
-        SettingsView.WireNumericCommit(nud, 10, v => v, commits.Add);
-
-        // A bare Value change (e.g. a spin-button click, or Value syncing live from typed Text)
-        // must not auto-commit on its own — only Enter/LostFocus should.
-        nud.Value = 20;
-        nud.Text = "20";
-        Assert.Empty(commits);
-
-        RaiseLostFocus(nud);
-        Assert.Equal([20], commits);
-    }
-
-    private sealed class FakeDialogService : IDialogService
-    {
-        public bool ResultToReturn { get; set; } = true;
-        /// <summary>Per-call destructive-confirm answers, in order; falls back to <see cref="ResultToReturn"/>.</summary>
-        public Queue<bool>? Results { get; set; }
-        public List<(string Title, string Effect, string ConfirmLabel)> DestructiveCalls { get; } = [];
-
-        public Task<bool> ConfirmDestructiveAsync(string title, string effect, string confirmLabel)
-        {
-            DestructiveCalls.Add((title, effect, confirmLabel));
-            return Task.FromResult(Results is { Count: > 0 } ? Results.Dequeue() : ResultToReturn);
-        }
-
-        public Task<bool> ConfirmAsync(string title, string message, bool destructive = false, string confirmLabel = "OK", bool defaultToCancel = false, DialogIcon icon = DialogIcon.None) =>
-            Task.FromResult(ResultToReturn);
-
-        public Task<int> ChooseAsync(string title, string message, IReadOnlyList<string> options, int defaultIndex = 0, int destructiveIndex = -1, DialogIcon icon = DialogIcon.None) =>
-            Task.FromResult(defaultIndex);
-
-        public Task<string?> PickFileAsync(string title, string filter, string? initialDirectory = null) => Task.FromResult<string?>(null);
-        public Task<string?> PickFolderAsync(string title, string? initialDirectory = null) => Task.FromResult<string?>(null);
-        public Task<string?> PromptAsync(string title, string message, string? defaultValue = null, string confirmLabel = "OK", bool primaryConfirm = false) => Task.FromResult<string?>(null);
-        public Task ShowMessageAsync(string title, string message) => Task.CompletedTask;
+        Assert.Single(rig.Dialog.DestructiveCalls);
+        Assert.Equal(AppSettings.ResidentRowCapWarnThreshold, rig.Settings.Current.ResidentRowCap);
     }
 }

@@ -1,0 +1,30 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.SettingsSectionHeader"
+             x:DataType="vm:SettingsSectionViewModel">
+    <!-- The whole row is the hit target, so the background is transparent rather than absent. -->
+    <Border Padding="0,8,0,8"
+            Margin="0,8,0,0"
+            BorderThickness="0,0,0,1"
+            BorderBrush="{DynamicResource ColorBorder}"
+            Background="Transparent"
+            Cursor="Hand"
+            PointerPressed="OnPressed">
+        <Grid ColumnDefinitions="*,Auto">
+            <DockPanel HorizontalAlignment="Left" HorizontalSpacing="6">
+                <ctl:HelpHint DockPanel.Dock="Right"
+                              ZIndex="1"
+                              IsVisible="{Binding HasHint}"
+                              Text="{Binding Hint}" />
+                <TextBlock Classes="text"
+                           FontWeight="SemiBold"
+                           Text="{Binding Title}" />
+            </DockPanel>
+            <TextBlock Grid.Column="1"
+                       Classes="text muted"
+                       Text="{Binding Glyph}" />
+        </Grid>
+    </Border>
+</UserControl>

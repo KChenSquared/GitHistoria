@@ -148,25 +148,60 @@ public sealed class SettingsCmdrPathRowTests
 
     private static StackPanel GeneralBody(SettingsView view)
     {
-        view.EnsureCmdrStatusLoadedForTesting();
+        Attach(view);
+        EnsureCmdrStatusLoaded(view);
         return GeneralBodyNow(view);
+    }
+
+    /// <summary>A button follows its command's CanExecute only while it is in a window.</summary>
+    private static void Attach(SettingsView view)
+    {
+        if (view.GetVisualRoot() is not null)
+            return;
+
+        new Window { Content = view }.Show();
+        Dispatcher.UIThread.RunJobs();
     }
 
     /// <summary>The General body as rendered now, without waiting for a status refresh that a
     /// test may be holding back.</summary>
     private static StackPanel GeneralBodyNow(SettingsView view)
     {
-        var root = (StackPanel)typeof(SettingsView).GetField("_root", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(view)!;
-        var header = root.Children.OfType<Border>().Single(b =>
-            b.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "General"));
+        var root = view.FindControl<StackPanel>("PageRoot")!;
+        var header = root.Children.OfType<SettingsSectionHeader>().Single(h =>
+            h.GetLogicalDescendants().OfType<TextBlock>().Any(t => t.Text == "General"));
         return (StackPanel)root.Children[root.Children.IndexOf(header) + 1];
     }
 
+    /// <summary>Waits for the PATH status check the view starts and lets its result land.</summary>
+    private static void EnsureCmdrStatusLoaded(SettingsView view)
+    {
+        view.ViewModel.CmdrStatusTask.GetAwaiter().GetResult();
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    /// <summary>The Add to PATH command's latest run.</summary>
+    private static Task ApplyTask(SettingsView view) => view.ViewModel.AddToPathCommand.ExecutionTask ?? Task.CompletedTask;
+
+    /// <summary>Clicks a button the way the control does: its command runs only while it can.</summary>
+    private static void Click(Button button)
+    {
+        var command = button.Command ?? throw new InvalidOperationException("The button has no command.");
+        if (button.IsEffectivelyEnabled && command.CanExecute(button.CommandParameter))
+            command.Execute(button.CommandParameter);
+    }
+
+    /// <summary>The Command line button, or null while its row is not shown.</summary>
     private static Button? FindCmdrButton(Control root)
     {
         var row = root.GetLogicalDescendants().OfType<Panel>()
             .FirstOrDefault(p => p.Children.OfType<TextBlock>().Any(t => t.Text == "Command line"));
-        return row?.GetLogicalDescendants().OfType<Button>().FirstOrDefault();
+        if (row is null)
+            return null;
+
+        var shown = row.IsVisible
+            && row.GetLogicalAncestors().TakeWhile(a => !ReferenceEquals(a, root)).OfType<Control>().All(a => a.IsVisible);
+        return shown ? row.GetLogicalDescendants().OfType<Button>().FirstOrDefault() : null;
     }
 
     private static string? RowLabel(Control row) => row switch
@@ -246,7 +281,7 @@ public sealed class SettingsCmdrPathRowTests
 
         Assert.NotNull(button);
         Assert.Equal("On PATH", button.Content);
-        Assert.False(button.IsEnabled);
+        Assert.False(button.IsEffectivelyEnabled);
 
         view.Dispose();
     }
@@ -271,7 +306,7 @@ public sealed class SettingsCmdrPathRowTests
 
         Assert.NotNull(button);
         Assert.Equal("Add to PATH", button.Content);
-        Assert.True(button.IsEnabled);
+        Assert.True(button.IsEffectivelyEnabled);
 
         view.Dispose();
     }
@@ -292,9 +327,9 @@ public sealed class SettingsCmdrPathRowTests
         var button = FindCmdrButton(general);
         Assert.NotNull(button);
 
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await view.CmdrApplyTaskForTesting;
-        view.EnsureCmdrStatusLoadedForTesting();
+        Click(button);
+        await ApplyTask(view);
+        EnsureCmdrStatusLoaded(view);
 
         Assert.Single(dialogs.DestructiveCalls);
         var call = dialogs.DestructiveCalls[0];
@@ -329,9 +364,9 @@ public sealed class SettingsCmdrPathRowTests
         var button = FindCmdrButton(general);
         Assert.NotNull(button);
 
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await view.CmdrApplyTaskForTesting;
-        view.EnsureCmdrStatusLoadedForTesting();
+        Click(button);
+        await ApplyTask(view);
+        EnsureCmdrStatusLoaded(view);
 
         Assert.Single(cmdr.ApplyCalls);
         Assert.Equal(preview, cmdr.ApplyCalls[0]);
@@ -357,9 +392,9 @@ public sealed class SettingsCmdrPathRowTests
         var button = FindCmdrButton(general);
         Assert.NotNull(button);
 
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await view.CmdrApplyTaskForTesting;
-        view.EnsureCmdrStatusLoadedForTesting();
+        Click(button);
+        await ApplyTask(view);
+        EnsureCmdrStatusLoaded(view);
 
         Assert.Single(dialogs.ShowMessageCalls);
         Assert.Equal("Update PATH", dialogs.ShowMessageCalls[0].Title);
@@ -385,9 +420,9 @@ public sealed class SettingsCmdrPathRowTests
         var button = FindCmdrButton(general);
         Assert.NotNull(button);
 
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await view.CmdrApplyTaskForTesting;
-        view.EnsureCmdrStatusLoadedForTesting();
+        Click(button);
+        await ApplyTask(view);
+        EnsureCmdrStatusLoaded(view);
 
         Assert.Single(dialogs.ShowMessageCalls);
         Assert.Equal("Update PATH", dialogs.ShowMessageCalls[0].Title);
@@ -412,9 +447,9 @@ public sealed class SettingsCmdrPathRowTests
         var button = FindCmdrButton(general);
         Assert.NotNull(button);
 
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await view.CmdrApplyTaskForTesting;
-        view.EnsureCmdrStatusLoadedForTesting();
+        Click(button);
+        await ApplyTask(view);
+        EnsureCmdrStatusLoaded(view);
 
         Assert.Single(dialogs.DestructiveCalls);
         var call = dialogs.DestructiveCalls[0];
@@ -447,18 +482,18 @@ public sealed class SettingsCmdrPathRowTests
         var general = GeneralBody(view);
         var button = FindCmdrButton(general);
         Assert.NotNull(button);
-        Assert.True(button.IsEnabled);
+        Assert.True(button.IsEffectivelyEnabled);
 
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Click(button);
         Dispatcher.UIThread.RunJobs();
 
         var buttonDuringApply = FindCmdrButton(GeneralBody(view));
         Assert.NotNull(buttonDuringApply);
-        Assert.False(buttonDuringApply.IsEnabled);
+        Assert.False(buttonDuringApply.IsEffectivelyEnabled);
 
         applyGate.SetResult(true);
-        await view.CmdrApplyTaskForTesting;
-        view.EnsureCmdrStatusLoadedForTesting();
+        await ApplyTask(view);
+        EnsureCmdrStatusLoaded(view);
 
         view.Dispose();
     }
@@ -481,23 +516,23 @@ public sealed class SettingsCmdrPathRowTests
         var button = FindCmdrButton(general);
         Assert.NotNull(button);
 
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await view.CmdrApplyTaskForTesting;
+        Click(button);
+        await ApplyTask(view);
         Dispatcher.UIThread.RunJobs();
 
         var buttonDuringWait = FindCmdrButton(GeneralBodyNow(view));
         Assert.NotNull(buttonDuringWait);
         Assert.Equal("Add to PATH", buttonDuringWait.Content);
-        Assert.False(buttonDuringWait.IsEnabled);
+        Assert.False(buttonDuringWait.IsEffectivelyEnabled);
 
         cmdr.StatusToReturn = new CmdrPathStatus.Current();
         statusGate.SetResult(true);
-        view.EnsureCmdrStatusLoadedForTesting();
+        EnsureCmdrStatusLoaded(view);
 
         var currentButton = FindCmdrButton(GeneralBodyNow(view));
         Assert.NotNull(currentButton);
         Assert.Equal("On PATH", currentButton.Content);
-        Assert.False(currentButton.IsEnabled);
+        Assert.False(currentButton.IsEffectivelyEnabled);
 
         Assert.Single(dialogs.DestructiveCalls);
         Assert.Single(cmdr.ApplyCalls);
@@ -540,9 +575,9 @@ public sealed class SettingsCmdrPathRowTests
         var button = FindCmdrButton(general);
         Assert.NotNull(button);
 
-        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await view.CmdrApplyTaskForTesting;
-        view.EnsureCmdrStatusLoadedForTesting();
+        Click(button);
+        await ApplyTask(view);
+        EnsureCmdrStatusLoaded(view);
 
         Assert.Single(dialogs.ShowMessageCalls);
         Assert.Equal("Update PATH", dialogs.ShowMessageCalls[0].Title);
