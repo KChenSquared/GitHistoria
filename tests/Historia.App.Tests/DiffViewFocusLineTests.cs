@@ -94,7 +94,7 @@ public class DiffViewFocusLineTests : IDisposable
         var (window, presenter) = await ShowAsync(view);
         try
         {
-            var expected = view.ModelForTesting!.FindDisplayLineForNewLine(170, mode == DiffViewMode.SideBySide)!.Value;
+            var expected = view.ViewModel.Model!.FindDisplayLineForNewLine(170, mode == DiffViewMode.SideBySide)!.Value;
             var range = presenter switch
             {
                 CombinedDiffPresenter c => c.VisibleLineRange,
@@ -154,7 +154,7 @@ public class DiffViewFocusLineTests : IDisposable
                 SideBySideDiffPresenter s => s.VisibleLineRange,
                 _ => null,
             };
-            var expected = view.ModelForTesting!.FindDisplayLineForNewLine(170, mode == DiffViewMode.SideBySide)!.Value;
+            var expected = view.ViewModel.Model!.FindDisplayLineForNewLine(170, mode == DiffViewMode.SideBySide)!.Value;
             bool Showing(int line) => Range() is { } r && line >= r.Start && line <= r.End;
 
             if (presenter is CombinedDiffPresenter combined)
