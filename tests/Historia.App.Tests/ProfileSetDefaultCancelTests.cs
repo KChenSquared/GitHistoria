@@ -162,7 +162,7 @@ public sealed class ProfileSetDefaultCancelTests
         var view = new ProfilesView(sp);
         try
         {
-            await view.SetDefaultAsync(created);
+            await view.ViewModel.SetDefaultAsync(created);
 
             Assert.Equal(1, dialogs.ChooseCalls);
             Assert.Equal(defaultBefore, profiles.GetDefaultProfile()?.Id);
@@ -194,13 +194,134 @@ public sealed class ProfileSetDefaultCancelTests
         var view = new ProfilesView(sp);
         try
         {
-            await view.SetDefaultAsync(created);
+            await view.ViewModel.SetDefaultAsync(created);
 
             Assert.Equal(1, dialogs.ChooseCalls);
             Assert.Equal(created.Id, profiles.GetDefaultProfile()?.Id);
             var note = Assert.Single(notify.Published);
             Assert.Equal(NotificationSeverity.Info, note.Severity);
             Assert.Contains("is now the default profile", note.Message);
+        }
+        finally
+        {
+            view.Dispose();
+        }
+    }
+
+    private static async Task<(ServiceProvider sp, CapturingNotificationService notify, FakeDialogService dialogs)> StartAsync()
+    {
+        var notify = new CapturingNotificationService();
+        var dialogs = new FakeDialogService { ChooseResult = 0 };
+        return (CreateServices(notify, dialogs), notify, dialogs);
+    }
+
+    private static IEnumerable<Button> VisibleButtons(Control root, string label)
+        => root.GetVisualDescendants().OfType<Button>().Where(b => b.Content as string == label && b.IsEffectivelyVisible);
+
+    private static Window Host(ProfilesView view)
+    {
+        var window = new Window { Width = 900, Height = 900, Content = view };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        window.UpdateLayout();
+        return window;
+    }
+
+    [AvaloniaFact]
+    public async Task The_view_carries_its_view_model_and_lists_the_global_profile()
+    {
+        using var dir = new IsolatedProfilesDir();
+        var (sp, _, _) = await StartAsync();
+        await using var _ = sp;
+
+        var view = new ProfilesView(sp);
+        var window = Host(view);
+        try
+        {
+            Assert.Same(view.ViewModel, view.DataContext);
+            var row = Assert.Single(view.ViewModel.Rows);
+            Assert.True(row.Profile.IsGlobal);
+            Assert.Single(VisibleButtons(view, "Edit"));
+            Assert.Empty(VisibleButtons(view, "Delete"));
+            Assert.Empty(VisibleButtons(view, "Set as default"));
+            Assert.Single(VisibleButtons(view, "+ Add profile"));
+        }
+        finally
+        {
+            view.Dispose();
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Rows_follow_the_profile_service_and_only_a_non_default_row_offers_set_as_default()
+    {
+        using var dir = new IsolatedProfilesDir();
+        var (sp, _, _) = await StartAsync();
+        await using var _ = sp;
+
+        var view = new ProfilesView(sp);
+        var window = Host(view);
+        try
+        {
+            await sp.GetRequiredService<IProfileService>().CreateProfileAsync(new GitProfileCreateRequest
+            {
+                DisplayName = "Work",
+                GitUserName = "Work User",
+                GitUserEmail = "work@example.com",
+            });
+            Dispatcher.UIThread.RunJobs();
+            window.UpdateLayout();
+
+            Assert.Equal(2, view.ViewModel.Rows.Count);
+            Assert.Single(VisibleButtons(view, "Set as default"));
+            Assert.Single(VisibleButtons(view, "Delete"));
+            Assert.Equal(2, VisibleButtons(view, "Edit").Count());
+        }
+        finally
+        {
+            view.Dispose();
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task The_add_intent_opens_the_add_form_and_hides_the_add_button()
+    {
+        using var dir = new IsolatedProfilesDir();
+        var (sp, _, _) = await StartAsync();
+        await using var _ = sp;
+
+        var view = new ProfilesView(sp, "add");
+        var window = Host(view);
+        try
+        {
+            Assert.NotNull(view.ViewModel.NewEditor);
+            Assert.Single(VisibleButtons(view, "Create profile"));
+            Assert.Empty(VisibleButtons(view, "+ Add profile"));
+        }
+        finally
+        {
+            view.Dispose();
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Close_goes_home_when_no_repository_is_focused()
+    {
+        using var dir = new IsolatedProfilesDir();
+        var (sp, _, _) = await StartAsync();
+        await using var _ = sp;
+        var routes = new List<string>();
+        sp.GetRequiredService<INavigationBus>().NavigationRequested += routes.Add;
+
+        var view = new ProfilesView(sp);
+        try
+        {
+            view.ViewModel.CloseCommand.Execute(null);
+
+            Assert.Equal([""], routes);
         }
         finally
         {
