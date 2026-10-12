@@ -18,7 +18,7 @@ public class DestructiveConfirmationTests
     {
         "Historia.Core/Services/UI/IDialogService.cs",
         "Historia.App/Platform/AvaloniaDialogService.cs",
-        "Historia.App/Services/UnsavedWorkPrompt.cs", // the multi-remedy form IDialogService.ChooseAsync documents; this file is its one caller
+        "Historia.Core/ViewModels/Actions/UnsavedWorkPrompt.cs", // the multi-remedy form IDialogService.ChooseAsync documents; this file is its one caller
     };
 
     private static readonly (Regex pattern, string what)[] Forbidden =
@@ -66,7 +66,7 @@ public class DestructiveConfirmationTests
     // a method whose own text also calls ConfirmDestructiveAsync — catching a call site with NO
     // confirmation at all, which the hand-rolled-styling guard above can't see.
     // Patterns are anchored to the actual call (receiver + method name), not a bare method-name
-    // substring, so e.g. BranchMenu's auto-stash `ApplyAndDropAsync` recovery (cleanup of a
+    // substring, so e.g. BranchActions' auto-stash `ApplyAndDropAsync` recovery (cleanup of a
     // stash Historia itself made moments earlier, not the user discarding anything) never
     // matches the stash `DropAsync` pattern and needs no allowlist entry.
     private static readonly (Regex Pattern, string What)[] DestructiveCallSites =

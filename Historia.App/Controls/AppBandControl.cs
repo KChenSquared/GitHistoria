@@ -421,7 +421,7 @@ public sealed class AppBandControl : UserControl, IDisposable
                 Icon = defaultProfile is not null && defaultProfile.Id == p.Id ? new TextBlock { Text = "✓" } : null,
             };
             var profile = p;
-            item.Click += async (_, _) => await Historia.Views.DefaultProfileFlow.SetAsync(_services, profile);
+            item.Click += async (_, _) => await DefaultProfileFlow.SetAsync(_services, profile);
             profileItems.Add(item);
         }
         if (profileItems.Count > 0)

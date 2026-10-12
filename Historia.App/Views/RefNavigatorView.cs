@@ -958,7 +958,7 @@ public sealed class RefNavigatorView : UserControl, IDisposable
                : b.Name.Contains('/') ? b.Name[(b.Name.IndexOf('/') + 1)..] : b.Name)
             : b.Name;
 
-        await BranchMenu.RunWithStashRecovery(repo, _notifications, _stashes, async () =>
+        await BranchActions.RunWithStashRecovery(repo, _notifications, _stashes, async () =>
         {
             var localExists = repo.State.Branches.Any(x => !x.IsRemote && x.Name == name);
             if (isRemote && !localExists)

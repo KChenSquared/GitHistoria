@@ -6,7 +6,7 @@ namespace Historia.Services.UI;
 /// "Remove stale lock files…" action on the failure card, which lists the files in a destructive
 /// confirmation before anything is deleted.
 /// </summary>
-internal static class StaleLockPrompt
+public static class StaleLockPrompt
 {
     private const int ListedFiles = 10;
 

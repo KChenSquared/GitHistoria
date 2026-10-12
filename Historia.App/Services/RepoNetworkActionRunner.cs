@@ -524,7 +524,7 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             var pullTarget = request.RemoteBranch ?? branch;
             _notifications.Publish(NotificationSeverity.Error, ex.Message, ex.Details,
             [
-                new NotificationAction("Stash & retry", () => BranchMenu.StashAndRetryAsync(repo, _notifications, _stashes,
+                new NotificationAction("Stash & retry", () => BranchActions.StashAndRetryAsync(repo, _notifications, _stashes,
                     () => RunExclusiveAsync(repo, "Pull",
                         (p, pct) => repo.Gateway.PullAsync(remote, pullTarget, GitPullOptions.From(_settings.Current), p, pct)), "Pull")),
             ]);

@@ -1,7 +1,7 @@
 namespace HistoriaApp.Tests;
 
 /// <summary>
-/// Verify BranchMenu.RunWithStashRecovery integration when a checkout conflict occurs —
+/// Verify BranchActions.RunWithStashRecovery integration when a checkout conflict occurs —
 /// ensures the classified UncommittedChanges error carries a "Stash &amp; retry" action that
 /// successfully creates and switches to the branch.
 /// </summary>
@@ -177,7 +177,7 @@ public sealed class CheckoutStashRecoveryTests
                 await ctx.State.RefreshRefsAsync();
 
                 var stash = sp.GetRequiredService<IStashService>();
-                await BranchMenu.RunWithStashRecovery(
+                await BranchActions.RunWithStashRecovery(
                     ctx, notify, stash,
                     () => ctx.Gateway.CreateBranchAsync("test-conflict", c1, checkout: true),
                     "Create branch");
@@ -220,7 +220,7 @@ public sealed class CheckoutStashRecoveryTests
                 await ctx.State.RefreshRefsAsync();
 
                 var stash = sp.GetRequiredService<IStashService>();
-                await BranchMenu.RunWithStashRecovery(
+                await BranchActions.RunWithStashRecovery(
                     ctx, notify, stash,
                     () => ctx.Gateway.CreateBranchAsync("test-conflict", c1, checkout: true),
                     "Create branch");

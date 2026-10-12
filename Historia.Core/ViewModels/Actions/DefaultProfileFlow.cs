@@ -1,11 +1,11 @@
-namespace Historia.Views;
+namespace Historia.Services.Profiles;
 
 /// <summary>
 /// Changing the default profile. Every entry point (the Profiles panel's "Set as default" and the
 /// app menu's "Default profile" submenu) goes through here, so a non-global default always asks
 /// whether repositories without their own selection follow it.
 /// </summary>
-internal static class DefaultProfileFlow
+public static class DefaultProfileFlow
 {
     public static async Task SetAsync(IServiceProvider sp, GitProfile p)
     {
@@ -43,7 +43,7 @@ internal static class DefaultProfileFlow
     /// selection row to its current resolution, so it keeps that identity when the default moves.</summary>
     private static async Task PinExistingRowlessReposAsync(IServiceProvider sp, IProfileService profiles)
     {
-        var recents = sp.GetRequiredService<Historia.Services.Workspace.IRecentRepositoryService>();
+        var recents = sp.GetRequiredService<IRecentRepositoryService>();
         var identity = sp.GetRequiredService<IRepoIdentityService>();
         foreach (var entry in recents.Items)
         {

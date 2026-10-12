@@ -29,7 +29,7 @@ public sealed partial class CommitGraphControl
     {
         if (!await _dialogs.ConfirmAsync("Detached checkout", prompt))
             return;
-        await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+        await BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
             () => ctx.Gateway.CheckoutAsync(refish, new GitCheckoutOptions(), ctx.Lifetime), "Checkout");
     }
 
@@ -106,7 +106,7 @@ public sealed partial class CommitGraphControl
 
         var remotes = deco.RemotesOrNull ?? [];
         var tracking = remotes.Length > 0 ? $"{remotes[0]}/{name}" : name;
-        _ = BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+        _ = BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
             () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout");
     }
 
@@ -122,7 +122,7 @@ public sealed partial class CommitGraphControl
     /// before pulling a merge (the local branch also has commits the remote lacks).</summary>
     internal async Task CheckoutLocalThenMaybeSyncAsync(RepositoryContext ctx, GraphDecoration deco, string name)
     {
-        await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+        await BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
             () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout");
 
         // The recovery helper reports failures itself and returns normally, so HEAD is the only reliable signal.
@@ -146,7 +146,7 @@ public sealed partial class CommitGraphControl
         if (div.Ahead == 0)
         {
             // ahead == 0 && behind > 0: a guaranteed fast-forward — nothing local to lose.
-            await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+            await BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
                 () => NetworkRunner.RunExclusiveAsync(ctx, "Pull",
                     (p, ct) => ctx.Gateway.PullAsync(remote, name, GitPullOptions.From(_settings.Current), p, ct)), "Pull");
             return;
@@ -155,7 +155,7 @@ public sealed partial class CommitGraphControl
         if (!await _dialogs.ConfirmAsync("Pull and merge?",
                 $"{upstream} has {div.Behind} commit(s) you don't have, and you have {div.Ahead} it doesn't. Pull and merge?"))
             return;
-        await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+        await BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
             () => NetworkRunner.RunExclusiveAsync(ctx, "Pull",
                 (p, ct) => ctx.Gateway.PullAsync(remote, name, GitPullOptions.From(_settings.Current), p, ct)), "Pull");
     }
@@ -176,7 +176,7 @@ public sealed partial class CommitGraphControl
         if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
         {
             if (deco.IsLocal)
-                items.Add(MenuLeaf($"Checkout {BranchMenu.TruncateBranchLabelForMenu(name)}", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+                items.Add(MenuLeaf($"Checkout {BranchMenu.TruncateBranchLabelForMenu(name)}", () => BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
                     () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout")));
 
             if (remotes.Length > 0)
@@ -186,7 +186,7 @@ public sealed partial class CommitGraphControl
                 foreach (var rem in remotes)
                 {
                     var tracking = $"{rem}/{name}";
-                    items.Add(MenuLeaf($"Checkout {BranchMenu.TruncateBranchLabelForMenu(tracking)} as a new branch", () => BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes,
+                    items.Add(MenuLeaf($"Checkout {BranchMenu.TruncateBranchLabelForMenu(tracking)} as a new branch", () => BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
                         () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout")));
                 }
             }
@@ -206,7 +206,7 @@ public sealed partial class CommitGraphControl
                     if (string.IsNullOrWhiteSpace(newName) || newName == name) return;
                     await Guard(() => ctx.Gateway.RenameBranchAsync(name, newName.Trim(), ctx.Lifetime), ctx, "Rename");
                 }));
-                items.Add(MenuLeaf("Delete local…", () => BranchMenu.DeleteAsync(ctx, _dialogs, _notifications, name)));
+                items.Add(MenuLeaf("Delete local…", () => BranchActions.DeleteAsync(ctx, _dialogs, _notifications, name)));
             }
         }
         else if (deco.Type == DecorationType.Tag)
@@ -432,7 +432,7 @@ public sealed partial class CommitGraphControl
     {
         if (!await _dialogs.ConfirmAsync("Merge", $"Merge {display} into {_state?.CurrentBranch?.Name ?? "the current branch"}?"))
             return;
-        await BranchMenu.RunWithStashRecovery(ctx, _notifications, _stashes, async () =>
+        await BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes, async () =>
         {
             await ctx.Gateway.MergeAsync(refish, noFastForward: false, ctx.Lifetime);
             await ctx.State.RefreshAllAsync(ctx.Lifetime);
