@@ -16,9 +16,7 @@ public sealed partial class DetailRouter : UserControl, IDisposable
         _sp = sp;
         InitializeComponent();
 
-        _notifHost = new NotificationHostView(
-            sp.GetRequiredService<Historia.Services.Notifications.INotificationService>(),
-            sp.GetRequiredService<ISettingsService>());
+        _notifHost = new NotificationHostView(sp);
         OverlayRoot.Children.Add(_notifHost);
         // FirstRunPrompt is app-modal and hosted at the window root (MainWindow.ModalOverlayHost)
         // so it dims and centres over the whole window, not just this detail pane.

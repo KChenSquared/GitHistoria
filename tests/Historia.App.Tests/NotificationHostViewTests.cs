@@ -177,6 +177,36 @@ public sealed class NotificationHostViewTests
         Assert.Equal(1, runs);
     }
 
+    private sealed class RecordingClipboard : IClipboardService
+    {
+        public List<string> Texts { get; } = [];
+
+        public Task SetTextAsync(string text)
+        {
+            Texts.Add(text);
+            return Task.CompletedTask;
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Copy_goes_to_the_clipboard_the_service_provider_registers()
+    {
+        var notifications = new NotificationService();
+        var clipboard = new RecordingClipboard();
+        await using var sp = new ServiceCollection()
+            .AddSingleton<INotificationService>(notifications)
+            .AddSingleton<ISettingsService>(new FixedSettings(new AppSettings { AutoHideNotices = false }))
+            .AddSingleton<IClipboardService>(clipboard)
+            .BuildServiceProvider();
+        using var view = new NotificationHostView(sp);
+
+        notifications.Publish(NotificationSeverity.Error, "boom", "stderr text");
+        Dispatcher.UIThread.RunJobs();
+        await Assert.Single(view.ViewModel.Items).CopyDetailsCommand.ExecuteAsync(null);
+
+        Assert.Contains("boom", Assert.Single(clipboard.Texts));
+    }
+
     [AvaloniaFact]
     public void Disposing_the_view_stops_it_following_the_service()
     {

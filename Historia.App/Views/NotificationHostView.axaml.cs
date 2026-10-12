@@ -5,17 +5,19 @@ namespace Historia.Views;
 /// view model schedules auto-hide on.</summary>
 public sealed partial class NotificationHostView : UserControl, IDisposable
 {
-    public NotificationHostView(INotificationService notifications, ISettingsService settings)
-        : this(notifications, settings, ScheduleOnDispatcher)
+    public NotificationHostView(IServiceProvider sp)
+        : this(sp.GetRequiredService<INotificationService>(), sp.GetRequiredService<ISettingsService>(), ScheduleOnDispatcher, sp)
     {
     }
 
     /// <summary><paramref name="schedule"/> runs an action once after a delay and returns a handle
-    /// that cancels it; tests pass a manual one.</summary>
-    internal NotificationHostView(INotificationService notifications, ISettingsService settings, Func<TimeSpan, Action, IDisposable> schedule)
+    /// that cancels it; tests pass a manual one. <paramref name="sp"/> supplies the dispatcher and
+    /// clipboard.</summary>
+    internal NotificationHostView(INotificationService notifications, ISettingsService settings,
+        Func<TimeSpan, Action, IDisposable> schedule, IServiceProvider? sp = null)
     {
         InitializeComponent();
-        ViewModel = new NotificationHostViewModel(notifications, settings, ViewServices.Dispatcher(null), schedule, ViewServices.Clipboard(null));
+        ViewModel = new NotificationHostViewModel(notifications, settings, ViewServices.Dispatcher(sp), schedule, ViewServices.Clipboard(sp));
         DataContext = ViewModel;
     }
 

@@ -7,7 +7,8 @@ namespace Historia.Tests;
 /// <c>AvaloniaDialogService.cs</c>, which builds its plain dialogs from a title, a message and a set
 /// of buttons; and no method named <c>Rebuild…</c> is declared or called, because a view that
 /// rebuilds its tree by hand has stopped binding. Under <c>Historia.App/Views</c> only, a view takes
-/// its dispatcher and clipboard from <c>ViewServices</c> instead of constructing them.
+/// its dispatcher and clipboard from <c>ViewServices</c>, passing its service provider, instead of
+/// constructing them.
 /// </summary>
 [Trait("tier", "unit")]
 public class MvvmViewGuardTests
@@ -42,8 +43,9 @@ public class MvvmViewGuardTests
     /// <summary>The one view file that may construct the dispatcher and clipboard.</summary>
     private const string ViewServicesFile = "Historia.App/Views/ViewServices.cs";
 
+    // Constructing either service, or asking ViewServices for one with no provider, which constructs it.
     private static readonly Regex ServiceConstruction = new(
-        @"\bnew\s+(?:UiDispatcher|ClipboardService)\s*\(",
+        @"\bnew\s+(?:UiDispatcher|ClipboardService)\s*\(|\bViewServices\s*\.\s*(?:Dispatcher|Clipboard)\s*\(\s*null\s*\)",
         RegexOptions.Compiled);
 
     private static readonly Regex RebuildMember = new(
@@ -201,6 +203,8 @@ public class MvvmViewGuardTests
     [InlineData("var ui = new UiDispatcher();")]
     [InlineData("var clip = new ClipboardService();")]
     [InlineData("var ui = new UiDispatcher ( );")]
+    [InlineData("var ui = ViewServices.Dispatcher(null);")]
+    [InlineData("var clip = ViewServices.Clipboard( null );")]
     public void A_view_that_constructs_a_service_is_reported(string source)
     {
         var violations = FindViolations("Historia.App/Views/Page.axaml.cs", source, _ => true);
