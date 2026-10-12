@@ -1,0 +1,145 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.TerminalDockView"
+             x:DataType="vm:TerminalDockViewModel"
+             IsVisible="{Binding IsOpen, FallbackValue=False}"
+             Height="{Binding Height, FallbackValue=0}">
+    <!-- The bottom terminal dock: a splitter, the live-session tab strip with its toolbar, and the
+         terminal control. A native control, so splitters, toasts and flyouts compose over it
+         normally. It collapses to zero height while closed. -->
+    <UserControl.Styles>
+        <Style Selector="Button.dockTab">
+            <Setter Property="Padding" Value="2,2" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorPrimary}" />
+        </Style>
+        <Style Selector="Button.dockTab.active">
+            <Setter Property="Background" Value="{DynamicResource ColorListActive}" />
+            <Setter Property="BorderThickness" Value="0,0,0,2" />
+        </Style>
+        <Style Selector="Button.dockTabClose">
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="Padding" Value="4,0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style Selector="Button.dockTool">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Height" Value="16" />
+            <Setter Property="Padding" Value="6,0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="8,40,*">
+        <!-- Transparent full-height grab strip with a faint 1 px seam at the top edge. -->
+        <Thumb x:Name="Splitter"
+               Grid.Row="0"
+               Height="8"
+               Cursor="SizeNorthSouth"
+               Background="Transparent"
+               DragDelta="OnSplitterDrag"
+               DragCompleted="OnSplitterDragCompleted">
+            <Thumb.Template>
+                <ControlTemplate>
+                    <Border Background="Transparent">
+                        <Border Height="1" VerticalAlignment="Top" Background="{DynamicResource ColorBorder}" />
+                    </Border>
+                </ControlTemplate>
+            </Thumb.Template>
+        </Thumb>
+
+        <Grid Grid.Row="1" Height="40">
+            <!-- Same single-row scroll model as the app-band strip: plain < > shown only on
+                 overflow, plus wheel-to-pan. The pair sits on the right, next to the toolbar. -->
+            <Grid ColumnDefinitions="*,Auto" Margin="6,4,34,0" VerticalAlignment="Top">
+                <ScrollViewer x:Name="TabScroller"
+                              Grid.Column="0"
+                              HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollBarVisibility="Disabled"
+                              VerticalAlignment="Top"
+                              ScrollChanged="OnTabScrollChanged">
+                    <ItemsControl x:Name="TabStrip" ItemsSource="{Binding Tabs}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:TerminalTabViewModel">
+                                <Button Classes="dockTab"
+                                        Classes.active="{Binding IsActive}"
+                                        Command="{Binding ActivateCommand}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="{Binding Label}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="8,0,4,0"
+                                                   FontSize="12" />
+                                        <Button Classes="dockTabClose"
+                                                Content="✕"
+                                                Command="{Binding CloseCommand}" />
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                    <Button x:Name="TabLeft"
+                            Classes="flat dockTool"
+                            Content="&lt;"
+                            IsVisible="False"
+                            ToolTip.Tip="Scroll tabs left"
+                            Click="OnTabLeftClick" />
+                    <Button x:Name="TabRight"
+                            Classes="flat dockTool"
+                            Content="&gt;"
+                            IsVisible="False"
+                            ToolTip.Tip="Scroll tabs right"
+                            Click="OnTabRightClick" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Buttons stacked vertically on the right: close on top, new-terminal below, then
+                 close-all. Closing the dock only hides it and leaves every session running. -->
+            <StackPanel Orientation="Vertical"
+                        Spacing="2"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top">
+                <Button Classes="dockTool"
+                        Content="✕"
+                        ToolTip.Tip="Close terminal dock"
+                        Command="{Binding CloseDockCommand}" />
+                <Button Classes="dockTool"
+                        Content="＋"
+                        ToolTip.Tip="New terminal"
+                        Command="{Binding NewHomeTerminalCommand}" />
+                <Button Classes="dockTool"
+                        Content="－－"
+                        ToolTip.Tip="Close all terminals"
+                        Command="{Binding CloseAllCommand}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- A real vertical scrollbar on the right edge of the terminal body, directly under the
+             new-terminal button. Shown only when the scrollback is taller than the viewport; the
+             code-behind drives its visibility from the terminal's render metrics. -->
+        <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
+            <ctl:TerminalControl x:Name="Terminal" Grid.Column="0" />
+            <ScrollBar x:Name="VScroll"
+                       Grid.Column="1"
+                       Orientation="Vertical"
+                       Visibility="Visible"
+                       Minimum="0"
+                       IsVisible="False"
+                       Scroll="OnVScrollScroll" />
+        </Grid>
+    </Grid>
+</UserControl>
