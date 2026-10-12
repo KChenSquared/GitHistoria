@@ -9,6 +9,10 @@ public enum RepoNetworkAction
     Push,
     Prune,
     DeleteRemoteBranch,
+
+    /// <summary>Pushes one local tag to one remote. The tag menu is the only surface that pushes
+    /// a tag; branch pushes never carry tags along.</summary>
+    PushTag,
 }
 
 /// <summary>A network action request, optionally targeted at a specific remote/branch pair
@@ -18,6 +22,8 @@ public enum RepoNetworkAction
 /// runner's usual resolution — <c>origin</c> if present, else the first remote, and the current
 /// branch. For <see cref="RepoNetworkAction.DeleteRemoteBranch"/>, <paramref name="Remote"/> and
 /// <paramref name="RemoteBranch"/> are both required, and <paramref name="Branch"/> is unused.
+/// For <see cref="RepoNetworkAction.PushTag"/>, <paramref name="Remote"/> and <paramref name="Tag"/>
+/// are both required and never fall back.
 /// <paramref name="Repo"/> pins the request to one repository (e.g. the staging panel's
 /// own, whichever tab is focused by the time it runs); null means the focused repository.</summary>
 public readonly record struct RepoNetworkRequest(
@@ -25,7 +31,8 @@ public readonly record struct RepoNetworkRequest(
     string? Remote,
     string? Branch,
     string? RemoteBranch = null,
-    RepositoryContext? Repo = null);
+    RepositoryContext? Repo = null,
+    string? Tag = null);
 
 /// <summary>
 /// A thin app-wide bus so any surface — the shortcuts bar, branch menus, the staging panel —

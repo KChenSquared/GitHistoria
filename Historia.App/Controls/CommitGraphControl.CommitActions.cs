@@ -201,6 +201,18 @@ public sealed partial class CommitGraphControl
         }
         else if (deco.Type == DecorationType.Tag)
         {
+            // The only way a tag reaches a remote: one unforced push per remote, offered whether
+            // or not the remote already has it; a refusal comes back as an error card.
+            foreach (var rem in ctx.State.Remotes.Select(r => r.Name))
+            {
+                items.Add(MenuLeaf($"Push {BranchMenu.TruncateBranchLabelForMenu(name)} to {rem}", () =>
+                {
+                    _actionBus.RequestNetworkAction(new RepoNetworkRequest(
+                        RepoNetworkAction.PushTag, rem, null, Repo: ctx, Tag: name));
+                    return Task.CompletedTask;
+                }));
+            }
+            if (items.Count > 0) items.Add(new Separator());
             items.Add(MenuLeaf($"Delete tag {BranchMenu.TruncateBranchLabelForMenu(name)}", async () =>
             {
                 if (!await _dialogs.ConfirmDestructiveAsync("Delete tag", $"Delete local tag '{name}'? This cannot be undone.", "Delete")) return;

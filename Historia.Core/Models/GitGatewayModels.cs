@@ -71,7 +71,8 @@ public sealed record GitPullOptions
     };
 }
 
-/// <summary>What to push and how.</summary>
+/// <summary>What to push and how. A push never carries tags along; <see cref="ForTag"/> is the
+/// only spec that sends one.</summary>
 public sealed record PushSpec
 {
     public required string RefSpec { get; init; }
@@ -79,7 +80,11 @@ public sealed record PushSpec
 
     /// <summary>Force push uses <c>--force-with-lease --force-if-includes</c> — never plain <c>--force</c>.</summary>
     public bool ForceWithLease { get; init; }
-    public bool PushTags { get; init; }
+
+    /// <summary>Pushes local tag <paramref name="tag"/> to the same name on the remote, unforced,
+    /// so a tag the remote already has is refused rather than overwritten.</summary>
+    public static PushSpec ForTag(string tag) =>
+        new() { RefSpec = GitGateway.TagRefSpec(tag) };
 }
 
 /// <summary>Divergence of a local branch from its upstream.</summary>

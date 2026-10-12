@@ -367,14 +367,17 @@ public sealed partial class GitGateway(
         }
     }
 
-    /// <summary>The refspec that overwrites local tag <paramref name="tag"/> with the remote's.
-    /// The leading <c>+</c> keeps it from reading as an option; the characters refused here are
-    /// ones git forbids in ref names and would otherwise change the refspec's meaning.</summary>
-    internal static string ForcedTagRefSpec(string tag)
+    /// <summary>The refspec that overwrites local tag <paramref name="tag"/> with the remote's.</summary>
+    internal static string ForcedTagRefSpec(string tag) => "+" + TagRefSpec(tag);
+
+    /// <summary>The refspec that maps tag <paramref name="tag"/> to the same name on the other side.
+    /// The <c>refs/tags/</c> prefix keeps it from reading as an option; the characters refused here
+    /// are ones git forbids in ref names and would otherwise change the refspec's meaning.</summary>
+    internal static string TagRefSpec(string tag)
     {
         if (tag.Length == 0 || tag.StartsWith('-') || tag.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c is ':' or '*' or '?' or '[' or '\\' or '^' or '~'))
-            throw new ArgumentException($"'{tag}' isn't a tag name that can be fetched.", nameof(tag));
-        return $"+refs/tags/{tag}:refs/tags/{tag}";
+            throw new ArgumentException($"'{tag}' isn't a tag name that can be fetched or pushed.", nameof(tag));
+        return $"refs/tags/{tag}:refs/tags/{tag}";
     }
 
     // Deliberately not wrapped in WithWriteLockAsync: pull can raise an interactive askpass
@@ -395,7 +398,9 @@ public sealed partial class GitGateway(
 
     public async Task PushAsync(string remote, PushSpec spec, IProgress<GitProgress>? progress, CancellationToken ct = default)
     {
-        var args = new List<string> { "push", "--progress" };
+        // --no-follow-tags overrides a push.followTags config, so a tag only ever leaves through
+        // PushSpec.ForTag.
+        var args = new List<string> { "push", "--progress", "--no-follow-tags" };
         if (spec.SetUpstream) args.Add("-u");
         if (spec.ForceWithLease)
         {
@@ -405,10 +410,7 @@ public sealed partial class GitGateway(
         }
 
         args.Add(remote);
-        if (spec.PushTags)
-            args.Add("--tags");
-        else
-            args.Add(spec.RefSpec);
+        args.Add(spec.RefSpec);
 
         await RunNetworkAsync(args, "Push", remote, progress, ct).ConfigureAwait(false);
     }

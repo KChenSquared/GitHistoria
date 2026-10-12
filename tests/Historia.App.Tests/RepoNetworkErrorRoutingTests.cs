@@ -208,6 +208,13 @@ public sealed class RepoNetworkErrorRoutingTests
             return this;
         }
 
+        /// <summary>Tags the clone's unpushed <c>HEAD</c> as <paramref name="tag"/>, locally only.</summary>
+        public PushFixture TagLocally(string tag)
+        {
+            RunGit(LocalPath, "tag", tag);
+            return this;
+        }
+
         public static string Rev(string dir, string rev) =>
             TestGit.Run(dir, ["rev-parse", rev], testIdentity: false).Stdout.Trim();
 
@@ -849,5 +856,55 @@ public sealed class RepoNetworkErrorRoutingTests
         Assert.DoesNotContain(h.Notify.Published, n => n.Severity == NotificationSeverity.Error);
         Assert.True(fixture.RemoteHasTag("b"));
         Assert.DoesNotContain(ctx.State.Branches, br => br.IsRemote && br.Name == "origin/b");
+    }
+
+    [AvaloniaFact]
+    public async Task A_tag_push_sends_only_that_tag()
+    {
+        using var fixture = new PushFixture().TagLocally("v1").TagLocally("v2");
+        await using var h = new Harness();
+        var ctx = await h.OpenAsync(fixture.LocalPath);
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
+            new RepoNetworkRequest(RepoNetworkAction.PushTag, "origin", null, Repo: ctx, Tag: "v1")));
+
+        Assert.True(fixture.RemoteHasTag("v1"));
+        Assert.False(fixture.RemoteHasTag("v2"));
+        var success = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Success);
+        Assert.Equal("Pushed tag v1 to origin.", success.Message);
+    }
+
+    [AvaloniaFact]
+    public async Task A_tag_the_remote_already_has_is_refused_with_an_error_and_never_overwritten()
+    {
+        using var fixture = new PushFixture().MoveRemoteTag("v1");
+        var remoteBefore = PushFixture.Rev(fixture.RemotePath, "v1");
+        await using var h = new Harness();
+        var ctx = await h.OpenAsync(fixture.LocalPath);
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(
+            new RepoNetworkRequest(RepoNetworkAction.PushTag, "origin", null, Repo: ctx, Tag: "v1")));
+
+        Assert.Equal(0, h.Dialogs.ChooseCalls);
+        var error = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Error);
+        Assert.Equal("Couldn't push tag v1: origin already has a tag named v1.", error.Message);
+        Assert.Contains("(already exists)", error.Details);
+        Assert.Equal(remoteBefore, PushFixture.Rev(fixture.RemotePath, "v1"));
+    }
+
+    [AvaloniaFact]
+    public async Task A_tag_push_without_a_remote_never_falls_back()
+    {
+        using var fixture = new PushFixture().TagLocally("v1");
+        await using var h = new Harness();
+        await h.OpenAsync(fixture.LocalPath);
+
+        _ = h.Runner;
+        h.Bus.RequestNetworkAction(new RepoNetworkRequest(RepoNetworkAction.PushTag, null, null, Tag: "v1"));
+        Dispatcher.UIThread.RunJobs();
+
+        var warning = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Warning);
+        Assert.Equal("No tag or remote to push to.", warning.Message);
+        Assert.False(fixture.RemoteHasTag("v1"));
     }
 }

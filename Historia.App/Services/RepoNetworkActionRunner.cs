@@ -114,8 +114,17 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
     internal static string OpLabel(RepoNetworkAction op) => op switch
     {
         RepoNetworkAction.DeleteRemoteBranch => "Delete remote branch",
+        RepoNetworkAction.PushTag => "Push tag",
         _ => op.ToString(),
     };
+
+    /// <summary>The error card text for a failed tag push. git refuses a tag the remote already has
+    /// as <c>! [rejected] … (already exists)</c>, which classifies as a rejected branch push, so that
+    /// case is named here; every other failure keeps its own message.</summary>
+    internal static string TagPushFailure(string remote, string tag, HistoriaGitException ex) =>
+        ex.Details?.Contains("(already exists)", StringComparison.OrdinalIgnoreCase) == true
+            ? $"Couldn't push tag {tag}: {remote} already has a tag named {tag}."
+            : $"Couldn't push tag {tag} to {remote}: {HistoriaGitException.Describe(ex.Kind)}.";
 
     private async Task ExecOpAsync(RepositoryContext repo, RepoNetworkAction op, string remote, string? branch, string? remoteBranch,
         IProgress<GitProgress> progress, CancellationToken ct)
@@ -331,6 +340,13 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
             return;
         }
 
+        if (op == RepoNetworkAction.PushTag && (string.IsNullOrEmpty(request.Remote) || string.IsNullOrEmpty(request.Tag)))
+        {
+            _notifications.Publish(NotificationSeverity.Warning, "No tag or remote to push to.");
+            AppLog.Write(AppLogLevel.Warn, "invalid_request", "PushTag requested without Remote or Tag specified.");
+            return;
+        }
+
         string remote;
         if (request.Remote is { } targetRemote)
         {
@@ -472,6 +488,13 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                     _notifications.Publish(NotificationSeverity.Success, $"Deleted {remote}/{request.RemoteBranch}.");
                 };
                 break;
+            case RepoNetworkAction.PushTag:
+                execute = async () =>
+                {
+                    await repo.Gateway.PushAsync(remote, PushSpec.ForTag(request.Tag!), progress, ct);
+                    _notifications.Publish(NotificationSeverity.Success, $"Pushed tag {request.Tag} to {remote}.");
+                };
+                break;
             default:
                 execute = () => ExecOpAsync(repo, op, remote, branch, request.RemoteBranch, progress, ct);
                 break;
@@ -527,6 +550,11 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                 // just restate the choice they just made.
                 AppLog.Write(AppLogLevel.Info, "declined", $"{op}: switch to Local config declined: {ex.Message}", ex);
             }
+        }
+        catch (HistoriaGitException ex) when (op == RepoNetworkAction.PushTag)
+        {
+            _notifications.Publish(NotificationSeverity.Error, TagPushFailure(remote, request.Tag!, ex), ex.Details,
+                StaleLockPrompt.ActionsFor(repo, ex, _dialogs, _notifications));
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.UncommittedChanges && op == RepoNetworkAction.Pull && branch is not null)
         {
