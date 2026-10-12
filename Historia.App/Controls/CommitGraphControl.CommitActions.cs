@@ -94,20 +94,7 @@ public sealed partial class CommitGraphControl
         if (deco.Type is not (DecorationType.LocalBranch or DecorationType.RemoteBranch))
             return;
 
-        var name = deco.Label;
-        var hasLocal = deco.IsLocal
-            || (_state?.Branches.Any(b => !b.IsRemote && string.Equals(b.Name, name, StringComparison.Ordinal)) ?? false);
-
-        if (hasLocal)
-        {
-            _ = CheckoutLocalThenMaybeSyncAsync(ctx, deco, name);
-            return;
-        }
-
-        var remotes = deco.RemotesOrNull ?? [];
-        var tracking = remotes.Length > 0 ? $"{remotes[0]}/{name}" : name;
-        _ = BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
-            () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout");
+        _ = CheckoutThenMaybeSyncAsync(ctx, deco);
     }
 
     // Resolved on use: only a badge pull needs it, and it shares the repository's network gate
@@ -115,24 +102,27 @@ public sealed partial class CommitGraphControl
     private Historia.Services.UI.IRepoNetworkActionRunner NetworkRunner =>
         _services.GetRequiredService<Historia.Services.UI.IRepoNetworkActionRunner>();
 
-    /// <summary>Double-clicking a remote badge whose local counterpart exists switches to
-    /// the local branch, then — only when the badge that was actually clicked was the remote one
-    /// (a local-badge double-click stays a plain, silent checkout) — measures divergence against
+    /// <summary>Double-clicking a branch badge checks the branch out through the shared checkout:
+    /// a remote badge with no local counterpart creates a tracking branch, every other badge checks
+    /// the local branch out. When a remote badge switched to an existing local branch — a
+    /// local-badge double-click stays a plain, silent checkout — it then measures divergence against
     /// that remote and either fast-forwards silently (a guaranteed no-loss fast-forward) or asks
     /// before pulling a merge (the local branch also has commits the remote lacks).</summary>
-    internal async Task CheckoutLocalThenMaybeSyncAsync(RepositoryContext ctx, GraphDecoration deco, string name)
+    internal async Task CheckoutThenMaybeSyncAsync(RepositoryContext ctx, GraphDecoration deco)
     {
-        await BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
-            () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout");
+        var name = deco.Label;
+        var remotes = deco.RemotesOrNull ?? [];
+        var hadLocal = ctx.State.Branches.Any(b => !b.IsRemote && string.Equals(b.Name, name, StringComparison.Ordinal));
+        var tracking = remotes.Length > 0 ? $"{remotes[0]}/{name}" : name;
 
-        // The recovery helper reports failures itself and returns normally, so HEAD is the only reliable signal.
+        await BranchActions.CheckoutBranchAsync(ctx, _notifications, _stashes, name, tracking, deco.IsLocal);
+
+        // The checkout reports failures itself and returns normally, so HEAD is the only reliable signal.
         if (!string.Equals(ctx.State.CurrentBranch?.Name, name, StringComparison.Ordinal))
             return;
 
-        if (deco.IsLocal)
-            return;
-        var remotes = deco.RemotesOrNull ?? [];
-        if (remotes.Length == 0)
+        // A branch just created from the remote is level with it; only an existing one can lag.
+        if (deco.IsLocal || !hadLocal || remotes.Length == 0)
             return;
         var remote = remotes[0];
         var upstream = $"{remote}/{name}";
@@ -176,8 +166,8 @@ public sealed partial class CommitGraphControl
         if (deco.Type is DecorationType.LocalBranch or DecorationType.RemoteBranch)
         {
             if (deco.IsLocal)
-                items.Add(MenuLeaf($"Checkout {BranchMenu.TruncateBranchLabelForMenu(name)}", () => BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
-                    () => ctx.Gateway.CheckoutAsync(name, new GitCheckoutOptions(), ctx.Lifetime), "Checkout")));
+                items.Add(MenuLeaf($"Checkout {BranchMenu.TruncateBranchLabelForMenu(name)}",
+                    () => BranchActions.CheckoutAsync(ctx, _notifications, _stashes, name)));
 
             if (remotes.Length > 0)
             {
@@ -186,8 +176,8 @@ public sealed partial class CommitGraphControl
                 foreach (var rem in remotes)
                 {
                     var tracking = $"{rem}/{name}";
-                    items.Add(MenuLeaf($"Checkout {BranchMenu.TruncateBranchLabelForMenu(tracking)} as a new branch", () => BranchActions.RunWithStashRecovery(ctx, _notifications, _stashes,
-                        () => ctx.Gateway.CreateBranchAsync(name, tracking, checkout: true, ctx.Lifetime), "Checkout")));
+                    items.Add(MenuLeaf($"Checkout {BranchMenu.TruncateBranchLabelForMenu(tracking)} as a new branch",
+                        () => BranchActions.CheckoutTrackingAsync(ctx, _notifications, _stashes, name, tracking)));
                 }
             }
 

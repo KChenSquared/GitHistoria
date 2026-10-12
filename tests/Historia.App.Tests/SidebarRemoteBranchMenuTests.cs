@@ -159,6 +159,33 @@ public sealed class SidebarRemoteBranchMenuTests
         Assert.Equal(expected, headers);
     }
 
+    private static async Task PumpUntilAsync(Func<bool> done, string what)
+    {
+        for (var i = 0; i < 400 && !done(); i++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(25);
+        }
+        Assert.True(done(), $"Timed out waiting for {what}.");
+    }
+
+    [AvaloniaFact]
+    public async Task Checkout_announces_the_switch_like_a_double_click()
+    {
+        using var fixture = new RepoFixture();
+        await using var h = new Harness();
+        var ctx = await h.OpenAsync(fixture.Path);
+
+        var remote = new BranchMenu.Target(
+            Name: "feat", CopyName: "origin/feat", TrackingRef: "origin/feat", IsLocal: false,
+            TipSha: null, CurrentBranch: ctx.State.CurrentBranch?.Name, RemoteAlias: "origin");
+        Click(ItemWithHeader(BranchMenu.Build(remote, ctx, h.Dialogs, h.Notify, h.Stash, h.Bus, _ => { }), "Checkout"));
+
+        await PumpUntilAsync(() => h.Notify.Current.Any(n => n.Message == "Switched to feat."), "the switch notice");
+        Assert.Equal("feat", ctx.State.CurrentBranch?.Name);
+        Assert.Equal(NotificationSeverity.Success, h.Notify.Current.Single(n => n.Message == "Switched to feat.").Severity);
+    }
+
     [AvaloniaFact]
     public async Task Delete_requests_a_targeted_remote_branch_delete()
     {

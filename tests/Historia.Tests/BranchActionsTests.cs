@@ -397,6 +397,21 @@ public sealed class BranchActionsTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task CheckoutBranchAsync_does_not_report_a_switch_to_the_branch_already_checked_out()
+    {
+        var (repo, ctx) = await RepoWithRemoteFeature("origin", localFeature: true);
+        repo.Git("checkout", "feature");
+        await ctx.State.RefreshAllAsync();
+        var switched = new List<string>();
+
+        await BranchActions.CheckoutBranchAsync(ctx, _notify, Stash(), Remote(ctx, "origin/feature"), switched.Add);
+
+        Assert.Empty(_notify.Published);
+        Assert.Equal("feature", Head(repo));
+        Assert.Empty(switched);
+    }
+
+    [Fact]
     public async Task A_checkout_blocked_by_local_edits_announces_the_switch_only_after_stash_and_retry()
     {
         var (repo, first) = RepoWithBlockingEdit();

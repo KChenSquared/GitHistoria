@@ -9,8 +9,9 @@ public static class BranchActions
 {
     /// <summary>Checks out <paramref name="branch"/>. A remote branch whose local name already exists
     /// checks that local branch out; a remote branch with no local counterpart materialises a tracking
-    /// branch. <paramref name="onSwitched"/> receives the local name once the checkout has landed, on
-    /// the first attempt or after a successful "Stash &amp; retry".</summary>
+    /// branch. <paramref name="onSwitched"/> receives the local name once HEAD has moved to it, on
+    /// the first attempt or after a successful "Stash &amp; retry"; checking out the branch HEAD is
+    /// already on does not call it.</summary>
     public static Task CheckoutBranchAsync(RepositoryContext ctx, INotificationService notify, IStashService stash,
         BranchInfo branch, Action<string>? onSwitched = null) =>
         CheckoutBranchAsync(ctx, notify, stash, LocalName(branch), branch.Name, !branch.IsRemote, onSwitched);
@@ -21,7 +22,8 @@ public static class BranchActions
     public static Task CheckoutBranchAsync(RepositoryContext ctx, INotificationService notify, IStashService stash,
         string name, string trackingRef, bool isLocal, Action<string>? onSwitched = null)
     {
-        Action? onSuccess = onSwitched is null
+        var alreadyCurrent = string.Equals(ctx.State.CurrentBranch?.Name, name, StringComparison.Ordinal);
+        Action? onSuccess = onSwitched is null || alreadyCurrent
             ? null
             : () =>
             {
@@ -48,6 +50,10 @@ public static class BranchActions
         var slash = branch.Name.IndexOf('/');
         return slash >= 0 ? branch.Name[(slash + 1)..] : branch.Name;
     }
+
+    /// <summary>The success notice the sidebar shows once a checkout has switched to <paramref name="name"/>.</summary>
+    public static void AnnounceSwitch(INotificationService notify, string name) =>
+        notify.Publish(NotificationSeverity.Success, $"Switched to {name}.");
 
     /// <summary>Checks out the existing local branch <paramref name="name"/>. <paramref name="onSuccess"/>
     /// runs once the checkout and the state refresh have succeeded, including after a successful

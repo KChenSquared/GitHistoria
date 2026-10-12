@@ -129,7 +129,8 @@ internal static class BranchMenu
 
         var isCurrent = t.IsLocal && string.Equals(t.Name, t.CurrentBranch, StringComparison.Ordinal);
 
-        items.Add(MenuLeaf("Checkout", () => BranchActions.CheckoutBranchAsync(ctx, notify, stash, t.Name, t.TrackingRef, t.IsLocal)));
+        items.Add(MenuLeaf("Checkout", () => BranchActions.CheckoutBranchAsync(ctx, notify, stash, t.Name, t.TrackingRef, t.IsLocal,
+            onSwitched: name => BranchActions.AnnounceSwitch(notify, name))));
 
         if (t.TipSha is { Length: > 0 } sha)
         {

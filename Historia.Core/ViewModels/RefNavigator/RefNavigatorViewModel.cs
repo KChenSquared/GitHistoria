@@ -730,7 +730,7 @@ public sealed partial class RefNavigatorViewModel : ViewModelBase
         try
         {
             await BranchActions.CheckoutBranchAsync(repo, _notifications, _stashes, b,
-                onSwitched: name => _notifications.Publish(NotificationSeverity.Success, $"Switched to {name}."));
+                onSwitched: name => BranchActions.AnnounceSwitch(_notifications, name));
         }
         catch (Exception ex)
         {
