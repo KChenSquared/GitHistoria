@@ -189,7 +189,7 @@ internal static class SectionFrame
     }
 
     public static Border Build(Control left, Control? center, Control? right, Control body,
-        Thickness border, double minHeight, out Control dividerHandle)
+        Thickness border, double minHeight, out Control dividerHandle, bool horizontalScroll = false)
     {
         var head = new Grid
         {
@@ -235,7 +235,7 @@ internal static class SectionFrame
         var scroll = new ScrollViewer
         {
             Content = body,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+            HorizontalScrollBarVisibility = horizontalScroll ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled
         };
 
         var inner = new DockPanel

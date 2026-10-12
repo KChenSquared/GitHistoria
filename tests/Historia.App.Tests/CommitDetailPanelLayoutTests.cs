@@ -382,6 +382,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
     [AvaloniaFact]
     public async Task Files_label_is_16_and_rows_are_14()
     {
+        await UsePathViewAsync();
         var headId = _fixture.HeadCommitId;
         var view = new CommitDetailPanelView(_sp, _context, headId);
         var window = new Window { Width = 600, Height = 600, Content = view };
@@ -479,6 +480,125 @@ public class CommitDetailPanelLayoutTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public async Task Files_list_scrolls_horizontally_when_a_path_is_wider_than_the_panel()
+    {
+        await UsePathViewAsync();
+        var longName = new string('a', 120) + ".txt";
+        var longPath = "d/" + longName;
+        var headId = _fixture.CreateCommitWithFile(longPath);
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 300, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.False(view.FilesHostForTesting.Content is ItemsControl { Tag: "Tree" });
+            var scroller = view.FilesScrollViewerForTesting;
+            Assert.Equal(ScrollBarVisibility.Auto, scroller.HorizontalScrollBarVisibility);
+            Assert.True(scroller.Extent.Width > scroller.Viewport.Width);
+
+            var pathTextBlock = view.FilesHostForTesting.GetVisualDescendants().OfType<TextBlock>().First(tb => tb.Text == longPath);
+            pathTextBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            Assert.True(pathTextBlock.Bounds.Width >= pathTextBlock.DesiredSize.Width - pathTextBlock.Margin.Left - 0.5);
+
+            // Switch to Tree view
+            var treeBtn = view.GetVisualDescendants().OfType<Button>().First(b => b.Content is "Tree");
+            treeBtn.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(view.FilesHostForTesting.Content is ItemsControl { Tag: "Tree" });
+            Assert.True(scroller.Extent.Width > scroller.Viewport.Width);
+            var treeTextBlock = view.FilesHostForTesting.GetVisualDescendants().OfType<TextBlock>().First(tb => tb.Text == longName);
+            treeTextBlock.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            Assert.True(treeTextBlock.Bounds.Width >= treeTextBlock.DesiredSize.Width - treeTextBlock.Margin.Left - 0.5);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Files_list_has_no_horizontal_overflow_when_paths_fit()
+    {
+        var headId = _fixture.HeadCommitId;
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            Dispatcher.UIThread.RunJobs();
+
+            var scroller = view.FilesScrollViewerForTesting;
+            Assert.True(scroller.Extent.Width <= scroller.Viewport.Width + 0.5);
+
+            var rowBorder = view.FilesHostForTesting.GetVisualDescendants()
+                .OfType<Border>()
+                .First(b => b.Child is Grid g && g.Height == 22);
+            Assert.InRange(Math.Abs(rowBorder.Bounds.Width - scroller.Viewport.Width), 0, 1.0);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Files_list_stays_virtualized_with_horizontal_scroll()
+    {
+        var headId = _fixture.CreateCommitWithManyFiles(300);
+        var view = new CommitDetailPanelView(_sp, _context, headId);
+        var window = new Window { Width = 600, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForCommitLoadedAsync(view);
+            Dispatcher.UIThread.RunJobs();
+
+            var realizedGrids = view.FilesHostForTesting.GetVisualDescendants()
+                .OfType<Grid>()
+                .Where(g => g.Height == 22)
+                .ToList();
+
+            Assert.True(realizedGrids.Count > 0);
+            Assert.True(realizedGrids.Count < 50);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Staging_lists_keep_horizontal_scroll_disabled()
+    {
+        var stagingView = new StagingPanelView(_sp, _context);
+        var window = new Window { Width = 800, Height = 900, Content = stagingView };
+        window.Show();
+        try
+        {
+            Dispatcher.UIThread.RunJobs();
+
+            var changesScroll = stagingView.ChangesRowsForTesting.FindAncestorOfType<ScrollViewer>();
+            var stagedScroll = stagingView.StagedRowsForTesting.FindAncestorOfType<ScrollViewer>();
+
+            Assert.Equal(ScrollBarVisibility.Disabled, changesScroll!.HorizontalScrollBarVisibility);
+            Assert.Equal(ScrollBarVisibility.Disabled, stagedScroll!.HorizontalScrollBarVisibility);
+        }
+        finally
+        {
+            stagingView.Dispose();
+            window.Close();
+        }
+    }
+
+    private Task UsePathViewAsync() =>
+        _sp.GetRequiredService<ISettingsService>().UpdateAsync(s => s with { CommitFilesView = CommitFilesView.Path });
+
     private static async Task WaitForCommitLoadedAsync(CommitDetailPanelView view)
     {
         for (var i = 0; i < 100; i++)
@@ -501,6 +621,7 @@ public class CommitDetailPanelLayoutTests : IDisposable
         {
             Path = TestScratch.NewDirectory("historia-detail-tests-");
             RunGit(Path, "init", "-b", "main");
+            RunGit(Path, "config", "core.autocrlf", "false");
             RunGit(Path, "config", "user.name", "Test");
             RunGit(Path, "config", "user.email", "test@example.com");
 
@@ -513,6 +634,32 @@ public class CommitDetailPanelLayoutTests : IDisposable
             File.WriteAllText(file, "second\n");
             RunGit(Path, "add", ".");
             RunGit(Path, "commit", "-m", "second commit", "--no-gpg-sign");
+        }
+
+        public GitObjectId CreateCommitWithFile(string relativePath)
+        {
+            var fullPath = System.IO.Path.Combine(Path, relativePath);
+            var dir = System.IO.Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+            File.WriteAllText(fullPath, "content\n");
+            RunGit(Path, "add", ".");
+            RunGit(Path, "commit", "-m", $"add {relativePath}", "--no-gpg-sign");
+            return HeadCommitId;
+        }
+
+        public GitObjectId CreateCommitWithManyFiles(int count)
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var fullPath = System.IO.Path.Combine(Path, $"file_{i:D4}.txt");
+                File.WriteAllText(fullPath, $"{i}\n");
+            }
+            RunGit(Path, "add", ".");
+            RunGit(Path, "commit", "-m", $"add {count} files", "--no-gpg-sign");
+            return HeadCommitId;
         }
 
         public void CreateCommitWithRawMessage(string msg)
@@ -561,7 +708,10 @@ public class CommitDetailPanelLayoutTests : IDisposable
             psi.Environment["GIT_COMMITTER_NAME"] = "Test";
             psi.Environment["GIT_COMMITTER_EMAIL"] = "test@example.com";
             using var p = System.Diagnostics.Process.Start(psi)!;
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();
             p.WaitForExit();
+            Task.WaitAll(outTask, errTask);
         }
 
         private static string RunGitOutput(string dir, params string[] args)
@@ -577,8 +727,10 @@ public class CommitDetailPanelLayoutTests : IDisposable
             foreach (var a in args) psi.ArgumentList.Add(a);
             psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
             using var p = System.Diagnostics.Process.Start(psi)!;
+            var errTask = p.StandardError.ReadToEndAsync();
             var stdout = p.StandardOutput.ReadToEnd();
             p.WaitForExit();
+            errTask.Wait();
             return stdout.Trim();
         }
 
