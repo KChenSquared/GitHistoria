@@ -197,14 +197,74 @@ public sealed class GraphCacheOwnershipTests : IAsyncDisposable
             newRecordCount: newRecords.Count, order: [0, 1, 2, 3, 4, 5], sortedTips: [Oid(5)]);
 
         Assert.False(ok);
-        // The old order stays authoritative — untouched by the abandoned attempt. The record
-        // AppendReorderBatch already wrote above is now a harmless dead record (compaction
-        // compacts these away later); it doesn't corrupt anything since nothing references it.
+        // The old order stays authoritative — untouched by the abandoned attempt. Nothing
+        // referenced the record AppendReorderBatch wrote above, and the spill's append cut it off.
         var after = ReadHeader();
         Assert.Equal(mutated.Fingerprint, after.Fingerprint);
         Assert.Equal(mutated.RowCount, after.RowCount);
         Assert.Equal(mutated.RecordCount, after.RecordCount);
         Assert.Equal(mutated.OrderVersion, after.OrderVersion);
+    }
+
+    [Fact]
+    public void A_batch_whose_header_write_failed_is_cut_before_the_next_spill_appends()
+    {
+        var writer = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
+        writer.AppendSpillBatch(RawRange(0, 5), from: 0, to: 5, exhausted: false);
+        // Rows 5 and 6 reached the record files, but the header still says 5 rows.
+        Assert.True(writer.Append(RawRange(5, 2), 0, 2));
+        Assert.Equal(5, ReadHeader().RowCount);
+
+        var (outcome, rowCount) = writer.AppendSpillBatch(RawRange(5, 5), from: 5, to: 10, exhausted: true);
+
+        Assert.Equal(SpillOutcome.Appended, outcome);
+        Assert.Equal(10, rowCount);
+        using var store = GraphMetaStore.TryOpen(Repo, WalkKeyA, true, 10)!;
+        Assert.Equal(Enumerable.Range(0, 10).Select(Oid), Enumerable.Range(0, 10).Select(i => store.ReadRaw(i).Id));
+        Assert.Equal([7], store.Search("commit 7"));
+        Assert.Equal(10 * 8, new FileInfo(GraphCachePaths.File(Repo, GraphMetaStore.IdxExt)).Length);
+    }
+
+    [Fact]
+    public void A_spill_never_appends_to_a_reordered_store()
+    {
+        var original = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
+        original.AppendSpillBatch(RawRange(0, 5), from: 0, to: 5, exhausted: true);
+        var before = ReadHeader();
+        // Commit 0 left the history: 4 rows over 5 records, row 0 naming record 4.
+        var reorder = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true);
+        Assert.True(reorder.TryCommitReorder(
+            expectedOldWalkKey: before.Fingerprint, expectedOldExhausted: before.Exhausted,
+            expectedOldOrderVersion: before.OrderVersion, expectedOldRecordCount: before.RecordCount,
+            newRecordCount: 0, order: [4, 3, 2, 1], sortedTips: [Oid(4)]));
+
+        var (outcome, _) = reorder.AppendSpillBatch(RawRange(5, 2), from: 4, to: 6, exhausted: true);
+
+        Assert.Equal(SpillOutcome.Conflict, outcome);
+        using var store = GraphMetaStore.TryOpen(Repo, WalkKeyB, true, 4)!;
+        Assert.Equal(4, store.Count);
+        Assert.Equal(Oid(4), store.ReadRaw(0).Id);
+    }
+
+    [Fact]
+    public void An_abandoned_reorders_records_do_not_shift_the_next_reorders()
+    {
+        var original = new GraphMetaWriter(Repo, WalkKeyA, includeRemoteBranches: true);
+        original.AppendSpillBatch(RawRange(0, 5), from: 0, to: 5, exhausted: true);
+        var before = ReadHeader();
+        var abandoned = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true);
+        Assert.True(abandoned.AppendReorderBatch(RawRange(5, 1), expectedWalkKey: before.Fingerprint));
+
+        var reorder = new GraphMetaWriter(Repo, WalkKeyB, includeRemoteBranches: true);
+        Assert.True(reorder.AppendReorderBatch(RawRange(6, 1), expectedWalkKey: before.Fingerprint));
+        Assert.True(reorder.TryCommitReorder(
+            expectedOldWalkKey: before.Fingerprint, expectedOldExhausted: before.Exhausted,
+            expectedOldOrderVersion: before.OrderVersion, expectedOldRecordCount: before.RecordCount,
+            newRecordCount: 1, order: [5, 4, 3, 2, 1, 0], sortedTips: [Oid(6)]));
+
+        using var store = GraphMetaStore.TryOpen(Repo, WalkKeyB, true, 6)!;
+        Assert.Equal(Oid(6), store.ReadRaw(0).Id);
+        Assert.Equal(Oid(0), store.ReadRaw(5).Id);
     }
 
     [Fact]

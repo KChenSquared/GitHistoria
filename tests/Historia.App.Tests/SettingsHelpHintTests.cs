@@ -299,6 +299,9 @@ public sealed class SettingsHelpHintTests
 
         // Tall enough for every row: a point outside the window cannot be hit-tested.
         var window = Show(view, windowWidth, 2400);
+        // Hit testing reads the last rendered scene; render the current layout first.
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
 
         var root = Root(view);
         Assert.True(root.Bounds.Width > 0 && root.Bounds.Width <= windowWidth);
