@@ -1,0 +1,159 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.ProfilesView"
+             x:DataType="vm:ProfilesViewModel"
+             Background="{DynamicResource ColorChrome}">
+    <UserControl.Resources>
+        <!-- The inline create / edit form, shared by an edited row and the add-profile slot. -->
+        <DataTemplate x:Key="ProfileEditorTemplate" x:DataType="vm:ProfileEditorViewModel">
+            <StackPanel Spacing="8">
+                <TextBlock Classes="text" FontSize="15" FontWeight="SemiBold" Text="{Binding Title}" />
+
+                <StackPanel Spacing="2">
+                    <TextBlock Classes="text muted" FontSize="11" Text="Display name" />
+                    <TextBox Watermark="Display name (e.g. Personal, Work)"
+                             Text="{Binding Name}"
+                             HorizontalAlignment="Stretch" />
+                </StackPanel>
+                <StackPanel Spacing="2">
+                    <TextBlock Classes="text muted" FontSize="11" Text="user.name" />
+                    <TextBox Watermark="Git user.name"
+                             Text="{Binding UserName}"
+                             HorizontalAlignment="Stretch" />
+                </StackPanel>
+                <StackPanel Spacing="2">
+                    <TextBlock Classes="text muted" FontSize="11" Text="user.email" />
+                    <TextBox Watermark="Git user.email"
+                             Text="{Binding Email}"
+                             HorizontalAlignment="Stretch" />
+                </StackPanel>
+
+                <TextBlock Classes="text muted" FontSize="12" FontWeight="SemiBold" Text="SSH key" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Button Classes="secondary"
+                            Content="Generate SSH key"
+                            Command="{Binding GenerateKeyCommand}"
+                            Cursor="Hand" />
+                    <Button Classes="secondary"
+                            Content="Copy public key"
+                            Command="{Binding CopyPublicKeyCommand}"
+                            Cursor="Hand" />
+                </StackPanel>
+                <TextBlock Classes="text faint"
+                           FontSize="11"
+                           Text="{Binding KeyStatus}"
+                           TextWrapping="Wrap" />
+
+                <TextBlock Classes="text muted" FontSize="12" FontWeight="SemiBold" Text="Commit signing" />
+                <StackPanel Spacing="2">
+                    <TextBlock Classes="text muted" FontSize="11" Text="Signing key" />
+                    <TextBox Watermark="GPG key id — 8–40 hex characters (optional)"
+                             Text="{Binding SigningKeyId}"
+                             HorizontalAlignment="Stretch" />
+                </StackPanel>
+                <CheckBox Content="Sign commits made under this profile"
+                          IsChecked="{Binding SignCommits}" />
+
+                <TextBlock Classes="text muted" FontSize="12" FontWeight="SemiBold" Text="GitHub" />
+                <Button Classes="secondary"
+                        Content="Sign in with GitHub"
+                        Command="{Binding SignInGitHubCommand}"
+                        Cursor="Hand" />
+                <TextBlock Classes="text faint" FontSize="11" Text="{Binding GitHubStatus}" />
+
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+                    <Button Classes="primary"
+                            Content="{Binding SaveLabel}"
+                            Command="{Binding SaveCommand}"
+                            Cursor="Hand" />
+                    <Button Classes="secondary"
+                            Content="Cancel"
+                            Command="{Binding CancelCommand}"
+                            Cursor="Hand" />
+                </StackPanel>
+            </StackPanel>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid>
+        <ScrollViewer>
+            <StackPanel Spacing="12" Margin="32" MaxWidth="640">
+                <TextBlock Classes="pane-title" Text="Profiles &amp; Accounts" />
+                <TextBlock Classes="text muted"
+                           Text="Git identity profiles Historia can apply per repository." />
+
+                <ItemsControl ItemsSource="{Binding Rows}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Spacing="12" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ProfileRowViewModel">
+                            <Panel>
+                                <Border Classes="card"
+                                        Padding="10"
+                                        IsVisible="{Binding IsNotEditing}">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Classes="text" FontWeight="SemiBold" Text="{Binding Title}" />
+                                        <TextBlock Classes="text muted" FontSize="11" Text="{Binding Identity}" />
+                                        <TextBlock Classes="text faint"
+                                                   FontSize="11"
+                                                   Text="{Binding Badges}"
+                                                   IsVisible="{Binding HasBadges}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
+                                            <Button Classes="secondary"
+                                                    Content="Edit"
+                                                    Command="{Binding EditCommand}"
+                                                    Cursor="Hand" />
+                                            <Button Classes="secondary"
+                                                    Content="Set as default"
+                                                    Command="{Binding SetDefaultCommand}"
+                                                    IsVisible="{Binding CanSetDefault}"
+                                                    Cursor="Hand" />
+                                            <Button Classes="secondary"
+                                                    Content="Delete"
+                                                    Command="{Binding DeleteCommand}"
+                                                    IsVisible="{Binding CanDelete}"
+                                                    Cursor="Hand" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                                <Border Classes="card"
+                                        IsVisible="{Binding IsEditing}">
+                                    <ContentControl Content="{Binding Editor}"
+                                                    ContentTemplate="{StaticResource ProfileEditorTemplate}" />
+                                </Border>
+                            </Panel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Border Classes="card" IsVisible="{Binding !ShowAddButton}">
+                    <ContentControl Content="{Binding NewEditor}"
+                                    ContentTemplate="{StaticResource ProfileEditorTemplate}" />
+                </Border>
+                <Button Classes="primary"
+                        Content="+ Add profile"
+                        Command="{Binding BeginAddCommand}"
+                        IsVisible="{Binding ShowAddButton}"
+                        Cursor="Hand" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <Button Command="{Binding CloseCommand}"
+                ToolTip.Tip="Close"
+                Padding="4"
+                Margin="0,6,6,0"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                ZIndex="1"
+                Background="Transparent"
+                BorderThickness="0"
+                Cursor="Hand">
+            <ctl:IconGlyph Icon="close" Size="12" ForegroundKey="ColorTextMuted" />
+        </Button>
+    </Grid>
+</UserControl>
