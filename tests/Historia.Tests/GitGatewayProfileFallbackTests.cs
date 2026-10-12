@@ -31,6 +31,7 @@ public sealed class GitGatewayProfileFallbackTests
     [InlineData(GitErrorKind.None, false)]
     [InlineData(GitErrorKind.RemoteRejected, false)]
     [InlineData(GitErrorKind.RemoteDeclined, false)]
+    [InlineData(GitErrorKind.TagConflict, false)]
     [InlineData(GitErrorKind.MergeConflict, false)]
     [InlineData(GitErrorKind.UncommittedChanges, false)]
     [InlineData(GitErrorKind.LockedIndex, false)]
@@ -48,5 +49,5 @@ public sealed class GitGatewayProfileFallbackTests
 
     [Fact]
     public void Every_kind_is_covered_by_the_transport_theory() =>
-        Assert.Equal(20, Enum.GetValues<GitErrorKind>().Length);
+        Assert.Equal(21, Enum.GetValues<GitErrorKind>().Length);
 }

@@ -6,15 +6,16 @@ namespace Historia.Services.UI;
 /// session-restore tab through its initialize path first — and runs a background <c>git fetch</c>
 /// through the same gateway a manual Fetch uses, flagged so routing never raises the
 /// switch-to-Local-config prompt. A failure with a local cause (a stale lock, an unsafe or missing
-/// repository…) is reported once per repository and kind until that repository fetches cleanly
-/// again; offline, sign-in and timeout failures stay in the developer log, so a machine with no
-/// network is never nagged.
+/// repository, a tag the remote has moved…) is reported once per repository and kind until that
+/// repository fetches cleanly again; offline, sign-in and timeout failures stay in the developer
+/// log, so a machine with no network is never nagged.
 /// </summary>
 public sealed class AutoFetchHost(
     IWorkspaceService workspace,
     ISettingsService settings,
     INotificationService notifications,
-    IDialogService dialogs) : IAutoFetchHost
+    IDialogService dialogs,
+    IRepoNetworkActionRunner runner) : IAutoFetchHost
 {
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<RepositoryContext, HashSet<GitErrorKind>> _warned = new();
 
@@ -39,6 +40,17 @@ public sealed class AutoFetchHost(
         }
         catch (HistoriaGitException ex)
         {
+            if (ex.Kind == GitErrorKind.TagConflict)
+            {
+                // Every other ref was fetched before the tag was reported.
+                await context.State.RefreshAllAsync(ct).ConfigureAwait(false);
+                if (FirstWarning(context, ex.Kind))
+                    notifications.Publish(NotificationSeverity.Warning,
+                        $"Auto-fetch of {context.DisplayName}: {TagConflictPrompt.Subject(ex)} on {remote}.", ex.Details,
+                        TagConflictPrompt.ActionsFor(context, remote, ex, runner, dialogs, notifications));
+                throw;
+            }
+
             var remedy = StaleLockPrompt.ActionsFor(context, ex, dialogs, notifications);
             if ((ShouldWarn(ex.Kind) || remedy.Count > 0) && FirstWarning(context, ex.Kind))
             {

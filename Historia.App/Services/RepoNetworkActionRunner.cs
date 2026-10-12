@@ -171,12 +171,21 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
         {
             throw;
         }
+        catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.TagConflict)
+        {
+            _notifications.Publish(NotificationSeverity.Warning,
+                $"{verb} {remote}/{branch}, but {TagConflictPrompt.Subject(ex)} on {remote}.", ex.Details,
+                TagConflictActions(repo, remote, ex));
+        }
         catch (Exception ex)
         {
             _notifications.Publish(NotificationSeverity.Warning,
                 $"{verb} {remote}/{branch}, but the follow-up fetch failed.", ex.NotificationDetails());
         }
     }
+
+    private IReadOnlyList<NotificationAction> TagConflictActions(RepositoryContext repo, string remote, HistoriaGitException ex) =>
+        TagConflictPrompt.ActionsFor(repo, remote, ex, this, _dialogs, _notifications);
 
     /// <summary>
     /// a push rejected as non-fast-forward means <c>remote/branch</c> has commits this
@@ -559,6 +568,19 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                     finally { await repo.State.RefreshAllAsync(repo.Lifetime); }
                 }),
             ]);
+        }
+        catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.TagConflict)
+        {
+            // Every other ref was fetched before the tag was reported, so the refresh shows them.
+            // A pull stops there and never merges.
+            RefreshCommitGraphAfterFetch(repo, op);
+            await repo.State.RefreshAllAsync(repo.Lifetime);
+            var pull = op == RepoNetworkAction.Pull;
+            _notifications.Publish(pull ? NotificationSeverity.Error : NotificationSeverity.Warning,
+                pull
+                    ? $"Pull stopped: {TagConflictPrompt.Subject(ex)} on {remote}. Replace it, then pull again."
+                    : $"Fetched {remote}, but {TagConflictPrompt.Subject(ex)} there.",
+                ex.Details, TagConflictActions(repo, remote, ex));
         }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.HostKeyVerificationFailed)
         {

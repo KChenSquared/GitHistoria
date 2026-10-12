@@ -41,6 +41,11 @@ public static class GitErrorClassifier
         "tip of your current branch is behind",
     ];
 
+    /// <summary>A fetch refusing to move an existing tag prints it as <c>! [rejected] … (would
+    /// clobber existing tag)</c>; checked before <see cref="NonFastForwardNeedles"/>, which would
+    /// otherwise read the <c>! [rejected]</c> as a non-fast-forward branch.</summary>
+    private const string TagClobberNeedle = "(would clobber existing tag)";
+
     private static readonly (GitErrorKind Kind, string[] Needles)[] Rules =
     [
         (GitErrorKind.HostKeyVerificationFailed, ["host key verification failed"]),
@@ -110,6 +115,31 @@ public static class GitErrorClassifier
     public static string FormatUnsafeRepositoryMessage(string path) =>
         $"Repository at '{path}' is not owned by the current user. To add an exception, run: git config --global --add safe.directory \"{path}\"";
 
+    /// <summary>The local tag names a fetch refused to move, from its
+    /// <c> ! [rejected]  v1 -&gt; v1  (would clobber existing tag)</c> lines, without duplicates.</summary>
+    public static IReadOnlyList<string> ClobberedTags(string? stderr)
+    {
+        if (string.IsNullOrEmpty(stderr))
+            return [];
+
+        var tags = new List<string>();
+        foreach (var raw in stderr.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.Trim();
+            if (!line.StartsWith("! [rejected]", StringComparison.Ordinal)
+                || !line.EndsWith(TagClobberNeedle, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var arrow = line.IndexOf("->", StringComparison.Ordinal);
+            if (arrow < 0)
+                continue;
+            var name = line[(arrow + 2)..^TagClobberNeedle.Length].Trim();
+            if (name.Length > 0 && !tags.Contains(name, StringComparer.Ordinal))
+                tags.Add(name);
+        }
+        return tags;
+    }
+
     public static GitErrorKind Classify(int exitCode, string stderr)
     {
         if (string.IsNullOrWhiteSpace(stderr))
@@ -122,6 +152,9 @@ public static class GitErrorClassifier
             if (haystack.Contains(needle, StringComparison.Ordinal))
                 return GitErrorKind.RemoteDeclined;
         }
+
+        if (haystack.Contains(TagClobberNeedle, StringComparison.Ordinal))
+            return GitErrorKind.TagConflict;
 
         foreach (var needle in NonFastForwardNeedles)
         {

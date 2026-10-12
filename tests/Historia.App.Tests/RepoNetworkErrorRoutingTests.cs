@@ -196,6 +196,21 @@ public sealed class RepoNetworkErrorRoutingTests
             return this;
         }
 
+        /// <summary>Tags the pushed <c>main</c> as <paramref name="tag"/> on the remote and in the
+        /// clone, then moves the remote's tag to a commit pushed from another clone, as re-cutting
+        /// a release does.</summary>
+        public PushFixture MoveRemoteTag(string tag)
+        {
+            RunGit(LocalPath, "tag", tag, "origin/main");
+            RunGit(LocalPath, "push", "origin", tag);
+            Diverge();
+            RunGit(RemotePath, "tag", "-f", tag, "main");
+            return this;
+        }
+
+        public static string Rev(string dir, string rev) =>
+            TestGit.Run(dir, ["rev-parse", rev], testIdentity: false).Stdout.Trim();
+
         public bool RemoteHasBranch(string branch) => RemoteLists("branch", branch);
 
         public bool RemoteHasTag(string tag) => RemoteLists("tag", tag);
@@ -600,6 +615,57 @@ public sealed class RepoNetworkErrorRoutingTests
         Assert.Equal("origin", request.Value.Remote);
         Assert.Equal("main", request.Value.Branch);
         Assert.Same(ctx, request.Value.Repo);
+    }
+
+    // ── moved remote tags ──
+
+    [AvaloniaFact]
+    public async Task A_fetch_refused_by_a_moved_remote_tag_offers_replacing_it_behind_a_destructive_confirm()
+    {
+        using var fixture = new PushFixture().MoveRemoteTag("v1");
+        await using var h = new Harness();
+        await h.OpenAsync(fixture.LocalPath);
+        var remoteTag = PushFixture.Rev(fixture.RemotePath, "v1");
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(RepoNetworkAction.Fetch));
+
+        var warning = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Warning);
+        Assert.Equal("Fetched origin, but tag v1 points to a different commit there.", warning.Message);
+        Assert.Equal(PushFixture.Rev(fixture.RemotePath, "main"), PushFixture.Rev(fixture.LocalPath, "origin/main"));
+        var replace = Assert.Single(warning.Actions);
+        Assert.Equal("Replace local v1", replace.Label);
+
+        // Declined: the tag stays where it was.
+        await replace.Invoke();
+        Assert.Equal(1, h.Dialogs.ConfirmDestructiveCalls);
+        Assert.Contains("'v1'", h.Dialogs.LastEffect);
+        Assert.NotEqual(remoteTag, PushFixture.Rev(fixture.LocalPath, "v1"));
+
+        // Confirmed: the tag moves to the remote's commit and the next fetch is clean.
+        h.Dialogs.ConfirmAnswer = true;
+        await replace.Invoke();
+        Assert.Equal(remoteTag, PushFixture.Rev(fixture.LocalPath, "v1"));
+        Assert.Contains(h.Notify.Published, n => n.Severity == NotificationSeverity.Success && n.Message == "Replaced v1 with origin's.");
+
+        await h.RunToIdleAsync(() => h.Bus.RequestNetworkAction(RepoNetworkAction.Fetch));
+        Assert.Contains(h.Notify.Published, n => n.Severity == NotificationSeverity.Success && n.Message == "Fetched origin.");
+    }
+
+    [AvaloniaFact]
+    public async Task Auto_fetch_refused_by_a_moved_remote_tag_warns_once_with_the_replacement()
+    {
+        using var fixture = new PushFixture().MoveRemoteTag("v1");
+        await using var h = new Harness();
+        var repo = await h.OpenAsync(fixture.LocalPath);
+        var host = h.Services.GetRequiredService<IAutoFetchHost>();
+
+        var failure = await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
+        await Assert.ThrowsAsync<HistoriaGitException>(() => host.FetchAsync(repo, CancellationToken.None));
+
+        Assert.Equal(GitErrorKind.TagConflict, failure.Kind);
+        var warning = Assert.Single(h.Notify.Published, n => n.Severity == NotificationSeverity.Warning);
+        Assert.Equal($"Auto-fetch of {repo.DisplayName}: tag v1 points to a different commit on origin.", warning.Message);
+        Assert.Equal("Replace local v1", Assert.Single(warning.Actions).Label);
     }
 
     // ── stale lock files ──

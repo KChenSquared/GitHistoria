@@ -41,6 +41,7 @@ public sealed class CloneTabTests
         sc.AddSingleton<IDialogService, Historia.Platform.AvaloniaDialogService>();
         sc.AddSingleton<IScrollDirectionProbe, Historia.Platform.ScrollDirectionProbe>();
         sc.AddSingleton<IRepoActionBus, RepoActionBus>();
+        sc.AddSingleton<IRepoNetworkActionRunner, RepoNetworkActionRunner>();
         sc.AddSingleton<IAutoFetchHost, AutoFetchHost>();
         sc.AddSingleton<IAutoFetchService, AutoFetchService>();
         sc.AddSingleton<Historia.Services.UI.INavigationBus, Historia.Services.UI.NavigationBus>();

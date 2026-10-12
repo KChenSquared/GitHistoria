@@ -61,6 +61,7 @@ public sealed class HistoriaGitException : Exception
         GitErrorKind.NetworkUnreachable => "couldn't reach the remote",
         GitErrorKind.RemoteRejected => "the remote has commits this branch doesn't",
         GitErrorKind.RemoteDeclined => "the remote declined it — its reason is in Details",
+        GitErrorKind.TagConflict => "a local tag points to a different commit than the remote's",
         GitErrorKind.MergeConflict => "it stopped on merge conflicts",
         GitErrorKind.UncommittedChanges => "local changes are in the way",
         GitErrorKind.LockedIndex => "another git process is using the repository",

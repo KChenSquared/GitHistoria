@@ -114,6 +114,11 @@ public enum GitErrorKind
     /// not help; the server's reason is the remedy.</summary>
     RemoteDeclined,
 
+    /// <summary>A fetch refused to move a local tag the remote now points elsewhere ("would
+    /// clobber existing tag"). Git treats tags as fixed, so neither fetch nor pull updates it
+    /// until the user replaces the local tag with the remote's.</summary>
+    TagConflict,
+
     MergeConflict,
     UncommittedChanges,
     LockedIndex,

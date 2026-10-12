@@ -347,9 +347,34 @@ public sealed partial class GitGateway(
 
         var args = new List<string> { "fetch", "--progress", remote };
         if (options.Prune) args.Add("--prune");
-        if (options.Tags) args.Add("--tags");
+        args.AddRange(options.ReplaceTags.Select(ForcedTagRefSpec));
+        if (!options.Tags)
+        {
+            await RunNetworkAsync(args, "Fetch", remote, progress, ct, options.Background).ConfigureAwait(false);
+            return;
+        }
 
-        await RunNetworkAsync(args, "Fetch", remote, progress, ct, options.Background).ConfigureAwait(false);
+        try
+        {
+            await RunNetworkAsync([.. args, "--tags"], "Fetch", remote, progress, ct, options.Background).ConfigureAwait(false);
+        }
+        catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.TagConflict)
+        {
+            // Git applies a fetch's ref updates together, so one refused tag also holds back every
+            // branch. Fetching again without --tags lands the branches; the tag is still reported.
+            await RunNetworkAsync(args, "Fetch", remote, progress, ct, options.Background).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    /// <summary>The refspec that overwrites local tag <paramref name="tag"/> with the remote's.
+    /// The leading <c>+</c> keeps it from reading as an option; the characters refused here are
+    /// ones git forbids in ref names and would otherwise change the refspec's meaning.</summary>
+    internal static string ForcedTagRefSpec(string tag)
+    {
+        if (tag.Length == 0 || tag.StartsWith('-') || tag.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c is ':' or '*' or '?' or '[' or '\\' or '^' or '~'))
+            throw new ArgumentException($"'{tag}' isn't a tag name that can be fetched.", nameof(tag));
+        return $"+refs/tags/{tag}:refs/tags/{tag}";
     }
 
     // Deliberately not wrapped in WithWriteLockAsync: pull can raise an interactive askpass

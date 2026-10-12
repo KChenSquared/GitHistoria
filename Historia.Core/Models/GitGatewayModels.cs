@@ -31,8 +31,16 @@ public sealed record GitCheckoutOptions
 public sealed record GitFetchOptions
 {
     public bool Prune { get; init; }
+
+    /// <summary>Fetches every tag with <c>--tags</c>. Without it git only adds tags it does not
+    /// have, so a tag the remote has moved stays stale with no error; with it, that tag fails the
+    /// fetch as <see cref="GitErrorKind.TagConflict"/>.</summary>
     public bool Tags { get; init; }
     public bool All { get; init; }
+
+    /// <summary>Tags to overwrite with the remote's copy. When set, the fetch transfers only
+    /// these tags, each with a forced refspec, so the user must have confirmed the replacement.</summary>
+    public IReadOnlyList<string> ReplaceTags { get; init; } = [];
 
     /// <summary>this fetch is an auto-fetch, not a user-initiated one. Routing must not
     /// raise the switch-to-Local-config fallback (that prompt is user-ops only); the
@@ -42,6 +50,7 @@ public sealed record GitFetchOptions
     public static GitFetchOptions From(AppSettings s, bool background = false) => new()
     {
         Prune = s.PruneOnFetch,
+        Tags = true,
         Background = background,
     };
 }

@@ -44,6 +44,13 @@ public class GitErrorClassifierTests
     [InlineData("fatal: the remote end hung up unexpectedly", GitErrorKind.Unknown)]
     [InlineData("error: failed to push some refs to 'x'", GitErrorKind.Unknown)]
     [InlineData(" ! [rejected]        main -> main (stale info)\nerror: failed to push some refs to 'x'", GitErrorKind.RemoteRejected)]
+    // A fetch refusing to move a tag the remote re-pointed is a tag conflict, not a
+    // non-fast-forward branch, though both print "! [rejected]".
+    [InlineData(
+        "From github.com:owner/repo\n"
+        + "   d68df6d..8976b09  main       -> origin/main\n"
+        + " ! [rejected]        v0.10.0    -> v0.10.0  (would clobber existing tag)",
+        GitErrorKind.TagConflict)]
     [InlineData("CONFLICT (content): Merge conflict in file.txt\nAutomatic merge failed; fix conflicts and then commit the result.", GitErrorKind.MergeConflict)]
     [InlineData("error: Your local changes to the following files would be overwritten by checkout:", GitErrorKind.UncommittedChanges)]
     [InlineData("fatal: Unable to create '/repo/.git/index.lock': File exists.", GitErrorKind.LockedIndex)]
@@ -56,6 +63,21 @@ public class GitErrorClassifierTests
     [InlineData("error: unable to delete 'b': remote ref does not exist", GitErrorKind.RefNotFound)]
     public void Classify_maps_known_stderr(string stderr, GitErrorKind expected)
         => Assert.Equal(expected, GitErrorClassifier.Classify(exitCode: 128, stderr));
+
+    [Fact]
+    public void Clobbered_tags_are_read_from_the_rejected_lines_once_each()
+    {
+        var stderr =
+            " ! [rejected]        v1         -> v1  (would clobber existing tag)\n"
+            + " ! [rejected]        release/2  -> release/2  (would clobber existing tag)\n"
+            + " ! [rejected]        main       -> origin/main  (non-fast-forward)\n"
+            + "\n"
+            + " ! [rejected]        v1         -> v1  (would clobber existing tag)";
+
+        Assert.Equal(["v1", "release/2"], GitErrorClassifier.ClobberedTags(stderr));
+        Assert.Empty(GitErrorClassifier.ClobberedTags(null));
+        Assert.Empty(GitErrorClassifier.ClobberedTags("fatal: Authentication failed"));
+    }
 
     [Fact]
     public void Unknown_stderr_is_never_silently_none()
