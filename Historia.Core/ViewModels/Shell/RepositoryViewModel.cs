@@ -143,6 +143,8 @@ public sealed partial class RepositoryViewModel : ViewModelBase
 
     private void OnResolverClosedChanged(object? sender, EventArgs e) => _ui.Post(Refresh);
 
+    private void OnConflictSessionChanged(object? sender, EventArgs e) => _ui.Post(Refresh);
+
     private void OnRefsChanged(object? sender, RefsChangedEventArgs e) => _ui.Post(Refresh);
 
     private void OnSelectedCommitChanged(object? sender, SelectionChangedEventArgs e) => _ui.Post(Refresh);
@@ -167,6 +169,7 @@ public sealed partial class RepositoryViewModel : ViewModelBase
         {
             _repo.State.StatusChanged += OnStatusChanged;
             _repo.State.ConflictResolverClosedChanged += OnResolverClosedChanged;
+            _repo.State.ConflictSessionChanged += OnConflictSessionChanged;
             _repo.State.SelectedCommitChanged += OnSelectedCommitChanged;
             _repo.State.RefsChanged += OnRefsChanged;
         }
@@ -182,6 +185,7 @@ public sealed partial class RepositoryViewModel : ViewModelBase
 
         _repo.State.StatusChanged -= OnStatusChanged;
         _repo.State.ConflictResolverClosedChanged -= OnResolverClosedChanged;
+        _repo.State.ConflictSessionChanged -= OnConflictSessionChanged;
         _repo.State.SelectedCommitChanged -= OnSelectedCommitChanged;
         _repo.State.RefsChanged -= OnRefsChanged;
     }

@@ -1456,23 +1456,32 @@ public class ConflictResolverViewTests : IDisposable
             return Task.FromResult(_conflicts.Conflicts);
         };
 
-        // Fire status change 1 and wait for it to pass the coalesce timer (50ms)
-        await _context.State.RefreshStatusAsync();
-        await PumpUntilAsync(() => callCount >= 1, "the first conflict refresh");
+        // Status changes reach the view through a coalescing timer; counting the raised events
+        // makes each step wait for delivery instead of for a fixed delay.
+        var raised = 0;
+        EventHandler<StatusChangedEventArgs> countRaised = (_, _) => raised++;
+        _context.State.StatusChanged += countRaised;
+        try
+        {
+            // Fire status change 1 and wait for it to be delivered
+            await _context.State.RefreshStatusAsync();
+            await PumpUntilAsync(() => raised >= 1 && callCount >= 1, "the first conflict refresh");
 
-        // Refresh 1 is now in-flight, awaiting tcs.Task in GetConflictsAsync
-        Assert.Equal(1, callCount);
+            // Refresh 1 is now in-flight, awaiting tcs.Task in GetConflictsAsync
+            Assert.Equal(1, callCount);
 
-        // Fire status changes 2 and 3 while 1 is in-flight
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+            // Fire status changes 2 and 3 while 1 is in-flight, each delivered before the next
+            await _context.State.RefreshStatusAsync();
+            await PumpUntilAsync(() => raised >= 2, "the second status change");
 
-        await _context.State.RefreshStatusAsync();
-        Dispatcher.UIThread.RunJobs();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+            await _context.State.RefreshStatusAsync();
+            await PumpUntilAsync(() => raised >= 3, "the third status change");
+            Dispatcher.UIThread.RunJobs();
+        }
+        finally
+        {
+            _context.State.StatusChanged -= countRaised;
+        }
 
         // Still only 1 call to GetConflictsAsync because refresh is in flight and extra ones folded into pending
         Assert.Equal(1, callCount);
