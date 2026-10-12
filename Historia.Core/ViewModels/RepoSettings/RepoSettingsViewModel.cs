@@ -274,15 +274,6 @@ public sealed partial class RepoSettingsViewModel : ViewModelBase
         });
     }
 
-    /// <summary>Moves the row at <paramref name="from"/> to <paramref name="to"/> and saves the order.</summary>
-    public async Task MoveColumnAsync(int from, int to)
-    {
-        if (from < 0 || from >= Columns.Count)
-            return;
-        PreviewMoveColumn(Columns[from], to);
-        await CommitColumnOrderAsync();
-    }
-
     /// <summary>Drops a preview that was not saved and shows the stored order again.</summary>
     public void CancelColumnReorder()
     {
