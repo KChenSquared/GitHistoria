@@ -78,6 +78,7 @@ public class DiffViewSettingsTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(DiffViewMode.SideBySide, settings.Current.DefaultDiffView);
+        Assert.True(view.ViewModel.IsSideBySide);
         Assert.IsType<SideBySideDiffPresenter>(view.PresenterForTesting);
 
         // Toggle back to Unified
@@ -86,6 +87,65 @@ public class DiffViewSettingsTests : IDisposable
 
         Assert.Equal(DiffViewMode.Unified, settings.Current.DefaultDiffView);
         Assert.IsType<CombinedDiffPresenter>(view.PresenterForTesting);
+    }
+
+    [AvaloniaFact]
+    public async Task The_mode_button_shows_the_mode_a_press_switches_to_and_toggles_it()
+    {
+        var settings = new LocalFakeSettingsService(new AppSettings { DefaultDiffView = DiffViewMode.Unified });
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, settings, _sp);
+        var window = new Window { Width = 900, Height = 400, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForPresenterAsync(view);
+            Button ModeButton() => view.GetVisualDescendants().OfType<Button>()
+                .First(b => b.Content?.ToString() is "Unified" or "Side-by-side");
+
+            Assert.Equal("Side-by-side", ModeButton().Content);
+
+            ModeButton().Command!.Execute(null);
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.Equal("Unified", ModeButton().Content);
+            Assert.Equal(DiffViewMode.SideBySide, settings.Current.DefaultDiffView);
+            Assert.IsType<SideBySideDiffPresenter>(view.PresenterForTesting);
+        }
+        finally
+        {
+            view.Dispose();
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Prev_and_next_change_buttons_are_bound_to_the_view_model()
+    {
+        var settings = new LocalFakeSettingsService(new AppSettings { DefaultDiffView = DiffViewMode.Unified });
+        var req = new DiffRequest { Source = DiffSource.UnstagedChanges, Path = "test.txt" };
+        var view = new DiffView(_context, req, settings, _sp);
+        var window = new Window { Width = 900, Height = 400, Content = view };
+        window.Show();
+        try
+        {
+            await WaitForPresenterAsync(view);
+            var raised = new List<DiffNavigation>();
+            view.ViewModel.NavigationRequested += (_, d) => raised.Add(d);
+
+            foreach (var caption in new[] { "Prev change", "Next change" })
+            {
+                view.GetVisualDescendants().OfType<Button>().First(b => b.Content?.ToString() == caption)
+                    .Command!.Execute(null);
+            }
+
+            Assert.Equal([DiffNavigation.PreviousChange, DiffNavigation.NextChange], raised);
+        }
+        finally
+        {
+            view.Dispose();
+            window.Close();
+        }
     }
 
     [AvaloniaFact]
