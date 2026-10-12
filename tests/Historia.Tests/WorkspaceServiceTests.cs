@@ -315,7 +315,10 @@ public class WorkspaceServiceTests : WorkspaceServiceTestBase
         await seed.OpenAsync(r1.Path);
         await Task.Delay(500);
         await seed.DisposeAsync();
-        var recentsBefore = _recents!.Items.Select(i => Norm(i.Path)).ToArray();
+        // Flush the debounced Recent write so the next workspace loads the same list.
+        var seedRecents = _recents!;
+        await seedRecents.DisposeAsync();
+        var recentsBefore = seedRecents.Items.Select(i => Norm(i.Path)).ToArray();
 
         File.WriteAllText(AppPaths.SessionFile, new JsonObject
         {
