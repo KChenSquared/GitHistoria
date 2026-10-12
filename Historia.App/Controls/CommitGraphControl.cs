@@ -8,9 +8,11 @@ public sealed partial class CommitGraphControl : Control
 {
     private const double MinRowHeight = 20;
     private const double MaxRowHeight = 44;
+    private const double DefaultRowHeight = 26;
     private const double WashRowGap = 2; // px of background between adjacent rows' lane washes
     private const double MinLaneWidth = 15;
     private const double MaxLaneWidth = 60;
+    private const double DefaultLaneWidth = 18;
     /// <summary>commit node radius.</summary>
     private const double NodeRadius = 5;
     private const double RowTextSize = 14;
@@ -24,7 +26,7 @@ public sealed partial class CommitGraphControl : Control
     /// HEAD badge→node connector.</summary>
     private const double LaneStrokeWidth = 2.0;
 
-    private double _laneWidth = 18;
+    private double _laneWidth = DefaultLaneWidth;
     private double LaneWidth => _laneWidth;
 
     private IServiceProvider _services = default!;
@@ -155,7 +157,7 @@ public sealed partial class CommitGraphControl : Control
     private bool _firstPaintQueued;
     private bool _firstPaintRenderLogged;
 
-    private double _rowHeight = 26;
+    private double _rowHeight = DefaultRowHeight;
     private double _scrollOffset;
     private double _hScrollOffset;
 
@@ -274,6 +276,8 @@ public sealed partial class CommitGraphControl : Control
     internal IReadOnlyList<ResolvedColumn> ResolvedColumnsForTesting => _resolvedColumns;
     internal double HScrollOffsetForTesting => _hScrollOffset;
     internal double GraphPanOffsetForTesting => _graphPanOffset;
+    internal double RowHeightForTesting => _rowHeight;
+    internal double LaneWidthForTesting => _laneWidth;
     internal int RowCountForTesting => _layout?.Layout.RowCount ?? 0;
     internal IReadOnlyList<GraphColumn> ColumnsForTesting => _columns;
     internal ContextMenu? OpenMenuForTesting => _openMenu;

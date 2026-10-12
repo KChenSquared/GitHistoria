@@ -142,7 +142,7 @@ public sealed partial class CommitGraphControl
             }
             if (icon == (GraphColumnKind.Graph, 1))
             {
-                ResetGraphScroll();
+                ResetGraphView();
                 e.Handled = true;
                 return;
             }

@@ -2,7 +2,7 @@ namespace HistoriaApp.Tests;
 
 /// <summary>The Graph column header's two right-aligned action icons — the cog (slot 0,
 /// navigates to repo-settings) and the reset (slot 1, returns the graph to the left-most
-/// horizontal position).</summary>
+/// horizontal position and default zoom).</summary>
 [Trait("tier", "ui")]
 public sealed class GraphHeaderActionsTests
 {
@@ -202,5 +202,110 @@ public sealed class GraphHeaderActionsTests
 
         Assert.Equal(GraphColumnDefaults.All.First(c => c.Kind == GraphColumnKind.Graph).Width,
             s.Graph.ColumnsForTesting.First(c => c.Kind == GraphColumnKind.Graph).Width);
+    }
+
+    [AvaloniaFact]
+    public void ResetClickRestoresDefaultZoom()
+    {
+        using var s = CreateGraph();
+        var point = new Point(200, 200);
+        s.Window.MouseWheel(point, new Vector(0, 1), RawInputModifiers.Control);
+        s.Window.MouseWheel(point, new Vector(0, 1), RawInputModifiers.Control);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotEqual(26.0, s.Graph.RowHeightForTesting);
+        Assert.NotEqual(18.0, s.Graph.LaneWidthForTesting);
+
+        var rect = IconRect(s.Graph, slot: 1);
+        s.Window.MouseDown(Center(rect), MouseButton.Left);
+        s.Window.MouseUp(Center(rect), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(26.0, s.Graph.RowHeightForTesting);
+        Assert.Equal(18.0, s.Graph.LaneWidthForTesting);
+    }
+
+    [AvaloniaFact]
+    public void ResetClickKeepsTheTopVisibleRowAfterZoomReset()
+    {
+        using var s = CreateGraph();
+        s.Graph.ContentRowCountOverrideForTesting = 500;
+        Dispatcher.UIThread.RunJobs();
+
+        var point = new Point(200, 200);
+        s.Window.MouseWheel(point, new Vector(0, 1), RawInputModifiers.Control);
+        s.Window.MouseWheel(point, new Vector(0, 1), RawInputModifiers.Control);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotEqual(26.0, s.Graph.RowHeightForTesting);
+
+        s.Graph.SetVerticalOffsetForBench(40.5 * s.Graph.RowHeightForTesting);
+        Dispatcher.UIThread.RunJobs();
+
+        var rect = IconRect(s.Graph, slot: 1);
+        s.Window.MouseDown(Center(rect), MouseButton.Left);
+        s.Window.MouseUp(Center(rect), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(40.5 * 26.0, s.Graph.ScrollOffsetForTesting, 0.5);
+    }
+
+    [AvaloniaFact]
+    public void ResetClickReturnsGraphColumnToItsPreZoomWidth()
+    {
+        using var s = CreateGraph();
+        var graphCol = s.Graph.ResolvedColumnsForTesting.First(c => c.Kind == GraphColumnKind.Graph);
+        var dividerX = graphCol.Left + graphCol.Width;
+
+        s.Window.MouseDown(new Point(dividerX, 15), MouseButton.Left);
+        s.Window.MouseMove(new Point(dividerX - 50, 15));
+        s.Window.MouseUp(new Point(dividerX - 50, 15), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        var widthBefore = s.Graph.ResolvedColumnsForTesting
+            .First(c => c.Kind == GraphColumnKind.Graph).Width;
+
+        var point = new Point(200, 200);
+        s.Window.MouseWheel(point, new Vector(0, 1), RawInputModifiers.Control);
+        s.Window.MouseWheel(point, new Vector(0, 1), RawInputModifiers.Control);
+        Dispatcher.UIThread.RunJobs();
+
+        var widthZoomed = s.Graph.ResolvedColumnsForTesting
+            .First(c => c.Kind == GraphColumnKind.Graph).Width;
+        Assert.NotEqual(widthBefore, widthZoomed);
+
+        var rect = IconRect(s.Graph, slot: 1);
+        s.Window.MouseDown(Center(rect), MouseButton.Left);
+        s.Window.MouseUp(Center(rect), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        var widthAfter = s.Graph.ResolvedColumnsForTesting
+            .First(c => c.Kind == GraphColumnKind.Graph).Width;
+        Assert.Equal(widthBefore, widthAfter);
+    }
+
+    [AvaloniaFact]
+    public void ResetClickWhileZoomedButLeftMostStillResets()
+    {
+        using var s = CreateGraph();
+        Assert.Equal(0, s.Graph.HScrollOffsetForTesting);
+        Assert.Equal(0, s.Graph.GraphPanOffsetForTesting);
+
+        var point = new Point(200, 200);
+        s.Window.MouseWheel(point, new Vector(0, 1), RawInputModifiers.Control);
+        s.Window.MouseWheel(point, new Vector(0, 1), RawInputModifiers.Control);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, s.Graph.HScrollOffsetForTesting);
+        Assert.Equal(0, s.Graph.GraphPanOffsetForTesting);
+        Assert.NotEqual(26.0, s.Graph.RowHeightForTesting);
+
+        var rect = IconRect(s.Graph, slot: 1);
+        s.Window.MouseDown(Center(rect), MouseButton.Left);
+        s.Window.MouseUp(Center(rect), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(26.0, s.Graph.RowHeightForTesting);
+        Assert.Equal(18.0, s.Graph.LaneWidthForTesting);
     }
 }
