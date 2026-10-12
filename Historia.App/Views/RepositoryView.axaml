@@ -14,7 +14,7 @@
     </UserControl.Styles>
 
     <DockPanel LastChildFill="True">
-        <!-- Two-mode top bar (34 px tall): over the staging panel it shows the branch name and the
+        <!-- Two-mode top bar: over the staging panel it shows the branch name and the
              ahead/behind count; over a commit's detail, the full-width Working Copy return button
              (primary when tracked changes exist). -->
         <Panel x:Name="TopBar" DockPanel.Dock="Top" Height="{x:Static v:SectionFrame.TopBarHeight}">
