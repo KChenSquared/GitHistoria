@@ -17,6 +17,15 @@ internal static class SectionFrame
     public const double SplitAreaMinHeight = TopMinHeight + HandleHeight + BottomMinHeight;
     public const double DefaultTopHeight = 260;
 
+    /// <summary>The height of the repository top bar: one header row of content plus the header gap above and below.</summary>
+    public const double TopBarHeight = 30 + 2 * HeaderGap;
+
+    /// <summary>The margin of the branch label and ahead/behind count inside the top bar.</summary>
+    public static readonly Thickness TopBarBranchMargin = new(12, HeaderGap);
+
+    /// <summary>The inner margin of the commit detail panel's top section, which sits a little lower than a section frame's own.</summary>
+    public static readonly Thickness DetailTopInnerMargin = new(InnerSide, HeaderGap + 4, InnerSide, InnerBottom);
+
     // UI-thread only.
     private static readonly Dictionary<string, double> SplitHeightByRepo = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, double> BoxHeightByRepo = new(StringComparer.Ordinal);

@@ -44,9 +44,9 @@
         <ctl:SectionFrameHost.Top>
             <Border x:Name="TopSection"
                     BorderThickness="1,1,1,0"
-                    MinHeight="150"
+                    MinHeight="{x:Static v:SectionFrame.TopMinHeight}"
                     BorderBrush="{DynamicResource ColorBorder}">
-                <DockPanel LastChildFill="True" Margin="8,6,8,8">
+                <DockPanel LastChildFill="True" Margin="{x:Static v:SectionFrame.DetailTopInnerMargin}">
                     <!-- Author name and the click-to-copy hash. -->
                     <Grid x:Name="MetaRow"
                           DockPanel.Dock="Top"
