@@ -429,6 +429,10 @@ public sealed class SettingsView : UserControl, IDisposable
             v => _ = _cfg.UpdateAsync(s => s with { EnableGraphSplice = v })),
             "On large repositories, adds new commits to the saved graph instead of rebuilding it. Takes effect after restart."));
 
+        advBody.Children.Add(WithHint(Check("Lightweight mode", c.LightweightMode,
+            v => _ = _cfg.UpdateAsync(s => s with { LightweightMode = v })),
+            "Lightweight mode restricts max rows in memory to 30,000 commits. Takes effect after restart."));
+
         var silentCrawlCap = new NumericUpDown
         {
             Minimum = AppSettings.MinSilentCrawlRowCap,
@@ -441,7 +445,7 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         WireNumericCommit(silentCrawlCap, c.SilentCrawlRowCap, AppSettings.ClampSilentCrawlRowCap,
             next => _ = _cfg.UpdateAsync(s => s with { SilentCrawlRowCap = next }));
-        advBody.Children.Add(WithHint(LabeledRow("Background preload (rows)", silentCrawlCap),
+        advBody.Children.Add(WithHint(LabeledRow("Background preload (rows)", silentCrawlCap, enabled: !c.LightweightMode),
             "Rows loaded in the background after the graph opens, and again each time you scroll past them. 0 = no limit. Takes effect after restart."));
 
         var residentRowCap = new NumericUpDown
@@ -456,7 +460,7 @@ public sealed class SettingsView : UserControl, IDisposable
         };
         WireResidentRowCapCommit(residentRowCap, c.ResidentRowCap, _dialogs,
             next => _cfg.UpdateAsync(s => s with { ResidentRowCap = next }));
-        advBody.Children.Add(WithHint(LabeledRow("Max rows in memory", residentRowCap),
+        advBody.Children.Add(WithHint(LabeledRow("Max rows in memory", residentRowCap, enabled: !c.LightweightMode),
             "Most rows the graph keeps loaded per repository. Only used when commit details are on disk; otherwise 500,000. Takes effect after restart."));
 
         var autolinkHint = "Turns issue keys in commit messages into links. In the URL, $1, $2… insert the pattern's capture groups."
@@ -690,10 +694,12 @@ public sealed class SettingsView : UserControl, IDisposable
         return cb;
     }
 
-    private static Control LabeledRow(string label, Control control)
+    private static Control LabeledRow(string label, Control control, bool enabled = true)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        row.Children.Add(Text(label, "ColorText", 13));
+        if (!enabled)
+            row.IsEnabled = false;
+        row.Children.Add(Text(label, enabled ? "ColorText" : "ColorTextMuted", 13));
         row.Children.Add(control);
         return row;
     }

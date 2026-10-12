@@ -48,6 +48,7 @@ public sealed class SettingsHelpHintTests
         ["Auto hide notices"] = "Closes notices in the bottom-right corner after 10 seconds. Turn off to keep them until you close them.",
         ["Keep commit details on disk"] = "Reads commit messages, authors and dates from a disk cache to save memory on large repositories. Takes effect after restart.",
         ["Fast graph updates (experimental)"] = "On large repositories, adds new commits to the saved graph instead of rebuilding it. Takes effect after restart.",
+        ["Lightweight mode"] = "Lightweight mode restricts max rows in memory to 30,000 commits. Takes effect after restart.",
         ["Background preload (rows)"] = "Rows loaded in the background after the graph opens, and again each time you scroll past them. 0 = no limit. Takes effect after restart.",
         ["Max rows in memory"] = "Most rows the graph keeps loaded per repository. Only used when commit details are on disk; otherwise 500,000. Takes effect after restart.",
         ["Enable developer panel"] = "Adds a Developer entry to the app menu with testing and cleanup tools. Takes effect after restart.",
@@ -63,7 +64,7 @@ public sealed class SettingsHelpHintTests
         "Pull with rebase", "Reopen tabs on launch", "Ask for a stash message", "Terminal", "Shell",
         "Shell arguments", "Separated by spaces", "Font family", "Font size", "Scrollback (lines)",
         "Cursor style", "Blinking cursor", "Advanced", "Enable logging", "Auto hide notices", "Show splash screen", "Keep commit details on disk",
-        "Fast graph updates (experimental)", "Background preload (rows)", "Max rows in memory", "Enable developer panel",
+        "Fast graph updates (experimental)", "Lightweight mode", "Background preload (rows)", "Max rows in memory", "Enable developer panel",
     ];
 
     private static readonly string[] RetiredLabels =
@@ -514,6 +515,130 @@ public sealed class SettingsHelpHintTests
         Assert.Equal("Enable logging", HelpHintMap.AnchorLabel(badges[0]));
         Assert.Equal("Enable developer panel", HelpHintMap.AnchorLabel(badges[^1]));
         view.Dispose();
+    }
+
+    [AvaloniaFact]
+    public void Lightweight_mode_sits_directly_above_background_preload_and_max_rows()
+    {
+        var sp = CreateServices();
+        var view = new SettingsView(sp);
+        var advBody = SectionBody(view, "Advanced");
+        var labels = advBody.Children.Select(RowLabel).Where(l => l != null).ToList();
+        var lwIdx = labels.IndexOf("Lightweight mode");
+        Assert.True(lwIdx >= 0, "Lightweight mode row not found");
+        Assert.Equal("Background preload (rows)", labels[lwIdx + 1]);
+        Assert.Equal("Max rows in memory", labels[lwIdx + 2]);
+        view.Dispose();
+    }
+
+    [AvaloniaFact]
+    public void Lightweight_mode_disables_both_caps_but_shows_stored_values()
+    {
+        var sp = CreateServices();
+        var cfg = sp.GetRequiredService<ISettingsService>();
+        WithSettings(cfg, s => s with { LightweightMode = true, SilentCrawlRowCap = 123_000, ResidentRowCap = 3_000_000 }, () =>
+        {
+            var view = new SettingsView(sp);
+            var window = new Window { Content = view };
+            window.Show();
+            try
+            {
+                var advBody = SectionBody(view, "Advanced");
+
+                var preloadRow = advBody.Children.Single(c => RowLabel(c) == "Background preload (rows)");
+                var preloadNum = preloadRow.GetLogicalDescendants().OfType<NumericUpDown>().Single();
+                Assert.False(preloadNum.IsEffectivelyEnabled);
+                Assert.Equal(123_000, (int)preloadNum.Value!);
+
+                var preloadLabel = preloadRow.GetLogicalDescendants().OfType<TextBlock>().First(t => t.Text == "Background preload (rows)");
+                if (Application.Current?.TryFindResource("ColorTextMuted", out var mutedRes) == true && mutedRes is IBrush expectedMuted)
+                {
+                    Assert.Equal(expectedMuted, preloadLabel.Foreground);
+                }
+
+                var maxRowsRow = advBody.Children.Single(c => RowLabel(c) == "Max rows in memory");
+                var maxRowsNum = maxRowsRow.GetLogicalDescendants().OfType<NumericUpDown>().Single();
+                Assert.False(maxRowsNum.IsEffectivelyEnabled);
+                Assert.Equal(3_000_000, (int)maxRowsNum.Value!);
+
+                var maxRowsLabel = maxRowsRow.GetLogicalDescendants().OfType<TextBlock>().First(t => t.Text == "Max rows in memory");
+                if (Application.Current?.TryFindResource("ColorTextMuted", out var mutedRes2) == true && mutedRes2 is IBrush expectedMuted2)
+                {
+                    Assert.Equal(expectedMuted2, maxRowsLabel.Foreground);
+                }
+            }
+            finally
+            {
+                window.Close();
+                view.Dispose();
+            }
+        });
+    }
+
+    [AvaloniaFact]
+    public void Lightweight_mode_off_leaves_both_caps_enabled()
+    {
+        var sp = CreateServices();
+        var cfg = sp.GetRequiredService<ISettingsService>();
+        WithSettings(cfg, s => s with { LightweightMode = false }, () =>
+        {
+            var view = new SettingsView(sp);
+            var window = new Window { Content = view };
+            window.Show();
+            try
+            {
+                var advBody = SectionBody(view, "Advanced");
+
+                var preloadRow = advBody.Children.Single(c => RowLabel(c) == "Background preload (rows)");
+                var preloadNum = preloadRow.GetLogicalDescendants().OfType<NumericUpDown>().Single();
+                Assert.True(preloadNum.IsEffectivelyEnabled);
+
+                var preloadLabel = preloadRow.GetLogicalDescendants().OfType<TextBlock>().First(t => t.Text == "Background preload (rows)");
+                if (Application.Current?.TryFindResource("ColorText", out var textRes) == true && textRes is IBrush expectedText)
+                {
+                    Assert.Equal(expectedText, preloadLabel.Foreground);
+                }
+
+                var maxRowsRow = advBody.Children.Single(c => RowLabel(c) == "Max rows in memory");
+                var maxRowsNum = maxRowsRow.GetLogicalDescendants().OfType<NumericUpDown>().Single();
+                Assert.True(maxRowsNum.IsEffectivelyEnabled);
+
+                var maxRowsLabel = maxRowsRow.GetLogicalDescendants().OfType<TextBlock>().First(t => t.Text == "Max rows in memory");
+                if (Application.Current?.TryFindResource("ColorText", out var textRes2) == true && textRes2 is IBrush expectedText2)
+                {
+                    Assert.Equal(expectedText2, maxRowsLabel.Foreground);
+                }
+            }
+            finally
+            {
+                window.Close();
+                view.Dispose();
+            }
+        });
+    }
+
+    [AvaloniaFact]
+    public void Checking_lightweight_mode_saves_it_and_keeps_the_caps()
+    {
+        var sp = CreateServices();
+        var cfg = sp.GetRequiredService<ISettingsService>();
+        WithSettings(cfg, s => s with { LightweightMode = false, SilentCrawlRowCap = 250_000, ResidentRowCap = 4_000_000 }, () =>
+        {
+            var view = new SettingsView(sp);
+            var advBody = SectionBody(view, "Advanced");
+            var lwRow = advBody.Children.Single(c => RowLabel(c) == "Lightweight mode");
+            var cb = lwRow.GetLogicalDescendants().OfType<CheckBox>().Single();
+            Assert.False(cb.IsChecked);
+
+            cb.IsChecked = true;
+            Dispatcher.UIThread.RunJobs();
+
+            Assert.True(cfg.Current.LightweightMode);
+            Assert.Equal(250_000, cfg.Current.SilentCrawlRowCap);
+            Assert.Equal(4_000_000, cfg.Current.ResidentRowCap);
+
+            view.Dispose();
+        });
     }
 
     /// <summary>The clickable header of a collapsible section.</summary>
