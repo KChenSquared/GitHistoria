@@ -8,6 +8,7 @@ public class StagingPanelCaseCollisionTests : IDisposable
     private readonly IGitCliService _cli;
     private readonly StubDialogService _dialogs;
     private readonly List<string> _scratchDirs = [];
+    private readonly List<Window> _windows = [];
 
     public StagingPanelCaseCollisionTests()
     {
@@ -20,12 +21,30 @@ public class StagingPanelCaseCollisionTests : IDisposable
 
     public void Dispose()
     {
+        foreach (var window in _windows)
+            try { window.Close(); } catch { }
         try { _sp.Dispose(); } catch { }
         foreach (var dir in _scratchDirs)
         {
             try { RepoTemplates.Delete(dir); } catch { }
         }
     }
+
+    private StagingPanelView ShowPanel(RepositoryContext context)
+    {
+        var panel = new StagingPanelView(_sp, context);
+        var window = new Window { Width = 800, Height = 900, Content = panel };
+        _windows.Add(window);
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        return panel;
+    }
+
+    private static TextBlock Footnote(StagingPanelView panel) =>
+        panel.ChangesList.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Classes.Contains("footnote"));
+
+    private static bool HasFootnote(StagingPanelView panel) =>
+        panel.ChangesList.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Classes.Contains("footnote"));
 
     private async Task<(string RepoPath, string LosingPath, string WinningPath)?> CreateCollisionFixtureAsync()
     {
@@ -105,13 +124,12 @@ public class StagingPanelCaseCollisionTests : IDisposable
         _workspace.Focus(context);
         await context.State.RefreshStatusAsync();
 
-        var panel = new StagingPanelView(_sp, context);
-        Dispatcher.UIThread.RunJobs();
+        var panel = ShowPanel(context);
 
-        Assert.Equal("Changes (0)", panel.ChangesHeaderForTesting.Text);
-        Assert.True(panel.CaseCollisionFootnoteForTesting.IsVisible);
-        Assert.Equal("1 case-collision file hidden", panel.CaseCollisionFootnoteForTesting.Text);
-        var tip = ToolTip.GetTip(panel.CaseCollisionFootnoteForTesting)?.ToString();
+        Assert.Equal("Changes (0)", panel.ChangesHeaderText.Text);
+        var footnote = Footnote(panel);
+        Assert.Equal("1 case-collision file hidden", footnote.Text);
+        var tip = ToolTip.GetTip(footnote)?.ToString();
         Assert.NotNull(tip);
         Assert.Contains("These tracked files share one file on disk", tip);
         Assert.Contains(fixture.Value.LosingPath, tip);
@@ -130,10 +148,9 @@ public class StagingPanelCaseCollisionTests : IDisposable
         _workspace.Focus(context);
         await context.State.RefreshStatusAsync();
 
-        var panel = new StagingPanelView(_sp, context);
-        Dispatcher.UIThread.RunJobs();
+        var panel = ShowPanel(context);
 
-        Assert.False(panel.CaseCollisionFootnoteForTesting.IsVisible);
+        Assert.False(HasFootnote(panel));
 
         await context.DisposeAsync();
     }
@@ -149,8 +166,7 @@ public class StagingPanelCaseCollisionTests : IDisposable
         _workspace.Focus(context);
         await context.State.RefreshStatusAsync();
 
-        var panel = new StagingPanelView(_sp, context);
-        Dispatcher.UIThread.RunJobs();
+        var panel = ShowPanel(context);
 
         var lsFilesBefore = await _cli.RunAsync(new GitCliRequest
         {
@@ -158,7 +174,7 @@ public class StagingPanelCaseCollisionTests : IDisposable
             WorkingDirectory = fixture.Value.RepoPath,
         });
 
-        await panel.StageAllChangesForTestingAsync();
+        await panel.ViewModel.StageAllChangesCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
         var lsFilesAfterStage = await _cli.RunAsync(new GitCliRequest
@@ -168,15 +184,15 @@ public class StagingPanelCaseCollisionTests : IDisposable
         });
         Assert.Equal(lsFilesBefore.StandardOutput, lsFilesAfterStage.StandardOutput);
 
-        await panel.DiscardAllChangesForTestingAsync();
+        await panel.ViewModel.DiscardAllChangesCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
         await context.State.RefreshStatusAsync();
         Dispatcher.UIThread.RunJobs();
 
         Assert.False(context.State.Status.IsDirty);
-        Assert.Equal("Changes (0)", panel.ChangesHeaderForTesting.Text);
-        Assert.True(panel.CaseCollisionFootnoteForTesting.IsVisible);
+        Assert.Equal("Changes (0)", panel.ChangesHeaderText.Text);
+        Assert.True(HasFootnote(panel));
 
         await context.DisposeAsync();
     }
@@ -195,11 +211,10 @@ public class StagingPanelCaseCollisionTests : IDisposable
         _workspace.Focus(context);
         await context.State.RefreshStatusAsync();
 
-        var panel = new StagingPanelView(_sp, context);
-        Dispatcher.UIThread.RunJobs();
+        var panel = ShowPanel(context);
 
         Assert.Equal(2, context.State.Status.AmbiguousCaseCollisions.Count);
-        Assert.Equal("2 case-collision rows left out of Stage all", panel.CaseCollisionFootnoteForTesting.Text);
+        Assert.Equal("2 case-collision rows left out of Stage all", Footnote(panel).Text);
 
         var lsFilesBefore = await _cli.RunAsync(new GitCliRequest
         {
@@ -207,7 +222,7 @@ public class StagingPanelCaseCollisionTests : IDisposable
             WorkingDirectory = fixture.Value.RepoPath,
         });
 
-        await panel.StageAllChangesForTestingAsync();
+        await panel.ViewModel.StageAllChangesCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
         var lsFilesAfter = await _cli.RunAsync(new GitCliRequest

@@ -624,7 +624,7 @@ public sealed class RepoNetworkErrorRoutingTests
         var ctx = await h.OpenAsync(fixture.LocalPath);
         await ctx.State.RefreshAllAsync();
 
-        var request = StagingPanelView.BuildPushRequest(ctx);
+        var request = StagingPanelViewModel.BuildPushRequest(ctx);
 
         Assert.NotNull(request);
         Assert.Equal(RepoNetworkAction.Push, request!.Value.Action);

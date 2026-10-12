@@ -19,6 +19,7 @@ internal static class SectionFrame
 
     // UI-thread only.
     private static readonly Dictionary<string, double> SplitHeightByRepo = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, double> BoxHeightByRepo = new(StringComparer.Ordinal);
 
     public static double GetSplitHeight(string repoId)
     {
@@ -28,6 +29,18 @@ internal static class SectionFrame
     public static void SetSplitHeight(string repoId, double h)
     {
         SplitHeightByRepo[repoId] = h;
+    }
+
+    /// <summary>The height the staging commit-message box was last given for a repository, or
+    /// <paramref name="fallback"/> when it was never resized.</summary>
+    public static double GetBoxHeight(string repoId, double fallback)
+    {
+        return BoxHeightByRepo.TryGetValue(repoId, out var h) ? h : fallback;
+    }
+
+    public static void SetBoxHeight(string repoId, double h)
+    {
+        BoxHeightByRepo[repoId] = h;
     }
 
     public static void ApplySplitHeight(Grid grid, RowDefinition topRow, string repoId)
