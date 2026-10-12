@@ -125,19 +125,21 @@ public class AiIntegrationsViewTests
         public AiTestSupport.Notifications Notifications { get; } = new();
         public AiTestSupport.Client Client { get; } = new();
         public AiTestSupport.Factory Factory { get; }
+        public IAiModelCatalog Catalog { get; }
         public ServiceProvider Services { get; }
 
         public Rig()
         {
             Profiles = new AiProfileService(Settings);
             Factory = new AiTestSupport.Factory(Client);
+            Catalog = new AiModelCatalog(Profiles, Factory);
             var sc = new ServiceCollection();
             sc.AddSingleton<IAiProfileService>(Profiles);
             sc.AddSingleton<IAiIntegrationsPanel>(Panel);
             sc.AddSingleton<IDialogService>(Dialogs);
             sc.AddSingleton<INotificationService>(Notifications);
             sc.AddSingleton<IAiClientFactory>(Factory);
-            sc.AddSingleton<IAiModelCatalog>(new AiModelCatalog(Profiles, Factory));
+            sc.AddSingleton<IAiModelCatalog>(Catalog);
             Services = sc.BuildServiceProvider();
         }
 
@@ -548,14 +550,16 @@ public class AiIntegrationsViewTests
     public async Task Dispose_stops_listening()
     {
         var rig = new Rig();
-        await rig.Add("A");
+        var a = await rig.Add("A", p => p with { Server = "https://ai.example.test/v1" });
         var view = rig.View();
         view.Dispose();
 
         await rig.Add("B");
+        rig.Catalog.Remember(a, ["unheard-model"]);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Single(view.RowsForTesting);
+        Assert.Null(view.EditorForTesting!.Model.ItemsSource);
     }
 
     [AvaloniaFact]
@@ -569,5 +573,177 @@ public class AiIntegrationsViewTests
         var view = rig.View();
 
         Assert.Equal(b.Id, view.SelectedIdForTesting);
+    }
+
+    private static void SelectRow(AiIntegrationsView view, int index)
+    {
+        var row = view.RowsForTesting[index].Row;
+        row.RaiseEvent(new PointerPressedEventArgs(
+            row, new Pointer(0, PointerType.Mouse, true), row,
+            default, 0, new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed), KeyModifiers.None));
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    [AvaloniaFact]
+    public async Task The_active_button_reads_Active_and_sits_at_the_top_right_of_the_editor()
+    {
+        var rig = new Rig();
+        await rig.Add("First");
+        var view = rig.View();
+        var editor = view.EditorForTesting!;
+
+        Assert.NotNull(editor.Active);
+        Assert.Equal("Active", editor.Active.Content);
+        Assert.Equal(1, Grid.GetColumn(editor.Active));
+        Assert.Equal(HorizontalAlignment.Right, editor.Active.HorizontalAlignment);
+    }
+
+    [AvaloniaFact]
+    public async Task The_active_button_is_green_when_the_selected_profile_is_active_and_grey_when_not()
+    {
+        var rig = new Rig();
+        var p = await rig.Add("First");
+        var view = rig.View();
+        var window = new Window { Width = 800, Height = 600, Content = view };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        var btn = view.EditorForTesting!.Active;
+
+        Assert.DoesNotContain("success", btn.Classes);
+        if (Application.Current is not null && Application.Current.TryFindResource("ColorTextFaint", out var faint) && faint is IBrush faintBrush)
+            Assert.Equal(faintBrush, btn.Foreground);
+        if (Application.Current is not null && Application.Current.TryFindResource("ColorBorder", out var border) && border is IBrush borderBrush)
+            Assert.Equal(borderBrush, btn.BorderBrush);
+
+        await rig.Profiles.SetActiveAsync(p.Id);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains("success", btn.Classes);
+        if (Application.Current is not null && Application.Current.TryFindResource("ColorSuccess", out var success) && success is IBrush successBrush)
+            Assert.Equal(successBrush, btn.Foreground);
+    }
+
+    [AvaloniaFact]
+    public async Task Clicking_the_active_button_activates_and_clicking_again_deactivates()
+    {
+        var rig = new Rig();
+        var p = await rig.Add("First");
+        var view = rig.View();
+        var btn = view.EditorForTesting!.Active;
+
+        Assert.Null(rig.Profiles.ActiveProfile);
+
+        Click(btn);
+        await AiTestSupport.PumpUntil(() => rig.Profiles.ActiveProfile?.Id == p.Id);
+        Assert.Equal(p.Id, rig.Profiles.ActiveProfile?.Id);
+
+        Click(btn);
+        await AiTestSupport.PumpUntil(() => rig.Profiles.ActiveProfile is null);
+        Assert.Null(rig.Profiles.ActiveProfile);
+    }
+
+    [AvaloniaFact]
+    public async Task Switching_with_the_active_button_asks_with_Save_like_the_list_check()
+    {
+        var rig = new Rig();
+        var a = await rig.Add("Gemini");
+        var b = await rig.Add("Work");
+        await rig.Profiles.SetActiveAsync(a.Id);
+        var view = rig.View();
+
+        SelectRow(view, 1);
+        Assert.Equal(b.Id, view.SelectedIdForTesting);
+
+        Click(view.EditorForTesting!.Active);
+        await AiTestSupport.PumpUntil(() => rig.Profiles.ActiveProfile?.Id == b.Id);
+
+        var call = Assert.Single(rig.Dialogs.ChooseCalls);
+        Assert.Equal("'1. Gemini' is the active AI integration. Switch to '2. Work'?", call.Message);
+        Assert.Equal(["Save"], call.Options);
+        Assert.Equal(0, call.DefaultIndex);
+    }
+
+    [AvaloniaFact]
+    public async Task The_active_button_and_the_list_check_always_agree()
+    {
+        var rig = new Rig();
+        var a = await rig.Add("First");
+        var view = rig.View();
+        var btn = view.EditorForTesting!.Active;
+        var check = view.RowsForTesting[0].Check;
+
+        Click(btn);
+        await AiTestSupport.PumpUntil(() => rig.Profiles.ActiveProfile?.Id == a.Id);
+        Assert.Contains("success", btn.Classes);
+        Assert.Equal("Active", ToolTip.GetTip(view.RowsForTesting[0].Check));
+
+        Click(view.RowsForTesting[0].Check);
+        await AiTestSupport.PumpUntil(() => rig.Profiles.ActiveProfile is null);
+        Assert.DoesNotContain("success", btn.Classes);
+        Assert.Equal("Make active", ToolTip.GetTip(view.RowsForTesting[0].Check));
+    }
+
+    [AvaloniaFact]
+    public async Task A_list_loaded_elsewhere_fills_the_model_dropdown_without_a_request()
+    {
+        var rig = new Rig();
+        var p = await rig.Add("A", p => p with { Server = "https://ai.example.test/v1" });
+        var view = rig.View();
+        var editor = view.EditorForTesting!;
+
+        rig.Client.ListResult = () => ["remote-1", "remote-2"];
+        await rig.Catalog.LoadAsync(p);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(["remote-1", "remote-2"], Assert.IsAssignableFrom<IEnumerable<string>>(editor.Model.ItemsSource).ToArray());
+        Assert.Single(rig.Client.Lists);
+    }
+
+    [AvaloniaFact]
+    public async Task Opening_the_model_list_with_a_cached_list_makes_no_request()
+    {
+        var rig = new Rig();
+        var p = await rig.Add("A", p => p with { Server = "https://ai.example.test/v1" });
+        rig.Catalog.Remember(p, ["cached-a", "cached-b"]);
+        var view = rig.View();
+
+        view.OpenModelListForTesting();
+        await view.ModelFetchForTesting;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(rig.Client.Lists);
+    }
+
+    [AvaloniaFact]
+    public async Task A_cached_gemini_list_without_the_saved_model_switches_it_when_the_list_opens()
+    {
+        var rig = new Rig();
+        var p = await rig.Add("G", p => AiServiceTemplates.ApplyGemini(p) with { ApiKey = "k", Model = "gemini-1.0-pro" });
+        rig.Catalog.Remember(p, ["gemini-2.0-flash", "gemini-2.5-flash"]);
+        var view = rig.View();
+        var editor = view.EditorForTesting!;
+
+        view.OpenModelListForTesting();
+        await AiTestSupport.PumpUntil(() => rig.Profiles.Profiles.Single().Model == "gemini-2.5-flash");
+        await view.ModelFetchForTesting;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("gemini-2.5-flash", editor.Model.Text);
+        Assert.True(editor.ModelNote.IsVisible);
+        Assert.Empty(rig.Client.Lists);
+    }
+
+    [AvaloniaFact]
+    public async Task Building_the_editor_over_a_cached_list_never_writes_the_profile()
+    {
+        var rig = new Rig();
+        var p = await rig.Add("A", p => p with { Server = "https://ai.example.test/v1", Model = "custom-model" });
+        rig.Catalog.Remember(p, ["model-1", "model-2"]);
+
+        var view = rig.View();
+        var editor = view.EditorForTesting!;
+
+        Assert.Equal(["model-1", "model-2"], Assert.IsAssignableFrom<IEnumerable<string>>(editor.Model.ItemsSource).ToArray());
+        Assert.Equal("custom-model", rig.Profiles.Profiles.Single().Model);
     }
 }
