@@ -49,6 +49,7 @@ public sealed class DeveloperViewCustomThemeTests
 
         Assert.True(UseBox(h.View).IsChecked);
         var combo = Row(h.View).Children.OfType<ComboBox>().Single();
+        Assert.True(combo.IsVisible);
         Assert.Equal(220, combo.Width);
         Assert.Equal(new[] { "Alpha", "Beta" }, combo.ItemsSource!.Cast<string>());
         Assert.Equal(1, combo.SelectedIndex);
@@ -63,7 +64,7 @@ public sealed class DeveloperViewCustomThemeTests
         // With no saved themes there is nothing to pick from.
         var none = Create(new AppSettings());
         Assert.False(UseBox(none.View).IsChecked);
-        Assert.Empty(Row(none.View).Children.OfType<ComboBox>());
+        Assert.False(Row(none.View).Children.OfType<ComboBox>().Single().IsVisible);
         Assert.Contains(Row(none.View).Children, c => c is Button { Content: "Manage themes" });
         Assert.Equal(Hint, HelpHintMap.Of(none.View)["Use custom theme"]);
     }
@@ -115,7 +116,7 @@ public sealed class DeveloperViewCustomThemeTests
 }
 
 /// <summary>The services <see cref="DeveloperView"/> resolves, around the given settings,
-/// theme and navigation instances.</summary>
+/// theme and navigation instances. Services the tests never drive are real or inert.</summary>
 internal static class DeveloperViewServices
 {
     public static IServiceProvider Build(
@@ -128,9 +129,23 @@ internal static class DeveloperViewServices
         sc.AddSingleton(settings);
         sc.AddSingleton(theme);
         sc.AddSingleton(customThemes);
-        if (dialogs is not null)
-            sc.AddSingleton(dialogs);
+        sc.AddSingleton<INotificationService, NotificationService>();
+        sc.AddSingleton<IExternalLauncher, ExternalLauncher>();
+        sc.AddSingleton<IRepoStateCache>(new RepoStateCache(settings));
+        sc.AddSingleton<IGraphLayoutService>(new GraphLayoutService(settings, new GitExecutableLocator()));
+        sc.AddSingleton(dialogs ?? new DecliningDialogs());
         return sc.BuildServiceProvider();
+    }
+
+    private sealed class DecliningDialogs : IDialogService
+    {
+        public Task<bool> ConfirmDestructiveAsync(string title, string effect, string confirmLabel) => Task.FromResult(false);
+        public Task<bool> ConfirmAsync(string title, string message, bool destructive = false, string confirmLabel = "OK", bool defaultToCancel = false, DialogIcon icon = DialogIcon.None) => Task.FromResult(false);
+        public Task<int> ChooseAsync(string title, string message, IReadOnlyList<string> options, int defaultIndex = 0, int destructiveIndex = -1, DialogIcon icon = DialogIcon.None) => Task.FromResult(-1);
+        public Task<string?> PickFileAsync(string title, string filter, string? initialDirectory = null) => Task.FromResult<string?>(null);
+        public Task<string?> PickFolderAsync(string title, string? initialDirectory = null) => Task.FromResult<string?>(null);
+        public Task<string?> PromptAsync(string title, string message, string? defaultValue = null, string confirmLabel = "OK", bool primaryConfirm = false) => Task.FromResult<string?>(null);
+        public Task ShowMessageAsync(string title, string message) => Task.CompletedTask;
     }
 
     private sealed class NoWorkspaceService : IWorkspaceService
