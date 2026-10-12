@@ -170,6 +170,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes \r
-            --notes "Only the Windows packages are supported. Packages marked \`-experimental\` (macOS and Linux) are experimental builds." \r
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes \
+            --notes "Only the Windows packages are supported. Packages marked \`-experimental\` (macOS and Linux) are experimental builds." \
             dist/*
