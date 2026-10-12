@@ -87,8 +87,9 @@ public class StagingPanelConflictAbortTests : IDisposable
     private static Button AbortButton(StagingPanelView panel) =>
         panel.ChangesList.GetVisualDescendants().OfType<Button>().Single(b => b.Name == "ConflictAbort");
 
-    private static void Click(Button button)
+    private static void Click(StagingPanelView panel, Button button)
     {
+        Assert.Same(panel.ViewModel.AbortOperationCommand, button.Command);
         button.Command!.Execute(button.CommandParameter);
         Dispatcher.UIThread.RunJobs();
     }
@@ -180,14 +181,14 @@ public class StagingPanelConflictAbortTests : IDisposable
         try
         {
             _dialogs.ConfirmDestructiveResult = false;
-            Click(AbortButton(panel));
+            Click(panel, AbortButton(panel));
 
             Assert.Single(_dialogs.ConfirmDestructiveCalls);
             Assert.Equal(0, _conflicts.AbortCalls);
             Assert.Equal(0, work.DiscardCalls);
 
             _dialogs.ConfirmDestructiveResult = true;
-            Click(AbortButton(panel));
+            Click(panel, AbortButton(panel));
 
             Assert.Equal(2, _dialogs.ConfirmDestructiveCalls.Count);
             Assert.Equal(1, _conflicts.AbortCalls);
@@ -208,16 +209,19 @@ public class StagingPanelConflictAbortTests : IDisposable
             var tcs = new TaskCompletionSource<bool>();
             _conflicts.AbortTcs = tcs;
 
-            Click(AbortButton(panel));
+            Assert.True(panel.ViewModel.AbortOperationCommand.CanExecute(null));
+            Click(panel, AbortButton(panel));
             Assert.Equal(1, _conflicts.AbortCalls);
+            Assert.False(panel.ViewModel.AbortOperationCommand.CanExecute(null));
             Assert.False(AbortButton(panel).IsEffectivelyEnabled);
 
-            Click(AbortButton(panel));
+            Click(panel, AbortButton(panel));
             Assert.Equal(1, _conflicts.AbortCalls);
             Assert.Single(_dialogs.ConfirmDestructiveCalls);
 
             tcs.SetResult(true);
             Dispatcher.UIThread.RunJobs();
+            Assert.True(panel.ViewModel.AbortOperationCommand.CanExecute(null));
             Assert.True(AbortButton(panel).IsEffectivelyEnabled);
         }
         finally

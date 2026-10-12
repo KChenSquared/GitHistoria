@@ -2402,6 +2402,16 @@ public class ConflictResolverViewTests : IDisposable
     private static void ClickMenuItem(ConflictResolverView view, string header)
     {
         var item = view.ResolveFileMenuItemsForTesting.Single(m => m.Header as string == header);
+        // The flyout sits outside the view's tree, so the view's code-behind assigns these commands.
+        var expected = header switch
+        {
+            "Take ours (whole file)" => view.ViewModel.TakeOursCurrentCommand,
+            "Take theirs (whole file)" => view.ViewModel.TakeTheirsCurrentCommand,
+            "Reset file to conflicted" => view.ViewModel.ResetFileCommand,
+            "Open in external tool" => view.ViewModel.LaunchExternalToolCommand,
+            _ => throw new ArgumentException($"No view-model command is known for the menu item '{header}'.", nameof(header)),
+        };
+        Assert.Same(expected, item.Command);
         item.Command!.Execute(null);
     }
 
@@ -3210,6 +3220,7 @@ public class ConflictResolverViewTests : IDisposable
         Assert.True(view.HasUnsavedWork);
         Assert.False(_context.State.IsConflictResolverClosed);
 
+        Assert.Same(view.ViewModel.CloseCommand, view.CloseButtonForTesting.Command);
         view.CloseButtonForTesting.Command!.Execute(null);
 
         Assert.True(_context.State.IsConflictResolverClosed);
