@@ -505,7 +505,9 @@ public class ConflictResolverViewTests : IDisposable
         await view.LoadAsync();
         Dispatcher.UIThread.RunJobs();
 
-        Assert.IsType<StackPanel>(view.EditorAreaForTesting.Content);
+        Assert.True(view.FileCardForTesting.IsVisible);
+        Assert.False(view.AllResolvedCardForTesting.IsVisible);
+        Assert.False(view.SplitGridForTesting.IsVisible);
     }
 
     [AvaloniaFact]
@@ -789,8 +791,9 @@ public class ConflictResolverViewTests : IDisposable
 
         Assert.Null(view.CurrentFileForTesting);
         Assert.Null(_context.State.SelectedConflictPath);
-        Assert.IsType<StackPanel>(view.EditorAreaForTesting.Content);
-        var card = (StackPanel)view.EditorAreaForTesting.Content;
+        Assert.True(view.AllResolvedCardForTesting.IsVisible);
+        Assert.False(view.SplitGridForTesting.IsVisible);
+        var card = view.AllResolvedCardForTesting;
         Assert.Contains(card.Children.OfType<TextBlock>(), tb => tb.Text?.Contains("All conflicts resolved") == true);
     }
 
@@ -2390,7 +2393,7 @@ public class ConflictResolverViewTests : IDisposable
     private static void ClickMenuItem(ConflictResolverView view, string header)
     {
         var item = view.ResolveFileMenuItemsForTesting.Single(m => m.Header as string == header);
-        item.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        item.Command!.Execute(null);
     }
 
     /// <summary>Runs posted UI work until <paramref name="condition"/> holds, for at most 10 seconds.
@@ -3198,7 +3201,7 @@ public class ConflictResolverViewTests : IDisposable
         Assert.True(view.HasUnsavedWork);
         Assert.False(_context.State.IsConflictResolverClosed);
 
-        view.CloseButtonForTesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        view.CloseButtonForTesting.Command!.Execute(null);
 
         Assert.True(_context.State.IsConflictResolverClosed);
         Assert.Empty(_conflicts.SaveResolutionCalls);
