@@ -1,0 +1,260 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ctl="clr-namespace:Historia.Controls"
+             xmlns:vm="clr-namespace:Historia.ViewModels;assembly=Historia.Core"
+             x:Class="Historia.Views.AiIntegrationsView"
+             x:DataType="vm:AiIntegrationsViewModel"
+             Background="{DynamicResource ColorBg}">
+    <UserControl.Styles>
+        <!-- A borderless icon button, like the toolbar buttons elsewhere. -->
+        <Style Selector="Button.icon">
+            <Setter Property="Padding" Value="4" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+
+        <!-- One line of the profile list; the selected one carries the raised surface. -->
+        <Style Selector="Border.profile-row">
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="Border.profile-row.selected">
+            <Setter Property="Background" Value="{DynamicResource ColorSurface2}" />
+        </Style>
+
+        <Style Selector="TextBlock.field-label">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextMuted}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+
+        <!-- The Active button is grey until the profile is active; then the success class from the
+             application styles paints it green. -->
+        <Style Selector="Button.active-toggle">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Padding" Value="8,2" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+        </Style>
+        <Style Selector="Button.active-toggle:not(.success)">
+            <Setter Property="Foreground" Value="{DynamicResource ColorTextFaint}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorBorder}" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+        <!-- A red frame around the API key until a key can be resolved. -->
+        <Style Selector="Border.key-frame">
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+        <Style Selector="Border.key-frame.missing">
+            <Setter Property="BorderThickness" Value="2" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ColorDanger}" />
+        </Style>
+    </UserControl.Styles>
+
+    <DockPanel LastChildFill="True">
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Height="30" Margin="12,4">
+            <TextBlock Text="AI Integrations"
+                       FontSize="14"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource ColorText}" />
+            <Button Name="CloseButton"
+                    Grid.Column="1"
+                    Classes="secondary"
+                    Content="X"
+                    Command="{Binding CloseCommand}"
+                    ToolTip.Tip="Close"
+                    AutomationProperties.Name="Close"
+                    Cursor="Hand" />
+        </Grid>
+
+        <Grid ColumnDefinitions="Auto,*">
+            <Border BorderThickness="0,0,1,0" BorderBrush="{DynamicResource ColorBorder}">
+                <DockPanel Width="260">
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="4" Margin="8,6">
+                        <Button Name="AddButton"
+                                Classes="icon"
+                                Command="{Binding AddCommand}"
+                                ToolTip.Tip="Add an AI integration">
+                            <ctl:IconGlyph Icon="add" Size="16" ForegroundKey="ColorTextMuted" />
+                        </Button>
+                        <Button Name="DeleteButton"
+                                Classes="icon"
+                                Command="{Binding DeleteSelectedCommand}"
+                                ToolTip.Tip="Delete the selected AI integration">
+                            <ctl:IconGlyph Icon="delete" Size="16" ForegroundKey="ColorTextMuted" />
+                        </Button>
+                    </StackPanel>
+
+                    <ScrollViewer Padding="8,4">
+                        <ItemsControl Name="RowList" ItemsSource="{Binding Rows}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Spacing="2" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:AiProfileRowViewModel">
+                                    <Border Classes="profile-row" Classes.selected="{Binding IsSelected}">
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <TextBlock Classes="text" Text="{Binding Label}" />
+                                            <Button Grid.Column="1"
+                                                    Padding="2"
+                                                    Background="Transparent"
+                                                    BorderThickness="0"
+                                                    VerticalAlignment="Top"
+                                                    Cursor="Hand"
+                                                    Command="{Binding ToggleActiveCommand}"
+                                                    ToolTip.Tip="{Binding ActiveTip}"
+                                                    AutomationProperties.Name="{Binding ActiveTip}">
+                                                <ctl:IconGlyph Icon="check_circle" Size="18" ForegroundKey="{Binding CheckColorKey}" />
+                                            </Button>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <Panel Grid.Column="1">
+                <TextBlock Text="Add an AI integration with + to get started."
+                           Margin="24"
+                           IsVisible="{Binding !HasEditor}"
+                           Foreground="{DynamicResource ColorTextMuted}" />
+                <ContentControl Content="{Binding Editor}">
+                    <ContentControl.ContentTemplate>
+                        <DataTemplate x:DataType="vm:AiProfileEditorViewModel">
+                            <ScrollViewer>
+                                <StackPanel Spacing="10" Margin="24,12" MaxWidth="560" HorizontalAlignment="Left">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <Button Name="ActiveButton"
+                                                Grid.Column="1"
+                                                Classes="active-toggle"
+                                                Classes.success="{Binding IsActive}"
+                                                Content="Active"
+                                                Command="{Binding ToggleActiveCommand}"
+                                                ToolTip.Tip="{Binding ActiveTip}"
+                                                AutomationProperties.Name="{Binding ActiveTip}" />
+                                    </Grid>
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Classes="field-label" Text="Template" />
+                                        <ComboBox Name="TemplateBox"
+                                                  HorizontalAlignment="Stretch"
+                                                  ItemsSource="{Binding TemplateNames}"
+                                                  SelectedIndex="{Binding TemplateIndex}" />
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Classes="field-label" Text="Name" />
+                                        <TextBox Name="NameBox" Text="{Binding Name, UpdateSourceTrigger=LostFocus}" />
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Classes="field-label" Text="Server" />
+                                        <TextBox Name="ServerBox" Text="{Binding Server, UpdateSourceTrigger=LostFocus}" />
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Classes="field-label" Text="API Key" />
+                                        <Border Name="KeyFrame" Classes="key-frame" Classes.missing="{Binding KeyMissing}">
+                                            <TextBox Name="KeyBox"
+                                                     PasswordChar="&#8226;"
+                                                     RevealPassword="{Binding ReadApiKeyFromEnv}"
+                                                     Text="{Binding ApiKey, UpdateSourceTrigger=LostFocus}" />
+                                        </Border>
+                                    </StackPanel>
+
+                                    <CheckBox Name="EnvKeyBox"
+                                              Content="Entered value is the name to load API key from ENV"
+                                              IsChecked="{Binding ReadApiKeyFromEnv}" />
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Classes="field-label" Text="Model" />
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <ComboBox Name="ModelBox"
+                                                      IsEditable="True"
+                                                      HorizontalAlignment="Stretch"
+                                                      ItemsSource="{Binding ModelItems}"
+                                                      SelectedItem="{Binding SelectedModel}"
+                                                      Text="{Binding Model, UpdateSourceTrigger=LostFocus}"
+                                                      PlaceholderText="{Binding ModelPlaceholder}"
+                                                      IsEnabled="{Binding CanEditModel}"
+                                                      IsDropDownOpen="{Binding IsModelListOpen}" />
+                                            <Button Name="ModelRefreshButton"
+                                                    Grid.Column="1"
+                                                    Classes="icon"
+                                                    Command="{Binding FetchModelsCommand}"
+                                                    ToolTip.Tip="Refresh the model list">
+                                                <ctl:IconGlyph Icon="refresh" Size="16" ForegroundKey="ColorTextMuted" />
+                                            </Button>
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <TextBlock Name="ModelNoteText"
+                                               Text="{Binding ModelNote}"
+                                               IsVisible="{Binding HasModelNote}"
+                                               TextWrapping="Wrap"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource ColorWarning}" />
+
+                                    <CheckBox Name="AutoFetchBox"
+                                              Content="Fetch available model-ids automatically"
+                                              IsChecked="{Binding AutoFetchModels}" />
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Classes="field-label" Text="Reasoning Effort Level" />
+                                        <ComboBox Name="EffortBox"
+                                                  HorizontalAlignment="Stretch"
+                                                  ItemsSource="{Binding ReasoningEffortLevels}"
+                                                  SelectedIndex="{Binding ReasoningEffortIndex}" />
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Classes="field-label" Text="Diff size limit" />
+                                        <ComboBox Name="DiffLimitBox"
+                                                  HorizontalAlignment="Stretch"
+                                                  ItemsSource="{Binding DiffLimitLabels}"
+                                                  SelectedIndex="{Binding DiffLimitIndex}" />
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Classes="field-label" Text="Additional Prompt" />
+                                        <TextBox Name="PromptBox"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 MinHeight="80"
+                                                 Watermark="Use `-` to list your requirements"
+                                                 Text="{Binding AdditionalPrompt, UpdateSourceTrigger=LostFocus}" />
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="4">
+                                        <TextBlock Classes="field-label" Text="Extra Headers" />
+                                        <TextBox Name="HeadersBox"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 MinHeight="60"
+                                                 Watermark="One `Name: Value` per line"
+                                                 Text="{Binding ExtraHeaders, UpdateSourceTrigger=LostFocus}" />
+                                    </StackPanel>
+
+                                    <TextBlock Classes="field-label"
+                                               Text="Your staged changes are sent to this service only when you click Generate." />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </DataTemplate>
+                    </ContentControl.ContentTemplate>
+                </ContentControl>
+            </Panel>
+        </Grid>
+    </DockPanel>
+</UserControl>
