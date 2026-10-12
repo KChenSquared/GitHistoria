@@ -88,6 +88,17 @@ jobs:
       - name: Run App tests
         run: dotnet test tests/Historia.App.Tests -c Release --no-build --logger "trx;LogFileName=app.trx" --blame-hang-timeout 15m
 
+      - name: Annotate failed tests
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          results=(tests/*/TestResults/*.trx)
+          if [ ${#results[@]} -gt 0 ]; then
+            if [ "$RUNNER_OS" = Windows ]; then py=python; else py=python3; fi
+            "$py" -I .github/scripts/annotate-test-failures.py "${results[@]}"
+          fi
+
       - name: Upload test results and crash dumps
         if: failure()
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
