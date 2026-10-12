@@ -16,7 +16,7 @@ public partial class MainWindow : Window
     private readonly ShortcutsBarView? _leftShortcuts;
     private readonly ShortcutsBarView? _rightShortcuts;
     private readonly CommitGraphControl? _graph;
-    private readonly TerminalDockControl? _terminalDock;
+    private readonly TerminalDockView? _terminalDock;
     private readonly CenterPaneController? _centerPaneController;
 
     // Parameterless ctor for the XAML previewer only.
@@ -63,7 +63,7 @@ public partial class MainWindow : Window
             SidebarHost.Content = new RefNavigatorView(services);
             DetailHost.Content = new DetailRouter(services);
 
-            _terminalDock = new TerminalDockControl();
+            _terminalDock = new TerminalDockView();
             TerminalDockHost.Content = _terminalDock;
             _terminalDock.Initialize(services);
         }

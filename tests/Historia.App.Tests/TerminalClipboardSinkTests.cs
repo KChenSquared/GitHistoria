@@ -33,7 +33,7 @@ public class TerminalClipboardSinkTests
     public async Task ClipboardWriteRequested_SetsClipboardText()
     {
         var sessions = new FakeSessions();
-        var dock = new TerminalDockControl();
+        var dock = new TerminalDockView();
         var window = new Window { Content = dock };
         window.Show();
         dock.AttachClipboardSink(sessions);
@@ -51,7 +51,7 @@ public class TerminalClipboardSinkTests
     public async Task AfterDetach_EventNoLongerHandled()
     {
         var sessions = new FakeSessions();
-        var dock = new TerminalDockControl();
+        var dock = new TerminalDockView();
         var window = new Window { Content = dock };
         window.Show();
         dock.AttachClipboardSink(sessions);
