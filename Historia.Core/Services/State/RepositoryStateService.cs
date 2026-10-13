@@ -50,12 +50,14 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         RepositoryContext context,
         IUiDispatcher? ui = null,
         IRepoStateCache? repoCache = null,
-        IGitGateway? gateway = null)
+        IGitGateway? gateway = null,
+        Func<long?>? changeGeneration = null)
     {
         _context = context;
         _gateway = gateway ?? context.Gateway;
-        _refsCoalescer = new(() => _context.Lifetime);
-        _statusCoalescer = new(() => _context.Lifetime);
+        changeGeneration ??= () => _context.ChangeGeneration;
+        _refsCoalescer = new(() => _context.Lifetime, changeGeneration);
+        _statusCoalescer = new(() => _context.Lifetime, changeGeneration);
         _ui = ui;
         _repoCache = repoCache;
         _stashStamp = RefStateToken.StashStamp(context.GitDirectory);
@@ -493,14 +495,15 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     }
 
     /// <summary>
-    /// One refresh at a time per kind. A caller arriving while a refresh runs never joins it: that
-    /// run may have read the working tree before the caller's change landed, so the caller waits
-    /// for a single trailing run that every such caller shares. A run's work gets a token
+    /// One refresh at a time per kind. A caller arriving while a refresh runs joins it only when no
+    /// change was observed since that run started (<see cref="RepositoryContext.ChangeGeneration"/>):
+    /// otherwise the run may have read the working tree before the change landed, so the caller
+    /// waits for a single trailing run that every such caller shares. A run's work gets a token
     /// that cancels when the tab closes or when every caller waiting on that run has given up
     /// (their tokens cancelled) — a tab the user switched away from stops paying for a refresh
     /// nobody is waiting for. A caller with a non-cancellable token keeps its run alive.
     /// </summary>
-    private sealed class SingleFlightCoalescer(Func<CancellationToken> lifetime)
+    private sealed class SingleFlightCoalescer(Func<CancellationToken> lifetime, Func<long?> changeGeneration)
     {
         private readonly object _gate = new();
         private Run? _current;  // running
@@ -510,7 +513,8 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         {
             public readonly TaskCompletionSource Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public readonly CancellationTokenSource Abandoned = new();
-            public int Waiters; // guarded by the coalescer's _gate
+            public int Waiters;          // guarded by the coalescer's _gate
+            public long? StartGeneration; // guarded by the coalescer's _gate
         }
 
         public Task RunAsync(Func<CancellationToken, Task> work, CancellationToken ct)
@@ -525,8 +529,13 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             {
                 if (_current is null)
                 {
-                    _current = run = new Run();
+                    _current = run = new Run { StartGeneration = changeGeneration() };
                     start = true;
+                }
+                else if (!_current.Abandoned.IsCancellationRequested
+                    && _current.StartGeneration is { } started && changeGeneration() == started)
+                {
+                    run = _current;
                 }
                 else
                 {
@@ -588,6 +597,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                     _trailing = null;
                     if (_current is null)
                         return;
+                    _current.StartGeneration = changeGeneration();
                 }
             }
         }
