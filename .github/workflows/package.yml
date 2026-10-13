@@ -51,7 +51,7 @@ jobs:
         id: build-plan
         shell: pwsh
         run: |
-          $isTag = '${{ github.ref_type }}' -eq 'tag'
+          $isTag = '${{ github.ref_type }}' -eq 'tag' -and '${{ github.event_name }}' -eq 'push'
           $archives = if ($isTag) { 'true' } else { '${{ inputs.archives }}' }
           $installers = if ($isTag) { 'true' } else { '${{ inputs.installers }}' }
 
@@ -64,13 +64,13 @@ jobs:
           if ($isTag -or '${{ inputs.win_x64 }}' -eq 'true') {
               $entries += @{ rid = 'win-x64'; runner = 'windows-latest' }
           }
-          if ($isTag -or '${{ inputs.osx_arm64 }}' -eq 'true') {
+          if (-not $isTag -and '${{ inputs.osx_arm64 }}' -eq 'true') {
               $entries += @{ rid = 'osx-arm64'; runner = 'macos-latest'; experimental = true }
           }
-          if ($isTag -or '${{ inputs.osx_x64 }}' -eq 'true') {
+          if (-not $isTag -and '${{ inputs.osx_x64 }}' -eq 'true') {
               $entries += @{ rid = 'osx-x64'; runner = 'macos-latest'; experimental = true }
           }
-          if ($isTag -or '${{ inputs.linux_x64 }}' -eq 'true') {
+          if (-not $isTag -and '${{ inputs.linux_x64 }}' -eq 'true') {
               $entries += @{ rid = 'linux-x64'; runner = 'ubuntu-latest'; experimental = true }
           }
 
@@ -171,5 +171,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes \
-            --notes "Only the Windows packages are supported. Packages marked \`-experimental\` (macOS and Linux) are experimental builds." \
+            --notes "Only the Windows packages are supported." \
             dist/*

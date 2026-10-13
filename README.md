@@ -140,13 +140,24 @@ the graph at 30k commits for lower memory use is available in settings.
 
 ## 📦 Install
 
-Download pre-built packages from [GitHub Releases](https://github.com/KChenSquared/GitHistoria/releases). Windows is the supported platform; macOS and Linux packages are experimental and carry `-experimental` in their file names.
+Download pre-built packages from [GitHub Releases](https://github.com/KChenSquared/GitHistoria/releases). Windows is the only officially supported platform; pre-built release binaries are provided for `win-x64`.
 
-### Windows
+### Windows (officially supported)
 - **Installer (`Historia-<version>-win-x64-setup.exe`):** Recommended. Provides a Start Menu shortcut and an **Add to PATH** option (enabled by default) for `Historia` and `historia-cmdr`. If the .NET 10 Desktop Runtime is not installed, the installer bundles and installs it during setup.
 - **Archive (`Historia-<version>-win-x64.zip`):** Extract and run. Requires [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download) and Git 2.46+.
 
-### macOS (experimental)
+### macOS & Linux (experimental)
+
+macOS and Linux packages are experimental and not included in release downloads. If you want packages for other platforms, you can build them using the GitHub Actions **Package** workflow:
+
+1. Go to the [**Actions**](https://github.com/KChenSquared/GitHistoria/actions/workflows/package.yml) tab in the repository (or your fork).
+2. Select the **Package** workflow in the left sidebar.
+3. Click **Run workflow**, choose your branch or tag, and select the desired operating systems (`osx-arm64`, `osx-x64`, `linux-x64`) and package kinds (archives or installers).
+4. When the run finishes, download the package artifacts from the workflow summary.
+
+You can also package locally with `packaging/package.ps1` or build from source (see [Quick Start](#-quick-start)).
+
+#### Installing macOS packages
 - **Disk Image (`Historia-<version>-<rid>-experimental.dmg`):** Open the `.dmg` and drag `Historia.app` to `Applications`. Builds are ad-hoc signed, so clear the quarantine attribute before first launch:
   ```bash
   xattr -dr com.apple.quarantine /Applications/Historia.app
@@ -157,7 +168,7 @@ Download pre-built packages from [GitHub Releases](https://github.com/KChenSquar
   ```
 - **Archive (`Historia-<version>-<rid>-experimental.tar.gz`):** Extract and run. Requires [.NET 10 Runtime](https://dotnet.microsoft.com/download) and Git 2.46+.
 
-### Linux (experimental)
+#### Installing Linux packages
 - **Debian / Ubuntu Package (`historia_<debver>_amd64-experimental.deb`):** Install via `apt`:
   ```bash
   sudo apt install ./historia_<debver>_amd64-experimental.deb
