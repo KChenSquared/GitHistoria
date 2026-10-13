@@ -26,13 +26,12 @@ internal static class BranchMenu
     /// <summary>Max characters of a branch/tag name shown in a context-menu item before it's
     /// ellipsis-trimmed — long names otherwise force the right-click popup
     /// wider than the screen.</summary>
-    internal const int MenuNameMaxChars = 25;
+    internal const int MenuNameMaxChars = RefMenuItemViewModel.NameMaxChars;
 
     /// <summary>Ellipsis-trims a branch/tag name to <see cref="MenuNameMaxChars"/> for display in
     /// a menu item — e.g. "Checkout origin/feature/very-long-name as a new branch" — without
     /// affecting the untrimmed name callers still use for the actual git operation.</summary>
-    internal static string TruncateBranchLabelForMenu(string name) =>
-        name.Length <= MenuNameMaxChars ? name : name[..(MenuNameMaxChars - 1)] + "…";
+    internal static string TruncateBranchLabelForMenu(string name) => RefMenuItemViewModel.TrimName(name);
 
     /// <summary>Builds the per-remote submenus for a branch label pill. This is the single
     /// place to add per-remote items to the pill menu.</summary>

@@ -178,17 +178,32 @@ public sealed class RefBranchRowViewModel : RefLeafRowViewModel
     public bool IsRemote { get; }
 }
 
-/// <summary>A tag with a delete button.</summary>
+/// <summary>A tag with a delete button and a context menu that pushes it to each remote.</summary>
 public sealed class RefTagRowViewModel : RefLeafRowViewModel
 {
-    internal RefTagRowViewModel(RefNavigatorViewModel host, TagInfo tag, Action press)
+    internal RefTagRowViewModel(RefNavigatorViewModel host, TagInfo tag, IReadOnlyList<string> remotes, Action press)
         : base(host, tag.Name, 0, RefRowTone.Normal, press)
     {
         Tag = tag;
+        var name = RefMenuItemViewModel.TrimName(tag.Name);
+        var items = remotes
+            .Select(remote => new RefMenuItemViewModel($"Push {name} to {remote}", host.PushTagCommand, new RefTagPushTarget(tag, remote)))
+            .ToList();
+        if (items.Count > 0)
+            items.Add(RefMenuItemViewModel.Separator);
+        items.Add(new RefMenuItemViewModel($"Delete tag {name}", host.DeleteTagCommand, this));
+        MenuItems = items;
     }
 
     public TagInfo Tag { get; }
+
+    /// <summary>The context menu: one unforced push per remote, offered whether or not the remote
+    /// already has the tag, then Delete.</summary>
+    public IReadOnlyList<RefMenuItemViewModel> MenuItems { get; }
 }
+
+/// <summary>A tag and the remote a context menu item pushes it to.</summary>
+public sealed record RefTagPushTarget(TagInfo Tag, string Remote);
 
 /// <summary>A stash entry with an Apply, Apply and drop, New branch and Drop menu.</summary>
 public sealed class RefStashRowViewModel : RefLeafRowViewModel

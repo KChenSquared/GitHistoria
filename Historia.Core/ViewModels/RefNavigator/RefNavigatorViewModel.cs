@@ -537,6 +537,7 @@ public sealed partial class RefNavigatorViewModel : ViewModelBase
     {
         var rows = new List<RefRowViewModel>();
         var tags = repo.State.Tags.OrderByDescending(t => t.Name).ToList();
+        var remotes = repo.State.Remotes.Select(r => r.Name).ToList();
 
         if (section.HasActiveFilter)
         {
@@ -550,7 +551,7 @@ public sealed partial class RefNavigatorViewModel : ViewModelBase
                 foreach (var item in ranked)
                 {
                     var tag = item.Item;
-                    rows.Add(new RefTagRowViewModel(this, tag, () => SelectCommit(tag.TargetCommitId)));
+                    rows.Add(new RefTagRowViewModel(this, tag, remotes, () => SelectCommit(tag.TargetCommitId)));
                 }
             }
             rows.Add(new RefSeparatorRowViewModel(this));
@@ -559,7 +560,7 @@ public sealed partial class RefNavigatorViewModel : ViewModelBase
         if (tags.Count == 0)
             rows.Add(Message("No tags."));
         foreach (var tag in tags)
-            rows.Add(new RefTagRowViewModel(this, tag, () => SelectCommit(tag.TargetCommitId)));
+            rows.Add(new RefTagRowViewModel(this, tag, remotes, () => SelectCommit(tag.TargetCommitId)));
         return rows;
     }
 
@@ -752,6 +753,16 @@ public sealed partial class RefNavigatorViewModel : ViewModelBase
         {
             _notifications.Publish(NotificationSeverity.Error, ex.NotificationMessage("Add remote"), ex.NotificationDetails());
         }
+    }
+
+    /// <summary>Pushes one local tag to one remote; the network runner reports the outcome.</summary>
+    [RelayCommand]
+    private void PushTag(RefTagPushTarget target)
+    {
+        if (_repo is not { } repo)
+            return;
+        _actions.RequestNetworkAction(new RepoNetworkRequest(
+            RepoNetworkAction.PushTag, target.Remote, null, Repo: repo, Tag: target.Tag.Name));
     }
 
     /// <summary>Deletes a local tag after confirming.</summary>

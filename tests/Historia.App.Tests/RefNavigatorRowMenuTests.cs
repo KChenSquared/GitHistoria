@@ -2,8 +2,9 @@ namespace HistoriaApp.Tests;
 
 /// <summary>
 /// The buttons and menus on ref navigator rows are bound to the navigator's commands with the row as
-/// the parameter: a tag's delete button, a stash's, submodule's and worktree's menus, a branch row's
-/// context menu and its double-click, and the filter box taking focus when it opens.
+/// the parameter: a tag's delete button and context menu, a stash's, submodule's and worktree's
+/// menus, a branch row's context menu and its double-click, and the filter box taking focus when it
+/// opens.
 /// </summary>
 [Trait("tier", "ui")]
 public sealed class RefNavigatorRowMenuTests
@@ -127,6 +128,57 @@ public sealed class RefNavigatorRowMenuTests
 
         Assert.Contains("v1", Assert.Single(dialogs.DestructiveEffects));
         Assert.Contains("v1", host.Git("tag", "--list"));
+    }
+
+    [AvaloniaFact]
+    public void A_tag_rows_context_menu_pushes_it_to_each_remote_then_offers_delete()
+    {
+        using var host = new RefNavigatorTestHost(configureRepo: git =>
+        {
+            git(["tag", "v1"]);
+            git(["remote", "add", "upstream", "https://example.com/upstream.git"]);
+        });
+        host.ExpandAllSections();
+        var requests = new List<RepoNetworkRequest>();
+        host.Services.GetRequiredService<IRepoActionBus>().NetworkActionRequested += (_, r) => requests.Add(r);
+
+        var row = RowWith(host.SectionLists()[2], r => r is RefTagRowViewModel);
+        var tagRow = (RefTagRowViewModel)row.DataContext!;
+        var menu = Assert.IsType<ContextMenu>(row.ContextMenu);
+        menu.Open(row);
+        Dispatcher.UIThread.RunJobs();
+        var items = Snapshot(menu.GetRealizedContainers().OfType<MenuItem>());
+        menu.Close();
+
+        Assert.Equal(["Push v1 to origin", "Push v1 to upstream", "-", "Delete tag v1"], items.Select(i => i.Header));
+        var vm = host.View.ViewModel;
+        Assert.Same(vm.PushTagCommand, items[0].Command);
+        Assert.Same(vm.DeleteTagCommand, items[3].Command);
+        Assert.Same(tagRow, items[3].Parameter);
+
+        items[1].Command!.Execute(items[1].Parameter);
+
+        var request = Assert.Single(requests);
+        Assert.Equal(RepoNetworkAction.PushTag, request.Action);
+        Assert.Equal("upstream", request.Remote);
+        Assert.Equal("v1", request.Tag);
+        Assert.Same(host.Context, request.Repo);
+    }
+
+    [AvaloniaFact]
+    public void A_tag_rows_context_menu_without_remotes_offers_only_delete()
+    {
+        using var host = new RefNavigatorTestHost(configureRepo: git =>
+        {
+            git(["tag", "v1"]);
+            git(["remote", "remove", "origin"]);
+        });
+        host.ExpandAllSections();
+
+        var row = RowWith(host.SectionLists()[2], r => r is RefTagRowViewModel);
+        var tagRow = (RefTagRowViewModel)row.DataContext!;
+
+        Assert.Equal(["Delete tag v1"], tagRow.MenuItems.Select(i => i.Header));
     }
 
     [AvaloniaFact]

@@ -551,11 +551,6 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                 AppLog.Write(AppLogLevel.Info, "declined", $"{op}: switch to Local config declined: {ex.Message}", ex);
             }
         }
-        catch (HistoriaGitException ex) when (op == RepoNetworkAction.PushTag)
-        {
-            _notifications.Publish(NotificationSeverity.Error, TagPushFailure(remote, request.Tag!, ex), ex.Details,
-                StaleLockPrompt.ActionsFor(repo, ex, _dialogs, _notifications));
-        }
         catch (HistoriaGitException ex) when (ex.Kind == GitErrorKind.UncommittedChanges && op == RepoNetworkAction.Pull && branch is not null)
         {
             var pullTarget = request.RemoteBranch ?? branch;
@@ -624,6 +619,11 @@ public sealed class RepoNetworkActionRunner : IRepoNetworkActionRunner
                     return Task.CompletedTask;
                 }),
             ]);
+        }
+        catch (HistoriaGitException ex) when (op == RepoNetworkAction.PushTag)
+        {
+            _notifications.Publish(NotificationSeverity.Error, TagPushFailure(remote, request.Tag!, ex), ex.Details,
+                StaleLockPrompt.ActionsFor(repo, ex, _dialogs, _notifications));
         }
         catch (Exception ex)
         {

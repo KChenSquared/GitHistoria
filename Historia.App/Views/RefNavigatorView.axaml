@@ -196,7 +196,7 @@
                                         </Border>
                                     </DataTemplate>
 
-                                    <!-- A tag, with a delete button. -->
+                                    <!-- A tag, with a delete button and a context menu that pushes it to each remote. -->
                                     <DataTemplate DataType="vm:RefTagRowViewModel" x:DataType="vm:RefTagRowViewModel">
                                         <Border Classes="ref-row"
                                                 Height="24"
@@ -205,6 +205,17 @@
                                                 Padding="0,0,4,0"
                                                 ToolTip.Tip="{Binding Tooltip}"
                                                 PointerPressed="OnLeafPressed">
+                                            <Border.ContextMenu>
+                                                <ContextMenu ItemsSource="{Binding MenuItems}">
+                                                    <ContextMenu.Styles>
+                                                        <Style Selector="MenuItem" x:DataType="vm:RefMenuItemViewModel">
+                                                            <Setter Property="Header" Value="{Binding Header}" />
+                                                            <Setter Property="Command" Value="{Binding Command}" />
+                                                            <Setter Property="CommandParameter" Value="{Binding CommandParameter}" />
+                                                        </Style>
+                                                    </ContextMenu.Styles>
+                                                </ContextMenu>
+                                            </Border.ContextMenu>
                                             <Grid ColumnDefinitions="Auto,Auto,*,Auto" Height="24">
                                                 <Border Width="{Binding Indent}" />
                                                 <Ellipse Grid.Column="1" Classes="dot" Classes.current="{Binding IsCurrent}" Width="7" Height="7" Margin="0,0,4,0" VerticalAlignment="Center" />
