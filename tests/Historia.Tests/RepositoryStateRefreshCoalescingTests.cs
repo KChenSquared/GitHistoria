@@ -2,7 +2,7 @@ namespace Historia.Tests;
 
 /// <summary>
 /// Single-flight coalescing and incremental ref publishing.
-/// Ensures concurrent calls run the gateway once, mid-flight callers get a trailing run,
+/// Ensures mid-flight callers share one trailing run, a change made while a run reads is not lost,
 /// faults are not cached, joiner cancellation does not cancel shared runs, and branches
 /// publish before tags finish.
 /// </summary>
@@ -38,7 +38,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
     };
 
     [Fact(Timeout = 10000)]
-    public async Task Concurrent_refresh_refs_calls_run_the_gateway_once()
+    public async Task Callers_arriving_mid_flight_share_one_trailing_refresh()
     {
         var gateway = new FakeGitGateway();
         var branchesEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -57,14 +57,56 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         var task1 = state.RefreshRefsAsync();
         await branchesEntered.Task;
 
-        // Call 2 arrives while task1 is in-flight before data is read:
+        // Calls 2 and 3 arrive while task1 is still reading:
         var task2 = state.RefreshRefsAsync();
+        var task3 = state.RefreshRefsAsync();
 
         branchesProceed.TrySetResult();
-        await Task.WhenAll(task1, task2);
+        await Task.WhenAll(task1, task2, task3);
 
-        Assert.Equal(1, gateway.BranchesCalls);
-        Assert.Equal(1, gateway.TagsCalls);
+        Assert.Equal(2, gateway.BranchesCalls);
+        Assert.Equal(2, gateway.TagsCalls);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_change_made_while_a_status_read_runs_is_not_lost()
+    {
+        var modified = Historia.Models.RepositoryStatus.Empty with
+        {
+            Unstaged = [new FileStatusEntry { Path = "f.txt", Kind = FileChangeKind.Modified, IsBinary = false, IsSubmodule = false }],
+            IsDirty = true,
+        };
+        var gateway = new FakeGitGateway();
+        var firstRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstProceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var onDisk = Historia.Models.RepositoryStatus.Empty;
+        gateway.OnGetStatus = async ct =>
+        {
+            // The working tree is read when git starts; the edit below lands after that.
+            var seen = onDisk;
+            if (gateway.StatusCalls == 1)
+            {
+                firstRead.TrySetResult();
+                await firstProceed.Task.WaitAsync(ct);
+            }
+            return seen;
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        var first = state.RefreshStatusAsync();
+        await firstRead.Task;
+
+        // A file is saved and the watcher asks for a refresh while the first read still runs.
+        onDisk = modified;
+        var second = state.RefreshStatusAsync();
+
+        firstProceed.TrySetResult();
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(2, gateway.StatusCalls);
+        Assert.Equal("f.txt", Assert.Single(state.Status.Unstaged).Path);
     }
 
     [Fact(Timeout = 10000)]
@@ -234,16 +276,20 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         var ctx = _host.Open(_repo.Path);
         var state = new RepositoryStateService(ctx, gateway: gateway);
 
+        var running = state.RefreshRefsAsync();
+        await entered.Task;
+
+        // Both wait on the trailing refresh; the leaver giving up must not cancel it.
         using var cts = new CancellationTokenSource();
         var leaver = state.RefreshRefsAsync(cts.Token);
-        await entered.Task;
         var stayer = state.RefreshRefsAsync();
         cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => leaver);
 
         proceed.TrySetResult();
-        await stayer;
+        await Task.WhenAll(running, stayer);
         Assert.False(cancelled);
+        Assert.Equal(2, gateway.BranchesCalls);
         Assert.Single(state.Branches);
     }
 

@@ -256,12 +256,11 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public Task RefreshStatusAsync(CancellationToken ct = default)
         => _statusCoalescer.RunAsync(DoRefreshStatusAsync, ct);
 
-    private async Task DoRefreshStatusAsync(Action markDataRead, CancellationToken ct)
+    private async Task DoRefreshStatusAsync(CancellationToken ct)
     {
         using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshStatusAsync({_context.DisplayName})");
         var status = await _gateway.GetStatusAsync(ct).ConfigureAwait(false);
         var info = await _gateway.GetRepositoryInfoAsync(ct).ConfigureAwait(false);
-        markDataRead();
         var operation = DetectOperationState(_context.GitDirectory);
 
         bool operationChanged;
@@ -360,15 +359,13 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public Task RefreshRefsAsync(CancellationToken ct = default)
         => _refsCoalescer.RunAsync(DoRefreshRefsAsync, ct);
 
-    private async Task DoRefreshRefsAsync(Action markDataRead, CancellationToken ct)
+    private async Task DoRefreshRefsAsync(CancellationToken ct)
     {
         using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshRefsAsync({_context.DisplayName})");
         var stamp = RefStateToken.StashStamp(_context.GitDirectory);
         var branches = await _gateway.GetBranchesAsync(ct).ConfigureAwait(false);
         var remotes = await _gateway.GetRemotesAsync(ct).ConfigureAwait(false);
         var info = await _gateway.GetRepositoryInfoAsync(ct).ConfigureAwait(false);
-
-        markDataRead();
 
         bool branchesOrRemotesChanged;
         bool stashChanged;
@@ -496,8 +493,9 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     }
 
     /// <summary>
-    /// One refresh at a time per kind. A caller arriving before the running refresh has read its
-    /// data joins it; one arriving after queues a single trailing run. A run's work gets a token
+    /// One refresh at a time per kind. A caller arriving while a refresh runs never joins it: that
+    /// run may have read the working tree before the caller's change landed, so the caller waits
+    /// for a single trailing run that every such caller shares. A run's work gets a token
     /// that cancels when the tab closes or when every caller waiting on that run has given up
     /// (their tokens cancelled) — a tab the user switched away from stops paying for a refresh
     /// nobody is waiting for. A caller with a non-cancellable token keeps its run alive.
@@ -512,11 +510,10 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         {
             public readonly TaskCompletionSource Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public readonly CancellationTokenSource Abandoned = new();
-            public int Waiters;      // guarded by the coalescer's _gate
-            public bool HasReadData; // guarded by the coalescer's _gate
+            public int Waiters; // guarded by the coalescer's _gate
         }
 
-        public Task RunAsync(Func<Action, CancellationToken, Task> work, CancellationToken ct)
+        public Task RunAsync(Func<CancellationToken, Task> work, CancellationToken ct)
         {
             // A caller that already gave up never starts (or joins) work.
             if (ct.IsCancellationRequested)
@@ -530,10 +527,6 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                 {
                     _current = run = new Run();
                     start = true;
-                }
-                else if (!_current.HasReadData && !_current.Abandoned.IsCancellationRequested)
-                {
-                    run = _current;
                 }
                 else
                 {
@@ -572,7 +565,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             }
         }
 
-        private async Task PumpAsync(Func<Action, CancellationToken, Task> work)
+        private async Task PumpAsync(Func<CancellationToken, Task> work)
         {
             while (true)
             {
@@ -599,7 +592,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             }
         }
 
-        private async Task<(bool Canceled, Exception? Fault)> ExecuteAsync(Run run, Func<Action, CancellationToken, Task> work)
+        private async Task<(bool Canceled, Exception? Fault)> ExecuteAsync(Run run, Func<CancellationToken, Task> work)
         {
             CancellationTokenSource? linked = null;
             try
@@ -608,7 +601,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                 if (run.Abandoned.IsCancellationRequested || tabLifetime.IsCancellationRequested)
                     return (true, null);
                 linked = CancellationTokenSource.CreateLinkedTokenSource(tabLifetime, run.Abandoned.Token);
-                await work(() => { lock (_gate) run.HasReadData = true; }, linked.Token).ConfigureAwait(false);
+                await work(linked.Token).ConfigureAwait(false);
                 return (false, null);
             }
             catch (OperationCanceledException)
