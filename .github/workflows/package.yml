@@ -51,7 +51,7 @@ jobs:
         id: build-plan
         shell: pwsh
         run: |
-          $isTag = '${{ github.ref_type }}' -eq 'tag' -and '${{ github.event_name }}' -eq 'push'
+          $isTag = '${{ github.ref_type }}' -eq 'tag'
           $archives = if ($isTag) { 'true' } else { '${{ inputs.archives }}' }
           $installers = if ($isTag) { 'true' } else { '${{ inputs.installers }}' }
 
