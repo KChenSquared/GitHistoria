@@ -2,7 +2,8 @@ namespace Historia.Tests;
 
 /// <summary>
 /// Single-flight coalescing and incremental ref publishing.
-/// Ensures concurrent calls run the gateway once, mid-flight callers get a trailing run,
+/// Ensures concurrent calls run the gateway once, mid-flight callers get a trailing run once data
+/// was read or a change was observed,
 /// faults are not cached, joiner cancellation does not cancel shared runs, and branches
 /// publish before tags finish.
 /// </summary>
@@ -20,6 +21,13 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         await _host.DisposeAsync();
         _repo.Dispose();
     }
+
+    // A fixed change count unless a test moves it: the tab's own count depends on its watcher,
+    // which a busy test host can push into degraded mode.
+    private long _generation;
+
+    private RepositoryStateService NewState(RepositoryContext ctx, FakeGitGateway gateway)
+        => new(ctx, gateway: gateway, changeGeneration: () => Interlocked.Read(ref _generation));
 
     private static BranchInfo MakeBranch(string name, bool isCurrent = true) => new()
     {
@@ -52,7 +60,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         var task1 = state.RefreshRefsAsync();
         await branchesEntered.Task;
@@ -68,7 +76,82 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
     }
 
     [Fact(Timeout = 10000)]
-    public async Task Caller_arriving_mid_flight_gets_a_trailing_refresh()
+    public async Task A_change_observed_while_a_status_read_runs_gets_a_trailing_refresh()
+    {
+        var modified = Historia.Models.RepositoryStatus.Empty with
+        {
+            Unstaged = [new FileStatusEntry { Path = "f.txt", Kind = FileChangeKind.Modified, IsBinary = false, IsSubmodule = false }],
+            IsDirty = true,
+        };
+        var gateway = new FakeGitGateway();
+        var firstRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstProceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var onDisk = Historia.Models.RepositoryStatus.Empty;
+        gateway.OnGetStatus = async ct =>
+        {
+            // The working tree is read when git starts; the edit below lands after that.
+            var seen = onDisk;
+            if (gateway.StatusCalls == 1)
+            {
+                firstRead.TrySetResult();
+                await firstProceed.Task.WaitAsync(ct);
+            }
+            return seen;
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = NewState(ctx, gateway);
+
+        var first = state.RefreshStatusAsync();
+        await firstRead.Task;
+
+        // A file is saved while the first read still runs; the watcher sees it and asks twice.
+        onDisk = modified;
+        Interlocked.Increment(ref _generation);
+        var second = state.RefreshStatusAsync();
+        var third = state.RefreshStatusAsync();
+
+        firstProceed.TrySetResult();
+        await Task.WhenAll(first, second, third);
+
+        Assert.Equal(2, gateway.StatusCalls);
+        Assert.Equal("f.txt", Assert.Single(state.Status.Unstaged).Path);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task No_running_refresh_is_joined_while_changes_go_unobserved()
+    {
+        var gateway = new FakeGitGateway();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.OnGetStatus = async ct =>
+        {
+            if (gateway.StatusCalls == 1)
+            {
+                entered.TrySetResult();
+                await proceed.Task.WaitAsync(ct);
+            }
+            return Historia.Models.RepositoryStatus.Empty;
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        // A degraded watcher reports no count: a working-tree edit may have gone unseen.
+        var state = new RepositoryStateService(ctx, gateway: gateway, changeGeneration: () => null);
+
+        var first = state.RefreshStatusAsync();
+        await entered.Task;
+        var second = state.RefreshStatusAsync();
+
+        proceed.TrySetResult();
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(2, gateway.StatusCalls);
+    }
+
+    [Theory(Timeout = 10000)]
+    [InlineData(true, 2)]
+    [InlineData(false, 1)]
+    public async Task Caller_arriving_after_data_was_read_gets_a_trailing_refresh_only_after_a_change(bool changed, int runs)
     {
         var gateway = new FakeGitGateway();
         var tagsEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -82,20 +165,22 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         var task1 = state.RefreshRefsAsync();
         await tagsEntered.Task;
 
-        // Call 2 arrives mid-flight AFTER data was read:
+        // Call 2 arrives mid-flight AFTER data was read, with or without a change seen since:
+        if (changed)
+            Interlocked.Increment(ref _generation);
         var task2 = state.RefreshRefsAsync();
 
         tagsProceed.TrySetResult();
         await task1;
         await task2;
 
-        Assert.Equal(2, gateway.BranchesCalls);
-        Assert.Equal(2, gateway.TagsCalls);
+        Assert.Equal(runs, gateway.BranchesCalls);
+        Assert.Equal(runs, gateway.TagsCalls);
     }
 
     [Fact(Timeout = 10000)]
@@ -111,7 +196,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         // First call fails:
         await Assert.ThrowsAsync<InvalidOperationException>(() => state.RefreshRefsAsync());
@@ -139,7 +224,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         var task1 = state.RefreshRefsAsync(CancellationToken.None);
         await branchesEntered.Task;
@@ -174,7 +259,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         using var cts = new CancellationTokenSource();
         var only = state.RefreshRefsAsync(cts.Token);
@@ -205,7 +290,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         using var cts = new CancellationTokenSource();
         var only = state.RefreshStatusAsync(cts.Token);
@@ -232,7 +317,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         using var cts = new CancellationTokenSource();
         var leaver = state.RefreshRefsAsync(cts.Token);
@@ -252,7 +337,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
     {
         var gateway = new FakeGitGateway();
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => state.RefreshRefsAsync(new CancellationToken(canceled: true)));
@@ -282,7 +367,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         RefsChangedEventArgs? eventBeforeTagsRead = null;
         state.RefsChanged += (_, e) =>
@@ -326,7 +411,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         using var joinerCts = new CancellationTokenSource();
         var task = state.RefreshRefsAsync(joinerCts.Token);
@@ -384,7 +469,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         GC.WaitForPendingFinalizers();
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         var refreshTask = state.RefreshStatusAsync(ctx.Lifetime);
         await statusEntered.Task;

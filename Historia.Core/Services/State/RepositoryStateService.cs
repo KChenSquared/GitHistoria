@@ -50,12 +50,14 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         RepositoryContext context,
         IUiDispatcher? ui = null,
         IRepoStateCache? repoCache = null,
-        IGitGateway? gateway = null)
+        IGitGateway? gateway = null,
+        Func<long?>? changeGeneration = null)
     {
         _context = context;
         _gateway = gateway ?? context.Gateway;
-        _refsCoalescer = new(() => _context.Lifetime);
-        _statusCoalescer = new(() => _context.Lifetime);
+        changeGeneration ??= () => _context.ChangeGeneration;
+        _refsCoalescer = new(() => _context.Lifetime, changeGeneration);
+        _statusCoalescer = new(() => _context.Lifetime, changeGeneration);
         _ui = ui;
         _repoCache = repoCache;
         _stashStamp = RefStateToken.StashStamp(context.GitDirectory);
@@ -256,12 +258,11 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public Task RefreshStatusAsync(CancellationToken ct = default)
         => _statusCoalescer.RunAsync(DoRefreshStatusAsync, ct);
 
-    private async Task DoRefreshStatusAsync(Action markDataRead, CancellationToken ct)
+    private async Task DoRefreshStatusAsync(CancellationToken ct)
     {
         using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshStatusAsync({_context.DisplayName})");
         var status = await _gateway.GetStatusAsync(ct).ConfigureAwait(false);
         var info = await _gateway.GetRepositoryInfoAsync(ct).ConfigureAwait(false);
-        markDataRead();
         var operation = DetectOperationState(_context.GitDirectory);
 
         bool operationChanged;
@@ -360,15 +361,13 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     public Task RefreshRefsAsync(CancellationToken ct = default)
         => _refsCoalescer.RunAsync(DoRefreshRefsAsync, ct);
 
-    private async Task DoRefreshRefsAsync(Action markDataRead, CancellationToken ct)
+    private async Task DoRefreshRefsAsync(CancellationToken ct)
     {
         using var _perf = Historia.Diagnostics.PerfLog.Scope($"RepositoryStateService.RefreshRefsAsync({_context.DisplayName})");
         var stamp = RefStateToken.StashStamp(_context.GitDirectory);
         var branches = await _gateway.GetBranchesAsync(ct).ConfigureAwait(false);
         var remotes = await _gateway.GetRemotesAsync(ct).ConfigureAwait(false);
         var info = await _gateway.GetRepositoryInfoAsync(ct).ConfigureAwait(false);
-
-        markDataRead();
 
         bool branchesOrRemotesChanged;
         bool stashChanged;
@@ -496,13 +495,15 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     }
 
     /// <summary>
-    /// One refresh at a time per kind. A caller arriving before the running refresh has read its
-    /// data joins it; one arriving after queues a single trailing run. A run's work gets a token
+    /// One refresh at a time per kind. A caller arriving while a refresh runs joins it only when no
+    /// change was observed since that run started (<see cref="RepositoryContext.ChangeGeneration"/>):
+    /// otherwise the run may have read the working tree before the change landed, so the caller
+    /// waits for a single trailing run that every such caller shares. A run's work gets a token
     /// that cancels when the tab closes or when every caller waiting on that run has given up
     /// (their tokens cancelled) — a tab the user switched away from stops paying for a refresh
     /// nobody is waiting for. A caller with a non-cancellable token keeps its run alive.
     /// </summary>
-    private sealed class SingleFlightCoalescer(Func<CancellationToken> lifetime)
+    private sealed class SingleFlightCoalescer(Func<CancellationToken> lifetime, Func<long?> changeGeneration)
     {
         private readonly object _gate = new();
         private Run? _current;  // running
@@ -512,11 +513,11 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         {
             public readonly TaskCompletionSource Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public readonly CancellationTokenSource Abandoned = new();
-            public int Waiters;      // guarded by the coalescer's _gate
-            public bool HasReadData; // guarded by the coalescer's _gate
+            public int Waiters;          // guarded by the coalescer's _gate
+            public long? StartGeneration; // guarded by the coalescer's _gate
         }
 
-        public Task RunAsync(Func<Action, CancellationToken, Task> work, CancellationToken ct)
+        public Task RunAsync(Func<CancellationToken, Task> work, CancellationToken ct)
         {
             // A caller that already gave up never starts (or joins) work.
             if (ct.IsCancellationRequested)
@@ -528,10 +529,11 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             {
                 if (_current is null)
                 {
-                    _current = run = new Run();
+                    _current = run = new Run { StartGeneration = changeGeneration() };
                     start = true;
                 }
-                else if (!_current.HasReadData && !_current.Abandoned.IsCancellationRequested)
+                else if (!_current.Abandoned.IsCancellationRequested
+                    && _current.StartGeneration is { } started && changeGeneration() == started)
                 {
                     run = _current;
                 }
@@ -572,7 +574,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             }
         }
 
-        private async Task PumpAsync(Func<Action, CancellationToken, Task> work)
+        private async Task PumpAsync(Func<CancellationToken, Task> work)
         {
             while (true)
             {
@@ -595,11 +597,12 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                     _trailing = null;
                     if (_current is null)
                         return;
+                    _current.StartGeneration = changeGeneration();
                 }
             }
         }
 
-        private async Task<(bool Canceled, Exception? Fault)> ExecuteAsync(Run run, Func<Action, CancellationToken, Task> work)
+        private async Task<(bool Canceled, Exception? Fault)> ExecuteAsync(Run run, Func<CancellationToken, Task> work)
         {
             CancellationTokenSource? linked = null;
             try
@@ -608,7 +611,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                 if (run.Abandoned.IsCancellationRequested || tabLifetime.IsCancellationRequested)
                     return (true, null);
                 linked = CancellationTokenSource.CreateLinkedTokenSource(tabLifetime, run.Abandoned.Token);
-                await work(() => { lock (_gate) run.HasReadData = true; }, linked.Token).ConfigureAwait(false);
+                await work(linked.Token).ConfigureAwait(false);
                 return (false, null);
             }
             catch (OperationCanceledException)

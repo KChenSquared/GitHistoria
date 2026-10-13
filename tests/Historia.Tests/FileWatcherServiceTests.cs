@@ -65,6 +65,79 @@ public sealed class FileWatcherServiceTests : IAsyncDisposable
         Assert.False(ctx.Watcher.IsLikelyIgnored("README.md"));
     }
 
+    [Theory]
+    [InlineData(".gitignore")]
+    [InlineData(".gitattributes")]
+    [InlineData(".github/workflows/ci.yml")]
+    public async Task An_edit_beside_the_git_directory_publishes_a_status_refresh(string relPath)
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        var fakeWs = new FakeWorkspace();
+        await using var watcher = new Historia.Services.Watching.FileWatcherService(ctx, ctx.State, _host.Settings, fakeWs);
+
+        var onRawEvent = typeof(Historia.Services.Watching.FileWatcherService)
+            .GetMethod("OnRawEvent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        onRawEvent.Invoke(watcher, [Path.Combine(_repo.Path, relPath.Replace('/', Path.DirectorySeparatorChar)), false]);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (fakeWs.RefreshCalls == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+
+        Assert.Equal(1, fakeWs.RefreshCalls);
+        Assert.False(fakeWs.LastFull);
+    }
+
+    // Read directly: the public count is null whenever the watcher is degraded, which a busy test
+    // host can cause.
+    private static long ObservedChanges(RepositoryContext ctx)
+        => (long)typeof(RepositoryContext)
+            .GetField("_changeGeneration", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(ctx)!;
+
+    [Fact]
+    public async Task A_working_tree_edit_and_the_end_of_an_operation_are_observed_changes()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        await using var watcher = new Historia.Services.Watching.FileWatcherService(ctx, ctx.State, _host.Settings, new FakeWorkspace());
+        var onRawEvent = typeof(Historia.Services.Watching.FileWatcherService)
+            .GetMethod("OnRawEvent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+
+        var before = ObservedChanges(ctx);
+        onRawEvent.Invoke(watcher, [Path.Combine(_repo.Path, "seed.txt"), false]);
+        Assert.True(ObservedChanges(ctx) > before);
+
+        before = ObservedChanges(ctx);
+        using (ctx.BeginSelfOperation())
+        {
+        }
+        Assert.True(ObservedChanges(ctx) > before);
+    }
+
+    [Fact]
+    public async Task Ignored_and_uninteresting_git_paths_are_not_observed_changes()
+    {
+        await using var ctx = _host.Open(_repo.Path);
+        await using var watcher = new Historia.Services.Watching.FileWatcherService(ctx, ctx.State, _host.Settings, new FakeWorkspace());
+        var onRawEvent = typeof(Historia.Services.Watching.FileWatcherService)
+            .GetMethod("OnRawEvent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+
+        var before = ObservedChanges(ctx);
+        onRawEvent.Invoke(watcher, [Path.Combine(_repo.Path, "node_modules", "x.js"), false]);
+        onRawEvent.Invoke(watcher, [Path.Combine(ctx.GitDirectory, "objects", "ab", "cdef"), false]);
+        Assert.Equal(before, ObservedChanges(ctx));
+    }
+
+    [Theory]
+    [InlineData("/r/.git", "/r/.git", true)]
+    [InlineData("/r/.git/index", "/r/.git", true)]
+    [InlineData(@"C:\r\.git\refs\heads\main", @"C:\r\.git", true)]
+    [InlineData("/r/.gitignore", "/r/.git", false)]
+    [InlineData(@"C:\r\.github\ci.yml", @"C:\r\.git", false)]
+    [InlineData("/r/src/a.cs", "/r/.git", false)]
+    [InlineData("/r/.git", "", false)]
+    public void IsSameOrUnder_matches_only_the_directory_and_its_contents(string path, string dir, bool expected)
+        => Assert.Equal(expected, Historia.Services.Watching.FileWatcherService.IsSameOrUnder(path, dir));
+
     [Fact]
     public async Task No_refresh_is_published_after_DisposeAsync()
     {
@@ -109,6 +182,7 @@ public sealed class FileWatcherServiceTests : IAsyncDisposable
     private sealed class FakeWorkspace : IWorkspaceService
     {
         public int RefreshCalls { get; private set; }
+        public bool LastFull { get; private set; }
         public IReadOnlyList<RepositoryContext> OpenRepositories => [];
         public RepositoryContext? Focused => null;
         public Task<RepositoryContext> OpenAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
@@ -120,6 +194,7 @@ public sealed class FileWatcherServiceTests : IAsyncDisposable
         public void EnsureInitialized(RepositoryContext context) { }
         public Task RequestBackgroundRefreshAsync(RepositoryContext context, bool full = false, CancellationToken ct = default)
         {
+            LastFull = full;
             RefreshCalls++;
             return Task.CompletedTask;
         }

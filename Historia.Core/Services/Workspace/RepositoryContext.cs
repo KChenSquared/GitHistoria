@@ -29,6 +29,7 @@ public sealed class RepositoryContext : IAsyncDisposable
     private readonly SemaphoreSlim _networkGate = new(1, 1);
     private NetworkOperationInfo? _networkOp;
     private int _selfOperationDepth;
+    private long _changeGeneration;
 
     // Signaled once the graph control's first paint for this context lands (success, failure,
     // or cancellation -- whichever comes first). WorkspaceService's InitializeContextAsync waits
@@ -326,6 +327,17 @@ public sealed class RepositoryContext : IAsyncDisposable
 
     public bool IsSelfOperationInProgress => Volatile.Read(ref _selfOperationDepth) > 0;
 
+    /// <summary>
+    /// Counts the changes this tab has observed: a watched working-tree or <c>.git</c> event, or
+    /// the end of one of Historia's own operations. A refresh that started at the current count
+    /// has seen every observed change. Null while the watcher is degraded and working-tree edits
+    /// go unobserved, so no running refresh can be trusted to include them.
+    /// </summary>
+    internal long? ChangeGeneration => Watcher is { IsDegraded: false } ? Volatile.Read(ref _changeGeneration) : null;
+
+    /// <summary>Records an observed change; see <see cref="ChangeGeneration"/>.</summary>
+    internal void NoteChange() => Interlocked.Increment(ref _changeGeneration);
+
     /// <summary>The fetch, pull, push, prune or lock cleanup running on this repository, or null.
     /// Lets a caller name what it is waiting on.</summary>
     public NetworkOperationInfo? CurrentNetworkOperation => Volatile.Read(ref _networkOp);
@@ -380,6 +392,7 @@ public sealed class RepositoryContext : IAsyncDisposable
     {
         public void Dispose()
         {
+            owner.NoteChange();
             if (Interlocked.Decrement(ref owner._selfOperationDepth) == 0)
                 _ = RefreshQuietlyAsync(owner);
         }

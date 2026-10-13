@@ -135,6 +135,7 @@ public sealed class FileWatcherService : IAsyncDisposable
             return;
 
         // Buffer overflow: discard pending state and force one full refresh — never ignored.
+        _context.NoteChange();
         lock (_sync)
         {
             if (_disposed)
@@ -157,7 +158,7 @@ public sealed class FileWatcherService : IAsyncDisposable
 
         var normalizedFullPath = NormalizePath(fullPath);
         var gitDir = NormalizePath(_context.GitDirectory);
-        var isUnderGit = isGitDir || (!string.IsNullOrEmpty(gitDir) && normalizedFullPath.StartsWith(gitDir, StringComparison.OrdinalIgnoreCase));
+        var isUnderGit = isGitDir || IsSameOrUnder(normalizedFullPath, gitDir);
 
         if (isUnderGit)
         {
@@ -171,6 +172,7 @@ public sealed class FileWatcherService : IAsyncDisposable
             if (!meaningful)
                 return;
 
+            _context.NoteChange();
             lock (_sync)
             {
                 _refsTouched = true;
@@ -189,11 +191,21 @@ public sealed class FileWatcherService : IAsyncDisposable
         if (IsLikelyIgnored(relPath))
             return;
 
+        _context.NoteChange();
         lock (_sync)
         {
             _pendingPaths.Add(relPath);
             ScheduleLocked();
         }
+    }
+
+    /// <summary>True when <paramref name="path"/> is <paramref name="dir"/> or inside it. A sibling
+    /// that merely shares the prefix (<c>.gitignore</c>, <c>.github/</c> beside <c>.git</c>) is not.</summary>
+    internal static bool IsSameOrUnder(string path, string dir)
+    {
+        if (string.IsNullOrEmpty(dir) || !path.StartsWith(dir, StringComparison.OrdinalIgnoreCase))
+            return false;
+        return path.Length == dir.Length || path[dir.Length] is '/' or '\\';
     }
 
     private void ScheduleLocked()
