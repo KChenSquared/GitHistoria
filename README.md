@@ -21,7 +21,8 @@ more sluggish. Once they hit that 100k+ commit mark, switching between repos and
 functions was a total headache. I was an early adopter of GitKraken, so I'd been
 grandfathered into their earlier pricing for a few years. But this year that price was going
 to double, and next year double again to $120/year, which felt like robbery when my
-experience with it was deteriorating.
+experience with it was deteriorating. 
+(Ironically it would end up costing $60 in AI subs to reach Historia's first release v0.10.0)
 
 Earlier this year, I'd started my agentic coding journey, and it quickly became
 apparent that keeping track of all the work happening in parallel would be crucial in the
