@@ -288,7 +288,7 @@
             </Grid>
         </Border>
 
-        <!-- Changes above Staged. A split drag past Staged's minimum borrows from the message box. -->
+        <!-- Changes above Staged. A split drag past Staged's minimum borrows from the message box and never gives it back. -->
         <ctl:SectionFrameHost x:Name="SplitHost" RepoId="{Binding RepoId}">
             <ctl:SectionFrameHost.TopHeader>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
