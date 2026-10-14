@@ -47,6 +47,7 @@ public sealed class ConflictToggleMargin : AbstractMargin
 
     internal int PoolMissesForTesting { get; private set; }
     internal int RenderCountForTesting { get; private set; }
+    internal IBrush? BoxBrushForTesting => _boxBrush;
     internal void ResetPoolCountersForTesting() => PoolMissesForTesting = 0;
 
     public ConflictToggleMargin(Func<int, ConflictToggleGlyph> getGlyph, Func<int, string?>? getTip = null)
@@ -60,6 +61,8 @@ public sealed class ConflictToggleMargin : AbstractMargin
     {
         base.OnAttachedToVisualTree(e);
         PaletteBrushes.Changed += OnPaletteChanged;
+        _boxBrush = null;
+        InvalidateVisual();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
