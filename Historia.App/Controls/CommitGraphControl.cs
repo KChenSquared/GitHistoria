@@ -116,6 +116,7 @@ public sealed partial class CommitGraphControl : Control
     private IRepositoryStateService? _state;
     private bool _refsRecomputeInFlight;
     private bool _refsPendingRecompute;
+    private bool _detachedSinceAttach;
     internal int RefsRecomputeCount => _refsRecomputeCount;
     private int _refsRecomputeCount;
     internal Task? ActiveRefsRecomputeTask { get; private set; }
@@ -129,6 +130,11 @@ public sealed partial class CommitGraphControl : Control
         get => _recomputeOverrideForTesting;
         set => _recomputeOverrideForTesting = value;
     }
+    internal GraphLayoutResult? LayoutForTesting => _layout;
+    internal bool ExtendPumpActiveForTesting => _extendChannel is not null;
+    internal int ResolveRowForTesting(GitObjectId id) => ResolveRow(id);
+    internal bool ShowAuthorDateForTesting => _showAuthorDate;
+    internal EffectiveTheme ThemeModeForTesting => _themeMode;
     private Func<RepositoryContext, Task>? _recomputeOverrideForTesting;
     private GraphLayoutResult? _layout;
     // The commit store behind _layout. A disk-backed store holds an open file handle that
@@ -700,6 +706,12 @@ public sealed partial class CommitGraphControl : Control
         var focused = _workspace.Focused;
         if (!ReferenceEquals(focused, _context))
         {
+            if (_detachedSinceAttach)
+            {
+                _detachedSinceAttach = false;
+                _themeMode = _theme.Effective;
+                RebuildThemeResources();
+            }
             Bind(focused);
         }
         else if (_state is not null)
@@ -711,10 +723,29 @@ public sealed partial class CommitGraphControl : Control
             _state.RevealCommitRequested -= OnRevealCommitRequested;
             _state.RevealCommitRequested += OnRevealCommitRequested;
 
-            // If the parked layout just died with its store handle (AddRef returned null above),
-            // walk it again for the still-focused repo; otherwise just repaint what we kept.
-            if (_layout is null && _context is { } stale)
-                _ = ComputeLayoutAsync(stale);
+            UpdateRemoteNumbering(_state.Remotes);
+
+            if (_settings is not null)
+                _showAuthorDate = _settings.Current.ShowAuthorDate;
+
+            SyncColumnsFromLayout();
+
+            if (_detachedSinceAttach)
+            {
+                _detachedSinceAttach = false;
+                _themeMode = _theme.Effective;
+                RebuildThemeResources();
+            }
+
+            if (_layout is null)
+            {
+                if (_context is { } stale)
+                    _ = ComputeLayoutAsync(stale);
+            }
+            else if (_context is { } ctx)
+            {
+                RequestRefsRecompute(ctx);
+            }
 
             InvalidateMeasure();
             InvalidateArrange();
@@ -794,6 +825,7 @@ public sealed partial class CommitGraphControl : Control
 
     private void Detach()
     {
+        _detachedSinceAttach = true;
         _firstPaintStartTimestamp = 0;
         _firstPaintKind = null;
         _firstPaintQueued = false;
@@ -865,17 +897,25 @@ public sealed partial class CommitGraphControl : Control
             if (!mine && !global)
                 return;
 
-            // Re-read the merged view (global order + visibility with this repo's session
-            // widths) rather than trusting e.Layout, whose widths are defaults for a global change.
-            var layout = _repoLayout.Get(_context.RepositoryPath);
-            if (ReferenceEquals(layout.Columns, _columns))
-                return;
-            _columns = layout.Columns;
-            _graphWidthPinned = layout.GraphWidthPinned;
-            InvalidateMeasure();
-            InvalidateArrange();
-            InvalidateVisual();
+            SyncColumnsFromLayout();
         });
+
+    private void SyncColumnsFromLayout()
+    {
+        if (_context is null || _repoLayout is null)
+            return;
+
+        // Re-read the merged view (global order + visibility with this repo's session
+        // widths) rather than trusting e.Layout, whose widths are defaults for a global change.
+        var layout = _repoLayout.Get(_context.RepositoryPath);
+        if (ReferenceEquals(layout.Columns, _columns))
+            return;
+        _columns = layout.Columns;
+        _graphWidthPinned = layout.GraphWidthPinned;
+        InvalidateMeasure();
+        InvalidateArrange();
+        InvalidateVisual();
+    }
 
     internal void OnRefsChanged(object? sender, RefsChangedEventArgs e)
     {
@@ -885,6 +925,11 @@ public sealed partial class CommitGraphControl : Control
         if (UpdateRemoteNumbering(e.Remotes))
             InvalidateVisual();
 
+        RequestRefsRecompute(ctx);
+    }
+
+    private void RequestRefsRecompute(RepositoryContext ctx)
+    {
         if (_refsRecomputeInFlight)
         {
             _refsPendingRecompute = true;
