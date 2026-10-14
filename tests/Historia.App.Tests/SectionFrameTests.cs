@@ -196,6 +196,119 @@ public class SectionFrameTests
     }
 
     [AvaloniaFact]
+    public void AttachRowResize_lender_is_never_given_room_back()
+    {
+        var topRow = new RowDefinition(new GridLength(443, GridUnitType.Pixel)) { MinHeight = SectionFrame.TopMinHeight };
+        var handleRow = new RowDefinition(new GridLength(SectionFrame.HandleHeight, GridUnitType.Pixel));
+        var starRow = new RowDefinition(new GridLength(1, GridUnitType.Star)) { MinHeight = SectionFrame.BottomMinHeight };
+
+        var grid = new Grid
+        {
+            Width = 400,
+            Height = 600,
+            RowDefinitions = { topRow, handleRow, starRow }
+        };
+
+        var handle = new Border
+        {
+            Height = SectionFrame.HandleHeight,
+            Background = Brushes.Transparent
+        };
+        Grid.SetRow(handle, 1);
+        grid.Children.Add(handle);
+
+        var applied = new List<double>();
+        (Func<(double Start, double Min)> Begin, Action<double> Apply) lender = (
+            () => (300, 96),
+            h => applied.Add(h));
+
+        double committedHeight = 0;
+        SectionFrame.AttachRowResize(handle, grid, topRow, h => committedHeight = h, lender);
+
+        var window = new Window { Width = 400, Height = 600, Content = grid };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var handleCenter = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, handleCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y + 100));
+        Dispatcher.UIThread.RunJobs();
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y));
+        Dispatcher.UIThread.RunJobs();
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(handleCenter.X, handleCenter.Y), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(new[] { 200.0 }, applied);
+        Assert.Equal(443, topRow.Height.Value);
+        Assert.Equal(443, committedHeight);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void AttachRowResize_lender_reversed_then_down_borrows_further()
+    {
+        var topRow = new RowDefinition(new GridLength(443, GridUnitType.Pixel)) { MinHeight = SectionFrame.TopMinHeight };
+        var handleRow = new RowDefinition(new GridLength(SectionFrame.HandleHeight, GridUnitType.Pixel));
+        var starRow = new RowDefinition(new GridLength(1, GridUnitType.Star)) { MinHeight = SectionFrame.BottomMinHeight };
+
+        var grid = new Grid
+        {
+            Width = 400,
+            Height = 600,
+            RowDefinitions = { topRow, handleRow, starRow }
+        };
+
+        var handle = new Border
+        {
+            Height = SectionFrame.HandleHeight,
+            Background = Brushes.Transparent
+        };
+        Grid.SetRow(handle, 1);
+        grid.Children.Add(handle);
+
+        var applied = new List<double>();
+        (Func<(double Start, double Min)> Begin, Action<double> Apply) lender = (
+            () => (300, 96),
+            h => applied.Add(h));
+
+        double committedHeight = 0;
+        SectionFrame.AttachRowResize(handle, grid, topRow, h => committedHeight = h, lender);
+
+        var window = new Window { Width = 400, Height = 600, Content = grid };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var handleCenter = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, handleCenter, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y + 100));
+        Dispatcher.UIThread.RunJobs();
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y - 50));
+        Dispatcher.UIThread.RunJobs();
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, new Point(handleCenter.X, handleCenter.Y + 150));
+        Dispatcher.UIThread.RunJobs();
+
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, new Point(handleCenter.X, handleCenter.Y + 150), MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(new[] { 200.0, 150.0 }, applied);
+        Assert.Equal(593, topRow.Height.Value);
+        Assert.Equal(593, committedHeight);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Apply_does_not_write_back_clamped_height()
     {
         const string repoId = "test-repo-split-clamp";

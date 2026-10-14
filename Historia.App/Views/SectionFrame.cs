@@ -161,8 +161,9 @@ internal static class SectionFrame
             {
                 if (lender is { } l)
                 {
-                    var (top, lenderHeight) = SplitWithLender(startHeight + delta, startAvailable, lenderStart, lenderMin);
-                    // The lender is only told about heights it actually gives up or takes back.
+                    var lent = lenderStart - lenderApplied;
+                    var (top, lenderHeight) = SplitWithLender(startHeight + delta, startAvailable + lent, lenderApplied, lenderMin);
+                    // The lender only ever gives room up during a drag.
                     if (lenderHeight != lenderApplied)
                     {
                         l.Apply(lenderHeight);

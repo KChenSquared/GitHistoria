@@ -5,7 +5,8 @@ namespace Historia.Views;
 /// resizable sections, with a checkbox column on each and a green ⬇ Stage / red ⬆ Unstage
 /// arrow pair in the Staged header acting on the checked rows; both the Staged section's
 /// top border and the rule under the Staged header resize the split. A downward split drag
-/// past Staged's minimum shrinks the commit box down to its minimum. The commit-message strip
+/// past Staged's minimum shrinks the commit box down to its minimum; an upward split drag grows
+/// Staged and never grows the box; only the box's own top edge grows it. The commit-message strip
 /// docks to the bottom; its top edge resizes the message box only, bounded by the box
 /// minimum and the two lists' minimums. The markup is bound to a <see cref="StagingPanelViewModel"/>;
 /// the code here is the drag and size handling of the splits and the box, and the pointer
@@ -24,29 +25,17 @@ public sealed partial class StagingPanelView : UserControl, IDisposable
 
         MessageInput.Height = SectionFrame.GetBoxHeight(ctx.Id, MessageMinHeight);
 
-        // A split drag past Staged's minimum borrows from the commit box. Only a borrowed height
-        // becomes the remembered one; giving all of it back restores the height remembered before
-        // the drag, which a short window may have clamped the box below.
-        double lendStartHeight = 0;
-        double lendStartRemembered = 0;
-        SplitHost.Lender = new SectionLender(
-            Begin: () =>
-            {
-                lendStartHeight = MessageInput.Height;
-                lendStartRemembered = SectionFrame.GetBoxHeight(ctx.Id, MessageMinHeight);
-                return (MessageInput.Height, MessageMinHeight);
-            },
-            Apply: h =>
-            {
-                MessageInput.Height = h;
-                SectionFrame.SetBoxHeight(ctx.Id, h < lendStartHeight ? h : lendStartRemembered);
-            });
-
         Action<double> applyMessageHeight = h =>
         {
             MessageInput.Height = h;
             SectionFrame.SetBoxHeight(ctx.Id, h);
         };
+
+        // A split drag past Staged's minimum borrows from the commit box, never gives it back,
+        // and the borrowed height becomes the remembered one.
+        SplitHost.Lender = new SectionLender(
+            Begin: () => (MessageInput.Height, MessageMinHeight),
+            Apply: applyMessageHeight);
         SectionFrame.AttachBottomResize(
             MessageResizeHandle,
             LayoutRoot,
