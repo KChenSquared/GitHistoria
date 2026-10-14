@@ -141,10 +141,14 @@ public class SectionFrameTests
         window.Close();
     }
 
-    [AvaloniaFact]
-    public void Divider_drag_resizes_top_row()
+    /// <summary>A 400×600 window holding a top row, a drag handle row and a star row, with the
+    /// handle attached through <see cref="SectionFrame.AttachRowResize"/>.</summary>
+    private static (Window Window, RowDefinition TopRow, Point HandleCenter) CreateRowResizeHarness(
+        double topHeight,
+        Action<double> committed,
+        (Func<(double Start, double Min)> Begin, Action<double> Apply)? lender = null)
     {
-        var topRow = new RowDefinition(new GridLength(200, GridUnitType.Pixel)) { MinHeight = SectionFrame.TopMinHeight };
+        var topRow = new RowDefinition(new GridLength(topHeight, GridUnitType.Pixel)) { MinHeight = SectionFrame.TopMinHeight };
         var handleRow = new RowDefinition(new GridLength(SectionFrame.HandleHeight, GridUnitType.Pixel));
         var starRow = new RowDefinition(new GridLength(1, GridUnitType.Star)) { MinHeight = SectionFrame.BottomMinHeight };
 
@@ -163,19 +167,42 @@ public class SectionFrameTests
         Grid.SetRow(handle, 1);
         grid.Children.Add(handle);
 
-        double committedHeight = 0;
-        int committedCount = 0;
-        SectionFrame.AttachRowResize(handle, grid, topRow, h =>
-        {
-            committedHeight = h;
-            committedCount++;
-        });
+        SectionFrame.AttachRowResize(handle, grid, topRow, committed, lender);
 
         var window = new Window { Width = 400, Height = 600, Content = grid };
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
         var handleCenter = handle.TranslatePoint(new Point(handle.Bounds.Width / 2, handle.Bounds.Height / 2), window)!.Value;
+        return (window, topRow, handleCenter);
+    }
+
+    /// <summary>Presses at <paramref name="start"/>, moves to each offset below it in one gesture, then releases.</summary>
+    private static void DragRow(Window window, Point start, params double[] offsets)
+    {
+        Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, start, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        var end = start;
+        foreach (var offset in offsets)
+        {
+            end = new Point(start.X, start.Y + offset);
+            Avalonia.Headless.HeadlessWindowExtensions.MouseMove(window, end);
+            Dispatcher.UIThread.RunJobs();
+        }
+        Avalonia.Headless.HeadlessWindowExtensions.MouseUp(window, end, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    [AvaloniaFact]
+    public void Divider_drag_resizes_top_row()
+    {
+        double committedHeight = 0;
+        int committedCount = 0;
+        var (window, topRow, handleCenter) = CreateRowResizeHarness(200, h =>
+        {
+            committedHeight = h;
+            committedCount++;
+        });
 
         // Drag down by 50 px
         Avalonia.Headless.HeadlessWindowExtensions.MouseDown(window, handleCenter, MouseButton.Left);
@@ -191,6 +218,38 @@ public class SectionFrameTests
 
         Assert.Equal(250, committedHeight);
         Assert.Equal(1, committedCount);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void AttachRowResize_lender_is_never_given_room_back()
+    {
+        var applied = new List<double>();
+        double committedHeight = 0;
+        var (window, topRow, handleCenter) = CreateRowResizeHarness(443, h => committedHeight = h, (() => (300, 96), h => applied.Add(h)));
+
+        DragRow(window, handleCenter, 100, 0);
+
+        Assert.Equal(new[] { 200.0 }, applied);
+        Assert.Equal(443, topRow.Height.Value);
+        Assert.Equal(443, committedHeight);
+
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void AttachRowResize_lender_reversed_then_down_borrows_further()
+    {
+        var applied = new List<double>();
+        double committedHeight = 0;
+        var (window, topRow, handleCenter) = CreateRowResizeHarness(443, h => committedHeight = h, (() => (300, 96), h => applied.Add(h)));
+
+        DragRow(window, handleCenter, 100, -50, 150);
+
+        Assert.Equal(new[] { 200.0, 150.0 }, applied);
+        Assert.Equal(593, topRow.Height.Value);
+        Assert.Equal(593, committedHeight);
 
         window.Close();
     }

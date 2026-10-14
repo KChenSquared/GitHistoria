@@ -2,8 +2,8 @@ namespace Historia.Controls;
 
 /// <summary>
 /// Where a split drag past the lower section's minimum takes its room from. <c>Begin</c> returns the
-/// lender's current height and its minimum when a drag starts; <c>Apply</c> is told each height the
-/// lender gives up or takes back.
+/// lender's current height and its minimum when a drag starts; <c>Apply</c> is told each smaller height
+/// the lender gives up. A drag never gives the lender room back.
 /// </summary>
 public sealed record SectionLender(Func<(double Start, double Min)> Begin, Action<double> Apply);
 

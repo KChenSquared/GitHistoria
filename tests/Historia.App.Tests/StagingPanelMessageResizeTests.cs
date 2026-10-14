@@ -472,16 +472,73 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
         Assert.True(splitAreaBottom <= messageSectionTop + 1.01);
     }
 
+    private void AssertReversedSplitDragGrowsStagedNotBox(Func<StagingPanelView, Control> handleOf)
+    {
+        var (context, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        Drag(window, handleOf(view), 100, 0);
+
+        var splitArea = view.SplitHost;
+        var changesRow = splitArea.RowDefinitions[0];
+        var stagedSection = splitArea.Frame;
+
+        Assert.InRange(Math.Abs(view.MessageInput.Height - (h - 100)), 0, 1.01);
+        Assert.Equal(150, changesRow.Height.Value);
+        Assert.InRange(Math.Abs(stagedSection.Bounds.Height - 250), 0, 1.01);
+
+        view.Dispose();
+        _views.Remove(view);
+
+        var view2 = new StagingPanelView(_sp, context);
+        _views.Add(view2);
+        window.Content = view2;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.InRange(Math.Abs(view2.MessageInput.Height - (h - 100)), 0, 1.01);
+    }
+
     [AvaloniaFact]
-    public void Split_drag_reversed_in_one_gesture_restores_box()
+    public void Split_drag_reversed_in_one_gesture_grows_staged_not_box()
+    {
+        AssertReversedSplitDragGrowsStagedNotBox(v => v.SplitHost.SplitHandle);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_reversed_then_down_again_borrows_further()
     {
         var (_, view, window) = CreateView(width: 400, height: 900);
         var h = GrowMessageBoxToMax(view, window);
 
-        Drag(window, view.SplitHost.SplitHandle, 100, 0);
+        Drag(window, view.SplitHost.SplitHandle, 100, 0, 150);
 
-        Assert.Equal(h, view.MessageInput.Height);
-        Assert.Equal(150, view.SplitHost.RowDefinitions[0].Height.Value);
+        var splitArea = view.SplitHost;
+        var changesRow = splitArea.RowDefinitions[0];
+        var stagedSection = splitArea.Frame;
+
+        Assert.InRange(Math.Abs(view.MessageInput.Height - (h - 150)), 0, 1.01);
+        Assert.InRange(Math.Abs(changesRow.Height.Value - 300), 0, 1.01);
+        Assert.True(stagedSection.Bounds.Height >= 150);
+    }
+
+    [AvaloniaFact]
+    public void Staged_divider_drag_reversed_grows_staged_not_box()
+    {
+        AssertReversedSplitDragGrowsStagedNotBox(v => v.SplitHost.DividerHandle);
+    }
+
+    [AvaloniaFact]
+    public void Message_handle_regrows_box_after_split_borrow()
+    {
+        var (_, view, window) = CreateView(width: 400, height: 900);
+        var h = GrowMessageBoxToMax(view, window);
+
+        Drag(window, view.SplitHost.SplitHandle, 100);
+        Assert.InRange(Math.Abs(view.MessageInput.Height - (h - 100)), 0, 1.01);
+
+        Drag(window, view.MessageResizeHandle, -100);
+        Assert.InRange(Math.Abs(view.MessageInput.Height - h), 0, 1.01);
+        Assert.InRange(Math.Abs(view.SplitHost.Frame.Bounds.Height - 150), 0, 1.01);
     }
 
     [AvaloniaFact]
