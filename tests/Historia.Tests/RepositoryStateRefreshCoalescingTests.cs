@@ -3,7 +3,7 @@ namespace Historia.Tests;
 /// <summary>
 /// Single-flight coalescing and incremental ref publishing.
 /// Ensures callers arriving while a refresh executes share one trailing run, changes made while a read
-/// runs are not lost, faults are not cached, joiner cancellation does not cancel shared runs, and branches
+/// runs are not lost, the refresh after an operation joins only a run that started after it, faults are not cached, joiner cancellation does not cancel shared runs, and branches
 /// publish before tags finish.
 /// </summary>
 [Trait("tier", "git")]
@@ -60,7 +60,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         var taskA = state.RefreshStatusAsync();
         await entered.Task;
@@ -108,7 +108,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         var taskA = state.RefreshStatusAsync();
         await entered.Task;
@@ -142,7 +142,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         };
 
         var ctx = _host.Open(_repo.Path);
-        var state = new RepositoryStateService(ctx, gateway: gateway);
+        var state = NewState(ctx, gateway);
 
         var taskA = state.RefreshRefsAsync();
         await entered.Task;
@@ -255,45 +255,75 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         Assert.Equal(2, gateway.TagsCalls);
     }
 
-    [Fact(Timeout = 10000)]
-    public async Task A_change_made_while_a_status_read_runs_is_not_lost()
+    // Ends one of Historia's own operations on the tab and returns the count it ended at.
+    private static long EndOperation(RepositoryContext ctx)
     {
-        var modified = Historia.Models.RepositoryStatus.Empty with
-        {
-            Unstaged = [new FileStatusEntry { Path = "f.txt", Kind = FileChangeKind.Modified, IsBinary = false, IsSubmodule = false }],
-            IsDirty = true,
-        };
+        ctx.BeginSelfOperation().Dispose();
+        return ctx.CompletedOperations;
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task The_refresh_after_an_operation_joins_a_run_started_after_the_operation_ended()
+    {
         var gateway = new FakeGitGateway();
-        var firstRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var firstProceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var onDisk = Historia.Models.RepositoryStatus.Empty;
-        gateway.OnGetStatus = async ct =>
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.OnGetBranches = async ct =>
         {
-            // The working tree is read when git starts; the edit below lands after that.
-            var seen = onDisk;
-            if (gateway.StatusCalls == 1)
-            {
-                firstRead.TrySetResult();
-                await firstProceed.Task.WaitAsync(ct);
-            }
-            return seen;
+            entered.TrySetResult();
+            await proceed.Task.WaitAsync(ct);
+            return [MakeBranch("main")];
         };
 
         var ctx = _host.Open(_repo.Path);
         var state = NewState(ctx, gateway);
 
-        var first = state.RefreshStatusAsync();
-        await firstRead.Task;
+        // The operation's caller refreshes as soon as the operation returns.
+        var operationEnd = EndOperation(ctx);
+        var callerRefresh = state.RefreshRefsAsync();
+        await entered.Task;
 
-        // A file is saved and the watcher asks for a refresh while the first read still runs.
-        onDisk = modified;
-        var second = state.RefreshStatusAsync();
+        // The operation's own refresh arrives while the caller's run executes.
+        var operationRefresh = state.RefreshAfterOperationAsync(operationEnd, CancellationToken.None);
 
-        firstProceed.TrySetResult();
-        await Task.WhenAll(first, second);
+        proceed.TrySetResult();
+        await Task.WhenAll(callerRefresh, operationRefresh);
 
-        Assert.Equal(2, gateway.StatusCalls);
-        Assert.Equal("f.txt", Assert.Single(state.Status.Unstaged).Path);
+        Assert.Equal(1, gateway.BranchesCalls);
+        Assert.Equal(1, gateway.TagsCalls);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task The_refresh_after_an_operation_does_not_join_a_run_started_before_the_operation_ended()
+    {
+        var gateway = new FakeGitGateway();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.OnGetBranches = async ct =>
+        {
+            if (gateway.BranchesCalls == 1)
+            {
+                entered.TrySetResult();
+                await proceed.Task.WaitAsync(ct);
+            }
+            return [MakeBranch("main")];
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = NewState(ctx, gateway);
+
+        var running = state.RefreshRefsAsync();
+        await entered.Task;
+
+        // The operation ends after the running read began, so that read may predate its result.
+        var operationEnd = EndOperation(ctx);
+        var operationRefresh = state.RefreshAfterOperationAsync(operationEnd, CancellationToken.None);
+
+        proceed.TrySetResult();
+        await Task.WhenAll(running, operationRefresh);
+
+        Assert.Equal(2, gateway.BranchesCalls);
+        Assert.Equal(2, gateway.TagsCalls);
     }
 
     [Fact(Timeout = 10000)]

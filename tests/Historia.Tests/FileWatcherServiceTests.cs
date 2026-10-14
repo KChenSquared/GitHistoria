@@ -87,44 +87,22 @@ public sealed class FileWatcherServiceTests : IAsyncDisposable
         Assert.False(fakeWs.LastFull);
     }
 
-    // Read directly: the public count is null whenever the watcher is degraded, which a busy test
-    // host can cause.
-    private static long ObservedChanges(RepositoryContext ctx)
-        => (long)typeof(RepositoryContext)
-            .GetField("_changeGeneration", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
-            .GetValue(ctx)!;
+    private static int PendingPaths(Historia.Services.Watching.FileWatcherService watcher)
+        => ((HashSet<string>)typeof(Historia.Services.Watching.FileWatcherService)
+            .GetField("_pendingPaths", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(watcher)!).Count;
 
     [Fact]
-    public async Task A_working_tree_edit_and_the_end_of_an_operation_are_observed_changes()
+    public async Task Ignored_and_uninteresting_git_paths_queue_no_refresh()
     {
         await using var ctx = _host.Open(_repo.Path);
         await using var watcher = new Historia.Services.Watching.FileWatcherService(ctx, ctx.State, _host.Settings, new FakeWorkspace());
         var onRawEvent = typeof(Historia.Services.Watching.FileWatcherService)
             .GetMethod("OnRawEvent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
 
-        var before = ObservedChanges(ctx);
-        onRawEvent.Invoke(watcher, [Path.Combine(_repo.Path, "seed.txt"), false]);
-        Assert.True(ObservedChanges(ctx) > before);
-
-        before = ObservedChanges(ctx);
-        using (ctx.BeginSelfOperation())
-        {
-        }
-        Assert.True(ObservedChanges(ctx) > before);
-    }
-
-    [Fact]
-    public async Task Ignored_and_uninteresting_git_paths_are_not_observed_changes()
-    {
-        await using var ctx = _host.Open(_repo.Path);
-        await using var watcher = new Historia.Services.Watching.FileWatcherService(ctx, ctx.State, _host.Settings, new FakeWorkspace());
-        var onRawEvent = typeof(Historia.Services.Watching.FileWatcherService)
-            .GetMethod("OnRawEvent", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-
-        var before = ObservedChanges(ctx);
         onRawEvent.Invoke(watcher, [Path.Combine(_repo.Path, "node_modules", "x.js"), false]);
         onRawEvent.Invoke(watcher, [Path.Combine(ctx.GitDirectory, "objects", "ab", "cdef"), false]);
-        Assert.Equal(before, ObservedChanges(ctx));
+        Assert.Equal(0, PendingPaths(watcher));
     }
 
     [Theory]

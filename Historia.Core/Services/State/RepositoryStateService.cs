@@ -50,13 +50,12 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         RepositoryContext context,
         IUiDispatcher? ui = null,
         IRepoStateCache? repoCache = null,
-        IGitGateway? gateway = null,
-        Func<long?>? changeGeneration = null)
+        IGitGateway? gateway = null)
     {
         _context = context;
         _gateway = gateway ?? context.Gateway;
-        _refsCoalescer = new(() => _context.Lifetime);
-        _statusCoalescer = new(() => _context.Lifetime);
+        _refsCoalescer = new(() => _context.Lifetime, () => _context.CompletedOperations);
+        _statusCoalescer = new(() => _context.Lifetime, () => _context.CompletedOperations);
         _ui = ui;
         _repoCache = repoCache;
         _stashStamp = RefStateToken.StashStamp(context.GitDirectory);
@@ -255,7 +254,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     }
 
     public Task RefreshStatusAsync(CancellationToken ct = default)
-        => _statusCoalescer.RunAsync(DoRefreshStatusAsync, ct);
+        => _statusCoalescer.RunAsync(DoRefreshStatusAsync, joinFrom: null, ct);
 
     private async Task DoRefreshStatusAsync(CancellationToken ct)
     {
@@ -358,7 +357,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     }
 
     public Task RefreshRefsAsync(CancellationToken ct = default)
-        => _refsCoalescer.RunAsync(DoRefreshRefsAsync, ct);
+        => _refsCoalescer.RunAsync(DoRefreshRefsAsync, joinFrom: null, ct);
 
     private async Task DoRefreshRefsAsync(CancellationToken ct)
     {
@@ -429,10 +428,22 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         }
     }
 
-    public async Task RefreshAllAsync(CancellationToken ct = default)
+    public Task RefreshAllAsync(CancellationToken ct = default)
+        => RefreshAllCoreAsync(joinFrom: null, ct);
+
+    /// <summary>
+    /// Refreshes refs then status after one of Historia's own operations ended at
+    /// <paramref name="operationEnd"/> (see <see cref="RepositoryContext.CompletedOperations"/>).
+    /// Joins a run that started at or after that count: it began after the operation finished, so
+    /// it reads the operation's result.
+    /// </summary>
+    internal Task RefreshAfterOperationAsync(long operationEnd, CancellationToken ct)
+        => RefreshAllCoreAsync(operationEnd, ct);
+
+    private async Task RefreshAllCoreAsync(long? joinFrom, CancellationToken ct)
     {
-        await RefreshRefsAsync(ct).ConfigureAwait(false);
-        await RefreshStatusAsync(ct).ConfigureAwait(false);
+        await _refsCoalescer.RunAsync(DoRefreshRefsAsync, joinFrom, ct).ConfigureAwait(false);
+        await _statusCoalescer.RunAsync(DoRefreshStatusAsync, joinFrom, ct).ConfigureAwait(false);
     }
 
     // ── Status-raise coalescing on a 50 ms trailing window ──
@@ -494,19 +505,27 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
     }
 
     /// <summary>
-    /// One refresh at a time per kind. A caller arriving while a refresh executes never joins it:
+    /// One refresh at a time per kind. A caller arriving while a refresh executes does not join it:
     /// that run may have read the working tree before the caller's change landed. Instead, the caller
     /// waits for the single trailing run queued behind it, and callers arriving before that run starts
-    /// share it. A run's work gets a token that cancels when the tab closes or when every caller waiting
-    /// on that run has given up (their tokens cancelled) — a tab the user switched away from stops paying
-    /// for a refresh nobody is waiting for. A caller with a non-cancellable token keeps its run alive.
+    /// share it. The one exception is the refresh that follows one of Historia's own operations
+    /// (<c>joinFrom</c>): it joins an executing run that started at or after the operation count its
+    /// operation ended at, since that run began after the operation finished. Without it, the
+    /// operation's caller and the operation's own refresh ask at once and a stage or commit often runs
+    /// <c>git status</c> twice. A run's work gets a token that cancels when the tab closes or when every
+    /// caller waiting on that run has given up (their tokens cancelled) — a tab the user switched away
+    /// from stops paying for a refresh nobody is waiting for. A caller with a non-cancellable token
+    /// keeps its run alive.
     /// <para>
-    /// <b>Trap:</b> Letting a caller join an executing run until its git reads returned served stale
-    /// status, because git fixes its answer when the read starts. A caller whose change landed mid-read
-    /// joined a run that could not see it. Only a run that has not started its work is joinable.
+    /// <b>Trap:</b> Two wider join rules served stale status. Joining an executing run until its git
+    /// reads returned fails because git fixes its answer when the read starts, so a change landing
+    /// mid-read is missed. Joining while no change had been observed since the run started fails for
+    /// any change not yet observed when the caller asks: the watcher reports an edit only after it
+    /// lands, and nothing reports a write the caller made itself. Only a caller that can show its
+    /// change predates the run may join it.
     /// </para>
     /// </summary>
-    private sealed class SingleFlightCoalescer(Func<CancellationToken> lifetime)
+    private sealed class SingleFlightCoalescer(Func<CancellationToken> lifetime, Func<long> completedOperations)
     {
         private readonly object _gate = new();
         private Run? _current;  // running
@@ -516,10 +535,11 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
         {
             public readonly TaskCompletionSource Done = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public readonly CancellationTokenSource Abandoned = new();
-            public int Waiters; // guarded by the coalescer's _gate
+            public int Waiters;      // guarded by the coalescer's _gate
+            public long StartCount;  // operation count when its work started; guarded by _gate
         }
 
-        public Task RunAsync(Func<CancellationToken, Task> work, CancellationToken ct)
+        public Task RunAsync(Func<CancellationToken, Task> work, long? joinFrom, CancellationToken ct)
         {
             // A caller that already gave up never starts (or joins) work.
             if (ct.IsCancellationRequested)
@@ -531,8 +551,13 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
             {
                 if (_current is null)
                 {
-                    _current = run = new Run();
+                    _current = run = new Run { StartCount = completedOperations() };
                     start = true;
+                }
+                else if (joinFrom is { } from && _current.StartCount >= from
+                    && !_current.Abandoned.IsCancellationRequested)
+                {
+                    run = _current;
                 }
                 else
                 {
@@ -594,6 +619,7 @@ public sealed class RepositoryStateService : IRepositoryStateService, IAsyncDisp
                     _trailing = null;
                     if (_current is null)
                         return;
+                    _current.StartCount = completedOperations();
                 }
             }
         }
