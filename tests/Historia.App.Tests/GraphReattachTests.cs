@@ -76,11 +76,17 @@ public sealed class GraphReattachTests
         RepositoryContext Context,
         Window Window,
         StubThemeService Theme,
-        ISettingsService Settings) : IDisposable
+        ISettingsService Settings,
+        bool InitialShowAuthorDate) : IDisposable
     {
         public void Dispose()
         {
             try { Window.Close(); } catch { }
+            try
+            {
+                Settings.UpdateAsync(s => s with { ShowAuthorDate = InitialShowAuthorDate }).GetAwaiter().GetResult();
+            }
+            catch { }
             try
             {
                 Services.GetRequiredService<IRepoLayoutService>()
@@ -93,9 +99,10 @@ public sealed class GraphReattachTests
         }
     }
 
-    private static async Task<TestSetup> CreateSetupAsync()
+    private static async Task<TestSetup> CreateSetupAsync(Action<TestRepo>? seed = null)
     {
         var repo = new TestRepo();
+        seed?.Invoke(repo);
         var theme = new StubThemeService();
         var sc = new ServiceCollection();
         var settings = SettingsService.Load();
@@ -160,7 +167,7 @@ public sealed class GraphReattachTests
             Dispatcher.UIThread.RunJobs();
         }
 
-        return new TestSetup(graph, sp, repo, ctx, window, theme, settings);
+        return new TestSetup(graph, sp, repo, ctx, window, theme, settings, settings.Current.ShowAuthorDate);
     }
 
     [AvaloniaFact]
@@ -217,6 +224,41 @@ public sealed class GraphReattachTests
 
         Assert.Equal(initialRecomputes + 1, graph.RefsRecomputeCount);
         Assert.Same(initialLayout, graph.LayoutForTesting);
+    }
+
+    [AvaloniaFact]
+    public async Task Reattach_with_unchanged_refs_keeps_the_find_cursor()
+    {
+        using var setup = await CreateSetupAsync(repo =>
+        {
+            foreach (var name in new[] { "one", "two", "three" })
+            {
+                repo.WriteFile($"{name}.txt", name);
+                repo.RunGit("add", $"{name}.txt");
+                repo.RunGit("commit", "-m", $"needle {name}", "--no-gpg-sign");
+            }
+        });
+        var graph = setup.Graph;
+        var window = setup.Window;
+        var placeholder = new Border();
+
+        graph.SearchBoxForTesting.Text = "needle";
+        Dispatcher.UIThread.RunJobs();
+        graph.StepMatchForTesting(1);
+        var steppedRow = graph.CurrentMatchRowForTesting;
+        Assert.NotEqual(-1, steppedRow);
+
+        window.Content = placeholder;
+        Dispatcher.UIThread.RunJobs();
+
+        window.Content = graph;
+        Dispatcher.UIThread.RunJobs();
+
+        if (graph.ActiveRefsRecomputeTask is { } task)
+            await task;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(steppedRow, graph.CurrentMatchRowForTesting);
     }
 
     [AvaloniaFact]

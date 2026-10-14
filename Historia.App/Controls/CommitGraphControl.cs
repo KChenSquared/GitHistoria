@@ -135,6 +135,9 @@ public sealed partial class CommitGraphControl : Control
     internal int ResolveRowForTesting(GitObjectId id) => ResolveRow(id);
     internal bool ShowAuthorDateForTesting => _showAuthorDate;
     internal EffectiveTheme ThemeModeForTesting => _themeMode;
+    internal TextBox SearchBoxForTesting => _searchBox;
+    internal void StepMatchForTesting(int direction) => StepMatch(direction);
+    internal int CurrentMatchRowForTesting => _matches.CurrentRow;
     private Func<RepositoryContext, Task>? _recomputeOverrideForTesting;
     private GraphLayoutResult? _layout;
     // The commit store behind _layout. A disk-backed store holds an open file handle that
@@ -703,15 +706,17 @@ public sealed partial class CommitGraphControl : Control
                 _layout = null;
         }
 
+        if (_detachedSinceAttach)
+        {
+            _detachedSinceAttach = false;
+            _themeMode = _theme.Effective;
+            RebuildThemeResources();
+            InvalidateVisual();
+        }
+
         var focused = _workspace.Focused;
         if (!ReferenceEquals(focused, _context))
         {
-            if (_detachedSinceAttach)
-            {
-                _detachedSinceAttach = false;
-                _themeMode = _theme.Effective;
-                RebuildThemeResources();
-            }
             Bind(focused);
         }
         else if (_state is not null)
@@ -729,13 +734,6 @@ public sealed partial class CommitGraphControl : Control
                 _showAuthorDate = _settings.Current.ShowAuthorDate;
 
             SyncColumnsFromLayout();
-
-            if (_detachedSinceAttach)
-            {
-                _detachedSinceAttach = false;
-                _themeMode = _theme.Effective;
-                RebuildThemeResources();
-            }
 
             if (_layout is null)
             {
@@ -1362,7 +1360,10 @@ public sealed partial class CommitGraphControl : Control
                 _layoutService.RecomputeAsync(context, query, previous, InvalidationReason.RefsChanged, initial, ct), ct).ConfigureAwait(true);
             if (ct.IsCancellationRequested)
                 return;
-            ApplyLayout(result, query);
+            // Unchanged refs hand back the painted layout; re-applying it would reset the find
+            // cursor and scroll to the first match.
+            if (!ReferenceEquals(result, previous))
+                ApplyLayout(result, query);
             _ = StartBackgroundSilentLoadAsync(context, ct);
         }
         catch (OperationCanceledException) { }
