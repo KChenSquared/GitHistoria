@@ -30,7 +30,6 @@ public class CodeEditor : TextEditor
     {
         base.OnAttachedToVisualTree(e);
         PaletteBrushes.Changed += OnPaletteBrushesChanged;
-        OnPaletteBrushesChanged(null, EventArgs.Empty);
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)

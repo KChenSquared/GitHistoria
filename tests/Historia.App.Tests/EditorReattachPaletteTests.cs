@@ -73,13 +73,35 @@ public sealed class EditorReattachPaletteTests
         }
     }
 
-    [AvaloniaFact]
-    public void Code_editor_rebuilds_visual_lines_after_a_detached_theme_change()
+    private sealed class AccentColorizer : DocumentColorizingTransformer
     {
+        protected override void ColorizeLine(DocumentLine line)
+        {
+            var brush = PaletteBrushes.Get("ColorAccent");
+            ChangeLinePart(line.Offset, line.EndOffset, element => element.TextRunProperties.SetForegroundBrush(brush));
+        }
+    }
+
+    private static Color? FirstRunColor(CodeEditor editor)
+    {
+        editor.TextArea.TextView.EnsureVisualLines();
+        var line = editor.TextArea.TextView.GetVisualLine(1);
+        return (line?.Elements[0].TextRunProperties.ForegroundBrush as ISolidColorBrush)?.Color;
+    }
+
+    [AvaloniaFact]
+    public void Code_editor_recolors_lines_after_a_detached_theme_change()
+    {
+        var app = Application.Current!;
+        app.TryFindResource("ColorAccent", out var originalAccentResource);
+        var oldBrush = originalAccentResource as IBrush ?? Brushes.Orange;
+        var newBrush = new SolidColorBrush(Colors.Magenta);
+
         var editor = new CodeEditor
         {
             Document = new TextDocument("line 1\nline 2\nline 3\n"),
         };
+        editor.TextArea.TextView.LineTransformers.Add(new AccentColorizer());
         var window = new Window { Width = 600, Height = 400, Content = editor };
         var placeholder = new Border();
         window.Show();
@@ -88,31 +110,30 @@ public sealed class EditorReattachPaletteTests
         {
             window.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
-            editor.TextArea.TextView.EnsureVisualLines();
-            Assert.True(editor.TextArea.TextView.VisualLinesValid);
+            Assert.NotEqual(Colors.Magenta, FirstRunColor(editor));
 
             window.Content = placeholder;
             Dispatcher.UIThread.RunJobs();
 
+            app.Resources["ColorAccent"] = newBrush;
             PaletteBrushes.Invalidate();
 
             window.Content = editor;
-            Assert.False(editor.TextArea.TextView.VisualLinesValid);
-
             window.UpdateLayout();
             Dispatcher.UIThread.RunJobs();
-            editor.TextArea.TextView.EnsureVisualLines();
-            Assert.True(editor.TextArea.TextView.VisualLinesValid);
+
+            Assert.Equal(Colors.Magenta, FirstRunColor(editor));
         }
         finally
         {
+            app.Resources["ColorAccent"] = oldBrush;
             PaletteBrushes.Invalidate();
             window.Close();
         }
     }
 
     [AvaloniaFact]
-    public void Resolver_minimap_repaints_after_a_detached_theme_change()
+    public void Resolver_minimap_rerenders_on_reattach()
     {
         var parse = ConflictMarkerParser.Parse("top\n<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\nbottom\n");
         var minimap = new ConflictResolverMinimap { Parse = parse, Width = 12, Height = 300 };

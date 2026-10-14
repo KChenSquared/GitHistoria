@@ -91,8 +91,6 @@ public sealed class ConflictResolverMinimap : Control
     {
         base.OnAttachedToVisualTree(e);
         PaletteBrushes.Changed += OnPaletteChanged;
-        _bars.Invalidate();
-        _range.InvalidateVisual();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
