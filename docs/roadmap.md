@@ -15,6 +15,8 @@ Features planned for upcoming releases. Items are not listed in priority order.
   credentials by hand.
 - **LFS support** — work with Git Large File Storage repositories.
 - **Spotlight** — Select which branches to display, hide the rest
+- **Reachy Mini integration** — have Reachy let you know when your agents want you to look
+  at something in the repo.
 
 ---
 
