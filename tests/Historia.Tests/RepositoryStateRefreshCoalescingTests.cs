@@ -2,9 +2,8 @@ namespace Historia.Tests;
 
 /// <summary>
 /// Single-flight coalescing and incremental ref publishing.
-/// Ensures concurrent calls run the gateway once, mid-flight callers get a trailing run once data
-/// was read or a change was observed,
-/// faults are not cached, joiner cancellation does not cancel shared runs, and branches
+/// Ensures callers arriving while a refresh executes share one trailing run, changes made while a read
+/// runs are not lost, faults are not cached, joiner cancellation does not cancel shared runs, and branches
 /// publish before tags finish.
 /// </summary>
 [Trait("tier", "git")]
@@ -22,12 +21,8 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         _repo.Dispose();
     }
 
-    // A fixed change count unless a test moves it: the tab's own count depends on its watcher,
-    // which a busy test host can push into degraded mode.
-    private long _generation;
-
-    private RepositoryStateService NewState(RepositoryContext ctx, FakeGitGateway gateway)
-        => new(ctx, gateway: gateway, changeGeneration: () => Interlocked.Read(ref _generation));
+    private static RepositoryStateService NewState(RepositoryContext ctx, FakeGitGateway gateway)
+        => new(ctx, gateway: gateway);
 
     private static BranchInfo MakeBranch(string name, bool isCurrent = true) => new()
     {
@@ -46,7 +41,126 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
     };
 
     [Fact(Timeout = 10000)]
-    public async Task Concurrent_refresh_refs_calls_run_the_gateway_once()
+    public async Task Status_refresh_requested_after_the_read_began_sees_the_new_answer()
+    {
+        var gateway = new FakeGitGateway();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var answer = Historia.Models.RepositoryStatus.Empty;
+
+        gateway.OnGetStatus = async ct =>
+        {
+            var seen = answer;
+            if (gateway.StatusCalls == 1)
+            {
+                entered.TrySetResult();
+                await proceed.Task.WaitAsync(ct);
+            }
+            return seen;
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        var taskA = state.RefreshStatusAsync();
+        await entered.Task;
+
+        answer = Historia.Models.RepositoryStatus.Empty with
+        {
+            Unstaged = [new FileStatusEntry { Path = "b.txt", Kind = FileChangeKind.Modified, IsBinary = false, IsSubmodule = false }],
+            IsDirty = true,
+        };
+        var taskB = state.RefreshStatusAsync();
+
+        proceed.TrySetResult();
+        await Task.WhenAll(taskA, taskB);
+
+        Assert.Equal(2, gateway.StatusCalls);
+        Assert.Equal("b.txt", Assert.Single(state.Status.Unstaged).Path);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Status_refresh_requested_during_the_info_read_sees_the_new_head()
+    {
+        var gateway = new FakeGitGateway();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var currentBranch = "main";
+
+        gateway.OnGetRepositoryInfo = async ct =>
+        {
+            var branch = currentBranch;
+            if (gateway.StatusCalls == 1 && !entered.Task.IsCompleted)
+            {
+                entered.TrySetResult();
+                await proceed.Task.WaitAsync(ct);
+            }
+            return new RepositoryInfo
+            {
+                WorkingDirectory = gateway.RepositoryPath,
+                GitDirectory = gateway.RepositoryPath + "\\.git",
+                DisplayName = "fake",
+                IsBare = false,
+                IsHeadDetached = false,
+                IsHeadUnborn = false,
+                CurrentBranchName = branch,
+            };
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        var taskA = state.RefreshStatusAsync();
+        await entered.Task;
+
+        currentBranch = "feature";
+        var taskB = state.RefreshStatusAsync();
+
+        proceed.TrySetResult();
+        await Task.WhenAll(taskA, taskB);
+
+        Assert.Equal("feature", state.Repository.CurrentBranchName);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Refs_refresh_requested_after_the_read_began_sees_the_new_branches()
+    {
+        var gateway = new FakeGitGateway();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var branches = (IReadOnlyList<BranchInfo>)[MakeBranch("main")];
+
+        gateway.OnGetBranches = async ct =>
+        {
+            var seen = branches;
+            if (gateway.BranchesCalls == 1)
+            {
+                entered.TrySetResult();
+                await proceed.Task.WaitAsync(ct);
+            }
+            return seen;
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = new RepositoryStateService(ctx, gateway: gateway);
+
+        var taskA = state.RefreshRefsAsync();
+        await entered.Task;
+
+        branches = [MakeBranch("main"), MakeBranch("feature", isCurrent: false)];
+        var taskB = state.RefreshRefsAsync();
+
+        proceed.TrySetResult();
+        await Task.WhenAll(taskA, taskB);
+
+        Assert.Equal(2, gateway.BranchesCalls);
+        Assert.Equal(2, state.Branches.Count);
+        Assert.Contains(state.Branches, b => b.Name == "main");
+        Assert.Contains(state.Branches, b => b.Name == "feature");
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_burst_during_a_refs_refresh_queues_exactly_one_trailing_run()
     {
         var gateway = new FakeGitGateway();
         var branchesEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -54,8 +168,11 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
 
         gateway.OnGetBranches = async ct =>
         {
-            branchesEntered.TrySetResult();
-            await branchesProceed.Task.WaitAsync(ct);
+            if (gateway.BranchesCalls == 1)
+            {
+                branchesEntered.TrySetResult();
+                await branchesProceed.Task.WaitAsync(ct);
+            }
             return [MakeBranch("main")];
         };
 
@@ -65,18 +182,81 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         var task1 = state.RefreshRefsAsync();
         await branchesEntered.Task;
 
-        // Call 2 arrives while task1 is in-flight before data is read:
-        var task2 = state.RefreshRefsAsync();
+        // Five callers arrive while task1 is executing:
+        var burst = Enumerable.Range(0, 5).Select(_ => state.RefreshRefsAsync()).ToArray();
 
         branchesProceed.TrySetResult();
-        await Task.WhenAll(task1, task2);
+        await Task.WhenAll([task1, .. burst]);
 
-        Assert.Equal(1, gateway.BranchesCalls);
-        Assert.Equal(1, gateway.TagsCalls);
+        Assert.Equal(2, gateway.BranchesCalls);
+        Assert.Equal(2, gateway.TagsCalls);
     }
 
     [Fact(Timeout = 10000)]
-    public async Task A_change_observed_while_a_status_read_runs_gets_a_trailing_refresh()
+    public async Task A_burst_during_a_status_refresh_queues_exactly_one_trailing_run()
+    {
+        var gateway = new FakeGitGateway();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        gateway.OnGetStatus = async ct =>
+        {
+            if (gateway.StatusCalls == 1)
+            {
+                entered.TrySetResult();
+                await proceed.Task.WaitAsync(ct);
+            }
+            return Historia.Models.RepositoryStatus.Empty;
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = NewState(ctx, gateway);
+
+        var first = state.RefreshStatusAsync();
+        await entered.Task;
+
+        // Five callers arrive while the first run is executing:
+        var burst = Enumerable.Range(0, 5).Select(_ => state.RefreshStatusAsync()).ToArray();
+
+        proceed.TrySetResult();
+        await Task.WhenAll([first, .. burst]);
+
+        Assert.Equal(2, gateway.StatusCalls);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task Caller_arriving_mid_flight_gets_a_trailing_refresh()
+    {
+        var gateway = new FakeGitGateway();
+        var tagsEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tagsProceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        gateway.OnGetTags = async ct =>
+        {
+            tagsEntered.TrySetResult();
+            await tagsProceed.Task.WaitAsync(ct);
+            return [];
+        };
+
+        var ctx = _host.Open(_repo.Path);
+        var state = NewState(ctx, gateway);
+
+        var task1 = state.RefreshRefsAsync();
+        await tagsEntered.Task;
+
+        // Call 2 arrives mid-flight:
+        var task2 = state.RefreshRefsAsync();
+
+        tagsProceed.TrySetResult();
+        await task1;
+        await task2;
+
+        Assert.Equal(2, gateway.BranchesCalls);
+        Assert.Equal(2, gateway.TagsCalls);
+    }
+
+    [Fact(Timeout = 10000)]
+    public async Task A_change_made_while_a_status_read_runs_is_not_lost()
     {
         var modified = Historia.Models.RepositoryStatus.Empty with
         {
@@ -105,82 +285,15 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
         var first = state.RefreshStatusAsync();
         await firstRead.Task;
 
-        // A file is saved while the first read still runs; the watcher sees it and asks twice.
+        // A file is saved and the watcher asks for a refresh while the first read still runs.
         onDisk = modified;
-        Interlocked.Increment(ref _generation);
         var second = state.RefreshStatusAsync();
-        var third = state.RefreshStatusAsync();
 
         firstProceed.TrySetResult();
-        await Task.WhenAll(first, second, third);
-
-        Assert.Equal(2, gateway.StatusCalls);
-        Assert.Equal("f.txt", Assert.Single(state.Status.Unstaged).Path);
-    }
-
-    [Fact(Timeout = 10000)]
-    public async Task No_running_refresh_is_joined_while_changes_go_unobserved()
-    {
-        var gateway = new FakeGitGateway();
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        gateway.OnGetStatus = async ct =>
-        {
-            if (gateway.StatusCalls == 1)
-            {
-                entered.TrySetResult();
-                await proceed.Task.WaitAsync(ct);
-            }
-            return Historia.Models.RepositoryStatus.Empty;
-        };
-
-        var ctx = _host.Open(_repo.Path);
-        // A degraded watcher reports no count: a working-tree edit may have gone unseen.
-        var state = new RepositoryStateService(ctx, gateway: gateway, changeGeneration: () => null);
-
-        var first = state.RefreshStatusAsync();
-        await entered.Task;
-        var second = state.RefreshStatusAsync();
-
-        proceed.TrySetResult();
         await Task.WhenAll(first, second);
 
         Assert.Equal(2, gateway.StatusCalls);
-    }
-
-    [Theory(Timeout = 10000)]
-    [InlineData(true, 2)]
-    [InlineData(false, 1)]
-    public async Task Caller_arriving_after_data_was_read_gets_a_trailing_refresh_only_after_a_change(bool changed, int runs)
-    {
-        var gateway = new FakeGitGateway();
-        var tagsEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var tagsProceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        gateway.OnGetTags = async ct =>
-        {
-            tagsEntered.TrySetResult();
-            await tagsProceed.Task.WaitAsync(ct);
-            return [];
-        };
-
-        var ctx = _host.Open(_repo.Path);
-        var state = NewState(ctx, gateway);
-
-        var task1 = state.RefreshRefsAsync();
-        await tagsEntered.Task;
-
-        // Call 2 arrives mid-flight AFTER data was read, with or without a change seen since:
-        if (changed)
-            Interlocked.Increment(ref _generation);
-        var task2 = state.RefreshRefsAsync();
-
-        tagsProceed.TrySetResult();
-        await task1;
-        await task2;
-
-        Assert.Equal(runs, gateway.BranchesCalls);
-        Assert.Equal(runs, gateway.TagsCalls);
+        Assert.Equal("f.txt", Assert.Single(state.Status.Unstaged).Path);
     }
 
     [Fact(Timeout = 10000)]
@@ -210,7 +323,7 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
     }
 
     [Fact(Timeout = 10000)]
-    public async Task Joiner_cancellation_does_not_cancel_the_shared_refresh()
+    public async Task A_queued_callers_cancellation_does_not_cancel_the_running_refresh()
     {
         var gateway = new FakeGitGateway();
         var branchesEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -237,10 +350,11 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task2);
 
-        // Shared run completes successfully:
+        // Running run completes successfully:
         branchesProceed.TrySetResult();
         await task1;
 
+        Assert.Equal(1, gateway.BranchesCalls);
         Assert.Single(state.Branches);
     }
 
@@ -305,30 +419,50 @@ public sealed class RepositoryStateRefreshCoalescingTests : IAsyncDisposable
     public async Task A_waiter_without_a_token_keeps_the_refresh_running_when_the_others_leave()
     {
         var gateway = new FakeGitGateway();
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var cancelled = false;
+        var blockA = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceedA = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blockB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceedB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelledB = false;
+
         gateway.OnGetBranches = async ct =>
         {
-            entered.TrySetResult();
-            using (ct.Register(() => cancelled = true))
-                await proceed.Task;
+            if (gateway.BranchesCalls == 1)
+            {
+                blockA.TrySetResult();
+                await proceedA.Task.WaitAsync(ct);
+            }
+            else
+            {
+                blockB.TrySetResult();
+                using (ct.Register(() => cancelledB = true))
+                    await proceedB.Task.WaitAsync(ct);
+            }
             return [MakeBranch("main")];
         };
 
         var ctx = _host.Open(_repo.Path);
         var state = NewState(ctx, gateway);
 
+        var blockerA = state.RefreshRefsAsync();
+        await blockA.Task;
+
         using var cts = new CancellationTokenSource();
         var leaver = state.RefreshRefsAsync(cts.Token);
-        await entered.Task;
-        var stayer = state.RefreshRefsAsync();
+        var stayer = state.RefreshRefsAsync(CancellationToken.None);
+
         cts.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => leaver);
 
-        proceed.TrySetResult();
+        proceedA.TrySetResult();
+        await blockerA;
+
+        await blockB.Task;
+        proceedB.TrySetResult();
         await stayer;
-        Assert.False(cancelled);
+
+        Assert.False(cancelledB);
+        Assert.Equal(2, gateway.BranchesCalls);
         Assert.Single(state.Branches);
     }
 
