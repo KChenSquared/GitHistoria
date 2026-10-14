@@ -135,7 +135,6 @@ public sealed class FileWatcherService : IAsyncDisposable
             return;
 
         // Buffer overflow: discard pending state and force one full refresh — never ignored.
-        _context.NoteChange();
         lock (_sync)
         {
             if (_disposed)
@@ -172,7 +171,6 @@ public sealed class FileWatcherService : IAsyncDisposable
             if (!meaningful)
                 return;
 
-            _context.NoteChange();
             lock (_sync)
             {
                 _refsTouched = true;
@@ -191,7 +189,6 @@ public sealed class FileWatcherService : IAsyncDisposable
         if (IsLikelyIgnored(relPath))
             return;
 
-        _context.NoteChange();
         lock (_sync)
         {
             _pendingPaths.Add(relPath);

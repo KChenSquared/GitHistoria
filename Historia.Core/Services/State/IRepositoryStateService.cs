@@ -99,8 +99,25 @@ public interface IRepositoryStateService
     /// Safe to call from any thread.</summary>
     void SetOpenDiff(DiffRequest? request);
     void SetActiveProfile(GitProfile? profile);
+
+    /// <summary>
+    /// Refreshes the working-tree and staging status. Completes once state has been read from git
+    /// by a run that started after this call, ensuring any change made before calling is reflected.
+    /// Concurrent callers arriving while a run executes share the single trailing run.
+    /// </summary>
     Task RefreshStatusAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Refreshes branches, tags, remotes, and repository info. Completes once state has been read
+    /// from git by a run that started after this call, ensuring any ref change made before calling
+    /// is reflected. Concurrent callers arriving while a run executes share the single trailing run.
+    /// </summary>
     Task RefreshRefsAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Refreshes refs and then status sequentially, with the same freshness guarantees as
+    /// <see cref="RefreshRefsAsync"/> and <see cref="RefreshStatusAsync"/>.
+    /// </summary>
     Task RefreshAllAsync(CancellationToken ct = default);
 
     /// <summary>Populate branches/tags/remotes synchronously from the on-disk repo-state cache
