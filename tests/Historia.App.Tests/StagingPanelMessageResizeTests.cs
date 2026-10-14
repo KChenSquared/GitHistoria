@@ -472,13 +472,12 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
         Assert.True(splitAreaBottom <= messageSectionTop + 1.01);
     }
 
-    [AvaloniaFact]
-    public void Split_drag_reversed_in_one_gesture_grows_staged_not_box()
+    private void AssertReversedSplitDragGrowsStagedNotBox(Func<StagingPanelView, Control> handleOf)
     {
         var (context, view, window) = CreateView(width: 400, height: 900);
         var h = GrowMessageBoxToMax(view, window);
 
-        Drag(window, view.SplitHost.SplitHandle, 100, 0);
+        Drag(window, handleOf(view), 100, 0);
 
         var splitArea = view.SplitHost;
         var changesRow = splitArea.RowDefinitions[0];
@@ -497,6 +496,12 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         Assert.InRange(Math.Abs(view2.MessageInput.Height - (h - 100)), 0, 1.01);
+    }
+
+    [AvaloniaFact]
+    public void Split_drag_reversed_in_one_gesture_grows_staged_not_box()
+    {
+        AssertReversedSplitDragGrowsStagedNotBox(v => v.SplitHost.SplitHandle);
     }
 
     [AvaloniaFact]
@@ -519,28 +524,7 @@ public sealed class StagingPanelMessageResizeTests : IDisposable
     [AvaloniaFact]
     public void Staged_divider_drag_reversed_grows_staged_not_box()
     {
-        var (context, view, window) = CreateView(width: 400, height: 900);
-        var h = GrowMessageBoxToMax(view, window);
-
-        Drag(window, view.SplitHost.DividerHandle, 100, 0);
-
-        var splitArea = view.SplitHost;
-        var changesRow = splitArea.RowDefinitions[0];
-        var stagedSection = splitArea.Frame;
-
-        Assert.InRange(Math.Abs(view.MessageInput.Height - (h - 100)), 0, 1.01);
-        Assert.Equal(150, changesRow.Height.Value);
-        Assert.InRange(Math.Abs(stagedSection.Bounds.Height - 250), 0, 1.01);
-
-        view.Dispose();
-        _views.Remove(view);
-
-        var view2 = new StagingPanelView(_sp, context);
-        _views.Add(view2);
-        window.Content = view2;
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.InRange(Math.Abs(view2.MessageInput.Height - (h - 100)), 0, 1.01);
+        AssertReversedSplitDragGrowsStagedNotBox(v => v.SplitHost.DividerHandle);
     }
 
     [AvaloniaFact]
